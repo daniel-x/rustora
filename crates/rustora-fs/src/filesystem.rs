@@ -86,10 +86,15 @@ impl FileSystem {
         };
         let result = (|| {
             let package = if let Some(id) = name.strip_prefix('$') {
-                self.installed_mods.get(id).cloned().ok_or_else(|| FsError::Invalid(format!("Could not load mod '{id}'.")))?
+                self.installed_mods
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| FsError::Invalid(format!("Could not load mod '{id}'.")))?
             } else {
                 self.open_package(name).ok_or_else(|| {
-                    FsError::Invalid(format!("Could not open package '{name}', file not found or its format is not supported."))
+                    FsError::Invalid(format!(
+                        "Could not open package '{name}', file not found or its format is not supported."
+                    ))
                 })?
             };
             self.mount_package(package, explicit_name);
@@ -160,7 +165,11 @@ impl FileSystem {
                 }
             }
         }
-        if let Some(p) = self.file_index.get(filename).and_then(|l| l.iter().rev().find(|p| p.contains(filename))) {
+        if let Some(p) = self
+            .file_index
+            .get(filename)
+            .and_then(|l| l.iter().rev().find(|p| p.contains(filename)))
+        {
             return p.get(filename);
         }
         if split.is_some() {
@@ -176,7 +185,10 @@ impl FileSystem {
 
     pub fn exists(&self, filename: &str) -> bool {
         if let Some(split) = filename.find('|').filter(|&s| s > 0) {
-            if self.explicit(&filename[..split]).is_some_and(|p| p.contains(&filename[split + 1..])) {
+            if self
+                .explicit(&filename[..split])
+                .is_some_and(|p| p.contains(&filename[split + 1..]))
+            {
                 return true;
             }
         }

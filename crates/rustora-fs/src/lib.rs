@@ -47,3 +47,44 @@ pub trait Package: Send + Sync {
         None
     }
 }
+
+/// Read access shared by the mod file system and map file systems (`IReadOnlyFileSystem`).
+pub trait ReadFs {
+    fn try_open(&self, filename: &str) -> Option<Vec<u8>>;
+    fn exists(&self, filename: &str) -> bool;
+
+    fn open(&self, filename: &str) -> Result<Vec<u8>, FsError> {
+        self.try_open(filename).ok_or_else(|| FsError::NotFound(filename.to_string()))
+    }
+}
+
+impl ReadFs for FileSystem {
+    fn try_open(&self, filename: &str) -> Option<Vec<u8>> {
+        FileSystem::try_open(self, filename)
+    }
+
+    fn exists(&self, filename: &str) -> bool {
+        FileSystem::exists(self, filename)
+    }
+}
+
+/// A map package layered over the mod file system, like `Map` implements `IReadOnlyFileSystem`.
+pub struct MapFs<'a> {
+    pub package: &'a dyn Package,
+    pub fs: &'a FileSystem,
+}
+
+impl ReadFs for MapFs<'_> {
+    fn try_open(&self, filename: &str) -> Option<Vec<u8>> {
+        if !filename.contains('|') {
+            if let Some(d) = self.package.get(filename) {
+                return Some(d);
+            }
+        }
+        self.fs.try_open(filename)
+    }
+
+    fn exists(&self, filename: &str) -> bool {
+        (!filename.contains('|') && self.package.contains(filename)) || self.fs.exists(filename)
+    }
+}

@@ -315,9 +315,10 @@ fn from_lines<'a>(lines: impl Iterator<Item = &'a str>, name: &str, discard: boo
 
         if !key.is_empty() || !discard {
             if let Some(last) = parsed.last()
-                && (last.level as isize) < level as isize - 1 {
-                    return Err(YamlError(format!("Bad indent in miniyaml at {location}")));
-                }
+                && (last.level as isize) < level as isize - 1
+            {
+                return Err(YamlError(format!("Bad indent in miniyaml at {location}")));
+            }
             while parsed.last().is_some_and(|l| l.level > level) {
                 build_completed_sub_node(level, &mut parsed, &mut result);
             }

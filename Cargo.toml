@@ -13,9 +13,14 @@ unsafe_code = "deny"
 
 [profile.dev]
 opt-level = 1
+# C# integer arithmetic is unchecked; the simulation must wrap the same way.
+overflow-checks = false
 
 [profile.dev.package."*"]
 opt-level = 3
 
 [profile.release]
 debug = 1
+
+[profile.test]
+overflow-checks = false

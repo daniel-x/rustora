@@ -13,7 +13,7 @@ use base64::Engine;
 use blowfish::cipher::{BlockCipherDecrypt, KeyInit};
 use num_bigint::BigUint;
 
-use crate::{FileSystem, PackageLoader, Package};
+use crate::{FileSystem, Package, PackageLoader};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashType {
@@ -74,7 +74,11 @@ fn parse_entries(h: &[u8], offset: usize) -> Option<(Vec<Entry>, usize)> {
     let mut entries = Vec::with_capacity(num);
     for i in 0..num {
         let o = offset + 6 + i * 12;
-        entries.push(Entry { hash: read_u32(h, o)?, offset: read_u32(h, o + 4)?, length: read_u32(h, o + 8)? });
+        entries.push(Entry {
+            hash: read_u32(h, o)?,
+            offset: read_u32(h, o + 4)?,
+            length: read_u32(h, o + 8)?,
+        });
     }
     Some((entries, offset + 6 + num * 12))
 }
@@ -159,7 +163,13 @@ impl MixFile {
             }
         }
 
-        let mut mix = MixFile { name: name.to_string(), data, data_start, index: HashMap::new(), order: Vec::new() };
+        let mut mix = MixFile {
+            name: name.to_string(),
+            data,
+            data_start,
+            index: HashMap::new(),
+            order: Vec::new(),
+        };
         mix.build_index(&by_hash, &entries, global_filenames);
         Some(mix)
     }
@@ -247,10 +257,14 @@ pub fn parse_global_database(d: &[u8]) -> Vec<String> {
         let count = read_u32(d, pos).unwrap_or(0);
         pos += 4;
         for _ in 0..count {
-            let Some(n) = d[pos.min(d.len())..].iter().position(|&b| b == 0) else { return out };
+            let Some(n) = d[pos.min(d.len())..].iter().position(|&b| b == 0) else {
+                return out;
+            };
             let name: String = d[pos..pos + n].iter().map(|&b| b as char).collect();
             pos += n + 1;
-            let Some(c) = d[pos.min(d.len())..].iter().position(|&b| b == 0) else { return out };
+            let Some(c) = d[pos.min(d.len())..].iter().position(|&b| b == 0) else {
+                return out;
+            };
             pos += c + 1;
             if seen.insert(name.clone()) {
                 out.push(name);
@@ -289,6 +303,9 @@ mod tests {
     #[test]
     fn classic_hash_is_rotate_add() {
         assert_eq!(hash_filename("A", HashType::Classic), 0x41);
-        assert_eq!(hash_filename("abcde", HashType::Classic), 0x4443_4241u32.rotate_left(1).wrapping_add(0x45));
+        assert_eq!(
+            hash_filename("abcde", HashType::Classic),
+            0x4443_4241u32.rotate_left(1).wrapping_add(0x45)
+        );
     }
 }

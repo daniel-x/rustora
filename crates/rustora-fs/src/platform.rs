@@ -14,7 +14,11 @@ pub struct Platform {
 impl Platform {
     pub fn new(engine_dir: impl Into<PathBuf>, support_dir: impl Into<PathBuf>) -> Self {
         let engine_dir = engine_dir.into();
-        Platform { bin_dir: engine_dir.clone(), engine_dir, support_dir: support_dir.into() }
+        Platform {
+            bin_dir: engine_dir.clone(),
+            engine_dir,
+            support_dir: support_dir.into(),
+        }
     }
 
     /// The default support directory of OpenRA on this OS, so content installed by OpenRA is found.
@@ -24,7 +28,9 @@ impl Platform {
         } else if cfg!(target_os = "macos") {
             home_dir().join("Library/Application Support/OpenRA")
         } else {
-            let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home_dir().join(".config"));
+            let xdg = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home_dir().join(".config"));
             let legacy = home_dir().join(".openra");
             if legacy.is_dir() { legacy } else { xdg.join("openra") }
         }
@@ -40,7 +46,11 @@ impl Platform {
             "^BinDir" => return dir(&self.bin_dir),
             _ => {}
         }
-        for (token, base) in [("^SupportDir|", &self.support_dir), ("^EngineDir|", &self.engine_dir), ("^BinDir|", &self.bin_dir)] {
+        for (token, base) in [
+            ("^SupportDir|", &self.support_dir),
+            ("^EngineDir|", &self.engine_dir),
+            ("^BinDir|", &self.bin_dir),
+        ] {
             if let Some(rest) = path.strip_prefix(token) {
                 return dir(base) + rest;
             }

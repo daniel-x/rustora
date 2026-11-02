@@ -15,7 +15,10 @@ pub struct Folder {
 impl Folder {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
-        Folder { name: path.to_string_lossy().into_owned(), path }
+        Folder {
+            name: path.to_string_lossy().into_owned(),
+            path,
+        }
     }
 
     fn join(&self, filename: &str) -> PathBuf {
@@ -30,7 +33,11 @@ pub(crate) fn invariant_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     key(a).cmp(&key(b)).then_with(|| {
         for (ca, cb) in a.chars().zip(b.chars()) {
             if ca != cb {
-                return if ca.is_lowercase() { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+                return if ca.is_lowercase() {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                };
             }
         }
         a.len().cmp(&b.len())

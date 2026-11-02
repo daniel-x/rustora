@@ -24,9 +24,18 @@ impl ZipPackage {
         let data: Arc<[u8]> = data.into();
         let archive = zip::ZipArchive::new(Cursor::new(data)).ok()?;
         let entries = (0..archive.len())
-            .filter_map(|i| archive.name_for_index(i).and_then(|r| r.ok()).map(|n| (n.to_string(), n.ends_with('/'))))
+            .filter_map(|i| {
+                archive
+                    .name_for_index(i)
+                    .and_then(|r| r.ok())
+                    .map(|n| (n.to_string(), n.ends_with('/')))
+            })
             .collect();
-        Some(ZipPackage { name: name.to_string(), archive: Mutex::new(archive), entries })
+        Some(ZipPackage {
+            name: name.to_string(),
+            archive: Mutex::new(archive),
+            entries,
+        })
     }
 
     pub fn open_file(path: &Path) -> Option<Self> {
@@ -75,7 +84,10 @@ impl Package for ZipPackage {
         let dir = format!("{filename}/");
         if let Some(idx) = self.find(filename).or_else(|| self.find(&dir)) {
             if self.entries[idx].1 {
-                return Some(Arc::new(ZipFolder { parent: self.snapshot(), name: filename.trim_end_matches('/').to_string() }));
+                return Some(Arc::new(ZipFolder {
+                    parent: self.snapshot(),
+                    name: filename.trim_end_matches('/').to_string(),
+                }));
             }
         } else {
             return None;
@@ -88,7 +100,11 @@ impl Package for ZipPackage {
 impl ZipPackage {
     fn snapshot(&self) -> Arc<ZipPackage> {
         let archive = self.archive.lock().unwrap().clone();
-        Arc::new(ZipPackage { name: self.name.clone(), archive: Mutex::new(archive), entries: self.entries.clone() })
+        Arc::new(ZipPackage {
+            name: self.name.clone(),
+            archive: Mutex::new(archive),
+            entries: self.entries.clone(),
+        })
     }
 }
 
