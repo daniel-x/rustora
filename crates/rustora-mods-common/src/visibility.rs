@@ -214,7 +214,15 @@ impl INotifyCreated for AffectsShroud {
 }
 
 impl AffectsShroud {
-    fn range(&self) -> WDist {
+    pub fn is_reveals_shroud(&self) -> bool {
+        !self.creates
+    }
+
+    pub fn is_trait_disabled(&self) -> bool {
+        self.state.is_trait_disabled()
+    }
+
+    pub fn range(&self) -> WDist {
         if self.cached_trait_disabled.get() {
             return WDist::ZERO;
         }

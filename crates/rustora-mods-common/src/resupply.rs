@@ -78,7 +78,7 @@ pub struct AmmoPool {
     current_ammo_count: Cell<i32>,
 }
 
-register_traits!(AmmoPool: INotifyCreated, ISync);
+register_traits!(AmmoPool: INotifyCreated, INotifyAttack, ISync);
 info_impl!(AmmoPoolInfo => |info, _init| {
     let ammo = if info.initial_ammo < info.ammo && info.initial_ammo >= 0 { info.initial_ammo } else { info.ammo };
     Some(Rc::new(AmmoPool { info, tokens: RefCell::new(Vec::new()), remaining_ticks: Cell::new(0), current_ammo_count: Cell::new(ammo) }))
@@ -95,6 +95,16 @@ impl INotifyCreated for AmmoPool {
         self.update_condition(self_);
         self.remaining_ticks.set(self.info.reload_delay);
     }
+}
+
+impl INotifyAttack for AmmoPool {
+    fn attacking(&self, self_: &ActorRef, _target: &Target, a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {
+        if self.info.armaments.contains(&a.info.name) {
+            self.take_ammo(self_, a.info.ammo_usage);
+        }
+    }
+
+    fn preparing_attack(&self, _self_: &ActorRef, _target: &Target, _a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {}
 }
 
 impl AmmoPool {

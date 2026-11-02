@@ -240,3 +240,37 @@ pub trait INotifyDockHost {
     fn docked(&self, self_: &ActorRef, client: &ActorRef);
     fn undocked(&self, self_: &ActorRef, client: &ActorRef);
 }
+
+pub trait INotifyBurstComplete {
+    fn fired_burst(&self, self_: &ActorRef, target: &Target, a: &crate::attack::Armament);
+}
+
+pub trait INotifyAttack {
+    fn attacking(&self, self_: &ActorRef, target: &Target, a: &crate::attack::Armament, barrel: &crate::attack::Barrel);
+    fn preparing_attack(&self, self_: &ActorRef, target: &Target, a: &crate::attack::Armament, barrel: &crate::attack::Barrel);
+}
+
+pub trait INotifyAiming {
+    fn started_aiming(&self, self_: &ActorRef, attack: &crate::attack::AttackBase);
+    fn stopped_aiming(&self, self_: &ActorRef, attack: &crate::attack::AttackBase);
+}
+
+pub trait INotifyTeslaCharging {
+    fn charging(&self, self_: &ActorRef, target: &Target);
+}
+
+pub trait IRangeModifier {
+    fn get_range_modifier(&self) -> i32;
+}
+
+pub trait IReloadModifier {
+    fn get_reload_modifier(&self) -> i32;
+}
+
+pub trait IFirepowerModifier {
+    fn get_firepower_modifier(&self) -> i32;
+}
+
+pub trait IInaccuracyModifier {
+    fn get_inaccuracy_modifier(&self) -> i32;
+}

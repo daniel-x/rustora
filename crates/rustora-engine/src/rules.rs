@@ -13,6 +13,7 @@ use rustora_core::miniyaml::MiniYamlNode;
 use crate::actor_info::{ActorInfo, TraitNode, parse_trait_nodes};
 use crate::stub::StubInfo;
 use crate::traits::TraitInfo;
+use crate::weapon::{WeaponInfo, WeaponRegistry};
 
 pub type InfoLoader = fn(&TraitNode) -> Result<Rc<dyn TraitInfo>, String>;
 
@@ -54,11 +55,12 @@ macro_rules! load_info {
 
 pub struct Ruleset {
     actors: IndexMap<String, Rc<ActorInfo>>,
+    weapons: IndexMap<String, Rc<WeaponInfo>>,
 }
 
 impl Ruleset {
     /// Builds actor infos from merged rule nodes; abstract (`^`) definitions are skipped.
-    pub fn load(registry: &TraitRegistry, rules: &[MiniYamlNode]) -> Result<Ruleset, String> {
+    pub fn load(registry: &TraitRegistry, weapon_registry: &WeaponRegistry, rules: &[MiniYamlNode], weapon_rules: &[MiniYamlNode]) -> Result<Ruleset, String> {
         let mut actors = IndexMap::new();
         for n in rules {
             if n.key.starts_with('^') {
@@ -73,11 +75,24 @@ impl Ruleset {
             let info = ActorInfo::new(&name, nodes, traits).map_err(|e| e.to_string())?;
             actors.insert(name, Rc::new(info));
         }
-        Ok(Ruleset { actors })
+        let mut weapons = IndexMap::new();
+        for n in weapon_rules {
+            if n.key.starts_with('^') {
+                continue;
+            }
+            let name = n.key.to_lowercase();
+            let w = WeaponInfo::load(weapon_registry, &n.value).map_err(|e| format!("Weapon {name}: {e}"))?;
+            weapons.insert(name, Rc::new(w));
+        }
+        Ok(Ruleset { actors, weapons })
     }
 
     pub fn actor(&self, name: &str) -> Option<Rc<ActorInfo>> {
         self.actors.get(name).cloned()
+    }
+
+    pub fn weapon(&self, name: &str) -> Option<Rc<WeaponInfo>> {
+        self.weapons.get(name).cloned()
     }
 
     pub fn actors(&self) -> impl Iterator<Item = (&String, &Rc<ActorInfo>)> {

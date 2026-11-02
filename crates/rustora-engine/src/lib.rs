@@ -28,4 +28,5 @@ pub mod target;
 pub mod terrain;
 pub mod trait_dict;
 pub mod traits;
+pub mod weapon;
 pub mod world;

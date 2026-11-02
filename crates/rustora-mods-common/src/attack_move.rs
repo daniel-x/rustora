@@ -1,35 +1,142 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Port of `Activities/Move/AttackMoveActivity.cs` (target scan pending the combat port).
+//! Port of `Activities/Move/AttackMoveActivity.cs` and `Traits/AttackMove.cs`.
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
-use rustora_engine::actor::ActorRef;
-use rustora_engine::activity_common;
+use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
+use rustora_engine::order::Order;
+use rustora_engine::rules::TraitRegistry;
+use rustora_engine::target::{Target, TargetType};
+use rustora_engine::traits::*;
+use rustora_engine::{activity_common, info_impl, load_info, register_traits};
+
+use crate::attack::AttackSource;
+use crate::auto_target::AutoTarget;
+use crate::interfaces::IMove;
+
+pub fn register(r: &mut TraitRegistry) {
+    r.register("AttackMove", |n| load_info!(AttackMoveInfo, n));
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct AttackMoveInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub attack_move_condition: Option<String>,
+    pub assault_move_condition: Option<String>,
+    pub move_into_shroud: bool,
+}
+
+impl Default for AttackMoveInfo {
+    fn default() -> Self {
+        AttackMoveInfo { instance_name: None, attack_move_condition: None, assault_move_condition: None, move_into_shroud: true }
+    }
+}
+
+pub struct AttackMove {
+    pub info: Rc<AttackMoveInfo>,
+    mv: Rc<dyn IMove>,
+}
+
+register_traits!(AttackMove: IResolveOrder);
+info_impl!(AttackMoveInfo => |info, init| Some(Rc::new(AttackMove { info, mv: init.self_.trait_::<dyn IMove>() })));
+
+impl IResolveOrder for AttackMove {
+    fn resolve_order(&self, self_: &ActorRef, order: &Order) {
+        if order.order_string != "AttackMove" && order.order_string != "AssaultMove" {
+            return;
+        }
+        if !order.target.is_valid_for(self_) {
+            return;
+        }
+        let w = self_.world();
+        let cell = w.map().clamp(w.map().cell_containing(order.target.center_position()));
+        if !self.info.move_into_shroud && !self_.owner().shroud().is_explored(cell) {
+            return;
+        }
+        let target_location = self.mv.nearest_moveable_cell(cell);
+        let assault = order.order_string == "AssaultMove";
+        let mv = self.mv.clone();
+        self_.queue_activity_queued(order.queued, AttackMoveActivity::new(self_, Rc::new(move || mv.move_to(target_location, 8, None, false)), assault));
+    }
+}
 
 pub struct AttackMoveActivity {
     base: ActivityBase,
     get_move: Rc<dyn Fn() -> ActivityRef>,
+    is_assault_move: bool,
+    auto_target: Option<Rc<AutoTarget>>,
+    attack_move: Option<Rc<AttackMove>>,
+    running_move_activity: Cell<bool>,
+    token: Cell<i32>,
+    target: RefCell<Target>,
 }
 
 impl AttackMoveActivity {
-    pub fn new(_self_: &ActorRef, get_move: Rc<dyn Fn() -> ActivityRef>, _assault_moving: bool) -> ActivityRef {
+    pub fn new(self_: &ActorRef, get_move: Rc<dyn Fn() -> ActivityRef>, assault_moving: bool) -> ActivityRef {
         let base = ActivityBase::default();
         base.child_has_priority.set(false);
-        Rc::new(AttackMoveActivity { base, get_move })
+        Rc::new(AttackMoveActivity {
+            base,
+            get_move,
+            is_assault_move: assault_moving,
+            auto_target: self_.trait_or_default::<AutoTarget>(),
+            attack_move: self_.trait_or_default::<AttackMove>(),
+            running_move_activity: Cell::new(false),
+            token: Cell::new(INVALID_CONDITION_TOKEN),
+            target: RefCell::new(Target::Invalid),
+        })
     }
 }
 
 impl Activity for AttackMoveActivity {
     activity_common!("AttackMoveActivity");
 
-    fn on_first_run(&self, _self_: &ActorRef) {
-        self.base.queue_child((self.get_move)());
+    fn on_first_run(&self, self_: &ActorRef) {
+        let (Some(attack_move), true) = (&self.attack_move, self.auto_target.is_some()) else {
+            self.base.queue_child((self.get_move)());
+            return;
+        };
+        let condition = if self.is_assault_move { &attack_move.info.assault_move_condition } else { &attack_move.info.attack_move_condition };
+        self.token.set(self_.grant_condition(condition.as_deref().unwrap_or("")));
     }
 
     fn tick(&self, self_: &ActorRef) -> bool {
-        self.base.tick_child(self_)
+        let Some(auto_target) = self.auto_target.as_ref().filter(|_| !self.base.is_canceling() && self.attack_move.is_some()) else {
+            return self.base.tick_child(self_);
+        };
+        if self.base.child_activity().is_none() || self.running_move_activity.get() {
+            let t = auto_target.scan_for_target(self_, auto_target.allow_move(), true, !self.running_move_activity.get());
+            *self.target.borrow_mut() = t.clone();
+            if t.target_type() != TargetType::Invalid {
+                self.running_move_activity.set(false);
+                if let Some(c) = self.base.child_activity() {
+                    c.cancel(self_, false);
+                }
+                for ab in auto_target.active_attack_bases() {
+                    self.base.queue_child(ab.get_attack_activity(self_, AttackSource::AttackMove, &t, auto_target.allow_move(), false));
+                }
+            }
+            if self.base.child_activity().is_none() {
+                self.running_move_activity.set(true);
+                self.base.queue_child((self.get_move)());
+            }
+        }
+        self.base.tick_child(self_) && self.running_move_activity.get()
+    }
+
+    fn on_last_run(&self, self_: &ActorRef) {
+        if self.token.get() != INVALID_CONDITION_TOKEN {
+            self.token.set(self_.revoke_condition(self.token.get()));
+        }
+    }
+
+    fn get_targets(&self, self_: &ActorRef) -> Vec<Target> {
+        self.base.child_activity().map_or_else(Vec::new, |c| c.get_targets(self_))
     }
 }

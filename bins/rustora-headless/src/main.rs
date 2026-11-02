@@ -60,7 +60,10 @@ fn load_game(engine: &Path, support: &str, replay_path: &str) -> (Rc<World>, Rep
     let rules_yaml = ModData::load_yaml(&fs, &md.manifest.rules, map_package.section("Rules")).expect("rules");
     let mut registry = TraitRegistry::default();
     rustora_mods_common::register(&mut registry);
-    let rules = Rc::new(Ruleset::load(&registry, &rules_yaml).expect("ruleset"));
+    let weapons_yaml = ModData::load_yaml(&fs, &md.manifest.weapons, map_package.section("Weapons")).expect("weapons");
+    let mut weapon_registry = rustora_engine::weapon::WeaponRegistry::default();
+    rustora_mods_common::weapons::register_weapon_parts(&mut weapon_registry);
+    let rules = Rc::new(Ruleset::load(&registry, &weapon_registry, &rules_yaml, &weapons_yaml).expect("ruleset"));
     let map_package_sequences = map_package.section("Sequences").cloned();
     let tileset = map_package
         .yaml
