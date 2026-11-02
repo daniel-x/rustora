@@ -53,6 +53,7 @@ pub fn register(r: &mut TraitRegistry) {
     attack_move::register(r);
     auto_target::register(r);
     conditions::register(r);
+    experience::register(r);
     weapons::register(r);
     cargo::register(r);
     crates::register(r);
