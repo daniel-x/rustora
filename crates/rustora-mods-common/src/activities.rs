@@ -57,6 +57,29 @@ impl Activity for Wait {
     }
 }
 
+/// `Activities/CallFunc.cs`.
+pub struct CallFunc {
+    base: ActivityBase,
+    f: RefCell<Option<Box<dyn FnOnce()>>>,
+}
+
+impl CallFunc {
+    pub fn new(f: Box<dyn FnOnce()>) -> ActivityRef {
+        Rc::new(CallFunc { base: ActivityBase::default(), f: RefCell::new(Some(f)) })
+    }
+}
+
+impl Activity for CallFunc {
+    activity_common!("CallFunc");
+
+    fn tick(&self, _self_: &ActorRef) -> bool {
+        if let Some(f) = self.f.borrow_mut().take() {
+            f();
+        }
+        true
+    }
+}
+
 pub struct WaitFor {
     base: ActivityBase,
     f: Option<Box<dyn Fn() -> bool>>,
@@ -501,6 +524,13 @@ pub fn notify_blocker(self_: &ActorRef, position: CPos) {
     }
 }
 
+/// `NotifyBlocker(IEnumerable<CPos>)`.
+pub fn notify_blocker_cells(self_: &ActorRef, cells: &[CPos]) {
+    for c in cells {
+        notify_blocker(self_, *c);
+    }
+}
+
 fn cell_is_evacuating(w: &World, cell: CPos) -> bool {
     for actor in w.actor_map().get_actors_at(cell) {
         match mobile_of(&actor) {
@@ -754,7 +784,7 @@ pub struct Follow {
     use_last_visible_target: Cell<bool>,
 }
 
-fn initial_last_visible(self_: &ActorRef, target: &Target, initial: Option<WPos>) -> Target {
+pub fn initial_last_visible(self_: &ActorRef, target: &Target, initial: Option<WPos>) -> Target {
     let tt = target.target_type();
     if (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner()))) || tt == TargetType::FrozenActor || tt == TargetType::Terrain {
         Target::from_pos(target.center_position())

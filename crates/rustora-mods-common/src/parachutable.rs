@@ -11,7 +11,6 @@ use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::damage::DamageTypes;
 use rustora_engine::rules::TraitRegistry;
-use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 use crate::actor_map::WorldExt;

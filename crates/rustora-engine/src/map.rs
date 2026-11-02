@@ -449,10 +449,17 @@ impl Map {
         cells.into_iter().find(|c| m(*c))
     }
 
+    pub fn projected_top_left(&self) -> WPos {
+        WPos::new(self.bounds.left() * 1024, self.bounds.top() * 1024, 0)
+    }
+
+    pub fn projected_bottom_right(&self) -> WPos {
+        WPos::new((self.bounds.right() - 1) * 1024 - 1, self.bounds.bottom() * 1024 - 1, 0)
+    }
+
     pub fn distance_to_edge(&self, pos: WPos, dir: WVec) -> WDist {
-        let b = &self.bounds;
-        let (tl_x, tl_y) = (b.left() * 1024, b.top() * 1024);
-        let (br_x, br_y) = ((b.right() - 1) * 1024 - 1, b.bottom() * 1024 - 1);
+        let (tl, br) = (self.projected_top_left(), self.projected_bottom_right());
+        let (tl_x, tl_y, br_x, br_y) = (tl.x, tl.y, br.x, br.y);
         let p = pos - WVec::new(0, pos.z, pos.z);
         let x = if dir.x == 0 {
             i32::MAX

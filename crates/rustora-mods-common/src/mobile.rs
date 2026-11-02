@@ -523,8 +523,8 @@ impl IMove for Mobile {
         Some(self.wrap_move(MoveAdjacentTo::new_adjacent(self_, target, initial)))
     }
 
-    fn return_to_cell(&self, _self_: &ActorRef) -> ActivityRef {
-        ReturnToCellActivity::new(self.me(), 0, false)
+    fn return_to_cell(&self, _self_: &ActorRef) -> Option<ActivityRef> {
+        Some(ReturnToCellActivity::new(self.me(), 0, false))
     }
 
     fn move_into_target(&self, self_: &ActorRef, target: &Target) -> Option<ActivityRef> {

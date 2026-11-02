@@ -579,6 +579,7 @@ pub trait WorldExt {
     fn add_to_maps(&self, a: &ActorRef, ios: &dyn IOccupySpace);
     fn update_maps(&self, a: &ActorRef);
     fn remove_from_maps(&self, a: &ActorRef, ios: &dyn IOccupySpace);
+    fn find_actors_in_circle(&self, origin: WPos, r: WDist) -> Vec<ActorRef>;
 }
 
 impl WorldExt for World {
@@ -604,5 +605,12 @@ impl WorldExt for World {
         let m = self.actor_map();
         m.remove_influence(a, ios);
         m.remove_position(a);
+    }
+
+    fn find_actors_in_circle(&self, origin: WPos, r: WDist) -> Vec<ActorRef> {
+        let vec = WVec::new(r.length, r.length, 0);
+        let mut actors = self.actor_map().actors_in_box(origin - vec, origin + vec);
+        actors.retain(|a| (a.center_position() - origin).horizontal_length_squared() <= r.length_squared());
+        actors
     }
 }

@@ -220,3 +220,30 @@ pub fn closest_position(positions: &[WPos], position: WPos) -> Option<WPos> {
 pub fn rot_from_yaw(a: WAngle) -> WRot {
     WRot::from_yaw(a)
 }
+
+/// `ClosestToWithPathFrom`: the closest of `actors` reachable by `source`.
+pub fn closest_to_with_path_from(actors: impl IntoIterator<Item = ActorRef>, source: &ActorRef) -> Option<ActorRef> {
+    let w = source.world();
+    let is_air = source.info.has_trait_info::<crate::aircraft::AircraftInfo>();
+    let mobile = source.trait_or_default::<crate::mobile::Mobile>();
+    if !is_air && mobile.is_none() {
+        return None;
+    }
+    let path_finder = w.world_actor().trait_::<crate::path_finder_trait::PathFinder>();
+    let src_pos = source.center_position();
+    let mut best: Option<(ActorRef, i64)> = None;
+    for a in actors {
+        if !is_air {
+            let from = w.map().cell_containing(src_pos);
+            let to = w.map().cell_containing(a.center_position());
+            if !path_finder.path_exists_for_locomotor(&mobile.as_ref().unwrap().locomotor(), from, to) {
+                continue;
+            }
+        }
+        let d = (a.center_position() - src_pos).length_squared();
+        if best.as_ref().is_none_or(|(_, b)| d < *b) {
+            best = Some((a, d));
+        }
+    }
+    best.map(|b| b.0)
+}

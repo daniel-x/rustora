@@ -23,7 +23,6 @@ use rustora_engine::traits::*;
 use rustora_engine::world::World;
 use rustora_engine::{conditional_plumbing, conditional_simple, info_impl, load_info, register_traits};
 
-use crate::actor_map::WorldExt;
 use crate::base::*;
 use crate::building::BuildingInfo;
 use crate::interfaces::*;

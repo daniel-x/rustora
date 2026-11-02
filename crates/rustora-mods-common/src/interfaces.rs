@@ -103,7 +103,7 @@ pub trait IMove {
     fn move_within_range(&self, target: &Target, min_range: WDist, max_range: WDist, initial_target_position: Option<WPos>) -> ActivityRef;
     fn move_follow(&self, self_: &ActorRef, target: &Target, min_range: WDist, max_range: WDist, initial_target_position: Option<WPos>) -> ActivityRef;
     fn move_to_target(&self, self_: &ActorRef, target: &Target, initial_target_position: Option<WPos>) -> Option<ActivityRef>;
-    fn return_to_cell(&self, self_: &ActorRef) -> ActivityRef;
+    fn return_to_cell(&self, self_: &ActorRef) -> Option<ActivityRef>;
     fn move_into_target(&self, self_: &ActorRef, target: &Target) -> Option<ActivityRef>;
     fn move_onto_target(&self, self_: &ActorRef, target: &Target, offset: WVec, facing: Option<WAngle>) -> ActivityRef;
     fn local_move(&self, self_: &ActorRef, from: WPos, to: WPos) -> ActivityRef;
@@ -205,4 +205,38 @@ pub trait INotifyHarvestAction {
 
 pub trait INotifyCapture {
     fn on_capture(&self, self_: &ActorRef, captor: &ActorRef, old_owner: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef, types: BitSet<crate::capture::CaptureType>);
+}
+
+pub trait INotifyEnteredCargo {
+    fn on_entered_cargo(&self, self_: &ActorRef, cargo: &ActorRef);
+}
+
+pub trait INotifyExitedCargo {
+    fn on_exited_cargo(&self, self_: &ActorRef, cargo: &ActorRef);
+}
+
+pub trait INotifyPassengerEntered {
+    fn on_passenger_entered(&self, self_: &ActorRef, passenger: &ActorRef);
+}
+
+pub trait INotifyPassengerExited {
+    fn on_passenger_exited(&self, self_: &ActorRef, passenger: &ActorRef);
+}
+
+pub trait INotifyLoadCargo {
+    fn loading(&self, self_: &ActorRef);
+}
+
+pub trait INotifyUnloadCargo {
+    fn unloading(&self, self_: &ActorRef);
+}
+
+pub trait INotifyDockClient {
+    fn docked(&self, self_: &ActorRef, host: &ActorRef);
+    fn undocked(&self, self_: &ActorRef, host: &ActorRef);
+}
+
+pub trait INotifyDockHost {
+    fn docked(&self, self_: &ActorRef, client: &ActorRef);
+    fn undocked(&self, self_: &ActorRef, client: &ActorRef);
 }
