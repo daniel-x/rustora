@@ -323,6 +323,16 @@ name = "rustora-headless"
 version = "0.1.0"
 
 [[package]]
+name = "rustora-net"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "rustora-core",
+ "rustora-derive",
+ "thiserror",
+]
+
+[[package]]
 name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"

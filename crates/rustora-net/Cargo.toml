@@ -1,0 +1,15 @@
+[package]
+name = "rustora-net"
+description = "Network protocol of rustora: order packets, replays, lobby session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-derive = { path = "../rustora-derive" }
+indexmap = "2"
+thiserror = "2"
+
+[lints]
+workspace = true
