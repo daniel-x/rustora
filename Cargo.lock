@@ -290,6 +290,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustora-engine"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "log",
+ "rustora-core",
+ "rustora-derive",
+ "rustora-fs",
+ "rustora-game",
+ "rustora-net",
+ "thiserror",
+]
+
+[[package]]
 name = "rustora-formats"
 version = "0.1.0"
 

@@ -1,0 +1,19 @@
+[package]
+name = "rustora-engine"
+description = "Simulation engine of rustora: world, actors, traits, activities, orders"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-derive = { path = "../rustora-derive" }
+rustora-fs = { path = "../rustora-fs" }
+rustora-game = { path = "../rustora-game" }
+rustora-net = { path = "../rustora-net" }
+indexmap = "2"
+thiserror = "2"
+log = "0.4"
+
+[lints]
+workspace = true
