@@ -222,6 +222,11 @@ impl Armament {
         self.state.is_trait_paused()
     }
 
+    /// The owning `Rc`, for keeping the armament in frame end tasks.
+    pub fn me_rc(&self) -> Rc<Armament> {
+        self.me.upgrade().expect("armament")
+    }
+
     pub fn burst(&self) -> i32 {
         self.burst.get()
     }

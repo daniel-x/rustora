@@ -1,22 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Port of `Traits/Render/Hovers.cs` (its offset moves weapon muzzles) and `Traits/Huntable.cs`.
+//! Port of `Traits/Render/Hovers.cs` (its offset moves weapon muzzles), `Traits/Huntable.cs` and
+//! `Traits/Render/WithInfantryBody.cs` (its idle timers draw from the shared random).
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::cell::{Cell, OnceCell, RefCell};
+use std::rc::{Rc, Weak};
 
-use rustora_core::world_types::{WAngle, WDist, WVec};
+use indexmap::IndexMap;
+use rustora_core::world_types::{MersenneTwister, WAngle, WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::conditional::*;
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sequence::{Animation, AnimationWithOffset};
+use rustora_engine::target::Target;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
+
+use crate::attack::{Armament, Barrel};
+use crate::interfaces::*;
+use crate::locomotor::movement_type;
+use crate::render::{RenderSprites, make_facing_func};
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("Hovers", |n| load_info!(HoversInfo, n));
     r.register("Huntable", |n| load_info!(HuntableInfo, n));
+    r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -133,3 +143,196 @@ pub struct Huntable;
 
 register_traits!(Huntable);
 info_impl!(HuntableInfo => |_info, _init| Some(Rc::new(Huntable)));
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithInfantryBodyInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub min_idle_delay: i32,
+    pub max_idle_delay: i32,
+    pub move_sequence: String,
+    pub default_attack_sequence: Option<String>,
+    pub attack_sequences: IndexMap<String, Vec<String>>,
+    pub idle_sequences: Vec<String>,
+    pub stand_sequences: Vec<String>,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
+}
+
+impl Default for WithInfantryBodyInfo {
+    fn default() -> Self {
+        WithInfantryBodyInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            min_idle_delay: 30,
+            max_idle_delay: 110,
+            move_sequence: "run".into(),
+            default_attack_sequence: None,
+            attack_sequences: IndexMap::new(),
+            idle_sequences: Vec::new(),
+            stand_sequences: vec!["stand".into()],
+            palette: None,
+            is_player_palette: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AnimationState {
+    Idle,
+    Attacking,
+    Moving,
+    Waiting,
+    IdleAnimating,
+}
+
+pub struct WithInfantryBody {
+    info: Rc<WithInfantryBodyInfo>,
+    state: ConditionalState,
+    me: Weak<WithInfantryBody>,
+    mv: OnceCell<Rc<dyn IMove>>,
+    default_animation: Rc<Animation>,
+    dirty: Cell<bool>,
+    idle_sequence: RefCell<String>,
+    idle_delay: Cell<i32>,
+    anim_state: Cell<AnimationState>,
+    cosmetic_random: RefCell<MersenneTwister>,
+}
+
+register_traits!(WithInfantryBody: ITick, INotifyAttack, INotifyIdle, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithInfantryBodyInfo => |info, init| {
+    let self_ = &init.self_;
+    let rs = self_.trait_::<RenderSprites>();
+    let world = init.world();
+    let anim = Animation::new(world.map().sequences().clone(), &rs.get_image(self_), Some(make_facing_func(self_)), None);
+    let state = ConditionalState::new(&info.base);
+    let body = Rc::new_cyclic(|me: &Weak<WithInfantryBody>| WithInfantryBody {
+        state,
+        me: me.clone(),
+        mv: OnceCell::new(),
+        default_animation: anim,
+        dirty: Cell::new(false),
+        idle_sequence: RefCell::new(String::new()),
+        idle_delay: Cell::new(0),
+        anim_state: Cell::new(AnimationState::Waiting),
+        cosmetic_random: RefCell::new(MersenneTwister::new(0)),
+        info,
+    });
+    let weak = Rc::downgrade(&body);
+    rs.add(
+        AnimationWithOffset {
+            animation: body.default_animation.clone(),
+            offset_func: None,
+            disable_func: Some(Rc::new(move || weak.upgrade().is_some_and(|b| b.state.is_trait_disabled()))),
+            zoffset_func: None,
+        },
+        body.info.palette.clone(),
+        body.info.is_player_palette,
+    );
+    body.play_stand_animation();
+    Some(body)
+});
+
+impl ConditionalHooks for WithInfantryBody {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+}
+rustora_engine::conditional_plumbing!(WithInfantryBody);
+
+impl INotifyCreated for WithInfantryBody {
+    fn created(&self, self_: &ActorRef) {
+        let _ = self.mv.set(self_.trait_::<dyn IMove>());
+        self.idle_delay.set(self_.world().shared_random.borrow_mut().next_range(self.info.min_idle_delay, self.info.max_idle_delay));
+        conditional_created(self, self_);
+    }
+}
+
+impl WithInfantryBody {
+    fn play_stand_animation(&self) {
+        self.anim_state.set(AnimationState::Waiting);
+        let sequence = self.default_animation.get_random_existing_sequence(&self.info.stand_sequences, &mut self.cosmetic_random.borrow_mut());
+        if let Some(s) = sequence {
+            self.default_animation.play_repeating(&s);
+        }
+    }
+
+    fn stand_callback(&self) -> Option<Rc<dyn Fn()>> {
+        let me = self.me.clone();
+        Some(Rc::new(move || {
+            if let Some(b) = me.upgrade() {
+                b.play_stand_animation();
+            }
+        }))
+    }
+
+    fn attacking(&self, a: &Armament, barrel: &Barrel) {
+        let mut sequence = self.info.default_attack_sequence.clone();
+        if let Some(list) = self.info.attack_sequences.get(&a.info.name).filter(|l| !l.is_empty()) {
+            sequence = Some(list[0].clone());
+            if list.len() > 1 {
+                for (i, s) in list.iter().enumerate() {
+                    if a.barrels[i].offset == barrel.offset && a.barrels[i].yaw == barrel.yaw {
+                        sequence = Some(s.clone());
+                    }
+                }
+            }
+        }
+        if let Some(s) = sequence.filter(|s| !s.is_empty() && self.default_animation.has_sequence(s)) {
+            self.anim_state.set(AnimationState::Attacking);
+            self.default_animation.play_then(&s, self.stand_callback());
+        }
+    }
+}
+
+impl INotifyAttack for WithInfantryBody {
+    fn attacking(&self, _self_: &ActorRef, _target: &Target, _a: &Armament, _barrel: &Barrel) {}
+
+    fn preparing_attack(&self, self_: &ActorRef, _target: &Target, a: &Armament, barrel: &Barrel) {
+        let (me, arm, b) = (self.me.clone(), a.me_rc(), barrel.clone());
+        self_.world().add_frame_end_task(Box::new(move |_w| {
+            if let Some(m) = me.upgrade() {
+                m.attacking(&arm, &b);
+            }
+        }));
+    }
+}
+
+impl ITick for WithInfantryBody {
+    fn tick(&self, self_: &ActorRef) {
+        let moving = self.mv.get().expect("move").current_movement_types() & movement_type::HORIZONTAL != 0;
+        let s = self.anim_state.get();
+        if (s != AnimationState::Moving || self.dirty.get()) && moving {
+            self.anim_state.set(AnimationState::Moving);
+            self.default_animation.play_repeating(&self.info.move_sequence);
+        } else if ((s == AnimationState::Moving || self.dirty.get()) && !moving) || ((s == AnimationState::Idle || s == AnimationState::IdleAnimating) && !self_.is_idle()) {
+            self.play_stand_animation();
+        }
+        self.dirty.set(false);
+    }
+}
+
+impl INotifyIdle for WithInfantryBody {
+    fn tick_idle(&self, self_: &ActorRef) {
+        if self.info.idle_sequences.is_empty() {
+            return;
+        }
+        let s = self.anim_state.get();
+        if s == AnimationState::Waiting {
+            self.anim_state.set(AnimationState::Idle);
+            let w = self_.world();
+            let i = w.shared_random.borrow_mut().next_max(self.info.idle_sequences.len() as i32) as usize;
+            *self.idle_sequence.borrow_mut() = self.info.idle_sequences[i].clone();
+            self.idle_delay.set(w.shared_random.borrow_mut().next_range(self.info.min_idle_delay, self.info.max_idle_delay));
+        } else if s == AnimationState::Idle && self.idle_delay.get() > 0 {
+            self.idle_delay.set(self.idle_delay.get() - 1);
+            if self.idle_delay.get() == 0 {
+                self.anim_state.set(AnimationState::IdleAnimating);
+                let seq = self.idle_sequence.borrow().clone();
+                self.default_animation.play_then(&seq, self.stand_callback());
+            }
+        }
+    }
+}
