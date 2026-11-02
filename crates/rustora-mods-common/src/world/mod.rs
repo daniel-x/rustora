@@ -494,7 +494,7 @@ impl Default for StartingUnitsInfo {
             factions: IndexSet::new(),
             base_actor: None,
             base_actor_offset: CVec::ZERO,
-            base_actor_facing: None,
+            base_actor_facing: Some(WAngle::new(512)),
             support_actors: Vec::new(),
             inner_support_radius: 2,
             outer_support_radius: 4,
