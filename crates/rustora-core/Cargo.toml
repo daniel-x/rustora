@@ -11,3 +11,6 @@ thiserror = "2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+rustora-derive = { path = "../rustora-derive" }

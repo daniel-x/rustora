@@ -276,6 +276,7 @@ name = "rustora-core"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "rustora-derive",
  "thiserror",
 ]
 
