@@ -96,9 +96,10 @@ impl ConditionalState {
     }
 }
 
-/// Sync hash value of a `[Sync]` bool.
+/// Sync hash value of a `[Sync]` bool. The C# IL generator intends 0xaaa/0x555 but branches on
+/// the pushed constant instead of the value, so the bool itself (0 or 1) ends up hashed.
 pub fn sync_bool(b: bool) -> i32 {
-    if b { 0xaaa } else { 0x555 }
+    i32::from(b)
 }
 
 /// `ConditionalTrait.Created` (+ the pausable part); call from `INotifyCreated::created`.

@@ -335,6 +335,26 @@ dependencies = [
 [[package]]
 name = "rustora-headless"
 version = "0.1.0"
+dependencies = [
+ "rustora-core",
+ "rustora-engine",
+ "rustora-fs",
+ "rustora-game",
+ "rustora-mods-common",
+ "rustora-net",
+]
+
+[[package]]
+name = "rustora-mods-common"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "log",
+ "rustora-core",
+ "rustora-derive",
+ "rustora-engine",
+ "rustora-net",
+]
 
 [[package]]
 name = "rustora-net"

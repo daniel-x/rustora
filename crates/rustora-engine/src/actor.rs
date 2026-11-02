@@ -58,6 +58,8 @@ pub struct ActorCache {
     pub becoming_idles: Vec<Rc<dyn INotifyBecomingIdle>>,
     pub tick_idles: Vec<Rc<dyn INotifyIdle>>,
     pub sync_hashes: Vec<Rc<dyn ISync>>,
+    /// C# class names of the sync traits, for diagnostics.
+    pub sync_names: Vec<&'static str>,
 }
 
 pub struct Actor {
@@ -121,9 +123,15 @@ impl Actor {
         }
 
         let dict = world.trait_dict();
+        let mut sync_names = Vec::new();
         for trait_info in info.traits_in_construct_order() {
             if let Some(t) = trait_info.clone().create(&init) {
+                let before = dict.with_interface::<dyn ISync>(&actor).len();
+                let name = t.type_name();
                 t.register(dict, &actor);
+                if dict.with_interface::<dyn ISync>(&actor).len() > before {
+                    sync_names.push(name);
+                }
             }
         }
 
@@ -138,6 +146,7 @@ impl Actor {
             becoming_idles: dict.with_interface::<dyn INotifyBecomingIdle>(&actor),
             tick_idles: dict.with_interface::<dyn INotifyIdle>(&actor),
             sync_hashes: dict.with_interface::<dyn ISync>(&actor),
+            sync_names,
         };
         let _ = actor.cache.set(cache);
         actor

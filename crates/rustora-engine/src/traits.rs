@@ -196,7 +196,7 @@ pub trait IAssignSpawnPoints {
         client: &rustora_net::session::Client,
         player_random: &mut rustora_core::world_types::MersenneTwister,
     ) -> CPos;
-    fn spawn_point_for_player(&self, player: &crate::player::Player) -> i32;
+    fn spawn_point_for_client(&self, client_index: i32) -> i32;
 }
 
 pub trait IGameOver {

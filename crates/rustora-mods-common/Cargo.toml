@@ -1,0 +1,17 @@
+[package]
+name = "rustora-mods-common"
+description = "Port of OpenRA.Mods.Common: shared traits of the C&C mods"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-derive = { path = "../rustora-derive" }
+rustora-engine = { path = "../rustora-engine" }
+rustora-net = { path = "../rustora-net" }
+indexmap = "2"
+log = "0.4"
+
+[lints]
+workspace = true

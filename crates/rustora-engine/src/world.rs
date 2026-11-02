@@ -115,6 +115,10 @@ impl World {
         self.world_actor.get().expect("world actor created")
     }
 
+    pub fn set_world_owner(&self, p: &PlayerRef) {
+        self.world_actor().set_owner(Some(p.clone()));
+    }
+
     pub fn world_tick(&self) -> i32 {
         self.world_tick.get()
     }
@@ -220,6 +224,45 @@ impl World {
 
     pub fn actors_having_trait<T: ?Sized + 'static>(&self) -> Vec<ActorRef> {
         self.trait_dict.actors_having_trait::<T>()
+    }
+
+    /// `World.LoadComplete` (sim part): `IWorldLoaded` on the world actor, then on player actors.
+    pub fn load_complete(self: &Rc<Self>) {
+        for t in self.world_actor().traits_implementing::<dyn IWorldLoaded>() {
+            t.world_loaded(self);
+        }
+        for p in self.players() {
+            for t in p.player_actor().traits_implementing::<dyn IWorldLoaded>() {
+                t.world_loaded(self);
+            }
+        }
+        for t in self.world_actor().traits_implementing::<dyn IPostWorldLoaded>() {
+            t.post_world_loaded(self);
+        }
+        for p in self.players() {
+            for t in p.player_actor().traits_implementing::<dyn IPostWorldLoaded>() {
+                t.post_world_loaded(self);
+            }
+        }
+    }
+
+    /// Per-actor and per-trait sync values in the format of the C# harness detail dump.
+    pub fn sync_detail(&self) -> Vec<String> {
+        let mut out = vec![format!(
+            "# random {} {}",
+            self.shared_random.borrow().last,
+            self.shared_random.borrow().total_count
+        )];
+        for a in self.actors.borrow().values() {
+            let owner = a.owner_opt().map(|o| o.internal_name.clone()).unwrap_or_default();
+            out.push(format!("# actor {} {} {} {}", a.id, a.info.name, owner, a.sync_hash_id()));
+        }
+        for a in self.trait_dict.actors_having_trait::<dyn ISync>() {
+            for (s, name) in a.cache().sync_hashes.iter().zip(&a.cache().sync_names) {
+                out.push(format!("# trait {} {} {}", a.id, name, s.sync_hash()));
+            }
+        }
+        out
     }
 
     pub fn end_game(self: &Rc<Self>) {

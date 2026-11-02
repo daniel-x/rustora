@@ -1,11 +1,17 @@
 [package]
 name = "rustora-headless"
+description = "Headless rustora: replay verification and test games without graphics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
 
 [dependencies]
+rustora-core = { path = "../../crates/rustora-core" }
+rustora-engine = { path = "../../crates/rustora-engine" }
+rustora-fs = { path = "../../crates/rustora-fs" }
+rustora-game = { path = "../../crates/rustora-game" }
+rustora-mods-common = { path = "../../crates/rustora-mods-common" }
+rustora-net = { path = "../../crates/rustora-net" }
 
 [lints]
 workspace = true
