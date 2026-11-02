@@ -4,6 +4,7 @@
 //! Port of `OpenRA.Mods.Common`.
 
 pub mod actor_reference;
+pub mod building;
 pub mod health;
 pub mod interfaces;
 pub mod player;
@@ -13,6 +14,7 @@ use rustora_engine::rules::TraitRegistry;
 
 /// Registers all ported traits of this crate.
 pub fn register(r: &mut TraitRegistry) {
+    building::register(r);
     health::register(r);
     player::register(r);
     world::register(r);
