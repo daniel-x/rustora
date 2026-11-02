@@ -1,0 +1,13 @@
+[package]
+name = "rustora-core"
+description = "Core types of rustora: MiniYaml, fixed point world types, RNG, .NET compatible collections"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+indexmap = "2"
+thiserror = "2"
+
+[lints]
+workspace = true
