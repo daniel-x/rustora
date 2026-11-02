@@ -27,6 +27,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Hovers", |n| load_info!(HoversInfo, n));
     r.register("Huntable", |n| load_info!(HuntableInfo, n));
     r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
+    r.register("WithSpriteTurret", |n| load_info!(WithSpriteTurretInfo, n));
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -336,3 +337,35 @@ impl INotifyIdle for WithInfantryBody {
         }
     }
 }
+
+/// `Traits/Render/WithSpriteTurret.cs`: restricts turret facings to the sprite, which is part of the sync state.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithSpriteTurretInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub sequence: String,
+    pub turret: String,
+}
+
+impl Default for WithSpriteTurretInfo {
+    fn default() -> Self {
+        WithSpriteTurretInfo { instance_name: None, base: ConditionalTraitInfo::default(), sequence: "turret".into(), turret: "primary".into() }
+    }
+}
+
+pub struct WithSpriteTurret {
+    state: ConditionalState,
+}
+
+register_traits!(WithSpriteTurret: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithSpriteTurretInfo => |info, init| {
+    let self_ = &init.self_;
+    let image = self_.trait_::<RenderSprites>().get_image(self_);
+    let turret = self_.traits_implementing::<crate::turreted::Turreted>().into_iter().find(|t| t.name() == info.turret).expect("turret");
+    let facings = init.world().map().sequences().get_sequence(&image, &info.sequence).facings;
+    turret.quantized_facings.set(facings);
+    Some(Rc::new(WithSpriteTurret { state: ConditionalState::new(&info.base) }))
+});
+rustora_engine::conditional_simple!(WithSpriteTurret);
