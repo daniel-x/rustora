@@ -3,6 +3,7 @@
 
 //! Core types shared by all rustora crates.
 
+pub mod expression;
 pub mod fieldloader;
 pub mod miniyaml;
 pub mod world_types;

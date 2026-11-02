@@ -125,3 +125,80 @@ pub fn construct_order(actor: &str, traits: &[TraitNode]) -> Result<Vec<usize>, 
 
     Ok(resolved.into_iter().map(|i| source[i].idx).collect())
 }
+
+/// Static index of trait infos by type (`TypeDictionary` of an `ActorInfo`).
+#[derive(Default)]
+pub struct InfoIndex {
+    map: std::cell::RefCell<std::collections::HashMap<std::any::TypeId, Vec<Box<dyn std::any::Any>>>>,
+}
+
+impl InfoIndex {
+    pub fn add<T: ?Sized + 'static>(&self, info: std::rc::Rc<T>) {
+        self.map
+            .borrow_mut()
+            .entry(std::any::TypeId::of::<T>())
+            .or_default()
+            .push(Box::new(info));
+    }
+
+    /// All infos registered under `T`, in definition order.
+    pub fn all<T: ?Sized + 'static>(&self) -> Vec<std::rc::Rc<T>> {
+        self.map
+            .borrow()
+            .get(&std::any::TypeId::of::<T>())
+            .map(|v| {
+                v.iter()
+                    .map(|b| b.downcast_ref::<std::rc::Rc<T>>().expect("info type").clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn get<T: ?Sized + 'static>(&self) -> Option<std::rc::Rc<T>> {
+        let all = self.all::<T>();
+        assert!(all.len() <= 1, "multiple trait infos of type {}", std::any::type_name::<T>());
+        all.into_iter().next()
+    }
+}
+
+/// A loaded actor type with typed trait infos.
+pub struct ActorInfo {
+    pub name: String,
+    pub nodes: Vec<TraitNode>,
+    pub traits: Vec<std::rc::Rc<dyn crate::traits::TraitInfo>>,
+    construct_order: Vec<usize>,
+    pub index: InfoIndex,
+}
+
+impl ActorInfo {
+    pub fn new(name: &str, nodes: Vec<TraitNode>, traits: Vec<std::rc::Rc<dyn crate::traits::TraitInfo>>) -> Result<Self, ActorInfoError> {
+        let construct_order = construct_order(name, &nodes)?;
+        let index = InfoIndex::default();
+        for t in &traits {
+            t.clone().register_info(&index);
+        }
+        Ok(ActorInfo {
+            name: name.to_string(),
+            nodes,
+            traits,
+            construct_order,
+            index,
+        })
+    }
+
+    pub fn traits_in_construct_order(&self) -> impl Iterator<Item = &std::rc::Rc<dyn crate::traits::TraitInfo>> {
+        self.construct_order.iter().map(|&i| &self.traits[i])
+    }
+
+    pub fn trait_info<T: ?Sized + 'static>(&self) -> Option<std::rc::Rc<T>> {
+        self.index.get::<T>()
+    }
+
+    pub fn trait_infos<T: ?Sized + 'static>(&self) -> Vec<std::rc::Rc<T>> {
+        self.index.all::<T>()
+    }
+
+    pub fn has_trait_info<T: ?Sized + 'static>(&self) -> bool {
+        !self.index.all::<T>().is_empty()
+    }
+}
