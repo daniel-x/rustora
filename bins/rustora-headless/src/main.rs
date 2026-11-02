@@ -54,9 +54,12 @@ fn main() {
     let mut registry = TraitRegistry::default();
     rustora_mods_common::register(&mut registry);
     let rules = Rc::new(Ruleset::load(&registry, &rules_yaml).expect("ruleset"));
+    let map_package_sequences = map_package.section("Sequences").cloned();
     let map = Rc::new(Map::load(map_package, MapGrid::default()).expect("map"));
 
+    let sequences = ModData::load_yaml(&fs, &md.manifest.sequences, map_package_sequences.as_ref()).expect("sequences");
     let world = World::new(map, rules, lobby, WorldType::Regular, 40, 3);
+    world.set_sequences(sequences);
     world.load_complete();
     println!("0 {}", world.sync_hash());
     for l in world.sync_detail() {

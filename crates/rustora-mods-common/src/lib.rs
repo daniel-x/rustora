@@ -8,6 +8,7 @@ pub mod building;
 pub mod health;
 pub mod interfaces;
 pub mod player;
+pub mod render;
 pub mod world;
 
 use rustora_engine::rules::TraitRegistry;
@@ -17,5 +18,6 @@ pub fn register(r: &mut TraitRegistry) {
     building::register(r);
     health::register(r);
     player::register(r);
+    render::register(r);
     world::register(r);
 }

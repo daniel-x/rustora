@@ -50,6 +50,7 @@ pub struct World {
     paused: Cell<bool>,
     is_game_over: Cell<bool>,
     pub disposing: Cell<bool>,
+    sequences: RefCell<Vec<rustora_core::miniyaml::MiniYamlNode>>,
 }
 
 impl World {
@@ -85,6 +86,7 @@ impl World {
             paused: Cell::new(false),
             is_game_over: Cell::new(false),
             disposing: Cell::new(false),
+            sequences: RefCell::new(Vec::new()),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -113,6 +115,31 @@ impl World {
 
     pub fn world_actor(&self) -> &ActorRef {
         self.world_actor.get().expect("world actor created")
+    }
+
+    /// Merged sprite sequence definitions (images with their sequences).
+    pub fn set_sequences(&self, nodes: Vec<rustora_core::miniyaml::MiniYamlNode>) {
+        *self.sequences.borrow_mut() = nodes;
+    }
+
+    /// `Facings` of a sprite sequence (`interpolatedFacings ?? facings`, always positive).
+    pub fn sequence_facings(&self, image: &str, sequence: &str) -> Option<i32> {
+        let seqs = self.sequences.borrow();
+        let img = seqs.iter().find(|n| n.key == image)?;
+        let defaults = img.value.nodes.iter().find(|n| n.key == "Defaults");
+        let seq = img.value.nodes.iter().find(|n| n.key == sequence)?;
+        let field = |k: &str| -> Option<i32> {
+            seq.value
+                .nodes
+                .iter()
+                .find(|n| n.key == k)
+                .or_else(|| defaults.and_then(|d| d.value.nodes.iter().find(|n| n.key == k)))
+                .and_then(|n| rustora_core::world_types::parse_i32(n.value.value_str()))
+        };
+        if let Some(i) = field("InterpolatedFacings") {
+            return Some(i);
+        }
+        Some(field("Facings").unwrap_or(1).abs())
     }
 
     pub fn set_world_owner(&self, p: &PlayerRef) {
