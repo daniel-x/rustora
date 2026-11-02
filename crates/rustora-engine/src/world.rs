@@ -51,6 +51,10 @@ pub struct World {
     is_game_over: Cell<bool>,
     pub disposing: Cell<bool>,
     sequences: RefCell<Vec<rustora_core::miniyaml::MiniYamlNode>>,
+    pub all_players_mask: Cell<u64>,
+    /// Cache for the actor map trait of the mod crate.
+    pub actor_map_slot: OnceCell<Rc<dyn std::any::Any>>,
+    is_replay: Cell<bool>,
 }
 
 impl World {
@@ -87,6 +91,9 @@ impl World {
             is_game_over: Cell::new(false),
             disposing: Cell::new(false),
             sequences: RefCell::new(Vec::new()),
+            all_players_mask: Cell::new(0),
+            actor_map_slot: OnceCell::new(),
+            is_replay: Cell::new(false),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -144,6 +151,33 @@ impl World {
 
     pub fn set_world_owner(&self, p: &PlayerRef) {
         self.world_actor().set_owner(Some(p.clone()));
+    }
+
+    pub fn order_validators(&self) -> Vec<Rc<dyn IValidateOrder>> {
+        self.world_actor().traits_implementing::<dyn IValidateOrder>()
+    }
+
+    pub fn is_replay(&self) -> bool {
+        self.is_replay.get()
+    }
+
+    pub fn set_is_replay(&self, v: bool) {
+        self.is_replay.set(v);
+    }
+
+    /// `World.OnClientDisconnected`.
+    pub fn on_client_disconnected(&self, client_id: i32) {
+        for player in self.players() {
+            if player.client_index != client_id || !player.playable {
+                continue;
+            }
+            for n in self.world_actor().traits_implementing::<dyn INotifyPlayerDisconnected>() {
+                n.player_disconnected(self.world_actor(), &player);
+            }
+            for p in self.players() {
+                p.player_disconnected(&player);
+            }
+        }
     }
 
     pub fn world_tick(&self) -> i32 {

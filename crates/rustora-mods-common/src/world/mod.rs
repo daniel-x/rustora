@@ -304,6 +304,11 @@ impl ICreatePlayers for CreateMapPlayers {
                 setup_player_masks(w, p, pr, q, qr);
             }
         }
+        for (p, _) in &refs {
+            if !p.spectating() {
+                w.all_players_mask.set(w.all_players_mask.get() | p.player_mask);
+            }
+        }
         *self.references.borrow_mut() = refs;
     }
 }
@@ -432,8 +437,18 @@ impl IAssignSpawnPoints for MapStartingLocations {
 }
 
 impl IWorldLoaded for MapStartingLocations {
-    fn world_loaded(&self, _world: &Rc<World>) {
-        // Explores the initial area around each home location; needs the Shroud trait port.
+    fn world_loaded(&self, world: &Rc<World>) {
+        for p in world.players() {
+            if !p.playable {
+                continue;
+            }
+            let cells = rustora_engine::shroud::Shroud::projected_cells_in_cell_range(world.map(), p.home_location, self.info.initial_explore_range);
+            for q in world.players() {
+                if p.is_allied_with(Some(&q)) {
+                    q.shroud().explore_projected_cells(&cells);
+                }
+            }
+        }
     }
 }
 

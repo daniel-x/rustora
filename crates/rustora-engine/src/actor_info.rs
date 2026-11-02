@@ -198,6 +198,11 @@ impl ActorInfo {
         self.index.all::<T>()
     }
 
+    /// Whether a trait node with this exact name exists, also for traits not ported yet.
+    pub fn has_trait_info_named(&self, name: &str) -> bool {
+        self.nodes.iter().any(|n| n.name == name)
+    }
+
     pub fn has_trait_info<T: ?Sized + 'static>(&self) -> bool {
         !self.index.all::<T>().is_empty()
     }

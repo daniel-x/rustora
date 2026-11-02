@@ -136,10 +136,24 @@ pub mod subcell {
     pub const FIRST: u8 = 1;
 }
 
-pub trait IOccupySpace {
+pub trait IOccupySpace: Any {
     fn center_position(&self) -> WPos;
     fn top_left(&self) -> CPos;
     fn occupied_cells(&self) -> Vec<(CPos, u8)>;
+    fn as_any(&self) -> &dyn Any;
+    /// `IPositionable.IsLeavingCell`; false for non-positionable traits.
+    fn is_leaving_cell(&self, _location: CPos, _sub: u8) -> bool {
+        false
+    }
+}
+
+/// Tag of `BitSet<CrushClass>`.
+pub struct CrushClass;
+
+pub trait ICrushable {
+    fn crushable_by_actor(&self, self_: &ActorRef, crusher: &ActorRef, classes: crate::bitset::BitSet<CrushClass>) -> bool;
+    /// Mask of the players whose units can crush this actor.
+    fn crushable_by(&self, self_: &ActorRef, classes: crate::bitset::BitSet<CrushClass>) -> u64;
 }
 
 pub trait IFacing {

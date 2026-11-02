@@ -3,6 +3,7 @@
 
 //! Port of `Traits/Buildings/Building.cs` (geometry and sync state; map influence pending).
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
@@ -10,15 +11,21 @@ use rustora_core::fieldloader::{LoadError, get_value};
 use rustora_core::miniyaml::MiniYaml;
 use rustora_core::world_types::{CPos, CVec, WPos, WVec};
 use rustora_derive::FieldLoad;
+use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_init::LocationInit;
+use rustora_engine::map::CellLayer;
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
+use crate::actor_map::WorldExt;
+use crate::interfaces::*;
+
 pub fn register(r: &mut TraitRegistry) {
     r.register("Building", |n| load_info!(BuildingInfo, n));
     r.register("Immobile", |n| load_info!(ImmobileInfo, n));
+    r.register("BuildingInfluence", |n| load_info!(BuildingInfluenceInfo, n));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,8 +171,61 @@ impl BuildingInfo {
     }
 }
 
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct BuildingInfluenceInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+/// `BuildingInfluence`: buildings per cell, newest first.
+pub struct BuildingInfluence {
+    influence: RefCell<CellLayer<Vec<ActorRef>>>,
+}
+
+register_traits!(BuildingInfluence);
+info_impl!(BuildingInfluenceInfo => |_, init| {
+    let w = init.world();
+    let (mw, mh) = w.map().map_size;
+    Some(Rc::new(BuildingInfluence { influence: RefCell::new(CellLayer::new(mw, mh, Vec::new())) }))
+});
+
+impl BuildingInfluence {
+    fn add_influence(&self, a: &ActorRef, cells: &[CPos]) {
+        let mut inf = self.influence.borrow_mut();
+        for c in cells {
+            if inf.contains_cell(*c) {
+                inf.at_mut(*c).push(a.clone());
+            }
+        }
+    }
+
+    fn remove_influence(&self, a: &ActorRef, cells: &[CPos]) {
+        let mut inf = self.influence.borrow_mut();
+        for c in cells {
+            if inf.contains_cell(*c) {
+                inf.at_mut(*c).retain(|x| x.id != a.id);
+            }
+        }
+    }
+
+    pub fn get_buildings_at(&self, cell: CPos) -> Vec<ActorRef> {
+        let inf = self.influence.borrow();
+        if !inf.contains_cell(cell) {
+            return Vec::new();
+        }
+        inf.at(cell).iter().rev().cloned().collect()
+    }
+
+    pub fn any_building_at(&self, cell: CPos) -> bool {
+        let inf = self.influence.borrow();
+        inf.contains_cell(cell) && !inf.at(cell).is_empty()
+    }
+}
+
 pub struct Building {
     pub info: Rc<BuildingInfo>,
+    self_: ActorRef,
+    influence: Rc<BuildingInfluence>,
     top_left: CPos,
     center: WPos,
     occupied: Vec<(CPos, u8)>,
@@ -173,7 +233,7 @@ pub struct Building {
     pub transit_only: Vec<CPos>,
 }
 
-register_traits!(Building: IOccupySpace, ISync);
+register_traits!(Building: IOccupySpace, ISync, ITargetableCells, INotifySold, INotifyTransform, INotifyAddedToWorld, INotifyRemovedFromWorld);
 info_impl!(BuildingInfo => |info, init| {
     let w = init.world();
     let top_left = init.inits.get::<LocationInit>().expect("Building needs a LocationInit").value;
@@ -181,12 +241,69 @@ info_impl!(BuildingInfo => |info, init| {
     let targetable = info.footprint_tiles(top_left, FootprintCellType::Occupied).map(|c| (c, subcell::FULL_CELL)).collect();
     let transit_only = info.transit_only_tiles(top_left);
     let center = w.map().center_of_cell(top_left) + info.center_offset(&w);
-    Some(Rc::new(Building { info, top_left, center, occupied, targetable, transit_only }))
+    let influence = w.world_actor().trait_::<BuildingInfluence>();
+    Some(Rc::new(Building { info, self_: init.self_.clone(), influence, top_left, center, occupied, targetable, transit_only }))
 });
 
 impl ISync for Building {
     fn sync_hash(&self) -> i32 {
         self.top_left.hash()
+    }
+}
+
+impl ITargetableCells for Building {
+    fn targetable_cells(&self) -> Vec<(CPos, u8)> {
+        self.targetable.clone()
+    }
+}
+
+impl INotifyAddedToWorld for Building {
+    fn added_to_world(&self, self_: &ActorRef) {
+        if self.info.remove_smudges_on_build {
+            self.remove_smudges();
+        }
+        self_.world().add_to_maps(self_, self);
+        self.influence.add_influence(self_, &self.info.tiles(self_.location()));
+    }
+}
+
+impl INotifyRemovedFromWorld for Building {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        self_.world().remove_from_maps(self_, self);
+        self.influence.remove_influence(self_, &self.info.tiles(self_.location()));
+    }
+}
+
+impl INotifySold for Building {
+    fn selling(&self, _self_: &ActorRef) {
+        if self.info.remove_smudges_on_sell {
+            self.remove_smudges();
+        }
+    }
+
+    fn sold(&self, _self_: &ActorRef) {}
+}
+
+impl INotifyTransform for Building {
+    fn before_transform(&self, _self_: &ActorRef) {
+        if self.info.remove_smudges_on_transform {
+            self.remove_smudges();
+        }
+    }
+
+    fn on_transform(&self, _self_: &ActorRef) {}
+
+    fn after_transform(&self, _to_actor: &ActorRef) {}
+}
+
+impl Building {
+    pub fn remove_smudges(&self) {
+        let w = self.self_.world();
+        for layer in w.world_actor().traits_implementing::<crate::smudge::SmudgeLayer>() {
+            for t in self.info.tiles(self.self_.location()) {
+                layer.remove_smudge(t);
+            }
+        }
     }
 }
 
@@ -201,6 +318,10 @@ impl IOccupySpace for Building {
 
     fn occupied_cells(&self) -> Vec<(CPos, u8)> {
         self.occupied.clone()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -227,7 +348,7 @@ pub struct Immobile {
     occupied: Vec<(CPos, u8)>,
 }
 
-register_traits!(Immobile: IOccupySpace, ISync);
+register_traits!(Immobile: IOccupySpace, ISync, INotifyAddedToWorld, INotifyRemovedFromWorld);
 info_impl!(ImmobileInfo => |info, init| {
     let w = init.world();
     let top_left = init.inits.get::<LocationInit>().expect("Immobile needs a LocationInit").value;
@@ -252,5 +373,21 @@ impl IOccupySpace for Immobile {
 
     fn occupied_cells(&self) -> Vec<(CPos, u8)> {
         self.occupied.clone()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl INotifyAddedToWorld for Immobile {
+    fn added_to_world(&self, self_: &ActorRef) {
+        self_.world().add_to_maps(self_, self);
+    }
+}
+
+impl INotifyRemovedFromWorld for Immobile {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        self_.world().remove_from_maps(self_, self);
     }
 }

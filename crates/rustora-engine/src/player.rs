@@ -37,6 +37,31 @@ impl PlayerRelationship {
     }
 }
 
+impl Default for PlayerRelationship {
+    fn default() -> Self {
+        PlayerRelationship::NONE
+    }
+}
+
+impl rustora_core::fieldloader::FieldValue for PlayerRelationship {
+    const TYPE_NAME: &'static str = "PlayerRelationship";
+    fn parse(field: &str, value: Option<&str>, _yaml: Option<&rustora_core::miniyaml::MiniYaml>) -> Result<Self, rustora_core::fieldloader::LoadError> {
+        let mut r = 0;
+        for p in value.unwrap_or("").split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            r |= match p {
+                "None" => 0,
+                "Enemy" => 1,
+                "Neutral" => 2,
+                "Ally" => 4,
+                _ => return rustora_core::fieldloader::invalid(value, "PlayerRelationship", field),
+            };
+        }
+        Ok(PlayerRelationship(r))
+    }
+}
+
+impl rustora_core::fieldloader::ArrayAware for PlayerRelationship {}
+
 /// Player properties resolved before the player actor is created.
 pub struct PlayerSetup {
     pub internal_name: String,
@@ -80,6 +105,9 @@ pub struct Player {
     pub allied_players_mask: Cell<u64>,
     pub enemy_players_mask: Cell<u64>,
     player_actor: OnceCell<ActorRef>,
+    shroud: OnceCell<Rc<crate::shroud::Shroud>>,
+    frozen_actor_layer: OnceCell<Option<Rc<crate::frozen::FrozenActorLayer>>>,
+    notify_disconnected: RefCell<Vec<Rc<dyn crate::traits::INotifyPlayerDisconnected>>>,
     unlock_render_player: RefCell<Vec<Rc<dyn crate::traits::IUnlocksRenderPlayer>>>,
 }
 
@@ -120,17 +148,37 @@ impl Player {
             allied_players_mask: Cell::new(0),
             enemy_players_mask: Cell::new(0),
             player_actor: OnceCell::new(),
+            shroud: OnceCell::new(),
+            frozen_actor_layer: OnceCell::new(),
+            notify_disconnected: RefCell::new(Vec::new()),
             unlock_render_player: RefCell::new(Vec::new()),
         });
         let actor = Actor::new(world, "player", ActorInits::new().with(OwnerInit::from_player(&p)));
         let _ = p.player_actor.set(actor.clone());
         actor.initialize(true);
+        let _ = p.shroud.set(actor.trait_::<crate::shroud::Shroud>());
+        let _ = p.frozen_actor_layer.set(actor.trait_or_default::<crate::frozen::FrozenActorLayer>());
+        *p.notify_disconnected.borrow_mut() = actor.traits_implementing::<dyn crate::traits::INotifyPlayerDisconnected>();
         *p.unlock_render_player.borrow_mut() = actor.traits_implementing::<dyn crate::traits::IUnlocksRenderPlayer>();
         p
     }
 
     pub fn player_actor(&self) -> &ActorRef {
         self.player_actor.get().expect("player actor created")
+    }
+
+    pub fn shroud(&self) -> Rc<crate::shroud::Shroud> {
+        self.shroud.get().expect("player shroud").clone()
+    }
+
+    pub fn frozen_actor_layer(&self) -> Option<Rc<crate::frozen::FrozenActorLayer>> {
+        self.frozen_actor_layer.get().cloned().flatten()
+    }
+
+    pub fn player_disconnected(&self, p: &PlayerRef) {
+        for n in self.notify_disconnected.borrow().clone() {
+            n.player_disconnected(self.player_actor(), p);
+        }
     }
 
     pub fn spectating(&self) -> bool {

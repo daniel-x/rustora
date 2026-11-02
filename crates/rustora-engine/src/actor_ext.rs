@@ -6,6 +6,8 @@
 use rustora_core::world_types::WPos;
 
 use crate::actor::ActorRef;
+use crate::bitset::BitSet;
+use crate::terrain::TargetableType;
 
 /// `Actor.GetTargetablePositions`: falls back to the center position.
 pub fn targetable_positions(a: &ActorRef) -> Vec<WPos> {
@@ -23,5 +25,37 @@ pub fn targetable_positions(a: &ActorRef) -> Vec<WPos> {
 
 pub trait ITargetablePositions {
     fn targetable_positions(&self, self_: &ActorRef) -> Vec<WPos>;
+    fn is_trait_enabled(&self) -> bool;
+}
+
+/// `Actor.GetEnabledTargetTypes`.
+pub fn enabled_target_types(a: &ActorRef) -> BitSet<TargetableType> {
+    let mut t = BitSet::default();
+    for tg in a.traits_implementing::<dyn ITargetable>() {
+        if tg.is_trait_enabled() {
+            t = t.union(&tg.target_types());
+        }
+    }
+    t
+}
+
+/// `Actor.GetAllTargetTypes`.
+pub fn all_target_types(a: &ActorRef) -> BitSet<TargetableType> {
+    let mut t = BitSet::default();
+    for tg in a.traits_implementing::<dyn ITargetable>() {
+        t = t.union(&tg.target_types());
+    }
+    t
+}
+
+/// `Actor.IsTargetableBy`.
+pub fn is_targetable_by(a: &ActorRef, by: &ActorRef) -> bool {
+    a.traits_implementing::<dyn ITargetable>().iter().any(|t| t.targetable_by(a, by))
+}
+
+pub trait ITargetable {
+    fn target_types(&self) -> BitSet<TargetableType>;
+    fn targetable_by(&self, self_: &ActorRef, by_actor: &ActorRef) -> bool;
+    fn requires_force_fire(&self) -> bool;
     fn is_trait_enabled(&self) -> bool;
 }

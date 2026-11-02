@@ -258,3 +258,10 @@ impl IHealth for Health {
         self.inflict_damage(self_, attacker, &Damage::new(self.max_hp, *damage_types), true);
     }
 }
+
+/// `Actor.Kill`.
+pub fn kill_actor(a: &ActorRef, attacker: Option<&ActorRef>, types: &DamageTypes) {
+    if let Some(h) = a.cache().health.clone() {
+        h.kill(a, attacker, types);
+    }
+}

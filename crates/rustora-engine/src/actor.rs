@@ -57,6 +57,7 @@ pub struct ActorCache {
     pub default_visibility: Option<Rc<dyn IDefaultVisibility>>,
     pub becoming_idles: Vec<Rc<dyn INotifyBecomingIdle>>,
     pub tick_idles: Vec<Rc<dyn INotifyIdle>>,
+    pub crushables: Vec<Rc<dyn ICrushable>>,
     pub sync_hashes: Vec<Rc<dyn ISync>>,
     /// C# class names of the sync traits, for diagnostics.
     pub sync_names: Vec<&'static str>,
@@ -76,6 +77,8 @@ pub struct Actor {
     pub replaced_by_actor: RefCell<Option<ActorRef>>,
     conditions: RefCell<Conditions>,
     cache: OnceCell<ActorCache>,
+    /// `OccupiesSpace`, available while later traits are being constructed.
+    occupies_early: OnceCell<Rc<dyn IOccupySpace>>,
 }
 
 impl std::fmt::Debug for Actor {
@@ -115,6 +118,7 @@ impl Actor {
                 ..Default::default()
             }),
             cache: OnceCell::new(),
+            occupies_early: OnceCell::new(),
         });
 
         let init = ActorInitializer::new(actor.clone(), inits);
@@ -129,6 +133,11 @@ impl Actor {
                 let before = dict.with_interface::<dyn ISync>(&actor).len();
                 let name = t.type_name();
                 t.register(dict, &actor);
+                if actor.occupies_early.get().is_none() {
+                    if let Some(o) = dict.get_or_default::<dyn IOccupySpace>(&actor) {
+                        let _ = actor.occupies_early.set(o);
+                    }
+                }
                 if dict.with_interface::<dyn ISync>(&actor).len() > before {
                     sync_names.push(name);
                 }
@@ -145,6 +154,7 @@ impl Actor {
             default_visibility: dict.get_or_default::<dyn IDefaultVisibility>(&actor),
             becoming_idles: dict.with_interface::<dyn INotifyBecomingIdle>(&actor),
             tick_idles: dict.with_interface::<dyn INotifyIdle>(&actor),
+            crushables: dict.with_interface::<dyn ICrushable>(&actor),
             sync_hashes: dict.with_interface::<dyn ISync>(&actor),
             sync_names,
         };
@@ -158,6 +168,10 @@ impl Actor {
 
     pub fn cache(&self) -> &ActorCache {
         self.cache.get().expect("actor initialized")
+    }
+
+    pub fn cache_opt(&self) -> Option<&ActorCache> {
+        self.cache.get()
     }
 
     pub fn owner(&self) -> PlayerRef {
@@ -193,11 +207,11 @@ impl Actor {
     }
 
     pub fn location(&self) -> CPos {
-        self.cache().occupies_space.as_ref().expect("IOccupySpace").top_left()
+        self.occupies_early.get().expect("IOccupySpace").top_left()
     }
 
     pub fn center_position(&self) -> WPos {
-        self.cache().occupies_space.as_ref().expect("IOccupySpace").center_position()
+        self.occupies_early.get().expect("IOccupySpace").center_position()
     }
 
     pub fn orientation(&self) -> WRot {

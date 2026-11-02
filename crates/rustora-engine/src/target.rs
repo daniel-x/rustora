@@ -113,6 +113,88 @@ impl Target {
         }
     }
 
+    /// `Target.IsValidFor`.
+    pub fn is_valid_for(&self, targeter: &ActorRef) -> bool {
+        match self.target_type() {
+            TargetType::Actor => crate::actor_ext::is_targetable_by(self.actor().unwrap(), targeter),
+            TargetType::FrozenActor => {
+                let f = self.frozen_actor().unwrap();
+                f.is_valid() && f.visible() && !f.hidden()
+            }
+            TargetType::Invalid => false,
+            TargetType::Terrain => true,
+        }
+    }
+
+    /// `Target.FromTargetPositions`.
+    pub fn from_target_positions(t: &Target) -> Target {
+        Target::from_positions(t.center_position(), t.positions())
+    }
+
+    /// `TargetExtensions.Recalculate`: returns the updated target and `targetIsHiddenActor`.
+    pub fn recalculate(&self, viewer: &crate::player::PlayerRef) -> (Target, bool) {
+        let mut t = self.clone();
+        if t.target_type() == TargetType::Invalid {
+            if let Some(a) = t.actor() {
+                let replaced = a.replaced_by_actor.borrow().clone();
+                if let Some(r) = replaced {
+                    t = Target::from_actor(Some(&r));
+                }
+            }
+        }
+        if viewer.is_bot {
+            if t.target_type() == TargetType::FrozenActor {
+                return match t.frozen_actor().unwrap().actor() {
+                    Some(a) => (Target::from_actor(Some(&a)), false),
+                    None => (Target::Invalid, false),
+                };
+            }
+            return (t, false);
+        }
+        if t.target_type() == TargetType::Actor {
+            let a = t.actor().unwrap().clone();
+            if !a.can_be_viewed_by_player(Some(viewer)) {
+                if let Some(frozen) = viewer.frozen_actor_layer().and_then(|l| l.from_id(a.id)) {
+                    return (Target::from_frozen_actor(frozen), false);
+                }
+                return (t, true);
+            }
+        } else if t.target_type() == TargetType::FrozenActor {
+            let f = t.frozen_actor().unwrap();
+            if !f.visible() || !f.is_valid() {
+                if let Some(a) = f.actor() {
+                    if a.can_be_viewed_by_player(Some(viewer)) {
+                        return (Target::from_actor(Some(&a)), false);
+                    }
+                }
+                return (Target::Invalid, false);
+            }
+        }
+        (t, false)
+    }
+
+    /// `RecalculateInvalidatingHiddenTargets`.
+    pub fn recalculate_invalidating_hidden(&self, viewer: &crate::player::PlayerRef) -> Target {
+        let (t, hidden) = self.recalculate(viewer);
+        if hidden { Target::Invalid } else { t }
+    }
+
+    /// `Target.RequiresForceFire`.
+    pub fn requires_force_fire(&self) -> bool {
+        let Some(a) = self.actor() else { return false };
+        let mut is_targetable = false;
+        for t in a.traits_implementing::<dyn crate::actor_ext::ITargetable>() {
+            if !t.is_trait_enabled() {
+                continue;
+            }
+            is_targetable = true;
+            if !t.requires_force_fire() {
+                return false;
+            }
+        }
+        is_targetable
+    }
+
     /// The raw type ignoring actor validity (the private `type` field in C#).
     pub fn raw_type(&self) -> TargetType {
         match self {

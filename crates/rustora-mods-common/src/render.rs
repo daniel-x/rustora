@@ -6,6 +6,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use rustora_core::world_types::{WAngle, WRot, WVec};
+
 use indexmap::IndexMap;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -150,6 +152,34 @@ impl TraitInfo for ClassicFacingBodyOrientationInfo {
 }
 
 impl BodyOrientation {
+    /// `LocalToWorld`.
+    pub fn local_to_world(&self, vec: WVec) -> WVec {
+        if !self.info.use_classic_perspective_fudge {
+            return WVec::new(vec.y, -vec.x, vec.z);
+        }
+        WVec::new(vec.y, (-self.info.camera_pitch.sin()).wrapping_mul(vec.x) / 1024, vec.z)
+    }
+
+    pub fn quantize_orientation(&self, orientation: WRot) -> WRot {
+        let f = self.quantized_facings();
+        if f == 0 {
+            return orientation;
+        }
+        WRot::from_yaw(self.quantize_facing_to(orientation.yaw, f))
+    }
+
+    pub fn quantize_facing(&self, facing: WAngle) -> WAngle {
+        self.quantize_facing_to(facing, self.quantized_facings())
+    }
+
+    /// `QuantizeFacing(facing, facings)`, with the classic rounding of `ClassicFacingBodyOrientation`.
+    pub fn quantize_facing_to(&self, facing: WAngle, facings: i32) -> WAngle {
+        if self.class_name == "ClassicFacingBodyOrientation" {
+            return crate::render::classic_quantize_facing(facing, facings);
+        }
+        crate::util::quantize_facing(facing, facings)
+    }
+
     pub fn quantized_facings(&self) -> i32 {
         if let Some(q) = self.quantized.get() {
             return q;
@@ -233,4 +263,28 @@ impl IDisabledTrait for QuantizeFacingsFromSequence {
     fn is_trait_disabled(&self) -> bool {
         self.state.is_trait_disabled()
     }
+}
+
+const SPRITE_RANGES: [i32; 32] = [
+    20, 56, 88, 132, 156, 184, 212, 240, 268, 296, 324, 352, 384, 416, 452, 488, 532, 568, 604, 644, 668, 696, 724, 752, 780, 808, 836, 864, 896, 928, 964, 1000,
+];
+
+const SPRITE_FACINGS: [i32; 32] = [
+    0, 40, 74, 112, 146, 172, 200, 228, 256, 284, 312, 340, 370, 402, 436, 472, 512, 552, 588, 626, 658, 684, 712, 740, 768, 796, 824, 852, 882, 914, 948, 984,
+];
+
+/// `ClassicIndexFacing` of `Mods.Cnc/Util.cs`.
+pub fn classic_index_facing(facing: WAngle, num_frames: i32) -> i32 {
+    if num_frames == 32 {
+        return SPRITE_RANGES.iter().position(|r| facing.angle < *r).map_or(0, |i| i as i32);
+    }
+    crate::util::index_facing(facing, num_frames)
+}
+
+/// `ClassicQuantizeFacing` of `Mods.Cnc/Util.cs`.
+pub fn classic_quantize_facing(facing: WAngle, steps: i32) -> WAngle {
+    if steps == 32 {
+        return WAngle::new(SPRITE_FACINGS[classic_index_facing(facing, steps) as usize]);
+    }
+    crate::util::quantize_facing(facing, steps)
 }

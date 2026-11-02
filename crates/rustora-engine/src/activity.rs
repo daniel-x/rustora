@@ -73,6 +73,15 @@ impl ActivityBase {
         }
     }
 
+    /// `Queue`: appends to the end of the queue this activity belongs to.
+    pub fn queue(&self, activity: Option<ActivityRef>) {
+        let next = self.next.borrow().clone();
+        match next {
+            Some(n) => queue(&n, activity),
+            None => *self.next.borrow_mut() = activity,
+        }
+    }
+
     /// `TickChild`: runs the child activity chain; true when no child remains.
     pub fn tick_child(&self, self_: &ActorRef) -> bool {
         let next = run_activity(self_, self.child_activity());
@@ -126,6 +135,22 @@ pub trait Activity: Any {
     fn type_name(&self) -> &'static str;
 
     fn as_any(&self) -> &dyn Any;
+}
+
+/// Implements the accessor methods of [`Activity`] for a struct with a `base: ActivityBase` field.
+#[macro_export]
+macro_rules! activity_common {
+    ($name:literal) => {
+        fn base(&self) -> &$crate::activity::ActivityBase {
+            &self.base
+        }
+        fn type_name(&self) -> &'static str {
+            $name
+        }
+        fn as_any(&self) -> &dyn ::std::any::Any {
+            self
+        }
+    };
 }
 
 /// Skips activities that were canceled while queued.

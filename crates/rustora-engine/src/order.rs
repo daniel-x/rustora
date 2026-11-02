@@ -26,6 +26,15 @@ pub struct Order {
 }
 
 impl Order {
+    /// `Order.FromGroupedOrder`.
+    pub fn from_grouped(&self, subject: Option<ActorRef>) -> Order {
+        Order {
+            subject,
+            grouped_actors: None,
+            ..self.clone()
+        }
+    }
+
     pub fn player(&self) -> Option<PlayerRef> {
         self.subject.as_ref().and_then(|s| s.owner_opt())
     }
@@ -48,7 +57,14 @@ impl Order {
                 Ok(a) => Target::from_serialized_actor(a, *generation),
                 Err(()) => Target::Invalid,
             },
-            RawTarget::FrozenActor { .. } => Target::Invalid,
+            RawTarget::FrozenActor {
+                player_actor_id,
+                frozen_id,
+            } => world
+                .get_actor_by_id(*player_actor_id)
+                .and_then(|a| a.owner().frozen_actor_layer())
+                .and_then(|l| l.from_id(*frozen_id))
+                .map_or(Target::Invalid, Target::from_frozen_actor),
             RawTarget::Cell { cell, subcell } => Target::from_cell(world, *cell, *subcell),
             RawTarget::Pos { pos, terrain_positions } => match terrain_positions {
                 None => Target::from_pos(*pos),
