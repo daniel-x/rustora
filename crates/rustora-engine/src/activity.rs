@@ -254,5 +254,5 @@ pub fn for_each_activity(first: Option<ActivityRef>, include_children: bool, f: 
         for_each_activity(a.base().child_activity(), true, f);
     }
     f(&a);
-    for_each_activity(a.base().next_activity(), true, f);
+    for_each_activity(a.base().next_activity(), include_children, f);
 }

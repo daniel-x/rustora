@@ -165,3 +165,51 @@ fn pause_conditions_changed<T: ConditionalHooks>(t: &T, self_: &ActorRef, c: &Co
         if was { t.trait_resumed(self_) } else { t.trait_paused(self_) }
     }
 }
+
+/// Implements `ISync`, `IObservesVariables` and `IDisabledTrait` for a conditional trait without further synced state.
+#[macro_export]
+macro_rules! conditional_plumbing {
+    ($t:ty) => {
+        impl $crate::traits::ISync for $t {
+            fn sync_hash(&self) -> i32 {
+                $crate::conditional::ConditionalHooks::conditional(self).sync_hash()
+            }
+        }
+        $crate::conditional_observers_impl!($t);
+    };
+}
+
+/// Implements `IObservesVariables` and `IDisabledTrait` for a conditional trait.
+#[macro_export]
+macro_rules! conditional_observers_impl {
+    ($t:ty) => {
+        impl $crate::traits::IObservesVariables for $t {
+            fn get_variable_observers(self: ::std::rc::Rc<Self>) -> Vec<$crate::traits::VariableObserver> {
+                $crate::conditional::conditional_observers(&self)
+            }
+        }
+        impl $crate::traits::IDisabledTrait for $t {
+            fn is_trait_disabled(&self) -> bool {
+                $crate::conditional::ConditionalHooks::conditional(self).is_trait_disabled()
+            }
+        }
+    };
+}
+
+/// A conditional trait with default hooks and `INotifyCreated`; `state` must be its [`ConditionalState`] field.
+#[macro_export]
+macro_rules! conditional_simple {
+    ($t:ty) => {
+        impl $crate::conditional::ConditionalHooks for $t {
+            fn conditional(&self) -> &$crate::conditional::ConditionalState {
+                &self.state
+            }
+        }
+        impl $crate::traits::INotifyCreated for $t {
+            fn created(&self, self_: &$crate::actor::ActorRef) {
+                $crate::conditional::conditional_created(self, self_);
+            }
+        }
+        $crate::conditional_plumbing!($t);
+    };
+}

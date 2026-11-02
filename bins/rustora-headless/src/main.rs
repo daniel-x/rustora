@@ -73,9 +73,13 @@ fn load_game(engine: &Path, support: &str, replay_path: &str) -> (Rc<World>, Rep
     let map = Rc::new(Map::load(map_package, MapGrid::default(), terrain).expect("map"));
 
     let sequences = ModData::load_yaml(&fs, &md.manifest.sequences, map_package_sequences.as_ref()).expect("sequences");
+    let md = Rc::new(md);
+    let md2 = md.clone();
+    let pkg2 = pkg.clone();
+    let read_file: rustora_engine::sequence::ReadFile = Rc::new(move |name: &str| pkg2.get(name).or_else(|| md2.file_system.try_open(name)));
+    map.set_sequences(Rc::new(rustora_engine::sequence::SequenceSet::new(&sequences, &tileset, read_file)));
     let world = World::new(map, rules, lobby, WorldType::Regular, 40, 3);
     world.set_is_replay(true);
-    world.set_sequences(sequences);
     world.load_complete();
     (world, replay)
 }

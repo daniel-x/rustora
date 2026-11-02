@@ -26,6 +26,22 @@ pub struct Order {
 }
 
 impl Order {
+    /// `new Order(orderString, subject, target, queued)`.
+    pub fn new(order_string: &str, subject: Option<ActorRef>, target: Target, queued: bool) -> Order {
+        Order {
+            order_string: order_string.to_string(),
+            subject,
+            target,
+            target_string: None,
+            queued,
+            extra_actors: None,
+            extra_location: CPos::ZERO,
+            extra_data: 0,
+            grouped_actors: None,
+            is_immediate: false,
+        }
+    }
+
     /// `Order.FromGroupedOrder`.
     pub fn from_grouped(&self, subject: Option<ActorRef>) -> Order {
         Order {

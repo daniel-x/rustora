@@ -20,6 +20,7 @@ pub mod order;
 pub mod order_manager;
 pub mod player;
 pub mod rules;
+pub mod sequence;
 pub mod shroud;
 pub mod spatial;
 pub mod stub;

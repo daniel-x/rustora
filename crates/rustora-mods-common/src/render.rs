@@ -3,10 +3,19 @@
 
 //! Sim relevant parts of render traits: body orientation and sprite image lookup.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use rustora_core::world_types::{WAngle, WRot, WVec};
+use rustora_engine::activity::ActivityRef;
+use rustora_engine::actor::INVALID_CONDITION_TOKEN;
+use rustora_engine::damage::{AttackInfo, DamageState};
+use rustora_engine::player::PlayerRef;
+use rustora_engine::sequence::{Animation, AnimationWithOffset};
+use rustora_engine::{conditional_plumbing, conditional_simple};
+
+use crate::actor_reference::SkipMakeAnimsInit;
+use crate::interfaces::{IDockClientBody, INotifyDamageStateChanged, INotifyDeployComplete, INotifyDeployTriggered, INotifyHarvestAction};
 
 use indexmap::IndexMap;
 use rustora_derive::FieldLoad;
@@ -20,6 +29,16 @@ use rustora_engine::{info_impl, load_info, register_traits};
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("RenderSprites", |n| load_info!(RenderSpritesInfo, n));
+    r.register("RenderSpritesEditorOnly", |n| load_info!(RenderSpritesInfo, n));
+    r.register("WithSpriteBody", |n| load_info!(WithSpriteBodyInfo, n));
+    r.register("WithFacingSpriteBody", |n| load_info!(WithFacingSpriteBodyInfo, n));
+    r.register("WithResourceLevelSpriteBody", |n| load_info!(WithResourceLevelSpriteBodyInfo, n));
+    r.register("WithHarvesterSpriteBody", |n| load_info!(WithHarvesterSpriteBodyInfo, n));
+    r.register("WithMakeAnimation", |n| load_info!(WithMakeAnimationInfo, n));
+    r.register("WithBuildingPlacedAnimation", |n| load_info!(WithBuildingPlacedAnimationInfo, n));
+    r.register("WithDockingAnimation", |n| load_info!(WithDockingAnimationInfo, n));
+    r.register("WithHarvestAnimation", |n| load_info!(WithHarvestAnimationInfo, n));
+    r.register("WithIdleOverlay", |n| load_info!(WithIdleOverlayInfo, n));
     r.register("BodyOrientation", |n| load_info!(BodyOrientationInfo, n));
     r.register("ClassicFacingBodyOrientation", |n| {
         let mut info = BodyOrientationInfo::default();
@@ -63,10 +82,797 @@ impl RenderSpritesInfo {
     }
 }
 
-/// Rendering is done by the client; the sim keeps the info for image lookups.
-pub struct RenderSprites;
-register_traits!(RenderSprites);
-info_impl!(RenderSpritesInfo => |_, _| Some(Rc::new(RenderSprites)));
+struct AnimationWrapper {
+    animation: AnimationWithOffset,
+    palette: Option<String>,
+    is_player_palette: bool,
+}
+
+/// `RenderSprites`: owns and ticks the animations of an actor.
+pub struct RenderSprites {
+    pub info: Rc<RenderSpritesInfo>,
+    faction: String,
+    anims: RefCell<Vec<Rc<AnimationWrapper>>>,
+}
+
+register_traits!(RenderSprites: ITick);
+info_impl!(RenderSpritesInfo => |info, init| {
+    let faction = init.inits.get::<FactionInit>().map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
+    Some(Rc::new(RenderSprites { info, faction, anims: RefCell::new(Vec::new()) }))
+});
+
+impl ITick for RenderSprites {
+    fn tick(&self, _self_: &ActorRef) {
+        let anims = self.anims.borrow().clone();
+        for a in anims {
+            a.animation.animation.tick();
+        }
+    }
+}
+
+impl RenderSprites {
+    pub fn get_image(&self, self_: &ActorRef) -> String {
+        self.info.get_image(&self_.info, &self.faction)
+    }
+
+    pub fn add(&self, anim: AnimationWithOffset, palette: Option<String>, is_player_palette: bool) {
+        let (palette, is_player_palette) = match palette {
+            Some(p) => (Some(p), is_player_palette),
+            None => (self.info.palette.clone().or_else(|| Some(self.info.player_palette.clone())), self.info.palette.is_none()),
+        };
+        self.anims.borrow_mut().push(Rc::new(AnimationWrapper { animation: anim, palette, is_player_palette }));
+    }
+
+    pub fn remove(&self, anim: &Rc<Animation>) {
+        self.anims.borrow_mut().retain(|a| !Rc::ptr_eq(&a.animation.animation, anim));
+    }
+
+    /// Animations with their palette, for the renderer.
+    pub fn animations(&self) -> Vec<(AnimationWithOffset, Option<String>, bool)> {
+        self.anims.borrow().iter().map(|a| (a.animation.clone(), a.palette.clone(), a.is_player_palette)).collect()
+    }
+}
+
+const DAMAGE_PREFIXES: [(DamageState, &str); 4] = [
+    (DamageState::CRITICAL, "critical-"),
+    (DamageState::HEAVY, "damaged-"),
+    (DamageState::MEDIUM, "scratched-"),
+    (DamageState::LIGHT, "scuffed-"),
+];
+
+pub fn unnormalize_sequence(sequence: &str) -> &str {
+    for (_, p) in DAMAGE_PREFIXES {
+        if let Some(s) = sequence.strip_prefix(p) {
+            return s;
+        }
+    }
+    sequence
+}
+
+pub fn normalize_sequence(anim: &Animation, state: DamageState, sequence: &str) -> String {
+    let sequence = unnormalize_sequence(sequence);
+    for (d, p) in DAMAGE_PREFIXES {
+        let name = format!("{p}{sequence}");
+        if state >= d && anim.has_sequence(&name) {
+            return name;
+        }
+    }
+    sequence.to_string()
+}
+
+/// `Actor.GetDamageState`.
+pub fn get_damage_state(a: &ActorRef) -> DamageState {
+    a.trait_or_default::<dyn IHealth>().map_or(DamageState::UNDAMAGED, |h| h.damage_state())
+}
+
+pub fn make_facing_func(a: &ActorRef) -> Rc<dyn Fn() -> WAngle> {
+    match a.trait_or_default::<dyn IFacing>() {
+        Some(f) => Rc::new(move || f.facing()),
+        None => Rc::new(|| WAngle::ZERO),
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithSpriteBodyInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: PausableConditionalTraitInfo,
+    pub start_sequence: Option<String>,
+    pub sequence: String,
+    pub name: String,
+    pub force_to_ground: bool,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
+}
+
+impl Default for WithSpriteBodyInfo {
+    fn default() -> Self {
+        WithSpriteBodyInfo {
+            instance_name: None,
+            base: PausableConditionalTraitInfo::default(),
+            start_sequence: None,
+            sequence: "idle".into(),
+            name: "body".into(),
+            force_to_ground: false,
+            palette: None,
+            is_player_palette: false,
+        }
+    }
+}
+
+/// `WithFacingSpriteBodyInfo`: the body animation follows the actor facing.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct WithFacingSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+enum BodyVariant {
+    Plain,
+    ResourceLevel { stages: i32, player_resources: RefCell<Rc<crate::player::PlayerResources>> },
+    Harvester { image_by_fullness: Vec<String>, harv: Rc<crate::harvester::Harvester> },
+}
+
+pub struct WithSpriteBody {
+    pub info: Rc<WithSpriteBodyInfo>,
+    class_name: &'static str,
+    variant: BodyVariant,
+    state: ConditionalState,
+    self_: ActorRef,
+    pub default_animation: Rc<Animation>,
+}
+
+impl TraitObject for WithSpriteBody {
+    fn register(self: Rc<Self>, dict: &rustora_engine::trait_dict::TraitDict, actor: &ActorRef) {
+        dict.add::<WithSpriteBody>(actor, self.clone());
+        dict.add::<dyn INotifyDamageStateChanged>(actor, self.clone());
+        dict.add::<dyn INotifyCreated>(actor, self.clone());
+        dict.add::<dyn IObservesVariables>(actor, self.clone());
+        dict.add::<dyn IDisabledTrait>(actor, self.clone());
+        if let BodyVariant::Harvester { .. } = self.variant {
+            dict.add::<dyn ITick>(actor, self.clone());
+        }
+        if let BodyVariant::ResourceLevel { .. } = self.variant {
+            dict.add::<dyn INotifyOwnerChanged>(actor, self.clone());
+        }
+        dict.add::<dyn ISync>(actor, self);
+    }
+    fn type_name(&self) -> &'static str {
+        self.class_name
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+fn new_sprite_body(
+    info: Rc<WithSpriteBodyInfo>,
+    init: &rustora_engine::actor_init::ActorInitializer,
+    class_name: &'static str,
+    base_facing: Option<Rc<dyn Fn() -> WAngle>>,
+    variant: BodyVariant,
+) -> Rc<WithSpriteBody> {
+    let self_ = init.self_.clone();
+    let rs = self_.trait_::<RenderSprites>();
+    let w = init.world();
+    let state = ConditionalState::new_pausable(&info.base);
+    let seqs = w.map().sequences().clone();
+    let image = rs.get_image(&self_);
+    let body = Rc::new_cyclic(|me: &std::rc::Weak<WithSpriteBody>| {
+        let (m, a) = (me.clone(), self_.clone());
+        let paused: Rc<dyn Fn() -> bool> = Rc::new(move || {
+            let Some(b) = m.upgrade() else { return false };
+            b.state.is_trait_paused() && b.default_animation.current_sequence().is_some_and(|s| s.name == b.normalize_sequence(&a, &b.info.sequence))
+        });
+        WithSpriteBody {
+            class_name,
+            variant,
+            state,
+            default_animation: Animation::new(seqs, &image, base_facing, Some(paused)),
+            self_: self_.clone(),
+            info: info.clone(),
+        }
+    });
+    let offset_func: Option<Rc<dyn Fn() -> WVec>> = if info.force_to_ground {
+        let (a, w2) = (self_.clone(), Rc::downgrade(&w));
+        Some(Rc::new(move || WVec::new(0, 0, -w2.upgrade().expect("world").map().distance_above_terrain(a.center_position()).length)))
+    } else {
+        None
+    };
+    let weak = Rc::downgrade(&body);
+    rs.add(
+        AnimationWithOffset {
+            animation: body.default_animation.clone(),
+            offset_func,
+            disable_func: Some(Rc::new(move || weak.upgrade().is_some_and(|b| b.state.is_trait_disabled()))),
+            zoffset_func: None,
+        },
+        info.palette.clone(),
+        info.is_player_palette,
+    );
+    body
+}
+
+info_impl!(WithSpriteBodyInfo => |info, init| Some(new_sprite_body(info, init, "WithSpriteBody", None, BodyVariant::Plain)));
+info_impl!(WithFacingSpriteBodyInfo => |info, init| {
+    let facing = make_facing_func(&init.self_);
+    Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithFacingSpriteBody", Some(facing), BodyVariant::Plain))
+});
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithResourceLevelSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub stages: i32,
+}
+
+impl Default for WithResourceLevelSpriteBodyInfo {
+    fn default() -> Self {
+        WithResourceLevelSpriteBodyInfo {
+            base: WithSpriteBodyInfo::default(),
+            instance_name: None,
+            stages: 10,
+        }
+    }
+}
+
+info_impl!(WithResourceLevelSpriteBodyInfo => |info, init| {
+    let v = BodyVariant::ResourceLevel {
+        stages: info.stages,
+        player_resources: RefCell::new(init.self_.owner().player_actor().trait_::<crate::player::PlayerResources>()),
+    };
+    Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithResourceLevelSpriteBody", None, v))
+});
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct WithHarvesterSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub image_by_fullness: Vec<String>,
+}
+
+info_impl!(WithHarvesterSpriteBodyInfo => |info, init| {
+    let facing = make_facing_func(&init.self_);
+    let v = BodyVariant::Harvester { image_by_fullness: info.image_by_fullness.clone(), harv: init.self_.trait_::<crate::harvester::Harvester>() };
+    Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithHarvesterSpriteBody", Some(facing), v))
+});
+
+impl ITick for WithSpriteBody {
+    fn tick(&self, _self_: &ActorRef) {
+        let BodyVariant::Harvester { image_by_fullness, harv } = &self.variant else { return };
+        if image_by_fullness.is_empty() {
+            return;
+        }
+        let desired = harv.fullness() * (image_by_fullness.len() as i32 - 1) / 100;
+        let cur = self.default_animation.current_sequence().expect("body sequence").name.clone();
+        self.default_animation.change_image(&image_by_fullness[desired as usize], &cur);
+    }
+}
+
+impl INotifyOwnerChanged for WithSpriteBody {
+    fn on_owner_changed(&self, _self_: &ActorRef, _old: &PlayerRef, new_owner: &PlayerRef) {
+        if let BodyVariant::ResourceLevel { player_resources, .. } = &self.variant {
+            *player_resources.borrow_mut() = new_owner.player_actor().trait_::<crate::player::PlayerResources>();
+        }
+    }
+}
+
+impl ConditionalHooks for WithSpriteBody {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        self.base_trait_enabled(self_);
+        if let BodyVariant::ResourceLevel { .. } = self.variant {
+            self.configure_animation(self_);
+        }
+    }
+}
+
+conditional_plumbing!(WithSpriteBody);
+
+impl WithSpriteBody {
+    fn configure_animation(&self, self_: &ActorRef) {
+        let BodyVariant::ResourceLevel { stages, player_resources } = &self.variant else { return };
+        let (anim, stages, pr) = (self.default_animation.clone(), *stages, player_resources.borrow().clone());
+        let a2 = anim.clone();
+        anim.play_fetch_index(
+            &self.normalize_sequence(self_, &self.info.sequence),
+            Rc::new(move || {
+                let cap = pr.resource_capacity.get();
+                if cap != 0 {
+                    (stages.wrapping_mul(a2.current_sequence().expect("sequence").length()) - 1).wrapping_mul(pr.resources.get()) / (stages.wrapping_mul(cap))
+                } else {
+                    0
+                }
+            }),
+        );
+    }
+
+    fn base_trait_enabled(&self, self_: &ActorRef) {
+        match &self.info.start_sequence {
+            Some(start) => {
+                let (a, anim, seq, me) = (self_.clone(), self.default_animation.clone(), self.info.sequence.clone(), self.self_.clone());
+                let _ = me;
+                let body_seq = move || normalize_sequence(&anim, get_damage_state(&a), &seq);
+                let anim2 = self.default_animation.clone();
+                self.play_custom_animation(self_, start, Some(Rc::new(move || anim2.play_repeating(&body_seq()))));
+            }
+            None => self.default_animation.play_repeating(&self.normalize_sequence(self_, &self.info.sequence)),
+        }
+    }
+}
+
+impl INotifyCreated for WithSpriteBody {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl INotifyDamageStateChanged for WithSpriteBody {
+    fn damage_state_changed(&self, self_: &ActorRef, _e: &AttackInfo) {
+        if let Some(s) = self.default_animation.current_sequence() {
+            self.default_animation.replace_anim(&self.normalize_sequence(self_, &s.name));
+        }
+    }
+}
+
+impl WithSpriteBody {
+    pub fn is_trait_disabled(&self) -> bool {
+        self.state.is_trait_disabled()
+    }
+
+    pub fn normalize_sequence(&self, self_: &ActorRef, sequence: &str) -> String {
+        normalize_sequence(&self.default_animation, get_damage_state(self_), sequence)
+    }
+
+    fn after_custom(&self, self_: &ActorRef, after: Option<Rc<dyn Fn()>>) -> Rc<dyn Fn()> {
+        let a = self_.clone();
+        let me = a.traits_implementing::<WithSpriteBody>().into_iter().find(|w| std::ptr::eq(Rc::as_ptr(w), self)).expect("body registered");
+        Rc::new(move || {
+            me.cancel_custom_animation(&a);
+            if let Some(f) = &after {
+                f();
+            }
+        })
+    }
+
+    pub fn play_custom_animation(&self, self_: &ActorRef, name: &str, after: Option<Rc<dyn Fn()>>) {
+        self.default_animation.play_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
+    }
+
+    pub fn play_custom_animation_repeating(&self, self_: &ActorRef, name: &str) {
+        self.default_animation.play_repeating(&self.normalize_sequence(self_, name));
+    }
+
+    pub fn play_custom_animation_backwards(&self, self_: &ActorRef, name: &str, after: Option<Rc<dyn Fn()>>) {
+        self.default_animation.play_backwards_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
+    }
+
+    pub fn cancel_custom_animation(&self, self_: &ActorRef) {
+        if let BodyVariant::ResourceLevel { .. } = self.variant {
+            self.configure_animation(self_);
+            return;
+        }
+        self.default_animation.play_repeating(&self.normalize_sequence(self_, &self.info.sequence));
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithMakeAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub sequence: String,
+    pub condition: Option<String>,
+    pub body_names: Vec<String>,
+}
+
+impl Default for WithMakeAnimationInfo {
+    fn default() -> Self {
+        WithMakeAnimationInfo {
+            instance_name: None,
+            sequence: "make".into(),
+            condition: None,
+            body_names: vec!["body".into()],
+        }
+    }
+}
+
+pub struct WithMakeAnimation {
+    info: Rc<WithMakeAnimationInfo>,
+    wsbs: Vec<Rc<WithSpriteBody>>,
+    skip_make_animation: bool,
+    token: Rc<Cell<i32>>,
+}
+
+register_traits!(WithMakeAnimation: INotifyCreated, INotifyDeployTriggered);
+info_impl!(WithMakeAnimationInfo => |info, init| {
+    let wsbs = init.self_.traits_implementing::<WithSpriteBody>().into_iter().filter(|w| info.body_names.contains(&w.info.name)).collect();
+    Some(Rc::new(WithMakeAnimation {
+        skip_make_animation: init.inits.contains::<SkipMakeAnimsInit>(),
+        info,
+        wsbs,
+        token: Rc::new(Cell::new(INVALID_CONDITION_TOKEN)),
+    }))
+});
+
+impl INotifyCreated for WithMakeAnimation {
+    fn created(&self, self_: &ActorRef) {
+        if !self.skip_make_animation {
+            self.forward(self_, Rc::new(|| {}));
+        }
+    }
+}
+
+impl WithMakeAnimation {
+    fn first_enabled(&self) -> Option<Rc<WithSpriteBody>> {
+        self.wsbs.iter().find(|w| !w.is_trait_disabled()).cloned()
+    }
+
+    fn grant(&self, self_: &ActorRef) {
+        if self.token.get() == INVALID_CONDITION_TOKEN {
+            self.token.set(self_.grant_condition(self.info.condition.as_deref().unwrap_or("")));
+        }
+    }
+
+    fn completion(&self, self_: &ActorRef, on_complete: Rc<dyn Fn()>) -> Rc<dyn Fn()> {
+        let (a, token) = (self_.clone(), self.token.clone());
+        Rc::new(move || {
+            let (a2, token, on_complete) = (a.clone(), token.clone(), on_complete.clone());
+            a.world().add_frame_end_task(Box::new(move |_| {
+                if token.get() != INVALID_CONDITION_TOKEN {
+                    token.set(a2.revoke_condition(token.get()));
+                }
+                on_complete();
+            }));
+        })
+    }
+
+    pub fn forward(&self, self_: &ActorRef, on_complete: Rc<dyn Fn()>) {
+        self.grant(self_);
+        let Some(wsb) = self.first_enabled() else { return };
+        wsb.play_custom_animation(self_, &self.info.sequence, Some(self.completion(self_, on_complete)));
+    }
+
+    pub fn reverse(&self, self_: &ActorRef, on_complete: Rc<dyn Fn()>) {
+        self.grant(self_);
+        let Some(wsb) = self.first_enabled() else { return };
+        wsb.play_custom_animation_backwards(self_, &self.info.sequence, Some(self.completion(self_, on_complete)));
+    }
+
+    /// `Reverse(self, activity, queued)`.
+    pub fn reverse_then_activity(&self, self_: &ActorRef, activity: ActivityRef, queued: bool) {
+        let (a, wsb, seq, token, cond) = (self_.clone(), self.first_enabled(), self.info.sequence.clone(), self.token.clone(), self.info.condition.clone());
+        self.reverse(
+            self_,
+            Rc::new(move || {
+                if let Some(w) = &wsb {
+                    w.default_animation.play_fetch_index(&seq, Rc::new(|| 0));
+                }
+                token.set(a.grant_condition(cond.as_deref().unwrap_or("")));
+                a.queue_activity_queued(queued, activity.clone());
+            }),
+        );
+    }
+}
+
+impl INotifyDeployTriggered for WithMakeAnimation {
+    fn deploy(&self, self_: &ActorRef, skip_make_anim: bool) {
+        let notify = self_.traits_implementing::<dyn INotifyDeployComplete>();
+        if skip_make_anim {
+            for n in &notify {
+                n.finished_deploy(self_);
+            }
+            return;
+        }
+        let notified = Rc::new(Cell::new(false));
+        for wsb in &self.wsbs {
+            if wsb.is_trait_disabled() {
+                continue;
+            }
+            let (a, notified, notify) = (self_.clone(), notified.clone(), notify.clone());
+            wsb.play_custom_animation(
+                self_,
+                &self.info.sequence,
+                Some(Rc::new(move || {
+                    if notified.get() {
+                        return;
+                    }
+                    for n in &notify {
+                        n.finished_deploy(&a);
+                        notified.set(true);
+                    }
+                })),
+            );
+        }
+    }
+
+    fn undeploy(&self, self_: &ActorRef, skip_make_anim: bool) {
+        let notify = self_.traits_implementing::<dyn INotifyDeployComplete>();
+        if skip_make_anim {
+            for n in &notify {
+                n.finished_undeploy(self_);
+            }
+            return;
+        }
+        let notified = Rc::new(Cell::new(false));
+        for wsb in &self.wsbs {
+            if wsb.is_trait_disabled() {
+                continue;
+            }
+            let (a, notified, notify) = (self_.clone(), notified.clone(), notify.clone());
+            wsb.play_custom_animation_backwards(
+                self_,
+                &self.info.sequence,
+                Some(Rc::new(move || {
+                    if notified.get() {
+                        return;
+                    }
+                    for n in &notify {
+                        n.finished_undeploy(&a);
+                        notified.set(true);
+                    }
+                })),
+            );
+        }
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithBuildingPlacedAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub sequence: String,
+    pub body: String,
+}
+
+impl Default for WithBuildingPlacedAnimationInfo {
+    fn default() -> Self {
+        WithBuildingPlacedAnimationInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sequence: "build".into(),
+            body: "body".into(),
+        }
+    }
+}
+
+fn body_named(self_: &ActorRef, name: &str) -> Rc<WithSpriteBody> {
+    self_
+        .traits_implementing::<WithSpriteBody>()
+        .into_iter()
+        .find(|w| w.info.name == name)
+        .unwrap_or_else(|| panic!("{self_:?} has no sprite body named {name}"))
+}
+
+pub struct WithBuildingPlacedAnimation {
+    info: Rc<WithBuildingPlacedAnimationInfo>,
+    state: ConditionalState,
+    wsb: Rc<WithSpriteBody>,
+}
+
+register_traits!(WithBuildingPlacedAnimation: crate::interfaces::INotifyBuildingPlaced, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithBuildingPlacedAnimationInfo => |info, init| {
+    let state = ConditionalState::new(&info.base);
+    let wsb = body_named(&init.self_, &info.body);
+    Some(Rc::new(WithBuildingPlacedAnimation { info, state, wsb }))
+});
+
+impl ConditionalHooks for WithBuildingPlacedAnimation {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+    fn trait_disabled(&self, self_: &ActorRef) {
+        self.wsb.cancel_custom_animation(self_);
+    }
+}
+
+conditional_plumbing!(WithBuildingPlacedAnimation);
+
+impl INotifyCreated for WithBuildingPlacedAnimation {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl crate::interfaces::INotifyBuildingPlaced for WithBuildingPlacedAnimation {
+    fn building_placed(&self, self_: &ActorRef) {
+        if !self.state.is_trait_disabled() {
+            self.wsb.play_custom_animation(self_, &self.info.sequence, None);
+        }
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithDockingAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub dock_sequence: String,
+    pub dock_loop_sequence: String,
+}
+
+impl Default for WithDockingAnimationInfo {
+    fn default() -> Self {
+        WithDockingAnimationInfo {
+            instance_name: None,
+            dock_sequence: "dock".into(),
+            dock_loop_sequence: "dock-loop".into(),
+        }
+    }
+}
+
+pub struct WithDockingAnimation {
+    info: Rc<WithDockingAnimationInfo>,
+    wsb: Rc<WithSpriteBody>,
+}
+
+register_traits!(WithDockingAnimation: IDockClientBody);
+info_impl!(WithDockingAnimationInfo => |info, init| {
+    let wsb = init.self_.trait_::<WithSpriteBody>();
+    Some(Rc::new(WithDockingAnimation { info, wsb }))
+});
+
+impl IDockClientBody for WithDockingAnimation {
+    fn play_dock_animation(&self, self_: &ActorRef, after: Rc<dyn Fn()>) {
+        let (w, a, l) = (self.wsb.clone(), self_.clone(), self.info.dock_loop_sequence.clone());
+        self.wsb.play_custom_animation(
+            self_,
+            &self.info.dock_sequence,
+            Some(Rc::new(move || {
+                w.play_custom_animation_repeating(&a, &l);
+                after();
+            })),
+        );
+    }
+
+    fn play_reverse_dock_animation(&self, self_: &ActorRef, after: Rc<dyn Fn()>) {
+        self.wsb.play_custom_animation_backwards(self_, &self.info.dock_sequence, Some(after));
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithHarvestAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub harvest_sequence: String,
+    pub body: String,
+}
+
+impl Default for WithHarvestAnimationInfo {
+    fn default() -> Self {
+        WithHarvestAnimationInfo {
+            instance_name: None,
+            harvest_sequence: "harvest".into(),
+            body: "body".into(),
+        }
+    }
+}
+
+pub struct WithHarvestAnimation {
+    info: Rc<WithHarvestAnimationInfo>,
+    wsb: Rc<WithSpriteBody>,
+}
+
+register_traits!(WithHarvestAnimation: INotifyHarvestAction);
+info_impl!(WithHarvestAnimationInfo => |info, init| {
+    let wsb = body_named(&init.self_, &info.body);
+    Some(Rc::new(WithHarvestAnimation { info, wsb }))
+});
+
+impl INotifyHarvestAction for WithHarvestAnimation {
+    fn harvested(&self, self_: &ActorRef, _resource_type: &str) {
+        let sequence = self.wsb.normalize_sequence(self_, &self.info.harvest_sequence);
+        let anim = &self.wsb.default_animation;
+        if anim.has_sequence(&sequence) && anim.current_sequence().is_none_or(|s| s.name != sequence) {
+            self.wsb.play_custom_animation(self_, &sequence, None);
+        }
+    }
+
+    fn moving_to_resources(&self, _self_: &ActorRef, _target_cell: rustora_core::world_types::CPos) {}
+
+    fn movement_cancelled(&self, _self_: &ActorRef) {}
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithIdleOverlayInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: PausableConditionalTraitInfo,
+    pub image: Option<String>,
+    pub start_sequence: Option<String>,
+    pub sequence: String,
+    pub offset: WVec,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
+    pub is_decoration: bool,
+}
+
+impl Default for WithIdleOverlayInfo {
+    fn default() -> Self {
+        WithIdleOverlayInfo {
+            instance_name: None,
+            base: PausableConditionalTraitInfo::default(),
+            image: None,
+            start_sequence: None,
+            sequence: "idle-overlay".into(),
+            offset: WVec::ZERO,
+            palette: None,
+            is_player_palette: false,
+            is_decoration: false,
+        }
+    }
+}
+
+pub struct WithIdleOverlay {
+    state: ConditionalState,
+    overlay: Rc<Animation>,
+}
+
+register_traits!(WithIdleOverlay: INotifyDamageStateChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithIdleOverlayInfo => |info, init| {
+    let self_ = init.self_.clone();
+    let w = init.world();
+    let rs = self_.trait_::<RenderSprites>();
+    let body = self_.trait_::<BodyOrientation>();
+    let facing = self_.trait_or_default::<dyn IFacing>();
+    let image = info.image.clone().unwrap_or_else(|| rs.get_image(&self_));
+    let state = ConditionalState::new_pausable(&info.base);
+    let facing_func: Option<Rc<dyn Fn() -> WAngle>> = facing.map(|f| {
+        let b = body.clone();
+        Rc::new(move || b.quantize_facing(f.facing())) as Rc<dyn Fn() -> WAngle>
+    });
+    let t = Rc::new_cyclic(|me: &std::rc::Weak<WithIdleOverlay>| {
+        let m = me.clone();
+        let paused: Rc<dyn Fn() -> bool> = Rc::new(move || m.upgrade().is_some_and(|t| t.state.is_trait_paused()));
+        WithIdleOverlay { state, overlay: Animation::new(w.map().sequences().clone(), &image, facing_func, Some(paused)) }
+    });
+    t.overlay.is_decoration.set(info.is_decoration);
+    let ds = get_damage_state(&self_);
+    match &info.start_sequence {
+        Some(start) => {
+            let (o, a, seq) = (t.overlay.clone(), self_.clone(), info.sequence.clone());
+            t.overlay.play_then(
+                &normalize_sequence(&t.overlay, ds, start),
+                Some(Rc::new(move || o.play_repeating(&normalize_sequence(&o, get_damage_state(&a), &seq)))),
+            );
+        }
+        None => t.overlay.play_repeating(&normalize_sequence(&t.overlay, ds, &info.sequence)),
+    }
+    let (b, a, off) = (body.clone(), self_.clone(), info.offset);
+    let weak = Rc::downgrade(&t);
+    rs.add(
+        AnimationWithOffset {
+            animation: t.overlay.clone(),
+            offset_func: Some(Rc::new(move || b.local_to_world(off.rotate(&b.quantize_orientation(a.orientation()))))),
+            disable_func: Some(Rc::new(move || weak.upgrade().is_some_and(|t| t.state.is_trait_disabled()))),
+            zoffset_func: None,
+        },
+        info.palette.clone(),
+        info.is_player_palette,
+    );
+    Some(t)
+});
+
+conditional_simple!(WithIdleOverlay);
+
+impl INotifyDamageStateChanged for WithIdleOverlay {
+    fn damage_state_changed(&self, _self_: &ActorRef, e: &AttackInfo) {
+        if let Some(s) = self.overlay.current_sequence() {
+            self.overlay.replace_anim(&normalize_sequence(&self.overlay, e.damage_state, &s.name));
+        }
+    }
+}
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct BodyOrientationInfo {

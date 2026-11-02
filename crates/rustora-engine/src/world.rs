@@ -50,8 +50,9 @@ pub struct World {
     paused: Cell<bool>,
     is_game_over: Cell<bool>,
     pub disposing: Cell<bool>,
-    sequences: RefCell<Vec<rustora_core::miniyaml::MiniYamlNode>>,
     pub all_players_mask: Cell<u64>,
+    actor_added: RefCell<Vec<Rc<dyn Fn(&ActorRef)>>>,
+    actor_removed: RefCell<Vec<Rc<dyn Fn(&ActorRef)>>>,
     /// Cache for the actor map trait of the mod crate.
     pub actor_map_slot: OnceCell<Rc<dyn std::any::Any>>,
     is_replay: Cell<bool>,
@@ -90,8 +91,9 @@ impl World {
             paused: Cell::new(false),
             is_game_over: Cell::new(false),
             disposing: Cell::new(false),
-            sequences: RefCell::new(Vec::new()),
             all_players_mask: Cell::new(0),
+            actor_added: RefCell::new(Vec::new()),
+            actor_removed: RefCell::new(Vec::new()),
             actor_map_slot: OnceCell::new(),
             is_replay: Cell::new(false),
         });
@@ -124,33 +126,23 @@ impl World {
         self.world_actor.get().expect("world actor created")
     }
 
-    /// Merged sprite sequence definitions (images with their sequences).
-    pub fn set_sequences(&self, nodes: Vec<rustora_core::miniyaml::MiniYamlNode>) {
-        *self.sequences.borrow_mut() = nodes;
-    }
-
     /// `Facings` of a sprite sequence (`interpolatedFacings ?? facings`, always positive).
     pub fn sequence_facings(&self, image: &str, sequence: &str) -> Option<i32> {
-        let seqs = self.sequences.borrow();
-        let img = seqs.iter().find(|n| n.key == image)?;
-        let defaults = img.value.nodes.iter().find(|n| n.key == "Defaults");
-        let seq = img.value.nodes.iter().find(|n| n.key == sequence)?;
-        let field = |k: &str| -> Option<i32> {
-            seq.value
-                .nodes
-                .iter()
-                .find(|n| n.key == k)
-                .or_else(|| defaults.and_then(|d| d.value.nodes.iter().find(|n| n.key == k)))
-                .and_then(|n| rustora_core::world_types::parse_i32(n.value.value_str()))
-        };
-        if let Some(i) = field("InterpolatedFacings") {
-            return Some(i);
+        let seqs = self.map.sequences();
+        if !seqs.has_image(image) || !seqs.has_sequence(image, sequence) {
+            return None;
         }
-        Some(field("Facings").unwrap_or(1).abs())
+        Some(seqs.get_sequence(image, sequence).facings_or_interpolated())
     }
 
     pub fn set_world_owner(&self, p: &PlayerRef) {
         self.world_actor().set_owner(Some(p.clone()));
+    }
+
+    /// Subscribes to both `ActorAdded` and `ActorRemoved`.
+    pub fn on_actor_changed(&self, f: Rc<dyn Fn(&ActorRef)>) {
+        self.actor_added.borrow_mut().push(f.clone());
+        self.actor_removed.borrow_mut().push(f);
     }
 
     pub fn order_validators(&self) -> Vec<Rc<dyn IValidateOrder>> {
@@ -238,6 +230,10 @@ impl World {
     pub fn add(&self, a: &ActorRef) {
         a.set_in_world(true);
         self.actors.borrow_mut().insert(a.id, a.clone());
+        let l = self.actor_added.borrow().clone();
+        for f in l {
+            f(a);
+        }
         for t in a.traits_implementing::<dyn INotifyAddedToWorld>() {
             t.added_to_world(a);
         }
@@ -246,6 +242,10 @@ impl World {
     pub fn remove(&self, a: &ActorRef) {
         a.set_in_world(false);
         self.actors.borrow_mut().remove(&a.id);
+        let l = self.actor_removed.borrow().clone();
+        for f in l {
+            f(a);
+        }
         for t in a.traits_implementing::<dyn INotifyRemovedFromWorld>() {
             t.removed_from_world(a);
         }

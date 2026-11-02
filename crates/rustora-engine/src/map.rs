@@ -127,6 +127,7 @@ pub struct Map {
     custom_terrain_listeners: RefCell<Vec<Rc<dyn Fn(CPos)>>>,
     tiles_by_distance: Vec<Vec<CVec>>,
     all_edge_cells: Vec<CPos>,
+    sequences: std::cell::OnceCell<Rc<crate::sequence::SequenceSet>>,
 }
 
 fn isqrt_ceil(n: i32) -> i32 {
@@ -245,6 +246,7 @@ impl Map {
             custom_terrain_listeners: RefCell::new(Vec::new()),
             tiles_by_distance: create_tiles_by_distance(),
             all_edge_cells: edge_cells(&bounds),
+            sequences: std::cell::OnceCell::new(),
             terrain,
             title: field("Title").unwrap_or_default(),
             uid: package.uid.clone(),
@@ -257,6 +259,15 @@ impl Map {
             grid,
             package,
         })
+    }
+
+    pub fn set_sequences(&self, s: Rc<crate::sequence::SequenceSet>) {
+        let _ = self.sequences.set(s);
+    }
+
+    /// `Map.Sequences`.
+    pub fn sequences(&self) -> &Rc<crate::sequence::SequenceSet> {
+        self.sequences.get().expect("sequences loaded")
     }
 
     pub fn contains_ppos(&self, p: PPos) -> bool {

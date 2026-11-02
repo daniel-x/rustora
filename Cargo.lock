@@ -297,6 +297,7 @@ dependencies = [
  "log",
  "rustora-core",
  "rustora-derive",
+ "rustora-formats",
  "rustora-fs",
  "rustora-game",
  "rustora-net",

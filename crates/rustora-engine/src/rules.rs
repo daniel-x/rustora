@@ -4,6 +4,8 @@
 //! Port of `GameRules/Ruleset.cs` (actors part) and the trait info registry.
 
 use std::collections::HashMap;
+
+use indexmap::IndexMap;
 use std::rc::Rc;
 
 use rustora_core::miniyaml::MiniYamlNode;
@@ -51,13 +53,13 @@ macro_rules! load_info {
 }
 
 pub struct Ruleset {
-    actors: HashMap<String, Rc<ActorInfo>>,
+    actors: IndexMap<String, Rc<ActorInfo>>,
 }
 
 impl Ruleset {
     /// Builds actor infos from merged rule nodes; abstract (`^`) definitions are skipped.
     pub fn load(registry: &TraitRegistry, rules: &[MiniYamlNode]) -> Result<Ruleset, String> {
-        let mut actors = HashMap::new();
+        let mut actors = IndexMap::new();
         for n in rules {
             if n.key.starts_with('^') {
                 continue;

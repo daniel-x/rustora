@@ -556,13 +556,13 @@ macro_rules! field_flags {
         impl $crate::fieldloader::FieldValue for $t {
             const TYPE_NAME: &'static str = stringify!($t);
             fn parse(field: &str, value: Option<&str>, _yaml: Option<&$crate::miniyaml::MiniYaml>) -> Result<Self, $crate::fieldloader::LoadError> {
-                let mut bits = 0;
+                let mut bits: i32 = 0;
                 for part in value.unwrap_or("").split(',') {
                     let s = part.trim();
                     let mut found = false;
                     $(if s.eq_ignore_ascii_case(stringify!($v)) { bits |= $t::$v.0; found = true; })*
                     if !found {
-                        if let Ok(n) = s.parse() { bits |= n; } else { return $crate::fieldloader::invalid(value, stringify!($t), field); }
+                        if let Ok(n) = s.parse::<i32>() { bits |= n; } else { return $crate::fieldloader::invalid(value, stringify!($t), field); }
                     }
                 }
                 Ok($t(bits))

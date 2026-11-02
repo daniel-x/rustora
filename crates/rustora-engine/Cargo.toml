@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 rustora-core = { path = "../rustora-core" }
 rustora-derive = { path = "../rustora-derive" }
+rustora-formats = { path = "../rustora-formats" }
 rustora-fs = { path = "../rustora-fs" }
 rustora-game = { path = "../rustora-game" }
 rustora-net = { path = "../rustora-net" }

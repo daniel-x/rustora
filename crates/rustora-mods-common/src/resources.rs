@@ -21,6 +21,7 @@ use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 use crate::building::BuildingInfluence;
+use crate::interfaces::ISeedableResource;
 use crate::util;
 
 pub fn register(r: &mut TraitRegistry) {
@@ -291,7 +292,7 @@ pub struct SeedsResource {
     ticks: Cell<i32>,
 }
 
-register_traits!(SeedsResource: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(SeedsResource: ITick, ISeedableResource, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(SeedsResourceInfo => |info, init| {
     let state = ConditionalState::new(&info.base);
     let resource_layer = init.world().world_actor().trait_::<ResourceLayer>();
@@ -341,8 +342,8 @@ impl ITick for SeedsResource {
     }
 }
 
-impl SeedsResource {
-    pub fn seed(&self, self_: &ActorRef) {
+impl ISeedableResource for SeedsResource {
+    fn seed(&self, self_: &ActorRef) {
         let w = self_.world();
         let ty = self.info.resource_type.as_str();
         let mut p = self_.location();

@@ -133,3 +133,76 @@ pub trait INotifyTransform {
     fn on_transform(&self, self_: &ActorRef);
     fn after_transform(&self, to_actor: &ActorRef);
 }
+
+pub trait ITechTreePrerequisite {
+    fn provides_prerequisites(&self) -> Vec<String>;
+}
+
+pub trait ITechTreeElement {
+    fn prerequisites_available(&self, key: &str);
+    fn prerequisites_unavailable(&self, key: &str);
+    fn prerequisites_item_hidden(&self, key: &str);
+    fn prerequisites_item_visible(&self, key: &str);
+}
+
+pub trait INotifyProduction {
+    fn unit_produced(&self, self_: &ActorRef, other: &ActorRef, exit: CPos);
+}
+
+pub trait INotifyOtherProduction {
+    fn unit_produced_by_other(&self, self_: &ActorRef, producer: &ActorRef, produced: &ActorRef, production_type: &str, init: &rustora_engine::actor_init::ActorInits);
+}
+
+pub trait INotifyBuildingPlaced {
+    fn building_placed(&self, self_: &ActorRef);
+}
+
+pub trait INotifyPowerLevelChanged {
+    fn power_level_changed(&self, self_: &ActorRef);
+}
+
+pub trait IPowerModifier {
+    fn get_power_modifier(&self) -> i32;
+}
+
+pub trait IProductionCostModifierInfo {
+    fn get_production_cost_modifier(&self, tech_tree: &crate::production::TechTree, queue: &str) -> i32;
+}
+
+pub trait IProductionTimeModifierInfo {
+    fn get_production_time_modifier(&self, tech_tree: &crate::production::TechTree, queue: &str) -> i32;
+}
+
+pub trait ISeedableResource {
+    fn seed(&self, self_: &ActorRef);
+}
+
+pub trait INotifyLineBuildSegmentsChanged {
+    fn segment_added(&self, self_: &ActorRef, segment: &ActorRef);
+    fn segment_removed(&self, self_: &ActorRef, segment: &ActorRef);
+}
+
+pub trait INotifyDeployTriggered {
+    fn deploy(&self, self_: &ActorRef, skip_make_anim: bool);
+    fn undeploy(&self, self_: &ActorRef, skip_make_anim: bool);
+}
+
+pub trait INotifyDeployComplete {
+    fn finished_deploy(&self, self_: &ActorRef);
+    fn finished_undeploy(&self, self_: &ActorRef);
+}
+
+pub trait IDockClientBody {
+    fn play_dock_animation(&self, self_: &ActorRef, after: std::rc::Rc<dyn Fn()>);
+    fn play_reverse_dock_animation(&self, self_: &ActorRef, after: std::rc::Rc<dyn Fn()>);
+}
+
+pub trait INotifyHarvestAction {
+    fn harvested(&self, self_: &ActorRef, resource_type: &str);
+    fn moving_to_resources(&self, self_: &ActorRef, target_cell: CPos);
+    fn movement_cancelled(&self, self_: &ActorRef);
+}
+
+pub trait INotifyCapture {
+    fn on_capture(&self, self_: &ActorRef, captor: &ActorRef, old_owner: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef, types: BitSet<crate::capture::CaptureType>);
+}
