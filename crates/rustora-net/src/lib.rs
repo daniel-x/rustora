@@ -3,11 +3,14 @@
 
 //! OpenRA network protocol: order packets, replays and the lobby session.
 
+pub mod beacon;
 pub mod binary;
+pub mod game_server;
 pub mod handshake;
 pub mod order;
 pub mod replay;
 pub mod session;
+pub mod web;
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetError {

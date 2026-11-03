@@ -751,7 +751,10 @@ impl IBotTick for MinelayerBotModule {
         let mut position = CPos::ZERO;
         let mut use_favorite = false;
         let mut halfway = false;
-        while let Some(&p) = self.conflict_positions.borrow().first() {
+        loop {
+            let Some(p) = self.conflict_positions.borrow().first().copied() else {
+                break;
+            };
             position = p;
             let (invalid, enemy) = self.has_invalid_actor_in_circle(w.map().center_of_cell(p), away);
             if invalid {

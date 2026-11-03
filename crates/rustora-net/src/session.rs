@@ -210,7 +210,8 @@ fn fmt_bool(b: bool) -> String {
     if b { "True" } else { "False" }.to_string()
 }
 
-fn fmt_color(c: Color) -> String {
+/// `FieldSaver.FormatValue` of a color.
+pub fn fmt_color(c: Color) -> String {
     if c.a() == 255 {
         format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
     } else {

@@ -35,6 +35,13 @@ pub enum Event {
     Disconnect {
         player_index: i32,
     },
+    /// The outcome of a profile lookup: the profile, or why authentication failed.
+    Authenticated {
+        player_index: i32,
+        profile: Result<crate::auth::PlayerProfile, String>,
+    },
+    /// A fluent message to all clients, from the master server thread.
+    MasterServerMessage(String),
 }
 
 /// The server thread's handle of a connection.

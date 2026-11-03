@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The game server (`OpenRA.Game/Server/Server.cs`) of type `ServerType.Dedicated`, with the `PlayerPinger` trait.
-//! Not ported yet: player authentication, replay recording, NAT port forwarding and master server advertising.
+//! Not ported yet: replay recording and game saves, which C# dedicated servers do not enable by default.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
@@ -25,8 +25,11 @@ use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResp
 use rustora_net::order::{RawOrder, SYNC_HASH_ORDER_LENGTH, order_type};
 use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Session};
 
+use crate::auth::{PlayerProfile, check_profile};
 use crate::connection::{Connection, Event, run_time};
+use crate::master_server::MasterServerPinger;
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
+use crate::nat::PortForward;
 use crate::order_buffer::OrderBuffer;
 use crate::vote_kick::VoteKickTracker;
 
@@ -65,6 +68,14 @@ pub struct ServerSettings {
     pub enable_vote_kick: bool,
     pub vote_kick_timer: u64,
     pub vote_kicker_cooldown: u64,
+    pub advertise_online: bool,
+    pub server_advertise_url: String,
+    pub require_authentication: bool,
+    pub profile_id_whitelist: Vec<i32>,
+    pub profile_id_blacklist: Vec<i32>,
+    pub player_profile_url: String,
+    pub discover_nat_devices: bool,
+    pub nat_port_mapping_lifetime: u32,
 }
 
 impl Default for ServerSettings {
@@ -88,6 +99,14 @@ impl Default for ServerSettings {
             enable_vote_kick: true,
             vote_kick_timer: 30000,
             vote_kicker_cooldown: 120000,
+            advertise_online: false,
+            server_advertise_url: rustora_net::web::SERVER_ADVERTISE_URL.to_string(),
+            require_authentication: false,
+            profile_id_whitelist: Vec::new(),
+            profile_id_blacklist: Vec::new(),
+            player_profile_url: rustora_net::web::PLAYER_PROFILE_URL.to_string(),
+            discover_nat_devices: false,
+            nat_port_mapping_lifetime: 36000,
         }
     }
 }
@@ -253,6 +272,9 @@ pub struct Server {
     pub temp_bans: Vec<String>,
     pub map_pool: IndexSet<String>,
     pub vote_kick: VoteKickTracker,
+    pub(crate) master_server: MasterServerPinger,
+    pending_authentication: HashMap<i32, Client>,
+    port_forward: Option<PortForward>,
     world_players: Vec<Option<WorldPlayer>>,
     sync_for_frame: HashMap<i32, Vec<u8>>,
     last_defeat_state_frame: i32,
@@ -348,6 +370,14 @@ impl Server {
             ..Default::default()
         };
         map.load_map_settings(&mut lobby);
+        let master_server = MasterServerPinger::start(&mut random);
+        let port_forward = if settings.discover_nat_devices {
+            PortForward::try_forward(settings.listen_port, settings.nat_port_mapping_lifetime)
+                .inspect_err(|e| println!("Port forwarding failed: {e}"))
+                .ok()
+        } else {
+            None
+        };
         println!("Initial mod: {}", game_mod.data.manifest.id);
         println!("Initial map: {}", map.uid);
 
@@ -363,6 +393,9 @@ impl Server {
             temp_bans: Vec::new(),
             map_pool,
             vote_kick: VoteKickTracker::default(),
+            master_server,
+            pending_authentication: HashMap::new(),
+            port_forward,
             world_players: Vec::new(),
             sync_for_frame: HashMap::new(),
             last_defeat_state_frame: 0,
@@ -390,6 +423,7 @@ impl Server {
             }
             self.pinger_tick();
             self.vote_kick_tick();
+            self.master_server_tick();
             if self.state == ServerState::GameStarted {
                 self.send_tick_scales();
                 if self.conns.is_empty() {
@@ -397,6 +431,10 @@ impl Server {
                     self.state = ServerState::ShuttingDown;
                 }
             }
+        }
+        self.master_server_shutdown();
+        if let Some(Err(e)) = self.port_forward.take().map(|p| p.remove()) {
+            println!("Port removal failed: {e}");
         }
         self.accepting.store(false, Ordering::Relaxed);
         for t in self.listener_threads.drain(..) {
@@ -414,6 +452,8 @@ impl Server {
             Event::Packet { player_index, frame, data } => self.receive_orders(player_index, frame, &data),
             Event::Ping { player_index, history, .. } => self.receive_ping(player_index, &history),
             Event::Disconnect { player_index } => self.drop_client(player_index),
+            Event::Authenticated { player_index, profile } => self.finish_authentication(player_index, profile),
+            Event::MasterServerMessage(key) => self.send_fluent_message(&key, &[]),
         }
     }
 
@@ -479,7 +519,7 @@ impl Server {
         self.drop_client(player_index);
     }
 
-    /// `ValidateClient`. Fingerprints are ignored as no player database is queried yet.
+    /// `ValidateClient`.
     fn validate_client(&mut self, player_index: i32, data: &str, name: &str) {
         if self.state == ServerState::GameStarted {
             return self.reject(
@@ -549,7 +589,86 @@ impl Server {
             state: ClientState::Invalid,
             ..Default::default()
         };
-        self.complete_connection(player_index, client);
+        let (fingerprint, signature) = (
+            handshake.fingerprint.unwrap_or_default(),
+            handshake.auth_signature.unwrap_or_default(),
+        );
+        if !fingerprint.is_empty() && !signature.is_empty() {
+            self.start_authentication(player_index, client, fingerprint, signature);
+        } else if self.authentication_required() {
+            self.reject(
+                player_index,
+                "ServerError",
+                "notification-requires-authentication",
+                "not authenticated",
+            );
+        } else {
+            self.complete_connection(player_index, client);
+        }
+    }
+
+    pub(crate) fn authentication_required(&self) -> bool {
+        self.settings.require_authentication || !self.settings.profile_id_whitelist.is_empty()
+    }
+
+    /// Looks up the player profile on a thread; [`Event::Authenticated`] continues on the server thread.
+    fn start_authentication(&mut self, player_index: i32, mut client: Client, fingerprint: String, signature: String) {
+        let Some(token) = self.conn(player_index).map(|c| c.auth_token.clone()) else {
+            return;
+        };
+        client.fingerprint = Some(fingerprint.clone());
+        self.pending_authentication.insert(player_index, client);
+        let url = format!("{}{fingerprint}", self.settings.player_profile_url);
+        let events = self.events_tx.clone();
+        std::thread::spawn(move || {
+            let profile = rustora_net::web::get(&url).and_then(|yaml| check_profile(&yaml, &token, &signature));
+            let _ = events.send(Event::Authenticated { player_index, profile });
+        });
+    }
+
+    fn finish_authentication(&mut self, player_index: i32, profile: Result<PlayerProfile, String>) {
+        let Some(mut client) = self.pending_authentication.remove(&player_index) else {
+            return;
+        };
+        if self.conn(player_index).is_none() {
+            return;
+        }
+        let profile_id = match &profile {
+            Ok(p) => {
+                println!(
+                    "Client {player_index} authenticated as {} (UID {})",
+                    p.profile_name.as_deref().unwrap_or(""),
+                    p.profile_id
+                );
+                Some(p.profile_id)
+            }
+            Err(e) => {
+                println!("Client {player_index} failed to authenticate: {e}");
+                client.fingerprint = None;
+                None
+            }
+        };
+        let settings = &self.settings;
+        let blacklisted = profile_id.is_some_and(|id| settings.profile_id_blacklist.contains(&id));
+        let not_whitelisted =
+            !settings.profile_id_whitelist.is_empty() && profile_id.is_none_or(|id| !settings.profile_id_whitelist.contains(&id));
+        if profile_id.is_none() && self.authentication_required() {
+            self.reject(
+                player_index,
+                "ServerError",
+                "notification-requires-authentication",
+                "not authenticated",
+            );
+        } else if blacklisted || not_whitelisted {
+            self.reject(
+                player_index,
+                "ServerError",
+                "notification-no-permission-to-join",
+                "not permitted by the profile lists",
+            );
+        } else {
+            self.complete_connection(player_index, client);
+        }
     }
 
     fn complete_connection(&mut self, player_index: i32, mut client: Client) {
@@ -754,6 +873,14 @@ impl Server {
         false
     }
 
+    pub(crate) fn run_time(&self) -> u64 {
+        run_time(self.start)
+    }
+
+    pub(crate) fn events_sender(&self) -> Sender<Event> {
+        self.events_tx.clone()
+    }
+
     fn broadcast_order(&mut self, order: &str, text: &str) {
         self.dispatch_server_orders_to_clients(0, &RawOrder::from_target_string(order, text, true).serialize());
     }
@@ -919,6 +1046,7 @@ impl Server {
 
     /// `SyncLobbyInfo`.
     pub fn sync_lobby_info(&mut self) {
+        self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncInfo", &self.lobby.serialize());
         }
@@ -926,6 +1054,7 @@ impl Server {
 
     /// `SyncLobbyClients`.
     pub fn sync_lobby_clients(&mut self) {
+        self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbyClients", &self.lobby.serialize_clients());
             self.ping_updated = Instant::now();
@@ -934,6 +1063,7 @@ impl Server {
 
     /// `SyncLobbySlots`.
     pub fn sync_lobby_slots(&mut self) {
+        self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbySlots", &self.lobby.serialize_slots());
         }
@@ -941,6 +1071,7 @@ impl Server {
 
     /// `SyncLobbyGlobalSettings`.
     pub fn sync_lobby_global_settings(&mut self) {
+        self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbyGlobalSettings", &self.lobby.serialize_global_settings());
         }
@@ -979,6 +1110,7 @@ impl Server {
             .cloned()
             .expect("mod defines the default game speed");
         let players = self.validated_conn_indices();
+        self.master_server_changed();
         self.order_buffer = Some(OrderBuffer::start(speed.timestep, players.clone()));
         self.state = ServerState::GameStarted;
         self.accepting.store(false, Ordering::Relaxed);

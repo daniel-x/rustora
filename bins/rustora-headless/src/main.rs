@@ -10,6 +10,8 @@
 //! `map-uid <engine-dir> <map>` prints the uid of a map, given by uid or file name.
 //! `join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>]`
 //! joins a server. With bots it hosts them like the C# `Harness.Bots`, without them it spectates.
+//! `lan-probe <seconds> [host:port]` lists the LAN games that answer, broadcasting unless a beacon address is given.
+//! `server-list <mod-version>` lists the RA games of the master server.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -252,11 +254,55 @@ fn join(args: &[String]) {
     }
 }
 
+fn print_game(g: &rustora_net::game_server::GameServer) {
+    let text = |s: &Option<String>| s.clone().unwrap_or_default();
+    println!(
+        "{} {} state={} map={} {}@{} players={} bots={} spectators={} clients={}",
+        text(&g.address),
+        text(&g.name),
+        g.state,
+        text(&g.map),
+        text(&g.mod_id),
+        text(&g.version),
+        g.players,
+        g.bots,
+        g.spectators,
+        g.clients.len()
+    );
+}
+
+/// Waits `seconds` for LAN beacons, then prints their games.
+fn lan_probe(seconds: u64, target: Option<&String>) {
+    use rustora_net::beacon::{LAN_GAME_BEACON, Probe};
+    let probe = match target {
+        Some(t) => Probe::start_to(LAN_GAME_BEACON, t.parse().expect("beacon address")),
+        None => Probe::start(LAN_GAME_BEACON),
+    }
+    .expect("start probe");
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
+    for b in probe.locations() {
+        match rustora_net::game_server::parse_lan_game(&b.data, b.address.ip()) {
+            Some(g) => print_game(&g),
+            None => println!("{} answered with unreadable data: {:?}", b.address, b.data),
+        }
+    }
+}
+
+fn server_list(version: &str) {
+    use rustora_net::game_server::{parse_game_list, server_list_url};
+    let url = server_list_url(rustora_net::web::SERVER_LIST_URL, version, "ra", version);
+    let games = parse_game_list(&rustora_net::web::get(&url).expect("query")).expect("parse");
+    println!("{} games", games.len());
+    games.iter().take(5).for_each(print_game);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("skirmish") => return skirmish(&args),
         Some("join") => return join(&args),
+        Some("lan-probe") if args.len() >= 3 => return lan_probe(args[2].parse().expect("seconds"), args.get(3)),
+        Some("server-list") if args.len() == 3 => return server_list(&args[2]),
         Some("map-uid") if args.len() == 4 => {
             let pkg = rustora_launch::open_map(&PathBuf::from(&args[2]), &args[3]).expect("map not found");
             println!("{}", rustora_game::map::MapPackage::load(pkg).expect("load map").uid);

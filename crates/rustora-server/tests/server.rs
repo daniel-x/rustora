@@ -8,12 +8,16 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use base64::Engine;
+use rsa::pkcs8::{EncodePublicKey, LineEnding};
+use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 use rustora_net::binary::Reader;
 use rustora_net::handshake::{HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::order::{RawOrder, order_type};
 use rustora_net::session::{Client, ClientState, Session};
 use rustora_server::mod_info::ServerMod;
 use rustora_server::server::{Server, ServerSettings};
+use sha1::{Digest, Sha1};
 
 const MAP: &str = "ore-lord.oramap";
 
@@ -49,7 +53,11 @@ struct Frame {
     data: Vec<u8>,
 }
 
+/// The fingerprint and key a client authenticates with.
+type Identity = (String, RsaPrivateKey);
+
 struct TestClient {
+    identity: Option<Identity>,
     stream: TcpStream,
     index: i32,
     lobby: Session,
@@ -73,6 +81,7 @@ impl TestClient {
         stream.read_exact(&mut hello).unwrap();
         assert_eq!(i32::from_le_bytes(hello[0..4].try_into().unwrap()), 7);
         TestClient {
+            identity: None,
             stream,
             index: i32::from_le_bytes(hello[4..8].try_into().unwrap()),
             lobby: Session::default(),
@@ -136,7 +145,13 @@ impl TestClient {
             "HandshakeRequest" => {
                 let request = HandshakeRequest::deserialize(&text, "test").unwrap();
                 assert_eq!(request.mod_id.as_deref(), Some("ra"));
+                let auth_signature = self
+                    .identity
+                    .as_ref()
+                    .map(|(_, key)| sign(key, request.auth_token.as_deref().unwrap_or("")));
                 let response = HandshakeResponse {
+                    fingerprint: self.identity.as_ref().map(|(f, _)| f.clone()),
+                    auth_signature,
                     mod_id: request.mod_id,
                     version: Some(version.to_string()),
                     orders_protocol: ORDERS_PROTOCOL,
@@ -167,6 +182,61 @@ impl TestClient {
 }
 
 const VERSION: &str = "release-20250330";
+
+fn sign(key: &RsaPrivateKey, data: &str) -> String {
+    let hash = Sha1::digest(data.as_bytes());
+    base64::engine::general_purpose::STANDARD.encode(key.sign(Pkcs1v15Sign::new::<Sha1>(), &hash).unwrap())
+}
+
+/// A web server for one kind of answer; returns its URL and the requests as `first line` and body.
+fn start_http_stub(answer: String) -> (String, std::sync::mpsc::Receiver<(String, String)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let (send, requests) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut data = Vec::new();
+            let mut buf = [0u8; 4096];
+            let (head, body) = loop {
+                let n = stream.read(&mut buf).unwrap();
+                data.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&data).into_owned();
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let length = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= length {
+                        break (head.to_string(), body.to_string());
+                    }
+                }
+            };
+            let first = head.lines().next().unwrap_or("").to_string();
+            let _ = send.send((first, body));
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            stream.write_all(reply.as_bytes()).unwrap();
+        }
+    });
+    (url, requests)
+}
+
+/// A key and the answer of the player database for it.
+fn identity() -> (Identity, String) {
+    let key = RsaPrivateKey::new(&mut rand::thread_rng(), 1024).unwrap();
+    let pem = key.to_public_key().to_public_key_pem(LineEnding::LF).unwrap();
+    let public_key = base64::engine::general_purpose::STANDARD.encode(pem);
+    let yaml =
+        format!("Player:\n\tFingerprint: abc\n\tPublicKey: {public_key}\n\tKeyRevoked: False\n\tProfileID: 42\n\tProfileName: Tester\n");
+    (("abc".to_string(), key), yaml)
+}
 
 fn join(port: u16) -> TestClient {
     let mut c = TestClient::connect(port);
@@ -291,4 +361,101 @@ fn game_start_sends_empty_frames_and_acks_orders() {
     assert_eq!(disconnect.client, 0);
     assert_eq!(disconnect.data[1..5], a_index.to_le_bytes());
     assert_ne!(a_index, b_index);
+}
+
+#[test]
+fn valid_signature_sets_the_fingerprint() {
+    let Some(engine) = engine_dir() else { return };
+    let ((fingerprint, key), yaml) = identity();
+    let (url, requests) = start_http_stub(yaml);
+    let port = start_server(engine, move |s| {
+        s.player_profile_url = url;
+        s.require_authentication = true;
+    });
+    let mut c = TestClient::connect(port);
+    c.identity = Some((fingerprint, key));
+    assert!(c.pump(VERSION, TestClient::joined));
+    assert_eq!(c.lobby.client_with_index(c.index).unwrap().fingerprint.as_deref(), Some("abc"));
+    assert!(requests.recv().unwrap().0.starts_with("GET /abc "));
+}
+
+#[test]
+fn bad_signature_counts_as_not_authenticated() {
+    let Some(engine) = engine_dir() else { return };
+    let ((fingerprint, _), yaml) = identity();
+    let ((_, other_key), _) = identity();
+    let (url, _requests) = start_http_stub(yaml);
+    let url2 = url.clone();
+    let port = start_server(engine.clone(), move |s| {
+        s.player_profile_url = url;
+        s.require_authentication = true;
+    });
+    let mut c = TestClient::connect(port);
+    c.identity = Some((fingerprint.clone(), other_key.clone()));
+    assert!(!c.pump(VERSION, TestClient::joined));
+    assert!(c.got("notification-requires-authentication"), "{:?}", c.messages);
+
+    let port = start_server(engine, move |s| s.player_profile_url = url2);
+    let mut c = TestClient::connect(port);
+    c.identity = Some((fingerprint, other_key));
+    assert!(c.pump(VERSION, TestClient::joined));
+    assert_eq!(c.lobby.client_with_index(c.index).unwrap().fingerprint, None);
+}
+
+#[test]
+fn unsigned_client_and_blacklisted_profile_are_rejected() {
+    let Some(engine) = engine_dir() else { return };
+    let port = start_server(engine.clone(), |s| s.require_authentication = true);
+    let mut c = TestClient::connect(port);
+    assert!(!c.pump(VERSION, TestClient::joined));
+    assert!(c.got("notification-requires-authentication"), "{:?}", c.messages);
+
+    let (identity, yaml) = identity();
+    let (url, _requests) = start_http_stub(yaml);
+    let port = start_server(engine, move |s| {
+        s.player_profile_url = url;
+        s.profile_id_blacklist = vec![42];
+    });
+    let mut c = TestClient::connect(port);
+    c.identity = Some(identity);
+    assert!(!c.pump(VERSION, TestClient::joined));
+    assert!(c.got("notification-no-permission-to-join"), "{:?}", c.messages);
+}
+
+#[test]
+fn advertising_posts_the_game_and_its_changes() {
+    let Some(engine) = engine_dir() else { return };
+    let (url, requests) = start_http_stub(String::new());
+    let port = start_server(engine, move |s| {
+        s.advertise_online = true;
+        s.server_advertise_url = url;
+        s.name = "Stub Game".to_string();
+    });
+    let timeout = Duration::from_secs(60);
+    let (first, body) = requests.recv_timeout(timeout).unwrap();
+    assert!(first.starts_with("POST "), "{first}");
+    assert!(body.starts_with("Game:\n\tProtocol: 2\n\tName: Stub Game\n"), "{body}");
+    assert!(body.contains("\tState: 1\n"), "{body}");
+    assert!(body.contains(&format!("\tAddress: 0.0.0.0:{port}\n")), "{body}");
+    let mut c = join(port);
+    let deadline = Instant::now() + timeout;
+    let name = format!("Player{}", c.index);
+    loop {
+        let wait = deadline.saturating_duration_since(Instant::now());
+        let (_, body) = requests.recv_timeout(wait).expect("no update with the client");
+        if body.contains(&name) {
+            break;
+        }
+        c.command("spectate");
+    }
+}
+
+#[test]
+fn servers_are_silent_towards_the_master_server_by_default() {
+    let Some(engine) = engine_dir() else { return };
+    let port = start_server(engine, |_| {});
+    let c = join(port);
+    assert!(c.joined());
+    assert!(!ServerSettings::default().advertise_online);
+    assert!(!ServerSettings::default().discover_nat_devices);
 }

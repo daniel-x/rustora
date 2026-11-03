@@ -3,7 +3,9 @@
 
 //! Dedicated rustora server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory.
 //! Usage: `rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
-//! [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports]`.
+//! [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports]
+//! [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>]
+//! [--profile-blacklist <id,id>]`.
 
 use std::path::PathBuf;
 
@@ -14,9 +16,17 @@ fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
     eprintln!(
         "usage: rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
-         [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports]"
+         [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports] \
+         [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
+         [--profile-blacklist <id,id>]"
     );
     std::process::exit(2);
+}
+
+fn parse_ids(text: &str) -> Vec<i32> {
+    text.split(',')
+        .map(|s| s.trim().parse().unwrap_or_else(|_| usage("invalid profile id")))
+        .collect()
 }
 
 fn main() {
@@ -38,6 +48,11 @@ fn main() {
             "--seed" => settings.seed = Some(value().parse().unwrap_or_else(|_| usage("invalid seed"))),
             "--enable-singleplayer" => settings.enable_singleplayer = true,
             "--enable-sync-reports" => settings.enable_sync_reports = true,
+            "--advertise-online" => settings.advertise_online = true,
+            "--discover-nat-devices" => settings.discover_nat_devices = true,
+            "--require-authentication" => settings.require_authentication = true,
+            "--profile-whitelist" => settings.profile_id_whitelist = parse_ids(&value()),
+            "--profile-blacklist" => settings.profile_id_blacklist = parse_ids(&value()),
             _ => usage(&format!("unknown argument {a}")),
         }
     }
