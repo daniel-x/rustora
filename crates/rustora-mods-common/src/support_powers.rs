@@ -1,0 +1,615 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
+
+//! Port of `Traits/SupportPowers`: `SupportPowerManager.cs`, `SupportPower.cs`, `DirectionalSupportPower.cs`,
+//! `AirstrikePower.cs` and `ParatroopersPower.cs`. The subclasses are one [`SupportPower`] struct with a
+//! [`PowerKind`]. Beacons, radar pings, sounds and order generators are left out.
+
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
+
+use rustora_core::world_types::{WAngle, WDist, WRot, WVec};
+use rustora_derive::FieldLoad;
+use rustora_engine::actor::ActorRef;
+use rustora_engine::actor_info::TraitNode;
+use rustora_engine::actor_init::{ActorInits, CenterPositionInit, FacingInit, LocationInit, OwnerInit};
+use rustora_engine::conditional::*;
+use rustora_engine::net_collections::NetMap;
+use rustora_engine::order::Order;
+use rustora_engine::player::WinState;
+use rustora_engine::rules::TraitRegistry;
+use rustora_engine::target::{Target, TargetType};
+use rustora_engine::traits::*;
+use rustora_engine::world::World;
+use rustora_engine::{info_impl, load_info, register_traits};
+
+use crate::activities::Wait;
+use crate::aircraft::{AircraftInfo, Fly, RemoveSelf};
+use crate::attack::AttackBase;
+use crate::base::DeveloperMode;
+use crate::cargo::{Cargo, ParaDrop};
+use crate::interfaces::*;
+use crate::production::TechTree;
+
+pub fn register(r: &mut TraitRegistry) {
+    r.register("SupportPowerManager", |n| load_info!(SupportPowerManagerInfo, n));
+    r.register("AirstrikePower", |n| load_power(n, PowerKind::Airstrike));
+    r.register("ParatroopersPower", |n| load_power(n, PowerKind::Paratroopers));
+}
+
+pub trait INotifySupportPower {
+    fn charged(&self, self_: &ActorRef);
+    fn activated(&self, self_: &ActorRef);
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PowerKind {
+    #[default]
+    Airstrike,
+    Paratroopers,
+}
+
+impl PowerKind {
+    pub fn class_name(self) -> &'static str {
+        match self {
+            PowerKind::Airstrike => "AirstrikePower",
+            PowerKind::Paratroopers => "ParatroopersPower",
+        }
+    }
+}
+
+fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine::traits::TraitInfo>, String> {
+    let mut info = SupportPowerInfo::default();
+    match kind {
+        PowerKind::Airstrike => {
+            info.unit_type = "badr.bomber".into();
+            info.camera_remove_delay = 25;
+        }
+        PowerKind::Paratroopers => {
+            info.unit_type = "badr".into();
+            info.camera_remove_delay = 85;
+        }
+    }
+    info.order_name = format!("{}InfoOrder", kind.class_name());
+    rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(|e| format!("Trait name {}: {}", node.display_name(), e))?;
+    info.instance_name = node.instance_name.clone();
+    info.kind = kind;
+    Ok(Rc::new(info))
+}
+
+/// Union of `SupportPowerInfo` and the info fields of its subclasses.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct SupportPowerInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(ignore)]
+    pub kind: PowerKind,
+    #[field(flatten)]
+    pub base: PausableConditionalTraitInfo,
+    pub charge_interval: i32,
+    pub allow_multiple: bool,
+    pub one_shot: bool,
+    pub start_fully_charged: bool,
+    pub prerequisites: Vec<String>,
+    pub order_name: String,
+    // DirectionalSupportPower
+    pub use_directional_target: bool,
+    // AirstrikePower, ParatroopersPower
+    pub unit_type: String,
+    pub squad_size: i32,
+    pub squad_offset: WVec,
+    pub quantized_facings: i32,
+    pub cordon: WDist,
+    pub camera_actor: Option<String>,
+    pub camera_remove_delay: i32,
+    // ParatroopersPower
+    pub drop_items: Vec<String>,
+    pub allow_impassable_cells: bool,
+}
+
+impl Default for SupportPowerInfo {
+    fn default() -> Self {
+        SupportPowerInfo {
+            instance_name: None,
+            kind: PowerKind::default(),
+            base: PausableConditionalTraitInfo::default(),
+            charge_interval: 0,
+            allow_multiple: false,
+            one_shot: false,
+            start_fully_charged: false,
+            prerequisites: Vec::new(),
+            order_name: String::new(),
+            use_directional_target: false,
+            unit_type: String::new(),
+            squad_size: 1,
+            squad_offset: WVec::new(-1536, 1536, 0),
+            quantized_facings: 32,
+            cordon: WDist::new(5120),
+            camera_actor: None,
+            camera_remove_delay: 0,
+            drop_items: Vec::new(),
+            allow_impassable_cells: false,
+        }
+    }
+}
+
+pub struct SupportPower {
+    pub info: Rc<SupportPowerInfo>,
+    state: ConditionalState,
+    pub self_: ActorRef,
+}
+
+impl rustora_engine::traits::TraitObject for SupportPower {
+    fn register(self: Rc<Self>, dict: &rustora_engine::trait_dict::TraitDict, actor: &ActorRef) {
+        dict.add::<SupportPower>(actor, self.clone());
+        dict.add::<dyn INotifyCreated>(actor, self.clone());
+        dict.add::<dyn IObservesVariables>(actor, self.clone());
+        dict.add::<dyn IDisabledTrait>(actor, self.clone());
+        dict.add::<dyn ISync>(actor, self);
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.info.kind.class_name()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+info_impl!(SupportPowerInfo => |info, init| {
+    let state = ConditionalState::new_pausable(&info.base);
+    Some(Rc::new(SupportPower { info, state, self_: init.self_.clone() }))
+});
+
+rustora_engine::conditional_simple!(SupportPower);
+
+impl SupportPower {
+    pub fn is_trait_disabled(&self) -> bool {
+        self.state.is_trait_disabled()
+    }
+
+    pub fn is_trait_paused(&self) -> bool {
+        self.state.is_trait_paused()
+    }
+
+    fn key(&self) -> String {
+        if self.info.allow_multiple { format!("{}_{}", self.info.order_name, self.self_.id) } else { self.info.order_name.clone() }
+    }
+
+    fn charged(&self, self_: &ActorRef) {
+        for n in self_.traits_implementing::<dyn INotifySupportPower>() {
+            n.charged(self_);
+        }
+    }
+
+    fn activate(&self, self_: &ActorRef, order: &Order) {
+        for n in self_.traits_implementing::<dyn INotifySupportPower>() {
+            n.activated(self_);
+        }
+        match self.info.kind {
+            PowerKind::Airstrike => {
+                let facing = self.directional_facing(order);
+                self.send_airstrike(self_, order.target.center_position(), facing);
+            }
+            PowerKind::Paratroopers => {
+                let facing = self.directional_facing(order);
+                self.send_paratroopers(self_, order.target.center_position(), facing);
+            }
+        }
+    }
+
+    fn directional_facing(&self, order: &Order) -> Option<WAngle> {
+        (self.info.use_directional_target && order.extra_data != u32::MAX).then(|| WAngle::from_facing(order.extra_data as i32))
+    }
+
+    fn random_facing(&self, w: &World) -> WAngle {
+        let q = self.info.quantized_facings;
+        WAngle::new(1024 * w.shared_random.borrow_mut().next_max(q) / q)
+    }
+
+    /// Start and finish positions of a fly-over, like `SendAirstrike` and `SendParatroopers`.
+    fn flight_path(&self, w: &World, target: rustora_core::world_types::WPos, facing: WAngle) -> (rustora_core::world_types::WPos, rustora_core::world_types::WPos, rustora_core::world_types::WPos, WRot) {
+        let unit_type = self.info.unit_type.to_lowercase();
+        let ai = w.rules().actor(&unit_type).unwrap_or_else(|| panic!("Actors ruleset does not include the entry '{unit_type}'"));
+        let altitude = ai.trait_info::<AircraftInfo>().expect("AircraftInfo").cruise_altitude.length;
+        let rotation = WRot::from_yaw(facing);
+        let delta = WVec::new(0, -1024, 0).rotate(&rotation);
+        let target = target + WVec::new(0, 0, altitude);
+        let start = target - delta * (w.map().distance_to_edge(target, -delta) + self.info.cordon).length / 1024;
+        let finish = target + delta * (w.map().distance_to_edge(target, delta) + self.info.cordon).length / 1024;
+        (target, start, finish, rotation)
+    }
+
+    fn squad_indices(&self) -> Vec<i32> {
+        let n = self.info.squad_size;
+        (-n / 2..=n / 2).filter(|&i| !(i == 0 && n & 1 == 0)).collect()
+    }
+
+    fn send_airstrike(&self, self_: &ActorRef, target: rustora_core::world_types::WPos, facing: Option<WAngle>) -> Vec<ActorRef> {
+        let w = self_.world();
+        let facing = facing.unwrap_or_else(|| self.random_facing(&w));
+        let (target, start_edge, finish_edge, rotation) = self.flight_path(&w, target, facing);
+        let tracker = FlyOverTracker::new(self.info.clone(), self_, w.map().cell_containing(target));
+        let so = self.info.squad_offset;
+        let mut aircraft = Vec::new();
+        for i in self.squad_indices() {
+            let spawn_offset = WVec::new(i * so.y, -i.abs() * so.x, 0).rotate(&rotation);
+            let target_offset = WVec::new(i * so.y, 0, 0).rotate(&rotation);
+            let a = w.create_actor_add(
+                false,
+                &self.info.unit_type,
+                ActorInits::new().with(CenterPositionInit::new(start_edge + spawn_offset)).with(OwnerInit::from_player(&self_.owner())).with(FacingInit::new(facing)),
+            );
+            tracker.in_range.borrow_mut().push((a.clone(), false));
+            let attack = a.traits_implementing::<AttackBase>().into_iter().find(|t| t.info.kind == crate::attack::AttackKind::Bomber).expect("AttackBomber");
+            attack.set_bomber_target(target + target_offset);
+            let (t1, t2, t3) = (tracker.clone(), tracker.clone(), tracker.clone());
+            attack.on_entered_attack_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, false)));
+            attack.on_exited_attack_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
+            attack.on_removed_from_world.borrow_mut().push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
+            aircraft.push(a);
+        }
+        let (list, indices) = (aircraft.clone(), self.squad_indices());
+        w.add_frame_end_task(Box::new(move |w| {
+            for (a, i) in list.iter().zip(indices) {
+                let spawn_offset = WVec::new(i * so.y, -i.abs() * so.x, 0).rotate(&rotation);
+                w.add(a);
+                a.queue_activity(Fly::new(a, Target::from_pos(target + spawn_offset)));
+                a.queue_activity(Fly::new(a, Target::from_pos(finish_edge + spawn_offset)));
+                a.queue_activity(RemoveSelf::new());
+            }
+        }));
+        aircraft
+    }
+
+    fn send_paratroopers(&self, self_: &ActorRef, target: rustora_core::world_types::WPos, facing: Option<WAngle>) {
+        let w = self_.world();
+        let facing = facing.unwrap_or_else(|| self.random_facing(&w));
+        let (target, start_edge, finish_edge, rotation) = self.flight_path(&w, target, facing);
+        let tracker = FlyOverTracker::new(self.info.clone(), self_, w.map().cell_containing(target));
+        let so = self.info.squad_offset;
+        let owner = self_.owner();
+        let mut aircraft = Vec::new();
+        for i in self.squad_indices() {
+            let spawn_offset = WVec::new(i * so.y, -i.abs() * so.x, 0).rotate(&rotation);
+            aircraft.push(w.create_actor_add(
+                false,
+                &self.info.unit_type,
+                ActorInits::new().with(CenterPositionInit::new(start_edge + spawn_offset)).with(OwnerInit::from_player(&owner)).with(FacingInit::new(facing)),
+            ));
+        }
+        let units: Vec<ActorRef> = self.info.drop_items.iter().map(|p| w.create_actor_add(false, &p.to_lowercase(), ActorInits::new().with(OwnerInit::from_player(&owner)))).collect();
+        let (info, indices) = (self.info.clone(), self.squad_indices());
+        w.add_frame_end_task(Box::new(move |w| {
+            let per_plane = ((info.drop_items.len() as i32 + info.squad_size - 1) / info.squad_size) as usize;
+            let mut added = 0;
+            for (a, i) in aircraft.iter().zip(indices) {
+                let spawn_offset = WVec::new(i * so.y, -i.abs() * so.x, 0).rotate(&rotation);
+                let target_offset = WVec::new(i * so.y, 0, 0).rotate(&rotation);
+                w.add(a);
+                let drop = a.trait_::<ParaDrop>();
+                drop.set_lz(w.map().cell_containing(target + target_offset), !info.allow_impassable_cells);
+                let (t1, t2, t3) = (tracker.clone(), tracker.clone(), tracker.clone());
+                drop.on_entered_drop_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, true)));
+                drop.on_exited_drop_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
+                drop.on_removed_from_world.borrow_mut().push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
+                let cargo = a.trait_::<Cargo>();
+                for unit in units.iter().skip(added).take(per_plane) {
+                    cargo.load(a, unit);
+                    added += 1;
+                }
+                a.queue_activity(Fly::new(a, Target::from_pos(target + spawn_offset)));
+                a.queue_activity(Fly::new(a, Target::from_pos(finish_edge + spawn_offset)));
+                a.queue_activity(RemoveSelf::new());
+                tracker.in_range.borrow_mut().push((a.clone(), false));
+            }
+            for u in units.iter().skip(added) {
+                u.dispose();
+            }
+        }));
+    }
+}
+
+/// The camera bookkeeping closures of `SendAirstrike` and `SendParatroopers`.
+struct FlyOverTracker {
+    info: Rc<SupportPowerInfo>,
+    owner_actor: ActorRef,
+    camera_cell: rustora_core::world_types::CPos,
+    camera: RefCell<Option<ActorRef>>,
+    in_range: RefCell<Vec<(ActorRef, bool)>>,
+    me: Weak<FlyOverTracker>,
+}
+
+impl FlyOverTracker {
+    fn new(info: Rc<SupportPowerInfo>, owner_actor: &ActorRef, camera_cell: rustora_core::world_types::CPos) -> Rc<Self> {
+        Rc::new_cyclic(|me| FlyOverTracker { info, owner_actor: owner_actor.clone(), camera_cell, camera: RefCell::new(None), in_range: RefCell::new(Vec::new()), me: me.clone() })
+    }
+
+    fn set(&self, a: &ActorRef, v: bool) {
+        let mut list = self.in_range.borrow_mut();
+        match list.iter_mut().find(|(x, _)| x.id == a.id) {
+            Some(e) => e.1 = v,
+            None => list.push((a.clone(), v)),
+        }
+    }
+
+    fn any_in_range(&self) -> bool {
+        self.in_range.borrow().iter().any(|(_, v)| *v)
+    }
+
+    fn on_enter_range(&self, a: &ActorRef, _paratroopers: bool) {
+        if let Some(cam) = self.info.camera_actor.clone() {
+            if self.camera.borrow().is_none() && !self.any_in_range() {
+                let (me, owner, cell) = (self.me.clone(), self.owner_actor.owner(), self.camera_cell);
+                self.owner_actor.world().add_frame_end_task(Box::new(move |w| {
+                    let c = w.create_actor(&cam, ActorInits::new().with(LocationInit::new(cell)).with(OwnerInit::from_player(&owner)));
+                    if let Some(t) = me.upgrade() {
+                        *t.camera.borrow_mut() = Some(c);
+                    }
+                }));
+            }
+        }
+        self.set(a, true);
+    }
+
+    fn on_exit_range(&self, a: &ActorRef) {
+        self.set(a, false);
+        if !self.any_in_range() {
+            self.remove_camera();
+        }
+    }
+
+    fn on_removed_from_world(&self, a: &ActorRef) {
+        self.set(a, false);
+        if self.in_range.borrow().iter().all(|(x, _)| !x.is_in_world()) {
+            self.remove_camera();
+        }
+    }
+
+    fn remove_camera(&self) {
+        let Some(c) = self.camera.borrow().clone() else { return };
+        c.queue_activity(Wait::new(self.info.camera_remove_delay));
+        c.queue_activity(RemoveSelf::new());
+    }
+}
+
+/// `SupportPowerInstance`.
+pub struct SupportPowerInstance {
+    manager: Weak<SupportPowerManager>,
+    pub key: String,
+    pub instances: RefCell<Vec<Rc<SupportPower>>>,
+    pub total_ticks: i32,
+    remaining_sub_ticks: Cell<i32>,
+    active: Cell<bool>,
+    instances_enabled: Cell<bool>,
+    prereqs_available: Cell<bool>,
+    one_shot_fired: Cell<bool>,
+    notified_charging: Cell<bool>,
+    notified_ready: Cell<bool>,
+}
+
+impl SupportPowerInstance {
+    fn new(key: String, info: &SupportPowerInfo, manager: Weak<SupportPowerManager>) -> Rc<Self> {
+        Rc::new(SupportPowerInstance {
+            manager,
+            key,
+            instances: RefCell::new(Vec::new()),
+            total_ticks: info.charge_interval,
+            remaining_sub_ticks: Cell::new(if info.start_fully_charged { 0 } else { info.charge_interval * 100 }),
+            active: Cell::new(false),
+            instances_enabled: Cell::new(false),
+            prereqs_available: Cell::new(true),
+            one_shot_fired: Cell::new(false),
+            notified_charging: Cell::new(false),
+            notified_ready: Cell::new(false),
+        })
+    }
+
+    fn manager(&self) -> Rc<SupportPowerManager> {
+        self.manager.upgrade().expect("manager")
+    }
+
+    pub fn remaining_ticks(&self) -> i32 {
+        self.remaining_sub_ticks.get() / 100
+    }
+
+    pub fn ready(&self) -> bool {
+        self.active.get() && self.remaining_ticks() == 0
+    }
+
+    pub fn disabled(&self) -> bool {
+        let m = self.manager();
+        m.self_.owner().win_state.get() == WinState::Lost || (!self.prereqs_available.get() && !m.dev_mode.all_tech()) || !self.instances_enabled.get() || self.one_shot_fired.get()
+    }
+
+    fn info(&self) -> Option<Rc<SupportPowerInfo>> {
+        self.instances.borrow().first().map(|i| i.info.clone())
+    }
+
+    pub fn prerequisites_available(&self, available: bool) {
+        self.prereqs_available.set(available);
+        if !available {
+            self.remaining_sub_ticks.set(self.total_ticks * 100);
+        }
+    }
+
+    fn tick(&self) {
+        let instances = self.instances.borrow().clone();
+        self.instances_enabled.set(instances.iter().any(|i| !i.is_trait_disabled()));
+        if !self.instances_enabled.get() {
+            self.remaining_sub_ticks.set(self.total_ticks * 100);
+        }
+        self.active.set(!self.disabled() && instances.iter().any(|i| !i.is_trait_paused()));
+        if !self.active.get() {
+            return;
+        }
+        let power = &instances[0];
+        if self.manager().dev_mode.fast_charge() && self.remaining_sub_ticks.get() > 2500 {
+            self.remaining_sub_ticks.set(2500);
+        }
+        if self.remaining_sub_ticks.get() > 0 {
+            self.remaining_sub_ticks.set((self.remaining_sub_ticks.get() - 100).clamp(0, self.total_ticks * 100));
+        }
+        if !self.notified_charging.get() {
+            self.notified_charging.set(true);
+        }
+        if self.remaining_ticks() == 0 && !self.notified_ready.get() {
+            power.charged(&power.self_);
+            self.notified_ready.set(true);
+        }
+    }
+
+    fn activate(&self, order: &Order) {
+        if !self.ready() {
+            return;
+        }
+        let instances = self.instances.borrow().clone();
+        let candidates = instances.iter().filter(|i| !i.is_trait_paused() && !i.is_trait_disabled());
+        let key = |a: &Rc<SupportPower>| -> i64 {
+            if a.self_.cache().occupies_space.is_none() || order.target.target_type() == TargetType::Invalid {
+                return 0;
+            }
+            (a.self_.center_position() - order.target.center_position()).horizontal_length_squared()
+        };
+        let mut best: Option<(&Rc<SupportPower>, i64)> = None;
+        for c in candidates {
+            let k = key(c);
+            if best.is_none_or(|(_, bk)| k < bk) {
+                best = Some((c, k));
+            }
+        }
+        let Some((power, _)) = best else { return };
+        power.activate(&power.self_, order);
+        self.remaining_sub_ticks.set(self.total_ticks * 100);
+        self.notified_charging.set(false);
+        self.notified_ready.set(false);
+        if self.info().is_some_and(|i| i.one_shot) {
+            self.prerequisites_available(false);
+            self.one_shot_fired.set(true);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct SupportPowerManagerInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+pub struct SupportPowerManager {
+    pub self_: ActorRef,
+    pub powers: RefCell<NetMap<String, Rc<SupportPowerInstance>>>,
+    dev_mode: Rc<DeveloperMode>,
+    tech_tree: Rc<TechTree>,
+    me: Weak<SupportPowerManager>,
+}
+
+register_traits!(SupportPowerManager: ITick, IResolveOrder);
+info_impl!(SupportPowerManagerInfo => |_, init| {
+    let self_ = init.self_.clone();
+    let m = Rc::new_cyclic(|me| SupportPowerManager {
+        dev_mode: self_.trait_::<DeveloperMode>(),
+        tech_tree: self_.trait_::<TechTree>(),
+        self_,
+        powers: RefCell::new(NetMap::new()),
+        me: me.clone(),
+    });
+    let w = init.world();
+    let (wa, wr) = (m.me.clone(), m.me.clone());
+    w.on_actor_added(Rc::new(move |a: &ActorRef| {
+        if let Some(m) = wa.upgrade() {
+            m.actor_added(a);
+        }
+    }));
+    w.on_actor_removed(Rc::new(move |a: &ActorRef| {
+        if let Some(m) = wr.upgrade() {
+            m.actor_removed(a);
+        }
+    }));
+    Some(m)
+});
+
+impl SupportPowerManager {
+    fn owns(&self, a: &ActorRef) -> bool {
+        a.owner_opt().is_some_and(|o| Rc::ptr_eq(&o, &self.self_.owner()))
+    }
+
+    fn actor_added(&self, a: &ActorRef) {
+        if !self.owns(a) {
+            return;
+        }
+        for t in a.traits_implementing::<SupportPower>() {
+            let key = t.key();
+            let existing = self.powers.borrow().get(&key).cloned();
+            let spi = match existing {
+                Some(s) => s,
+                None => {
+                    let s = SupportPowerInstance::new(key.clone(), &t.info, self.me.clone());
+                    self.powers.borrow_mut().insert(key.clone(), s.clone());
+                    if !t.info.prerequisites.is_empty() {
+                        let me: Rc<dyn ITechTreeElement> = self.me.upgrade().expect("manager");
+                        self.tech_tree.add(&key, t.info.prerequisites.clone(), 0, me);
+                        self.tech_tree.update();
+                    }
+                    s
+                }
+            };
+            spi.instances.borrow_mut().push(t);
+        }
+    }
+
+    fn actor_removed(&self, a: &ActorRef) {
+        if !self.owns(a) || a.info.trait_info::<SupportPowerInfo>().is_none() {
+            return;
+        }
+        for t in a.traits_implementing::<SupportPower>() {
+            let key = t.key();
+            let spi = self.powers.borrow().get(&key).cloned().expect("power instance");
+            spi.instances.borrow_mut().retain(|i| !Rc::ptr_eq(i, &t));
+            if spi.instances.borrow().is_empty() && !spi.disabled() {
+                self.powers.borrow_mut().remove(&key);
+                self.tech_tree.remove_key(&key);
+                self.tech_tree.update();
+            }
+        }
+    }
+}
+
+impl ITick for SupportPowerManager {
+    fn tick(&self, _self_: &ActorRef) {
+        let powers: Vec<Rc<SupportPowerInstance>> = self.powers.borrow().values().cloned().collect();
+        for p in powers {
+            p.tick();
+        }
+    }
+}
+
+impl IResolveOrder for SupportPowerManager {
+    fn resolve_order(&self, _self_: &ActorRef, order: &Order) {
+        let sp = self.powers.borrow().get(&order.order_string).cloned();
+        if let Some(sp) = sp {
+            sp.activate(order);
+        }
+    }
+}
+
+impl ITechTreeElement for SupportPowerManager {
+    fn prerequisites_available(&self, key: &str) {
+        let sp = self.powers.borrow().get(&key.to_string()).cloned();
+        if let Some(sp) = sp {
+            sp.prerequisites_available(true);
+        }
+    }
+
+    fn prerequisites_unavailable(&self, key: &str) {
+        let sp = self.powers.borrow().get(&key.to_string()).cloned();
+        if let Some(sp) = sp {
+            sp.prerequisites_available(false);
+        }
+    }
+
+    fn prerequisites_item_hidden(&self, _key: &str) {}
+
+    fn prerequisites_item_visible(&self, _key: &str) {}
+}

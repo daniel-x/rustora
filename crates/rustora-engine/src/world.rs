@@ -139,6 +139,16 @@ impl World {
         self.world_actor().set_owner(Some(p.clone()));
     }
 
+    /// Subscribes to `ActorAdded`.
+    pub fn on_actor_added(&self, f: Rc<dyn Fn(&ActorRef)>) {
+        self.actor_added.borrow_mut().push(f);
+    }
+
+    /// Subscribes to `ActorRemoved`.
+    pub fn on_actor_removed(&self, f: Rc<dyn Fn(&ActorRef)>) {
+        self.actor_removed.borrow_mut().push(f);
+    }
+
     /// Subscribes to both `ActorAdded` and `ActorRemoved`.
     pub fn on_actor_changed(&self, f: Rc<dyn Fn(&ActorRef)>) {
         self.actor_added.borrow_mut().push(f.clone());

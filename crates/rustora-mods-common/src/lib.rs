@@ -37,6 +37,7 @@ pub mod render;
 pub mod resources;
 pub mod resupply;
 pub mod smudge;
+pub mod support_powers;
 pub mod targetable;
 pub mod transforms;
 pub mod turreted;
@@ -62,6 +63,7 @@ pub fn register(r: &mut TraitRegistry) {
     death::register(r);
     cloak::register(r);
     minelayer::register(r);
+    support_powers::register(r);
     resupply::register(r);
     base::register(r);
     building::register(r);
