@@ -290,6 +290,7 @@ fn lobby_has_map_settings_and_only_the_admin_changes_them() {
     other.command("no_such_command");
     assert!(other.pump(VERSION, |c| c.got("notification-unknown-server-command")));
 
+    assert!(admin.pump(VERSION, |c| c.lobby.client_in_slot("Multi1").is_some()));
     other.command("spectate");
     assert!(admin.pump(VERSION, |c| c.lobby.client_in_slot("Multi1").is_none()));
     admin.command("slot_bot Multi1 0 no_such_bot");
@@ -304,6 +305,7 @@ fn leaving_admin_hands_over_and_removes_bots() {
     let port = start_server(engine, |_| {});
     let mut admin = join(port);
     let mut other = join(port);
+    assert!(admin.pump(VERSION, |c| c.lobby.client_in_slot("Multi1").is_some()));
     other.command("spectate");
     assert!(admin.pump(VERSION, |c| c.lobby.client_in_slot("Multi1").is_none()));
     admin.command("slot_bot Multi1 0 normal");
