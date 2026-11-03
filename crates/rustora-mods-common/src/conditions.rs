@@ -26,6 +26,7 @@ use crate::render::{RenderSprites, make_facing_func};
 pub fn register(r: &mut TraitRegistry) {
     r.register("Hovers", |n| load_info!(HoversInfo, n));
     r.register("Huntable", |n| load_info!(HuntableInfo, n));
+    r.register("ScaredyCat", |n| load_info!(ScaredyCatInfo, n));
     r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
     r.register("WithSpriteTurret", |n| load_info!(WithSpriteTurretInfo, n));
 }
@@ -196,6 +197,8 @@ pub struct WithInfantryBody {
     mv: OnceCell<Rc<dyn IMove>>,
     default_animation: Rc<Animation>,
     dirty: Cell<bool>,
+    rsm: OnceCell<Option<Rc<dyn IRenderInfantrySequenceModifier>>>,
+    was_modifying: Cell<bool>,
     idle_sequence: RefCell<String>,
     idle_delay: Cell<i32>,
     anim_state: Cell<AnimationState>,
@@ -215,6 +218,8 @@ info_impl!(WithInfantryBodyInfo => |info, init| {
         mv: OnceCell::new(),
         default_animation: anim,
         dirty: Cell::new(false),
+        rsm: OnceCell::new(),
+        was_modifying: Cell::new(false),
         idle_sequence: RefCell::new(String::new()),
         idle_delay: Cell::new(0),
         anim_state: Cell::new(AnimationState::Waiting),
@@ -246,6 +251,7 @@ rustora_engine::conditional_plumbing!(WithInfantryBody);
 impl INotifyCreated for WithInfantryBody {
     fn created(&self, self_: &ActorRef) {
         let _ = self.mv.set(self_.trait_::<dyn IMove>());
+        let _ = self.rsm.set(self_.trait_or_default::<dyn IRenderInfantrySequenceModifier>());
         self.idle_delay.set(self_.world().shared_random.borrow_mut().next_range(self.info.min_idle_delay, self.info.max_idle_delay));
         conditional_created(self, self_);
     }
@@ -256,8 +262,22 @@ impl WithInfantryBody {
         self.anim_state.set(AnimationState::Waiting);
         let sequence = self.default_animation.get_random_existing_sequence(&self.info.stand_sequences, &mut self.cosmetic_random.borrow_mut());
         if let Some(s) = sequence {
-            self.default_animation.play_repeating(&s);
+            self.default_animation.play_repeating(&self.normalize_infantry_sequence(&s));
         }
+    }
+
+    fn rsm(&self) -> Option<&Rc<dyn IRenderInfantrySequenceModifier>> {
+        self.rsm.get().and_then(|r| r.as_ref())
+    }
+
+    fn is_modifying_sequence(&self) -> bool {
+        self.rsm().is_some_and(|r| r.is_modifying_sequence())
+    }
+
+    fn normalize_infantry_sequence(&self, base: &str) -> String {
+        let prefix = if self.is_modifying_sequence() { self.rsm().unwrap().sequence_prefix() } else { String::new() };
+        let prefixed = prefix + base;
+        if self.default_animation.has_sequence(&prefixed) { prefixed } else { base.to_string() }
     }
 
     fn stand_callback(&self) -> Option<Rc<dyn Fn()>> {
@@ -281,9 +301,9 @@ impl WithInfantryBody {
                 }
             }
         }
-        if let Some(s) = sequence.filter(|s| !s.is_empty() && self.default_animation.has_sequence(s)) {
+        if let Some(s) = sequence.filter(|s| !s.is_empty() && self.default_animation.has_sequence(&self.normalize_infantry_sequence(s))) {
             self.anim_state.set(AnimationState::Attacking);
-            self.default_animation.play_then(&s, self.stand_callback());
+            self.default_animation.play_then(&self.normalize_infantry_sequence(&s), self.stand_callback());
         }
     }
 }
@@ -303,11 +323,18 @@ impl INotifyAttack for WithInfantryBody {
 
 impl ITick for WithInfantryBody {
     fn tick(&self, self_: &ActorRef) {
+        if let Some(r) = self.rsm() {
+            let m = r.is_modifying_sequence();
+            if self.was_modifying.get() != m {
+                self.dirty.set(true);
+            }
+            self.was_modifying.set(m);
+        }
         let moving = self.mv.get().expect("move").current_movement_types() & movement_type::HORIZONTAL != 0;
         let s = self.anim_state.get();
         if (s != AnimationState::Moving || self.dirty.get()) && moving {
             self.anim_state.set(AnimationState::Moving);
-            self.default_animation.play_repeating(&self.info.move_sequence);
+            self.default_animation.play_repeating(&self.normalize_infantry_sequence(&self.info.move_sequence));
         } else if ((s == AnimationState::Moving || self.dirty.get()) && !moving) || ((s == AnimationState::Idle || s == AnimationState::IdleAnimating) && !self_.is_idle()) {
             self.play_stand_animation();
         }
@@ -317,7 +344,7 @@ impl ITick for WithInfantryBody {
 
 impl INotifyIdle for WithInfantryBody {
     fn tick_idle(&self, self_: &ActorRef) {
-        if self.info.idle_sequences.is_empty() {
+        if self.info.idle_sequences.is_empty() || self.is_modifying_sequence() {
             return;
         }
         let s = self.anim_state.get();
@@ -369,3 +396,121 @@ info_impl!(WithSpriteTurretInfo => |info, init| {
     Some(Rc::new(WithSpriteTurret { state: ConditionalState::new(&info.base) }))
 });
 rustora_engine::conditional_simple!(WithSpriteTurret);
+
+/// `Traits/Infantry/ScaredyCat.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ScaredyCatInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub panic_chance: i32,
+    pub panic_duration: i32,
+    pub panic_speed_modifier: i32,
+    pub attack_panic_chance: i32,
+    pub avoid_terrain_types: Vec<String>,
+    pub panic_sequence_prefix: String,
+}
+
+impl Default for ScaredyCatInfo {
+    fn default() -> Self {
+        ScaredyCatInfo {
+            instance_name: None,
+            panic_chance: 100,
+            panic_duration: 250,
+            panic_speed_modifier: 200,
+            attack_panic_chance: 20,
+            avoid_terrain_types: Vec::new(),
+            panic_sequence_prefix: "panic-".into(),
+        }
+    }
+}
+
+pub struct ScaredyCat {
+    info: Rc<ScaredyCatInfo>,
+    self_: ActorRef,
+    mobile: Rc<crate::mobile::Mobile>,
+    panic_started_tick: Cell<i32>,
+}
+
+register_traits!(ScaredyCat: ITick, INotifyIdle, INotifyDamage, INotifyAttack, ISpeedModifier, ISync, IRenderInfantrySequenceModifier);
+info_impl!(ScaredyCatInfo => |info, init| {
+    Some(Rc::new(ScaredyCat { mobile: init.self_.trait_::<crate::mobile::Mobile>(), self_: init.self_.clone(), info, panic_started_tick: Cell::new(0) }))
+});
+
+impl ScaredyCat {
+    fn panicking(&self) -> bool {
+        self.panic_started_tick.get() > 0
+    }
+
+    pub fn panic(&self) {
+        if !self.panicking() {
+            self.self_.cancel_activity();
+        }
+        self.panic_started_tick.set(self.self_.world().world_tick());
+    }
+}
+
+impl ISync for ScaredyCat {
+    fn sync_hash(&self) -> i32 {
+        self.panic_started_tick.get()
+    }
+}
+
+impl ITick for ScaredyCat {
+    fn tick(&self, self_: &ActorRef) {
+        if !self.panicking() {
+            return;
+        }
+        if self_.world().world_tick() >= self.panic_started_tick.get() + self.info.panic_duration {
+            self_.cancel_activity();
+            self.panic_started_tick.set(0);
+        }
+    }
+}
+
+impl INotifyIdle for ScaredyCat {
+    fn tick_idle(&self, self_: &ActorRef) {
+        if !self.panicking() {
+            return;
+        }
+        let w = self_.world();
+        let avoid = |c: rustora_core::world_types::CPos| self.info.avoid_terrain_types.contains(&w.map().terrain_type_info(c).ty);
+        let filter: Option<&dyn Fn(rustora_core::world_types::CPos) -> bool> = if self.info.avoid_terrain_types.is_empty() { None } else { Some(&avoid) };
+        if let Some(cell) = self.mobile.get_adjacent_cell(self_.location(), filter) {
+            self_.queue_activity_queued(false, self.mobile.move_to(cell, 0, None, false));
+        }
+    }
+}
+
+impl INotifyDamage for ScaredyCat {
+    fn damaged(&self, self_: &ActorRef, e: &rustora_engine::damage::AttackInfo) {
+        if e.damage.value > 0 && self_.world().shared_random.borrow_mut().next_max(100) < self.info.panic_chance {
+            self.panic();
+        }
+    }
+}
+
+impl INotifyAttack for ScaredyCat {
+    fn attacking(&self, self_: &ActorRef, _target: &Target, _a: &Armament, _barrel: &Barrel) {
+        if self_.world().shared_random.borrow_mut().next_max(100) < self.info.attack_panic_chance {
+            self.panic();
+        }
+    }
+
+    fn preparing_attack(&self, _self_: &ActorRef, _target: &Target, _a: &Armament, _barrel: &Barrel) {}
+}
+
+impl ISpeedModifier for ScaredyCat {
+    fn get_speed_modifier(&self) -> i32 {
+        if self.panicking() { self.info.panic_speed_modifier } else { 100 }
+    }
+}
+
+impl IRenderInfantrySequenceModifier for ScaredyCat {
+    fn is_modifying_sequence(&self) -> bool {
+        self.panicking()
+    }
+
+    fn sequence_prefix(&self) -> String {
+        self.info.panic_sequence_prefix.clone()
+    }
+}

@@ -13,7 +13,9 @@ use rustora_engine::conditional::*;
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
-use rustora_engine::{info_impl, load_info, register_traits};
+use indexmap::IndexMap;
+use rustora_engine::damage::{AttackInfo, Damage, DamageTypes};
+use rustora_engine::{info_impl, load_info};
 
 use crate::actor_reference::TurretFacingInit;
 use crate::attack::AttackBase;
@@ -23,6 +25,51 @@ use crate::util;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("Turreted", |n| load_info!(TurretedInfo, n));
+    r.register("TakeCover", load_take_cover);
+}
+
+fn load_take_cover(node: &rustora_engine::actor_info::TraitNode) -> Result<Rc<dyn rustora_engine::traits::TraitInfo>, String> {
+    let err = |e: rustora_core::fieldloader::LoadError| format!("Trait name {}: {}", node.display_name(), e);
+    let mut info = TurretedInfo::default();
+    rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(err)?;
+    let mut cover = TakeCoverInfo::default();
+    rustora_core::fieldloader::FieldLoad::load(&mut cover, &node.yaml).map_err(err)?;
+    if cover.duration > -1 && cover.damage_triggers.is_empty() {
+        return Err("TakeCover: If Duration isn't negative (permanent), DamageTriggers is required.".into());
+    }
+    info.instance_name = node.instance_name.clone();
+    info.take_cover = Some(cover);
+    Ok(Rc::new(info))
+}
+
+/// `Traits/Infantry/TakeCover.cs`, a `Turreted` subclass.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct TakeCoverInfo {
+    pub duration: i32,
+    pub speed_modifier: i32,
+    pub damage_triggers: DamageTypes,
+    pub damage_modifiers: IndexMap<String, i32>,
+    pub prone_offset: WVec,
+    pub prone_sequence_prefix: String,
+}
+
+impl Default for TakeCoverInfo {
+    fn default() -> Self {
+        TakeCoverInfo {
+            duration: 100,
+            speed_modifier: 50,
+            damage_triggers: DamageTypes::default(),
+            damage_modifiers: IndexMap::new(),
+            prone_offset: WVec::new(500, 0, 0),
+            prone_sequence_prefix: "prone-".into(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct TakeCoverState {
+    remaining_duration: Cell<i32>,
+    is_prone: Cell<bool>,
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -36,6 +83,8 @@ pub struct TurretedInfo {
     pub initial_facing: WAngle,
     pub realign_delay: i32,
     pub offset: WVec,
+    #[field(ignore)]
+    pub take_cover: Option<TakeCoverInfo>,
 }
 
 impl Default for TurretedInfo {
@@ -48,6 +97,7 @@ impl Default for TurretedInfo {
             initial_facing: WAngle::ZERO,
             realign_delay: 40,
             offset: WVec::ZERO,
+            take_cover: None,
         }
     }
 }
@@ -63,14 +113,39 @@ pub struct Turreted {
     realign_tick: Cell<i32>,
     realign_desired: Cell<bool>,
     local_orientation: Cell<WRot>,
+    local_offset: Cell<WVec>,
+    cover: Option<TakeCoverState>,
 }
 
-register_traits!(Turreted: ITick, IDeathActorInitModifier, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+impl rustora_engine::traits::TraitObject for Turreted {
+    fn register(self: Rc<Self>, dict: &rustora_engine::trait_dict::TraitDict, actor: &ActorRef) {
+        dict.add::<Turreted>(actor, self.clone());
+        dict.add::<dyn ITick>(actor, self.clone());
+        dict.add::<dyn IDeathActorInitModifier>(actor, self.clone());
+        dict.add::<dyn INotifyCreated>(actor, self.clone());
+        dict.add::<dyn IObservesVariables>(actor, self.clone());
+        dict.add::<dyn IDisabledTrait>(actor, self.clone());
+        if self.cover.is_some() {
+            dict.add::<dyn INotifyDamage>(actor, self.clone());
+            dict.add::<dyn IDamageModifier>(actor, self.clone());
+            dict.add::<dyn ISpeedModifier>(actor, self.clone());
+            dict.add::<dyn IRenderInfantrySequenceModifier>(actor, self.clone());
+        }
+        dict.add::<dyn ISync>(actor, self);
+    }
+
+    fn type_name(&self) -> &'static str {
+        if self.cover.is_some() { "TakeCover" } else { "Turreted" }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 info_impl!(TurretedInfo => |info, init| {
     let facing = init.inits.get_for::<TurretFacingInit>(info.instance_name.as_deref()).map_or(info.initial_facing, |f| f.value);
     let state = ConditionalState::new_pausable(&info.base);
     Some(Rc::new(Turreted {
-        info,
         state,
         attack: OnceCell::new(),
         facing: OnceCell::new(),
@@ -80,6 +155,9 @@ info_impl!(TurretedInfo => |info, init| {
         realign_tick: Cell::new(0),
         realign_desired: Cell::new(false),
         local_orientation: Cell::new(WRot::from_yaw(facing)),
+        local_offset: Cell::new(WVec::ZERO),
+        cover: info.take_cover.as_ref().map(|_| TakeCoverState::default()),
+        info,
     }))
 });
 
@@ -88,7 +166,21 @@ impl ConditionalHooks for Turreted {
         &self.state
     }
 
+    fn trait_enabled(&self, _self_: &ActorRef) {
+        if let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) {
+            if ci.damage_triggers.is_empty() {
+                c.remaining_duration.set(ci.duration);
+                self.set_prone_state(true);
+            }
+        }
+    }
+
     fn trait_disabled(&self, self_: &ActorRef) {
+        if let Some(c) = &self.cover {
+            c.remaining_duration.set(0);
+            self.set_prone_state(false);
+            return;
+        }
         if let Some(a) = self.attack.get().and_then(|a| a.as_ref()) {
             if a.is_aiming() {
                 a.on_stop_order(self_);
@@ -99,7 +191,7 @@ impl ConditionalHooks for Turreted {
 
 impl ISync for Turreted {
     fn sync_hash(&self) -> i32 {
-        self.state.sync_hash() ^ self.quantized_facings.get()
+        self.state.sync_hash() ^ self.quantized_facings.get() ^ self.cover.as_ref().map_or(0, |c| c.remaining_duration.get())
     }
 }
 
@@ -125,11 +217,35 @@ impl INotifyCreated for Turreted {
         let _ = self.attack.set(attack);
         let _ = self.facing.set(self_.trait_or_default::<dyn IFacing>());
         let _ = self.body.set(self_.trait_::<BodyOrientation>());
+        if let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) {
+            if ci.damage_triggers.is_empty() {
+                c.remaining_duration.set(ci.duration);
+                if !self.is_trait_disabled() {
+                    self.set_prone_state(true);
+                }
+            }
+        }
     }
 }
 
 impl ITick for Turreted {
-    fn tick(&self, _self_: &ActorRef) {
+    fn tick(&self, self_: &ActorRef) {
+        self.turreted_tick(self_);
+        let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) else { return };
+        if self.is_trait_disabled() || ci.duration < 0 {
+            return;
+        }
+        if !self.is_trait_paused() && c.remaining_duration.get() > 0 {
+            c.remaining_duration.set(c.remaining_duration.get() - 1);
+        }
+        if c.is_prone.get() && c.remaining_duration.get() == 0 {
+            self.set_prone_state(false);
+        }
+    }
+}
+
+impl Turreted {
+    fn turreted_tick(&self, _self_: &ActorRef) {
         if self.state.is_trait_disabled() {
             return;
         }
@@ -170,7 +286,21 @@ impl Turreted {
     }
 
     pub fn offset(&self) -> WVec {
-        self.info.offset
+        self.info.offset + self.local_offset.get()
+    }
+
+    fn cover_info(&self) -> Option<&TakeCoverInfo> {
+        self.info.take_cover.as_ref()
+    }
+
+    fn set_prone_state(&self, state: bool) {
+        let ci = self.cover_info().expect("TakeCover");
+        self.local_offset.set(if state { ci.prone_offset } else { WVec::ZERO });
+        self.cover.as_ref().unwrap().is_prone.set(state);
+    }
+
+    pub fn is_prone(&self) -> bool {
+        self.cover.as_ref().is_some_and(|c| c.is_prone.get())
     }
 
     pub fn is_trait_disabled(&self) -> bool {
@@ -244,12 +374,54 @@ impl Turreted {
     }
 
     pub fn has_achieved_desired_facing(&self) -> bool {
-        self.desired() == self.local_orientation.get().yaw
+        self.cover.is_some() || self.desired() == self.local_orientation.get().yaw
     }
 
     /// Turret offset in world space.
     pub fn position(&self, self_: &ActorRef) -> WVec {
         let body = self.body.get().expect("created");
         body.local_to_world(self.offset().rotate(&body.quantize_orientation(self_.orientation())))
+    }
+}
+
+impl INotifyDamage for Turreted {
+    fn damaged(&self, _self_: &ActorRef, e: &AttackInfo) {
+        let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) else { return };
+        if self.is_trait_paused() || self.is_trait_disabled() {
+            return;
+        }
+        if e.damage.value <= 0 || !e.damage.damage_types.overlaps(&ci.damage_triggers) {
+            return;
+        }
+        if !c.is_prone.get() {
+            self.set_prone_state(true);
+        }
+        c.remaining_duration.set(ci.duration);
+    }
+}
+
+impl IDamageModifier for Turreted {
+    fn get_damage_modifier(&self, _attacker: Option<&ActorRef>, damage: &Damage) -> i32 {
+        if !self.is_prone() || damage.damage_types.is_empty() {
+            return 100;
+        }
+        let ci = self.cover_info().expect("TakeCover");
+        util::apply_percentage_modifiers(100, ci.damage_modifiers.iter().filter(|(k, _)| damage.damage_types.contains(k)).map(|(_, v)| *v))
+    }
+}
+
+impl ISpeedModifier for Turreted {
+    fn get_speed_modifier(&self) -> i32 {
+        if self.is_prone() { self.cover_info().expect("TakeCover").speed_modifier } else { 100 }
+    }
+}
+
+impl IRenderInfantrySequenceModifier for Turreted {
+    fn is_modifying_sequence(&self) -> bool {
+        self.is_prone()
+    }
+
+    fn sequence_prefix(&self) -> String {
+        self.cover_info().map_or_else(String::new, |c| c.prone_sequence_prefix.clone())
     }
 }

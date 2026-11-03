@@ -18,6 +18,7 @@ pub mod cloak;
 pub mod combat;
 pub mod conditions;
 pub mod crates;
+pub mod death;
 pub mod experience;
 pub mod harvester;
 pub mod health;
@@ -57,6 +58,7 @@ pub fn register(r: &mut TraitRegistry) {
     weapons::register(r);
     cargo::register(r);
     crates::register(r);
+    death::register(r);
     resupply::register(r);
     base::register(r);
     building::register(r);

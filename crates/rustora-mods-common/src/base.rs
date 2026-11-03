@@ -48,6 +48,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("LineBuildNode", |n| load_info!(LineBuildNodeInfo, n));
     r.register("FreeActor", |n| load_info!(FreeActorInfo, n));
     r.register("PlayerExperience", |n| load_info!(PlayerExperienceInfo, n));
+    r.register("RepairableBuilding", |n| load_info!(RepairableBuildingInfo, n));
+    r.register("AllyRepair", |n| load_info!(AllyRepairInfo, n));
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -1293,4 +1295,194 @@ pub fn is_close_enough_to_base(bi: &BuildingInfo, world: &World, p: &PlayerRef, 
     }
     let tiles = bi.tiles(top_left);
     candidates.iter().any(|a| tiles.iter().any(|b| (a.x() - b.x()).abs() <= adjacent && (a.y() - b.y()).abs() <= adjacent))
+}
+
+/// `Traits/Buildings/RepairableBuilding.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct RepairableBuildingInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub repair_percent: i32,
+    pub repair_interval: i32,
+    pub repair_step: i32,
+    pub repair_damage_types: DamageTypes,
+    pub repair_bonuses: Vec<i32>,
+    pub cancel_when_disabled: bool,
+    pub player_experience: i32,
+    pub repair_condition: Option<String>,
+}
+
+impl Default for RepairableBuildingInfo {
+    fn default() -> Self {
+        RepairableBuildingInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            repair_percent: 20,
+            repair_interval: 24,
+            repair_step: 7,
+            repair_damage_types: DamageTypes::default(),
+            repair_bonuses: vec![100, 150, 175, 200, 220, 240, 260, 280, 300],
+            cancel_when_disabled: false,
+            player_experience: 0,
+            repair_condition: None,
+        }
+    }
+}
+
+pub struct RepairableBuilding {
+    info: Rc<RepairableBuildingInfo>,
+    state: ConditionalState,
+    health: Rc<dyn IHealth>,
+    repair_tokens: RefCell<Vec<i32>>,
+    remaining_ticks: Cell<i32>,
+    pub repairers: RefCell<Vec<PlayerRef>>,
+    repair_active: Cell<bool>,
+}
+
+register_traits!(RepairableBuilding: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(RepairableBuildingInfo => |info, init| {
+    let state = ConditionalState::new(&info.base);
+    Some(Rc::new(RepairableBuilding {
+        health: init.self_.trait_::<dyn IHealth>(),
+        info,
+        state,
+        repair_tokens: RefCell::new(Vec::new()),
+        remaining_ticks: Cell::new(0),
+        repairers: RefCell::new(Vec::new()),
+        repair_active: Cell::new(false),
+    }))
+});
+
+impl ConditionalHooks for RepairableBuilding {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+}
+rustora_engine::conditional_observers_impl!(RepairableBuilding);
+
+impl INotifyCreated for RepairableBuilding {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl ISync for RepairableBuilding {
+    fn sync_hash(&self) -> i32 {
+        self.state.sync_hash() ^ self.repairers.borrow().iter().fold(0, |h, p| h ^ rustora_engine::player::hash_player(Some(p)))
+    }
+}
+
+impl RepairableBuilding {
+    pub fn repair_active(&self) -> bool {
+        self.repair_active.get()
+    }
+
+    fn update_condition(&self, self_: &ActorRef) {
+        let Some(c) = self.info.repair_condition.as_deref().filter(|c| !c.is_empty()) else { return };
+        let count = self.repairers.borrow().len();
+        while count > self.repair_tokens.borrow().len() {
+            let t = self_.grant_condition(c);
+            self.repair_tokens.borrow_mut().push(t);
+        }
+        while count < self.repair_tokens.borrow().len() {
+            let t = self.repair_tokens.borrow_mut().pop().unwrap();
+            self_.revoke_condition(t);
+        }
+    }
+
+    pub fn repair_building(&self, self_: &ActorRef, player: &PlayerRef) {
+        if self.state.is_trait_disabled() || !crate::util::appears_friendly_to(self_, player.player_actor()) {
+            return;
+        }
+        let pos = self.repairers.borrow().iter().position(|p| Rc::ptr_eq(p, player));
+        if let Some(i) = pos {
+            self.repairers.borrow_mut().remove(i);
+            self.update_condition(self_);
+            return;
+        }
+        if self.repairers.borrow().len() >= self.info.repair_bonuses.len() - 1 {
+            return;
+        }
+        self.repairers.borrow_mut().push(player.clone());
+        self.update_condition(self_);
+    }
+}
+
+impl ITick for RepairableBuilding {
+    fn tick(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            if self.repair_active.get() && self.info.cancel_when_disabled {
+                self.repairers.borrow_mut().clear();
+                self.update_condition(self_);
+            }
+            return;
+        }
+        if self.remaining_ticks.get() != 0 {
+            self.remaining_ticks.set(self.remaining_ticks.get() - 1);
+            return;
+        }
+        let owner = self_.owner();
+        self.repairers.borrow_mut().retain(|p| p.win_state.get() == rustora_engine::player::WinState::Undefined && owner.relationship_with(Some(p)) == PlayerRelationship::ALLY);
+        self.update_condition(self_);
+        if self.repairers.borrow().is_empty() {
+            self.repair_active.set(false);
+            return;
+        }
+        let building_value = crate::production::get_sell_value(self_);
+        let (max_hp, hp) = (self.health.max_hp(), self.health.hp());
+        let hp_to_repair = self.info.repair_step.min(max_hp - hp);
+        let cost = 1.max((hp_to_repair as i64 * self.info.repair_percent as i64 * building_value as i64 / (max_hp as i64 * 100)) as i32);
+        let repairers = self.repairers.borrow().clone();
+        let active_players = repairers.iter().filter(|p| p.player_actor().trait_::<PlayerResources>().take_cash(cost, true)).count();
+        self.repair_active.set(active_players > 0);
+        if active_players == 0 {
+            self.remaining_ticks.set(1);
+            return;
+        }
+        let amount = -(hp_to_repair * self.info.repair_bonuses[active_players - 1] / 100);
+        self.health.inflict_damage(self_, Some(self_), &rustora_engine::damage::Damage::new(amount, self.info.repair_damage_types.clone()), false);
+        if self.health.damage_state() == rustora_engine::damage::DamageState::UNDAMAGED {
+            for r in &repairers {
+                if !Rc::ptr_eq(r, &owner) {
+                    if let Some(pe) = r.player_actor().trait_or_default::<PlayerExperience>() {
+                        pe.give_experience(self.info.player_experience);
+                    }
+                }
+            }
+            self.repairers.borrow_mut().clear();
+            self.repair_active.set(false);
+            self.update_condition(self_);
+            return;
+        }
+        self.remaining_ticks.set(self.info.repair_interval);
+    }
+}
+
+/// `Traits/Player/AllyRepair.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct AllyRepairInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+pub struct AllyRepair;
+
+register_traits!(AllyRepair: IResolveOrder);
+info_impl!(AllyRepairInfo => |_, _| Some(Rc::new(AllyRepair)));
+
+impl IResolveOrder for AllyRepair {
+    fn resolve_order(&self, self_: &ActorRef, order: &Order) {
+        if order.order_string != "RepairBuilding" || order.target.target_type() != TargetType::Actor {
+            return;
+        }
+        let building = order.target.actor().unwrap().clone();
+        if !crate::util::appears_friendly_to(&building, self_) {
+            return;
+        }
+        if let Some(rb) = building.trait_or_default::<RepairableBuilding>() {
+            rb.repair_building(&building, &self_.owner());
+        }
+    }
 }

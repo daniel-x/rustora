@@ -71,6 +71,11 @@ pub trait ISpeedModifier {
     fn get_speed_modifier(&self) -> i32;
 }
 
+pub trait IRenderInfantrySequenceModifier {
+    fn is_modifying_sequence(&self) -> bool;
+    fn sequence_prefix(&self) -> String;
+}
+
 pub trait IRevealsShroudModifier {
     fn get_reveals_shroud_modifier(&self) -> i32;
 }

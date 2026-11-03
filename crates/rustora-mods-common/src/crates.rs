@@ -810,8 +810,7 @@ impl CrateAction {
     fn activate_give_unit(&self, collector: &ActorRef) {
         let info = self.info.clone();
         let c = collector.clone();
-        let me = self.self_.trait_::<CrateAction>();
-        let me = me.self_.traits_implementing::<CrateAction>().into_iter().find(|a| Rc::ptr_eq(&a.info, &info)).unwrap_or(me);
+        let me = self.self_.traits_implementing::<CrateAction>().into_iter().find(|a| Rc::ptr_eq(&a.info, &info)).expect("crate action");
         collector.world().add_frame_end_task(Box::new(move |w| {
             for unit in &info.units {
                 let cells = me.suitable_cells(w, c.location(), unit);

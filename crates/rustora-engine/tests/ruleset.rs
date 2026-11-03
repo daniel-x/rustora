@@ -20,7 +20,7 @@ fn ra_rules_load() {
     let md = ModData::load(Platform::new(home.join("openra-ref"), home.join("testdata/support")), "ra").unwrap();
     let rules = ModData::load_yaml(&md.file_system, &md.manifest.rules, None).unwrap();
     let registry = TraitRegistry::default();
-    let ruleset = Ruleset::load(&registry, &rules).unwrap();
+    let ruleset = Ruleset::load(&registry, &Default::default(), &rules, &[]).unwrap();
     assert!(ruleset.actor("mcv").is_some());
     assert!(ruleset.actor("world").is_some());
     assert_eq!(ruleset.actors().count(), 307);

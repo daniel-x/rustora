@@ -130,7 +130,15 @@ fn main() {
         "world" => {
             let tick: i32 = args.get(5).map_or(0, |t| t.parse().expect("tick"));
             if tick > 0 {
-                run_replay(&world, replay, tick, |_, _| true);
+                let trace: Option<u32> = std::env::var("TRACE_ACTOR").ok().and_then(|v| v.parse().ok());
+                run_replay(&world, replay, tick, |w, _| {
+                    if let Some(a) = trace.and_then(|id| w.get_actor_by_id(id)) {
+                        let facing = a.trait_or_default::<dyn rustora_engine::traits::IFacing>().map(|f| f.facing().angle);
+                        let prone = (a.trait_or_default::<rustora_mods_common::turreted::Turreted>().map(|t| t.is_prone()), a.trait_or_default::<rustora_mods_common::mobile::Mobile>().map(|m| m.movement_speed_for_cell(a.location())));
+                        eprintln!("trace {} pos={:?} facing={:?} prone={:?} activity={:?}", w.world_tick(), a.center_position(), facing, prone, a.current_activity().map(|x| x.type_name()));
+                    }
+                    true
+                });
             }
             print_detail(&world);
         }
