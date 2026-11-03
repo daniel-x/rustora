@@ -1692,6 +1692,7 @@ dependencies = [
 name = "rustora-launch"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "rustora-core",
  "rustora-engine",
  "rustora-fs",

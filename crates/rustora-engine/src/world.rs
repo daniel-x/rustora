@@ -55,6 +55,7 @@ pub struct World {
     world_tick: Cell<i32>,
     paused: Cell<bool>,
     is_game_over: Cell<bool>,
+    end_game_requests: RefCell<Vec<i32>>,
     pub disposing: Cell<bool>,
     pub all_players_mask: Cell<u64>,
     actor_added: RefCell<Vec<Rc<dyn Fn(&ActorRef)>>>,
@@ -122,6 +123,7 @@ impl World {
             world_tick: Cell::new(0),
             paused: Cell::new(false),
             is_game_over: Cell::new(false),
+            end_game_requests: RefCell::new(Vec::new()),
             disposing: Cell::new(false),
             all_players_mask: Cell::new(0),
             actor_added: RefCell::new(Vec::new()),
@@ -366,6 +368,16 @@ impl World {
             }
         }
         out
+    }
+
+    /// Asks the host loop to call [`World::end_game`] after `delay_ms` (the C# `Game.RunAfterDelay`).
+    pub fn request_end_game(&self, delay_ms: i32) {
+        self.end_game_requests.borrow_mut().push(delay_ms);
+    }
+
+    /// Takes the delays of the end game requests filed since the last call.
+    pub fn take_end_game_requests(&self) -> Vec<i32> {
+        std::mem::take(&mut *self.end_game_requests.borrow_mut())
     }
 
     pub fn end_game(self: &Rc<Self>) {

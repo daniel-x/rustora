@@ -4,6 +4,9 @@
 //! Headless rustora. Subcommands:
 //! `world <engine-dir> <support-dir> <replay> [tick]` prints the sync detail of a replay after world load (or after `tick`).
 //! `verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a recorded game and compares the sync hashes.
+//! `verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]` compares the Rust bots with a C# bot game.
+//! `skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]` hosts a bot game,
+//! writes `tick hash botrandomcount` per tick and compares all three columns with a C# sync dump.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -109,8 +112,74 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
     }
 }
 
+/// Reads `tick hash botrandomcount` lines of a C# sync dump, skipping detail lines.
+fn read_sync_dump(path: &str) -> std::collections::HashMap<i32, String> {
+    std::fs::read_to_string(path)
+        .expect("read sync dump")
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| Some((l.split(' ').next()?.parse().ok()?, l.to_string())))
+        .collect()
+}
+
+fn skirmish(args: &[String]) {
+    use rustora_launch::skirmish::{SkirmishDriver, parse_bots, skirmish_session};
+    let [engine, support, map, bots, ticks, seed] = &args[2..8] else {
+        panic!("usage: rustora-headless skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]")
+    };
+    let engine = PathBuf::from(engine);
+    let (ticks, seed): (i32, i32) = (ticks.parse().expect("ticks"), seed.parse().expect("seed"));
+    let pkg = rustora_launch::open_map(&engine, map).expect("map not found");
+    let map_package = rustora_game::map::MapPackage::load(pkg.clone()).expect("load map");
+    let lobby = skirmish_session(&map_package, &parse_bots(bots).expect("bots"), seed).expect("lobby");
+    let (world, _, _) = rustora_launch::load_world(&engine, support, pkg, lobby, false);
+    let mut out = args.get(8).map(|p| std::io::BufWriter::new(std::fs::File::create(p).expect("create sync dump")));
+    let expected = args.get(9).map(|p| read_sync_dump(p));
+    let start = std::time::Instant::now();
+    let mut driver = SkirmishDriver::new(&world);
+    let mut mismatch = None;
+    while world.world_tick() < ticks {
+        match driver.step() {
+            Step::Ticked => {
+                let line = format!("{} {} {}", world.world_tick(), world.sync_hash(), world.bot_random.borrow().total_count);
+                if let Some(o) = out.as_mut() {
+                    use std::io::Write;
+                    writeln!(o, "{line}").expect("write sync dump");
+                }
+                if let Some(e) = expected.as_ref().and_then(|e| e.get(&world.world_tick())) {
+                    if *e != line {
+                        mismatch = Some(format!("first mismatch at tick {}\n  expected {e}\n  got      {line}", world.world_tick()));
+                        break;
+                    }
+                }
+            }
+            Step::Waiting => {}
+            Step::Ended => break,
+        }
+    }
+    println!("ticks {} in {:?}, game over: {}", world.world_tick(), start.elapsed(), world.is_game_over());
+    if let Some(e) = &expected {
+        let last = e.keys().copied().max().unwrap_or(0);
+        match mismatch {
+            Some(m) => {
+                println!("{m}");
+                std::process::exit(1);
+            }
+            None if world.world_tick() < last => {
+                println!("stopped before the C# dump ends at tick {last}");
+                std::process::exit(1);
+            }
+            None => println!("all {last} ticks of the C# dump match"),
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("skirmish") {
+        skirmish(&args);
+        return;
+    }
     if args.len() < 5 {
         eprintln!("usage: rustora-headless world|verify-replay <engine-dir> <support-dir> <replay> [...]");
         std::process::exit(2);

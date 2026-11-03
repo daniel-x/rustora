@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Loads the RA mod, the map and the rules of a replay into a [`World`], and steps the replay tick by tick.
+//! Loads the RA mod, the map and the rules of a replay or a skirmish into a [`World`], and steps the game tick by tick.
+
+pub mod skirmish;
 
 use std::path::Path;
 use std::rc::Rc;
@@ -54,11 +56,32 @@ pub struct LoadedGame {
 }
 
 pub fn load_game(engine: &Path, support: &str, replay_path: &str) -> LoadedGame {
-    let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let mut replay = Replay::parse(&std::fs::read(replay_path).expect("read replay")).expect("parse replay");
     let lobby = replay.lobby_info.take().expect("lobby info");
     let uid = lobby.global_settings.map.clone().expect("map uid");
     let pkg = find_map(engine, &uid).expect("map not found");
+    let (world, mod_data, read_file) = load_world(engine, support, pkg, lobby, true);
+    LoadedGame {
+        world,
+        replay,
+        mod_data,
+        read_file,
+    }
+}
+
+/// Opens a map of the RA mod by its file or folder name, like `Launch.Map=ore-lord.oramap`.
+pub fn open_map(engine: &Path, name: &str) -> Option<Arc<dyn Package>> {
+    let p = engine.join("mods/ra/maps").join(name);
+    if p.is_dir() {
+        Some(Arc::new(Folder::new(&p)))
+    } else {
+        Some(Arc::new(ZipPackage::open_file(&p)?))
+    }
+}
+
+/// Loads the RA mod and the map `pkg` with its custom rules and creates the world for `lobby`.
+pub fn load_world(engine: &Path, support: &str, pkg: Arc<dyn Package>, lobby: rustora_net::session::Session, is_replay: bool) -> (Rc<World>, Rc<ModData>, ReadFile) {
+    let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
 
     let fs = MapFs {
@@ -93,14 +116,9 @@ pub fn load_game(engine: &Path, support: &str, replay_path: &str) -> LoadedGame 
         read_file.clone(),
     )));
     let world = World::new(map, rules, lobby, WorldType::Regular, 40, 3);
-    world.set_is_replay(true);
+    world.set_is_replay(is_replay);
     world.load_complete();
-    LoadedGame {
-        world,
-        replay,
-        mod_data: md,
-        read_file,
-    }
+    (world, md, read_file)
 }
 
 /// Outcome of one [`ReplayDriver::step`].

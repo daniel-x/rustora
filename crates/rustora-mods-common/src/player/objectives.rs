@@ -52,12 +52,24 @@ pub struct MissionObjective {
     pub state: ObjectiveState,
 }
 
-#[derive(Clone, Debug, Default, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad)]
 pub struct MissionObjectivesInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
     pub cooperative: bool,
     pub early_game_over: bool,
+    pub game_over_delay: i32,
+}
+
+impl Default for MissionObjectivesInfo {
+    fn default() -> Self {
+        MissionObjectivesInfo {
+            instance_name: None,
+            cooperative: false,
+            early_game_over: false,
+            game_over_delay: 1500,
+        }
+    }
 }
 
 pub struct MissionObjectives {
@@ -130,6 +142,16 @@ impl MissionObjectives {
             for n in Self::win_state_changed_listeners(player) {
                 n.on_player_won(player);
             }
+            self.check_if_game_is_over(player);
+        }
+    }
+
+    /// `CheckIfGameIsOver`: C# ends the game `GameOverDelay` milliseconds later from the game loop, outside the
+    /// simulation, so this only files the request with the world for the host loop.
+    fn check_if_game_is_over(&self, player: &PlayerRef) {
+        let w = player.player_actor().world();
+        if w.players().iter().all(|p| p.non_combatant || p.win_state.get() != WinState::Undefined || !p.has_objectives.get()) {
+            w.request_end_game(self.info.game_over_delay);
         }
     }
 
@@ -146,6 +168,7 @@ impl MissionObjectives {
             for n in Self::win_state_changed_listeners(player) {
                 n.on_player_lost(player);
             }
+            self.check_if_game_is_over(player);
         }
     }
 
