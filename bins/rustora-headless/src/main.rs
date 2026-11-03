@@ -53,8 +53,14 @@ fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: im
 
 /// Runs the bots of a replay next to the recorded orders and compares their orders and bot random counts
 /// with the C# harness dumps (`.orders`, and the third column of `.sync`).
+/// The dump's `PauseGame` orders come from the C# client at game over, not from bots, so they are skipped.
 fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: Option<&String>) {
-    let expected: Vec<String> = std::fs::read_to_string(orders_path).expect("read order dump").lines().map(str::to_string).collect();
+    let expected: Vec<String> = std::fs::read_to_string(orders_path)
+        .expect("read order dump")
+        .lines()
+        .filter(|l| l.split(' ').nth(1) != Some("PauseGame"))
+        .map(str::to_string)
+        .collect();
     let counts: std::collections::HashMap<i32, i32> = sync_path.map_or_else(Default::default, |p| {
         std::fs::read_to_string(p)
             .expect("read sync dump")

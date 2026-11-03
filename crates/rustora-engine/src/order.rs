@@ -102,3 +102,53 @@ impl Order {
         })
     }
 }
+
+impl Order {
+    /// `Order.Serialize` for field orders, without the byte encoding: actor references become ids.
+    pub fn to_raw(&self) -> RawOrder {
+        let id = |a: &Option<ActorRef>| a.as_ref().map_or(u32::MAX, |a| a.id);
+        let ids = |v: &Option<Vec<Option<ActorRef>>>| v.as_ref().map(|v| v.iter().map(id).collect());
+        let target = match &self.target {
+            Target::Invalid => RawTarget::Invalid,
+            Target::Actor { actor, generation } => RawTarget::Actor {
+                id: actor.id,
+                generation: *generation,
+            },
+            Target::FrozenActor(fa) => RawTarget::FrozenActor {
+                player_actor_id: fa.viewer.player_actor().id,
+                frozen_id: fa.id(),
+            },
+            Target::Terrain {
+                center,
+                positions,
+                cell,
+                subcell,
+            } => match cell {
+                Some(cell) => RawTarget::Cell {
+                    cell: *cell,
+                    subcell: subcell.unwrap_or(0),
+                },
+                None => RawTarget::Pos {
+                    pos: *center,
+                    terrain_positions: if positions.len() == 1 && positions[0] == *center {
+                        None
+                    } else {
+                        Some(positions.to_vec())
+                    },
+                },
+            },
+        };
+        RawOrder {
+            subject: self.subject.as_ref().map(|a| a.id),
+            target,
+            target_string: self.target_string.clone(),
+            queued: self.queued,
+            extra_actors: ids(&self.extra_actors),
+            extra_location: self.extra_location,
+            extra_data: self.extra_data,
+            grouped_actors: ids(&self.grouped_actors),
+            is_immediate: self.is_immediate,
+            ..RawOrder::new(&self.order_string)
+        }
+    }
+}

@@ -8,6 +8,7 @@ pub mod base_builder;
 pub mod fuzzy;
 pub mod modules;
 pub mod squads;
+pub mod support_power;
 pub mod unit_builder;
 
 use std::cell::{Cell, RefCell};
@@ -36,6 +37,7 @@ pub fn register(r: &mut TraitRegistry) {
     base_builder::register(r);
     unit_builder::register(r);
     squads::register(r);
+    support_power::register(r);
 }
 
 pub trait IBotEnabled {

@@ -499,7 +499,7 @@ impl SupportPowerInstance {
         m.self_.owner().win_state.get() == WinState::Lost || (!self.prereqs_available.get() && !m.dev_mode.all_tech()) || !self.instances_enabled.get() || self.one_shot_fired.get()
     }
 
-    fn info(&self) -> Option<Rc<SupportPowerInfo>> {
+    pub fn info(&self) -> Option<Rc<SupportPowerInfo>> {
         self.instances.borrow().first().map(|i| i.info.clone())
     }
 

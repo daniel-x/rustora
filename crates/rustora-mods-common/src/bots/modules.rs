@@ -359,10 +359,13 @@ impl IBotTick for HarvesterBotModule {
             return;
         }
         let mut searched = false;
-        while !searched {
+        loop {
             let Some(h) = self.harvesters_needing_orders.borrow_mut().pop() else {
                 break;
             };
+            if searched {
+                break;
+            }
             searched = self.harvest_if_able(bot, &h);
         }
         self.scan_for_idle_harvesters_ticks
@@ -497,7 +500,7 @@ impl HarvesterBotModule {
             BlockedByActor::Stationary,
             Some(cost),
             None,
-            false,
+            true,
         );
         match path.first() {
             Some(&c) => Target::from_cell(&w, c, FULL_CELL),
