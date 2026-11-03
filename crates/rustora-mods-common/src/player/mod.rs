@@ -14,7 +14,10 @@ use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
 
+pub mod objectives;
+
 pub fn register(r: &mut TraitRegistry) {
+    objectives::register(r);
     r.register("PlayerResources", |n| load_info!(PlayerResourcesInfo, n));
     r.register("GrantConditionOnBotOwner", |n| load_info!(GrantConditionOnBotOwnerInfo, n));
 }
