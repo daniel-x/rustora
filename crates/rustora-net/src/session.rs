@@ -6,7 +6,7 @@
 use indexmap::{IndexMap, IndexSet};
 use rustora_core::field_enum;
 use rustora_core::fieldloader::{Color, LoadError, load};
-use rustora_core::miniyaml::MiniYaml;
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_derive::FieldLoad;
 
 use crate::NetError;
@@ -38,6 +38,7 @@ pub struct Client {
     pub faction: Option<String>,
     pub spawn_point: i32,
     pub name: Option<String>,
+    #[field(name = "AnonymizedIPAddress")]
     pub anonymized_ip_address: Option<String>,
     pub location: Option<String>,
     pub connection_quality: ConnectionQuality,
@@ -179,5 +180,149 @@ impl Session {
 
     pub fn client_in_slot(&self, slot: &str) -> Option<&Client> {
         self.clients.iter().find(|c| c.slot.as_deref() == Some(slot))
+    }
+}
+
+/// `FieldSaver.FormatValue` of the session field types.
+fn fmt_bool(b: bool) -> String {
+    if b { "True" } else { "False" }.to_string()
+}
+
+fn fmt_color(c: Color) -> String {
+    if c.a() == 255 {
+        format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
+    } else {
+        format!("{:02X}{:02X}{:02X}{:02X}", c.r(), c.g(), c.b(), c.a())
+    }
+}
+
+fn fmt_opt(s: &Option<String>) -> String {
+    s.clone().unwrap_or_default()
+}
+
+/// The `Session.MapStatus` flags as the C# enum converter writes them.
+pub fn fmt_map_status(status: i32) -> String {
+    const NAMES: [(i32, &str); 4] = [(1, "Validating"), (2, "Playable"), (4, "Incompatible"), (8, "UnsafeCustomRules")];
+    let set: Vec<&str> = NAMES.iter().filter(|(b, _)| status & b != 0).map(|(_, n)| *n).collect();
+    if set.is_empty() { "Unknown".to_string() } else { set.join(", ") }
+}
+
+fn yaml(fields: Vec<(&str, String)>) -> MiniYaml {
+    MiniYaml::new(None, fields.into_iter().map(|(k, v)| MiniYamlNode::with_value_str(k, v)).collect())
+}
+
+impl ConnectionQuality {
+    pub fn name(self) -> &'static str {
+        match self {
+            ConnectionQuality::Good => "Good",
+            ConnectionQuality::Moderate => "Moderate",
+            ConnectionQuality::Poor => "Poor",
+        }
+    }
+}
+
+impl ClientState {
+    pub fn name(self) -> &'static str {
+        match self {
+            ClientState::NotReady => "NotReady",
+            ClientState::Invalid => "Invalid",
+            ClientState::Ready => "Ready",
+            ClientState::Disconnected => "Disconnected",
+        }
+    }
+}
+
+impl Client {
+    /// `Session.Client.Serialize`: `Client@<index>` with all fields.
+    pub fn serialize(&self) -> MiniYamlNode {
+        MiniYamlNode::new(
+            format!("Client@{}", self.index),
+            yaml(vec![
+                ("Index", self.index.to_string()),
+                ("PreferredColor", fmt_color(self.preferred_color)),
+                ("Color", fmt_color(self.color)),
+                ("Faction", fmt_opt(&self.faction)),
+                ("SpawnPoint", self.spawn_point.to_string()),
+                ("Name", fmt_opt(&self.name)),
+                ("AnonymizedIPAddress", fmt_opt(&self.anonymized_ip_address)),
+                ("Location", fmt_opt(&self.location)),
+                ("ConnectionQuality", self.connection_quality.name().to_string()),
+                ("State", self.state.name().to_string()),
+                ("Team", self.team.to_string()),
+                ("Handicap", self.handicap.to_string()),
+                ("Slot", fmt_opt(&self.slot)),
+                ("Bot", fmt_opt(&self.bot)),
+                ("BotControllerClientIndex", self.bot_controller_client_index.to_string()),
+                ("IsAdmin", fmt_bool(self.is_admin)),
+                ("Fingerprint", fmt_opt(&self.fingerprint)),
+            ]),
+        )
+    }
+}
+
+impl Slot {
+    /// `Session.Slot.Serialize`: `Slot@<player reference>`.
+    pub fn serialize(&self) -> MiniYamlNode {
+        MiniYamlNode::new(
+            format!("Slot@{}", self.player_reference),
+            yaml(vec![
+                ("PlayerReference", self.player_reference.clone()),
+                ("Closed", fmt_bool(self.closed)),
+                ("AllowBots", fmt_bool(self.allow_bots)),
+                ("LockFaction", fmt_bool(self.lock_faction)),
+                ("LockColor", fmt_bool(self.lock_color)),
+                ("LockTeam", fmt_bool(self.lock_team)),
+                ("LockHandicap", fmt_bool(self.lock_handicap)),
+                ("LockSpawn", fmt_bool(self.lock_spawn)),
+                ("Required", fmt_bool(self.required)),
+            ]),
+        )
+    }
+}
+
+impl Global {
+    /// `Session.Global.Serialize`: `GlobalSettings` with the lobby options under `Options`.
+    pub fn serialize(&self) -> MiniYamlNode {
+        let mut y = yaml(vec![
+            ("ServerName", fmt_opt(&self.server_name)),
+            ("Map", fmt_opt(&self.map)),
+            ("MapStatus", fmt_map_status(self.map_status)),
+            ("RandomSeed", self.random_seed.to_string()),
+            ("AllowSpectators", fmt_bool(self.allow_spectators)),
+            ("GameUid", fmt_opt(&self.game_uid)),
+            ("EnableSingleplayer", fmt_bool(self.enable_singleplayer)),
+            ("EnableSyncReports", fmt_bool(self.enable_sync_reports)),
+            ("Dedicated", fmt_bool(self.dedicated)),
+            ("GameSavesEnabled", fmt_bool(self.game_saves_enabled)),
+            ("NetFrameInterval", self.net_frame_interval.to_string()),
+        ]);
+        let options = self
+            .lobby_options
+            .iter()
+            .map(|(k, o)| {
+                MiniYamlNode::new(
+                    k.clone(),
+                    yaml(vec![
+                        ("Value", fmt_opt(&o.value)),
+                        ("PreferredValue", fmt_opt(&o.preferred_value)),
+                        ("IsLocked", fmt_bool(o.is_locked)),
+                    ]),
+                )
+            })
+            .collect();
+        y.nodes.push(MiniYamlNode::new("Options", MiniYaml::new(None, options)));
+        MiniYamlNode::new("GlobalSettings", y)
+    }
+}
+
+impl Session {
+    /// `Session.Serialize`, the payload of the `SyncInfo` server order.
+    pub fn serialize(&self) -> String {
+        let spawns: Vec<String> = self.disabled_spawn_points.iter().map(i32::to_string).collect();
+        let mut nodes = vec![MiniYamlNode::with_value_str("DisabledSpawnPoints", spawns.join(", "))];
+        nodes.extend(self.clients.iter().map(Client::serialize));
+        nodes.extend(self.slots.values().map(Slot::serialize));
+        nodes.push(self.global_settings.serialize());
+        nodes_to_string(&nodes)
     }
 }

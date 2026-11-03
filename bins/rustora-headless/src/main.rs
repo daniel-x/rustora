@@ -7,6 +7,7 @@
 //! `verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]` compares the Rust bots with a C# bot game.
 //! `skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]` hosts a bot game,
 //! writes `tick hash botrandomcount` per tick and compares all three columns with a C# sync dump.
+//! `map-uid <engine-dir> <map>` prints the uid of a map, given by uid or file name.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -196,9 +197,14 @@ fn skirmish(args: &[String]) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("skirmish") {
-        skirmish(&args);
-        return;
+    match args.get(1).map(String::as_str) {
+        Some("skirmish") => return skirmish(&args),
+        Some("map-uid") if args.len() == 4 => {
+            let pkg = rustora_launch::open_map(&PathBuf::from(&args[2]), &args[3]).expect("map not found");
+            println!("{}", rustora_game::map::MapPackage::load(pkg).expect("load map").uid);
+            return;
+        }
+        _ => {}
     }
     if args.len() < 5 {
         eprintln!("usage: rustora-headless world|verify-replay <engine-dir> <support-dir> <replay> [...]");
