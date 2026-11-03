@@ -683,8 +683,10 @@ impl CrateAction {
                 if crate::experience::can_gain_level(collector) { info.selection_shares } else { 0 }
             }
             ActionKind::HideMap => {
-                let shroud = collector.owner().shroud();
-                if shroud.explore_map_enabled() { 0 } else { info.selection_shares }
+                let owner = collector.owner();
+                let pa = owner.player_actor();
+                let prevent_reset = pa.traits_implementing::<dyn crate::gps::IPreventsShroudReset>().iter().any(|p| p.prevent_shroud_reset(pa));
+                if prevent_reset || owner.shroud().explore_map_enabled() { 0 } else { info.selection_shares }
             }
             ActionKind::DuplicateUnit => {
                 if self.duplicate_can_give_to(collector) { info.selection_shares } else { 0 }

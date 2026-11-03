@@ -26,6 +26,10 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("ProvidesRadar", |n| load_info!(ProvidesRadarInfo, n));
 }
 
+pub trait IPreventsShroudReset {
+    fn prevent_shroud_reset(&self, self_: &ActorRef) -> bool;
+}
+
 pub trait IOnGpsRefreshed {
     fn on_gps_refresh(&self, self_: &ActorRef, player: &PlayerRef);
 }
@@ -46,7 +50,7 @@ pub struct GpsWatcher {
     notify_on_refresh: RefCell<Vec<(ActorRef, Rc<dyn IOnGpsRefreshed>)>>,
 }
 
-register_traits!(GpsWatcher: ISync);
+register_traits!(GpsWatcher: ISync, IPreventsShroudReset);
 info_impl!(GpsWatcherInfo => |_, init| Some(Rc::new(GpsWatcher {
     owner: init.self_.owner(),
     launched: Cell::new(false),
@@ -61,6 +65,12 @@ impl ISync for GpsWatcher {
     fn sync_hash(&self) -> i32 {
         let b = |c: &Cell<bool>| c.get() as i32;
         b(&self.launched) ^ b(&self.granted_allies) ^ b(&self.granted) ^ b(&self.explored)
+    }
+}
+
+impl IPreventsShroudReset for GpsWatcher {
+    fn prevent_shroud_reset(&self, _self_: &ActorRef) -> bool {
+        self.granted.get() || self.granted_allies.get()
     }
 }
 
