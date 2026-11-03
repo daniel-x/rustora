@@ -45,6 +45,7 @@ pub struct Connection {
     pub validated: bool,
     pub last_orders_frame: i32,
     pub timeout_message_shown: bool,
+    connected_at: Instant,
     send: Option<Sender<Vec<u8>>>,
     last_received: Arc<AtomicU64>,
 }
@@ -97,6 +98,7 @@ impl Connection {
             validated: false,
             last_orders_frame: 0,
             timeout_message_shown: false,
+            connected_at: Instant::now(),
             send: Some(send),
             last_received,
         })
@@ -105,6 +107,11 @@ impl Connection {
     /// Queues `data` for sending; false once the connection is closed.
     pub fn try_send_data(&self, data: Vec<u8>) -> bool {
         self.send.as_ref().is_some_and(|s| s.send(data).is_ok())
+    }
+
+    /// Milliseconds since the client connected, the `ConnectionTimer`.
+    pub fn connection_timer(&self) -> u64 {
+        self.connected_at.elapsed().as_millis() as u64
     }
 
     /// Milliseconds since the client last sent data.

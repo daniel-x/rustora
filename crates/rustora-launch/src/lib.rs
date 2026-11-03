@@ -3,6 +3,7 @@
 
 //! Loads the RA mod, the map and the rules of a replay or a skirmish into a [`World`], and steps the game tick by tick.
 
+pub mod net_client;
 pub mod skirmish;
 
 use std::path::Path;
@@ -20,7 +21,8 @@ use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
 use rustora_net::replay::Replay;
 
-fn find_map(engine: &Path, uid: &str) -> Option<Arc<dyn Package>> {
+/// Opens the map with the given uid from the `maps` folder of the RA mod.
+pub fn find_map(engine: &Path, uid: &str) -> Option<Arc<dyn Package>> {
     for e in std::fs::read_dir(engine.join("mods/ra/maps")).ok()?.flatten() {
         let p = e.path();
         let pkg: Arc<dyn Package> = if p.is_dir() {

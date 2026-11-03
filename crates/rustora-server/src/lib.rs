@@ -9,3 +9,4 @@ pub mod lobby;
 pub mod mod_info;
 pub mod order_buffer;
 pub mod server;
+pub mod vote_kick;

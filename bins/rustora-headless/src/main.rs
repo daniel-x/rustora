@@ -8,6 +8,8 @@
 //! `skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]` hosts a bot game,
 //! writes `tick hash botrandomcount` per tick and compares all three columns with a C# sync dump.
 //! `map-uid <engine-dir> <map>` prints the uid of a map, given by uid or file name.
+//! `join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>]`
+//! joins a server. With bots it hosts them like the C# `Harness.Bots`, without them it spectates.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -195,10 +197,66 @@ fn skirmish(args: &[String]) {
     }
 }
 
+/// Joins a server, runs up to `ticks` world ticks and writes `tick hash botrandomcount` per tick.
+fn join(args: &[String]) {
+    use rustora_launch::net_client::{JoinOptions, join_game};
+    use rustora_launch::skirmish::{SkirmishDriver, parse_bots};
+    let [engine, support, address, ticks] = &args[2..6] else {
+        panic!(
+            "usage: rustora-headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>]"
+        )
+    };
+    let engine = PathBuf::from(engine);
+    let ticks: i32 = ticks.parse().expect("ticks");
+    let mut options = JoinOptions::default();
+    let mut sync_out = None;
+    for pair in args[6..].chunks(2) {
+        let value = pair.get(1).expect("option value");
+        match pair[0].as_str() {
+            "--bots" => options.bots = parse_bots(value).expect("bots"),
+            "--wait-clients" => options.wait_clients = value.parse().expect("wait clients"),
+            "--sync-out" => sync_out = Some(std::io::BufWriter::new(std::fs::File::create(value).expect("create sync dump"))),
+            "--name" => options.name = value.clone(),
+            o => panic!("unknown option {o}"),
+        }
+    }
+    let game = join_game(&engine, support, address, &options).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    let world = game.world.clone();
+    let mut driver = SkirmishDriver::with_connection(&world, Box::new(game.connection), game.is_host);
+    while world.world_tick() < ticks {
+        match driver.step() {
+            Step::Ticked => {
+                if let Some(o) = sync_out.as_mut() {
+                    use std::io::Write;
+                    writeln!(
+                        o,
+                        "{} {} {}",
+                        world.world_tick(),
+                        world.sync_hash(),
+                        world.bot_random.borrow().total_count
+                    )
+                    .expect("write sync dump");
+                }
+            }
+            Step::Waiting => std::thread::sleep(std::time::Duration::from_micros(200)),
+            Step::Ended => break,
+        }
+    }
+    println!("ticks {}, game over: {}", world.world_tick(), world.is_game_over());
+    if let Some(frame) = driver.orders.out_of_sync {
+        println!("out of sync at frame {frame}");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("skirmish") => return skirmish(&args),
+        Some("join") => return join(&args),
         Some("map-uid") if args.len() == 4 => {
             let pkg = rustora_launch::open_map(&PathBuf::from(&args[2]), &args[3]).expect("map not found");
             println!("{}", rustora_game::map::MapPackage::load(pkg).expect("load map").uid);

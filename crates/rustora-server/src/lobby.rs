@@ -57,7 +57,7 @@ impl Server {
             "reset_options" => self.cmd_reset_options(conn, &client),
             "assignteams" => self.cmd_assign_teams(conn, &client, value),
             "kick" => self.cmd_kick(conn, &client, value),
-            "vote_kick" => self.cmd_vote_kick(conn, value),
+            "vote_kick" => self.cmd_vote_kick(conn, &client, value),
             "make_admin" => self.cmd_make_admin(conn, &client, value),
             "make_spectator" => self.cmd_make_spectator(conn, &client, value),
             "name" => self.cmd_name(&client, value),
@@ -564,7 +564,6 @@ impl Server {
         self.lobby.client_with_index(index).cloned()
     }
 
-    /// Kicks of players in a started game are always refused, as win and loss tracking is not ported yet.
     fn cmd_kick(&mut self, conn: i32, client: &Client, s: &str) -> bool {
         if !client.is_admin {
             self.send_fluent_message_to(conn, "notification-admin-kick", &[]);
@@ -582,7 +581,7 @@ impl Server {
             self.send_fluent_message_to(conn, "notification-kick-self", &[]);
             return true;
         }
-        if self.state == ServerState::GameStarted && !target.is_observer() {
+        if self.state == ServerState::GameStarted && !target.is_observer() && !self.has_client_won_or_lost(target.index) {
             self.send_fluent_message_to(conn, "notification-no-kick-game-started", &[]);
             return true;
         }
@@ -604,12 +603,34 @@ impl Server {
         true
     }
 
-    /// Answers as a server with `EnableVoteKick` off until `VoteKickTracker` is ported.
-    fn cmd_vote_kick(&mut self, conn: i32, s: &str) -> bool {
-        if s.split(' ').count() != 2 {
+    fn cmd_vote_kick(&mut self, conn: i32, client: &Client, s: &str) -> bool {
+        let split: Vec<&str> = s.split(' ').collect();
+        if split.len() != 2 {
             return self.malformed(conn, "vote_kick");
         }
-        self.send_fluent_message_to(conn, "notification-vote-kick-disabled", &[]);
+        if !self.settings.enable_vote_kick {
+            self.send_fluent_message_to(conn, "notification-vote-kick-disabled", &[]);
+            return true;
+        }
+        let Some(target) = self.connected_client(split[0]) else {
+            self.send_fluent_message_to(conn, "notification-kick-none", &[]);
+            return true;
+        };
+        if target.index == client.index {
+            self.send_fluent_message_to(conn, "notification-kick-self", &[]);
+            return true;
+        }
+        let Some(vote) = parse_bool(split[1]) else {
+            return self.malformed(conn, "vote_kick");
+        };
+        if self.vote_kick(conn, client, &target, vote) {
+            let name = target.name.clone().unwrap_or_default();
+            self.send_fluent_message("notification-kicked", &[("player", (&name).into())]);
+            self.send_order_to(target.index, "ServerError", "notification-you-were-kicked");
+            self.drop_client(target.index);
+            self.sync_lobby_clients();
+            self.sync_lobby_slots();
+        }
         true
     }
 

@@ -2,9 +2,9 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The game server (`OpenRA.Game/Server/Server.cs`) of type `ServerType.Dedicated`, with the `PlayerPinger` trait.
-//! Not ported yet: player authentication, chat flood limits, vote kick, replay recording, win and loss tracking,
-//! NAT port forwarding and master server advertising.
+//! Not ported yet: player authentication, replay recording, NAT port forwarding and master server advertising.
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,12 +22,13 @@ use rustora_core::world_types::MersenneTwister;
 use rustora_mods_common::world::{make_slot, sync_client_to_player_reference};
 use rustora_net::binary::Reader;
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
-use rustora_net::order::{RawOrder, order_type};
+use rustora_net::order::{RawOrder, SYNC_HASH_ORDER_LENGTH, order_type};
 use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Session};
 
 use crate::connection::{Connection, Event, run_time};
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
 use crate::order_buffer::OrderBuffer;
+use crate::vote_kick::VoteKickTracker;
 
 const PING_INTERVAL: u64 = 5000;
 const CONN_REPORT_INTERVAL: u64 = 20000;
@@ -57,6 +58,13 @@ pub struct ServerSettings {
     pub map_pool: Vec<String>,
     pub seed: Option<i32>,
     pub support_dir: PathBuf,
+    pub flood_limit_join_cooldown: u64,
+    pub flood_limit_interval: u64,
+    pub flood_limit_message_count: usize,
+    pub flood_limit_cooldown: u64,
+    pub enable_vote_kick: bool,
+    pub vote_kick_timer: u64,
+    pub vote_kicker_cooldown: u64,
 }
 
 impl Default for ServerSettings {
@@ -73,6 +81,13 @@ impl Default for ServerSettings {
             map_pool: Vec::new(),
             seed: None,
             support_dir: PathBuf::new(),
+            flood_limit_join_cooldown: 5000,
+            flood_limit_interval: 5000,
+            flood_limit_message_count: 5,
+            flood_limit_cooldown: 15000,
+            enable_vote_kick: true,
+            vote_kick_timer: 30000,
+            vote_kicker_cooldown: 120000,
         }
     }
 }
@@ -207,6 +222,25 @@ fn listen_loop(listener: TcpListener, events: Sender<Event>, accepting: Arc<Atom
     }
 }
 
+/// The outcome of a player, for `GameInformation.Player` of the win and loss tracking.
+struct WorldPlayer {
+    client_index: i32,
+    team: i32,
+    undecided: bool,
+}
+
+/// `AnyUndefinedWinStates`: true while more than one side is undecided.
+fn any_undecided_opponents(players: &[Option<WorldPlayer>]) -> bool {
+    let mut last_team = -1;
+    for p in players.iter().flatten().filter(|p| p.undecided) {
+        if last_team >= 0 && (p.team != last_team || p.team == 0) {
+            return true;
+        }
+        last_team = p.team;
+    }
+    false
+}
+
 pub struct Server {
     pub settings: ServerSettings,
     pub game_mod: ServerMod,
@@ -218,6 +252,12 @@ pub struct Server {
     pub order_latency: i32,
     pub temp_bans: Vec<String>,
     pub map_pool: IndexSet<String>,
+    pub vote_kick: VoteKickTracker,
+    world_players: Vec<Option<WorldPlayer>>,
+    sync_for_frame: HashMap<i32, Vec<u8>>,
+    last_defeat_state_frame: i32,
+    last_defeat_state: u64,
+    message_tracker: HashMap<i32, Vec<u64>>,
     order_buffer: Option<OrderBuffer>,
     start: Instant,
     next_player_index: i32,
@@ -322,6 +362,12 @@ impl Server {
             order_latency: 1,
             temp_bans: Vec::new(),
             map_pool,
+            vote_kick: VoteKickTracker::default(),
+            world_players: Vec::new(),
+            sync_for_frame: HashMap::new(),
+            last_defeat_state_frame: 0,
+            last_defeat_state: 0,
+            message_tracker: HashMap::new(),
             order_buffer: None,
             start: Instant::now(),
             next_player_index: 0,
@@ -343,6 +389,7 @@ impl Server {
                 self.handle_event(e);
             }
             self.pinger_tick();
+            self.vote_kick_tick();
             if self.state == ServerState::GameStarted {
                 self.send_tick_scales();
                 if self.conns.is_empty() {
@@ -517,11 +564,16 @@ impl Server {
             None => client.color = WHITE,
         }
         let name = client.name.clone().unwrap_or_default();
+        let is_admin = client.is_admin;
         self.lobby.clients.push(client);
         let map = self.map.clone();
         if let Some(c) = self.conn_mut(player_index) {
             c.validated = true;
             println!("Client {player_index}: Accepted connection from {}.", c.end_point);
+        }
+        let join_cooldown = self.settings.flood_limit_join_cooldown;
+        if !is_admin && join_cooldown > 0 {
+            self.disable_chat_ui(player_index, join_cooldown);
         }
         self.client_joined(player_index);
         self.sync_lobby_info();
@@ -568,6 +620,7 @@ impl Server {
                 self.dispatch_frame_to_client(c, frame_data.clone());
             }
         }
+        self.record_order(frame, data, from);
     }
 
     /// `DispatchServerOrdersToClients`.
@@ -576,6 +629,129 @@ impl Server {
         for c in self.validated_conn_indices() {
             self.dispatch_frame_to_client(c, frame_data.clone());
         }
+        self.record_order(frame, data, 0);
+    }
+
+    /// `RecordOrder` without a replay recorder: tracks defeats through the sync packets.
+    fn record_order(&mut self, frame: i32, data: &[u8], from: i32) {
+        if data.first() != Some(&order_type::SYNC_HASH) {
+            return;
+        }
+        if data.len() == SYNC_HASH_ORDER_LENGTH {
+            self.handle_sync_order(frame, data);
+        } else {
+            println!(
+                "Dropped sync order with length {} from client {from}. Expected length {SYNC_HASH_ORDER_LENGTH}.",
+                data.len()
+            );
+        }
+    }
+
+    /// `HandleSyncOrder`. The first client's sync packet of a frame decides; others only detect a desync.
+    fn handle_sync_order(&mut self, frame: i32, packet: &[u8]) {
+        if let Some(existing) = self.sync_for_frame.get(&frame) {
+            if existing != packet {
+                println!("Out of sync detected at frame {frame}");
+            }
+            return;
+        }
+        let defeat_state = u64::from_le_bytes(packet[5..13].try_into().expect("sync order length"));
+        if frame > self.last_defeat_state_frame && self.last_defeat_state != defeat_state {
+            let new_defeats = defeat_state & !self.last_defeat_state;
+            for i in 0..self.world_players.len().min(64) {
+                if new_defeats & (1u64 << i) != 0 {
+                    self.set_player_defeat(i);
+                }
+            }
+            self.last_defeat_state = defeat_state;
+            self.last_defeat_state_frame = frame;
+        }
+        self.sync_for_frame.insert(frame, packet.to_vec());
+    }
+
+    /// `SetPlayerDefeat`: when only one side remains, its players have won.
+    fn set_player_defeat(&mut self, player_index: usize) {
+        let Some(Some(player)) = self.world_players.get_mut(player_index) else {
+            return;
+        };
+        if !player.undecided {
+            return;
+        }
+        player.undecided = false;
+        if !any_undecided_opponents(&self.world_players) {
+            for p in self.world_players.iter_mut().flatten() {
+                p.undecided = false;
+            }
+        }
+    }
+
+    /// `HasClientWonOrLost`: also true for clients without a player.
+    pub fn has_client_won_or_lost(&self, client_index: i32) -> bool {
+        self.world_players
+            .iter()
+            .flatten()
+            .find(|p| p.client_index == client_index)
+            .is_none_or(|p| !p.undecided)
+    }
+
+    /// `ICreatePlayersInfo.CreateServerPlayers` without the resolved factions and spawn points, which only
+    /// replay metadata uses: the padded player list with the indexes of `world.Players` on the clients.
+    fn create_world_players(&mut self) {
+        self.world_players = self.map.players.values().filter(|p| !p.playable).map(|_| None).collect();
+        for slot in self.lobby.slots.keys() {
+            if let Some(c) = self.lobby.client_in_slot(slot) {
+                self.world_players.push(Some(WorldPlayer {
+                    client_index: c.index,
+                    team: c.team,
+                    undecided: true,
+                }));
+            }
+        }
+        self.world_players.push(None);
+    }
+
+    /// `PlayerMessageTracker.DisableChatUI`.
+    fn disable_chat_ui(&mut self, player_index: i32, time: u64) {
+        let order = RawOrder {
+            extra_data: time as u32,
+            ..RawOrder::new("DisableChatEntry")
+        };
+        self.dispatch_frame_to_client(player_index, create_frame(0, 0, &order.serialize()));
+    }
+
+    /// `PlayerMessageTracker.IsPlayerAtFloodLimit`.
+    fn is_player_at_flood_limit(&mut self, player_index: i32) -> bool {
+        let Some(time) = self.conn(player_index).map(|c| c.connection_timer()) else {
+            return true;
+        };
+        let is_admin = self.lobby.client_with_index(player_index).is_some_and(|c| c.is_admin);
+        let interval = self.settings.flood_limit_interval;
+        let count = self.settings.flood_limit_message_count;
+        let tracker = self.message_tracker.entry(player_index).or_default();
+        tracker.retain(|t| t + interval >= time);
+        let remaining = |cooldown: u64| (cooldown.saturating_sub(time).saturating_add(999) / 1000) as i64;
+        let blocked_until = if !is_admin && time < self.settings.flood_limit_join_cooldown {
+            Some(self.settings.flood_limit_join_cooldown)
+        } else if tracker.len() >= count {
+            Some(tracker.first().map_or(0, |t| t + interval))
+        } else {
+            None
+        };
+        if let Some(until) = blocked_until {
+            self.send_fluent_message_to(
+                player_index,
+                "notification-chat-temp-disabled",
+                &[("remaining", remaining(until).into())],
+            );
+            return true;
+        }
+        tracker.push(time);
+        if tracker.len() >= count {
+            let delta = self.settings.flood_limit_cooldown.saturating_sub(interval);
+            tracker.iter_mut().for_each(|t| *t = time + delta);
+            self.disable_chat_ui(player_index, self.settings.flood_limit_cooldown);
+        }
+        false
     }
 
     fn broadcast_order(&mut self, order: &str, text: &str) {
@@ -632,7 +808,9 @@ impl Server {
                     self.send_fluent_message_to(player_index, "notification-unknown-server-command", &[("command", target.into())]);
                 }
             }
-            "Chat" => self.dispatch_orders_to_clients(player_index, 0, &o.serialize()),
+            "Chat" if !self.is_player_at_flood_limit(player_index) => {
+                self.dispatch_orders_to_clients(player_index, 0, &o.serialize());
+            }
             _ => {}
         }
     }
@@ -788,6 +966,7 @@ impl Server {
             self.drop_client(c);
         }
         self.lobby.global_settings.game_saves_enabled = false;
+        self.create_world_players();
         self.sync_lobby_info();
 
         let default_speed = self.game_mod.default_speed.clone();
@@ -884,6 +1063,34 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_side_standing_wins() {
+        let player = |client_index, team| {
+            Some(WorldPlayer {
+                client_index,
+                team,
+                undecided: true,
+            })
+        };
+        let mut players = vec![None, player(1, 1), player(2, 1), player(3, 2), None];
+        assert!(any_undecided_opponents(&players));
+        players[3].as_mut().unwrap().undecided = false;
+        assert!(!any_undecided_opponents(&players));
+    }
+
+    #[test]
+    fn players_without_a_team_are_opponents() {
+        let player = |client_index| {
+            Some(WorldPlayer {
+                client_index,
+                team: 0,
+                undecided: true,
+            })
+        };
+        assert!(any_undecided_opponents(&[player(1), player(2)]));
+        assert!(!any_undecided_opponents(&[player(1)]));
+    }
 
     #[test]
     fn frame_layout() {

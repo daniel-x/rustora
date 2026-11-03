@@ -19,6 +19,7 @@ pub enum Incoming {
     Disconnect { client_id: i32, frame: i32 },
     Immediate { client_id: i32, orders: OrderPacket },
     Orders { client_id: i32, orders: OrderPacket },
+    TickScale(f32),
 }
 
 /// `IConnection`.
@@ -29,6 +30,10 @@ pub trait Connection {
     fn send_immediate(&mut self, _orders: Vec<RawOrder>) {}
     fn send_sync(&mut self, frame: i32, sync_hash: i32, defeat_state: u64);
     fn receive(&mut self, net_frame_number: i32) -> Vec<Incoming>;
+    /// False once a network connection is lost.
+    fn is_connected(&self) -> bool {
+        true
+    }
 }
 
 /// `ReplayConnection`: feeds recorded packets with the original order latency.
@@ -119,6 +124,8 @@ pub struct OrderManager {
     net_frame_interval: i32,
     /// First frame whose synced state diverged, if any.
     pub out_of_sync: Option<i32>,
+    /// The timestep multiplier the server requests so that this client does not run ahead of slower ones.
+    pub tick_scale: f32,
 }
 
 impl OrderManager {
@@ -136,6 +143,7 @@ impl OrderManager {
             local_immediate_orders: Vec::new(),
             net_frame_interval,
             out_of_sync: None,
+            tick_scale: 1.0,
         }
     }
 
@@ -195,6 +203,7 @@ impl OrderManager {
                 Incoming::Orders { client_id, orders } => {
                     self.enqueue(client_id, orders.frame, Some(orders));
                 }
+                Incoming::TickScale(scale) => self.tick_scale = scale,
             }
         }
     }

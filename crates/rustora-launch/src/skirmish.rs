@@ -158,8 +158,15 @@ pub struct SkirmishDriver {
 
 impl SkirmishDriver {
     pub fn new(world: &Rc<World>) -> SkirmishDriver {
-        rustora_mods_common::bots::activate_bots(world);
-        let mut orders = OrderManager::new(world.clone(), Box::new(LocalConnection::default()));
+        SkirmishDriver::with_connection(world, Box::new(LocalConnection::default()), true)
+    }
+
+    /// Drives the game over `connection`. Only the host runs the bots (`Game.IsHost` in the C# `Player`).
+    pub fn with_connection(world: &Rc<World>, connection: Box<dyn Connection>, is_host: bool) -> SkirmishDriver {
+        if is_host {
+            rustora_mods_common::bots::activate_bots(world);
+        }
+        let mut orders = OrderManager::new(world.clone(), connection);
         orders.start_game();
         SkirmishDriver {
             orders,
@@ -175,7 +182,11 @@ impl SkirmishDriver {
         }
         self.orders.tick_immediate();
         if !self.orders.try_tick() {
-            return Step::Waiting;
+            return if self.orders.connection.is_connected() {
+                Step::Waiting
+            } else {
+                Step::Ended
+            };
         }
         self.world.tick();
         for delay in self.world.take_end_game_requests() {
