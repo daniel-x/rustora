@@ -255,7 +255,13 @@ impl INotifyCreated for WithInfantryBody {
     fn created(&self, self_: &ActorRef) {
         let _ = self.mv.set(self_.trait_::<dyn IMove>());
         let _ = self.rsm.set(self_.trait_or_default::<dyn IRenderInfantrySequenceModifier>());
-        self.idle_delay.set(self_.world().shared_random.borrow_mut().next_range(self.info.min_idle_delay, self.info.max_idle_delay));
+        self.idle_delay.set(
+            self_
+                .world()
+                .shared_random
+                .borrow_mut()
+                .next_range(self.info.min_idle_delay, self.info.max_idle_delay),
+        );
         conditional_created(self, self_);
     }
 }
@@ -263,7 +269,9 @@ impl INotifyCreated for WithInfantryBody {
 impl WithInfantryBody {
     fn play_stand_animation(&self) {
         self.anim_state.set(AnimationState::Waiting);
-        let sequence = self.default_animation.get_random_existing_sequence(&self.info.stand_sequences, &mut self.cosmetic_random.borrow_mut());
+        let sequence = self
+            .default_animation
+            .get_random_existing_sequence(&self.info.stand_sequences, &mut self.cosmetic_random.borrow_mut());
         if let Some(s) = sequence {
             self.default_animation.play_repeating(&self.normalize_infantry_sequence(&s));
         }
@@ -278,9 +286,17 @@ impl WithInfantryBody {
     }
 
     fn normalize_infantry_sequence(&self, base: &str) -> String {
-        let prefix = if self.is_modifying_sequence() { self.rsm().unwrap().sequence_prefix() } else { String::new() };
+        let prefix = if self.is_modifying_sequence() {
+            self.rsm().unwrap().sequence_prefix()
+        } else {
+            String::new()
+        };
         let prefixed = prefix + base;
-        if self.default_animation.has_sequence(&prefixed) { prefixed } else { base.to_string() }
+        if self.default_animation.has_sequence(&prefixed) {
+            prefixed
+        } else {
+            base.to_string()
+        }
     }
 
     fn stand_callback(&self) -> Option<Rc<dyn Fn()>> {
@@ -306,7 +322,8 @@ impl WithInfantryBody {
         }
         if let Some(s) = sequence.filter(|s| !s.is_empty() && self.default_animation.has_sequence(&self.normalize_infantry_sequence(s))) {
             self.anim_state.set(AnimationState::Attacking);
-            self.default_animation.play_then(&self.normalize_infantry_sequence(&s), self.stand_callback());
+            self.default_animation
+                .play_then(&self.normalize_infantry_sequence(&s), self.stand_callback());
         }
     }
 }
@@ -337,8 +354,11 @@ impl ITick for WithInfantryBody {
         let s = self.anim_state.get();
         if (s != AnimationState::Moving || self.dirty.get()) && moving {
             self.anim_state.set(AnimationState::Moving);
-            self.default_animation.play_repeating(&self.normalize_infantry_sequence(&self.info.move_sequence));
-        } else if ((s == AnimationState::Moving || self.dirty.get()) && !moving) || ((s == AnimationState::Idle || s == AnimationState::IdleAnimating) && !self_.is_idle()) {
+            self.default_animation
+                .play_repeating(&self.normalize_infantry_sequence(&self.info.move_sequence));
+        } else if ((s == AnimationState::Moving || self.dirty.get()) && !moving)
+            || ((s == AnimationState::Idle || s == AnimationState::IdleAnimating) && !self_.is_idle())
+        {
             self.play_stand_animation();
         }
         self.dirty.set(false);
@@ -356,7 +376,11 @@ impl INotifyIdle for WithInfantryBody {
             let w = self_.world();
             let i = w.shared_random.borrow_mut().next_max(self.info.idle_sequences.len() as i32) as usize;
             *self.idle_sequence.borrow_mut() = self.info.idle_sequences[i].clone();
-            self.idle_delay.set(w.shared_random.borrow_mut().next_range(self.info.min_idle_delay, self.info.max_idle_delay));
+            self.idle_delay.set(
+                w.shared_random
+                    .borrow_mut()
+                    .next_range(self.info.min_idle_delay, self.info.max_idle_delay),
+            );
         } else if s == AnimationState::Idle && self.idle_delay.get() > 0 {
             self.idle_delay.set(self.idle_delay.get() - 1);
             if self.idle_delay.get() == 0 {
@@ -447,7 +471,8 @@ impl crate::interfaces::INotifyDamageStateChanged for WithSpriteTurret {
     fn damage_state_changed(&self, self_: &ActorRef, _e: &rustora_engine::damage::AttackInfo) {
         if let Some(s) = self.default_animation.current_sequence() {
             let ds = crate::render::get_damage_state(self_);
-            self.default_animation.replace_anim(&crate::render::normalize_sequence(&self.default_animation, ds, &s.name));
+            self.default_animation
+                .replace_anim(&crate::render::normalize_sequence(&self.default_animation, ds, &s.name));
         }
     }
 }
@@ -529,7 +554,11 @@ impl INotifyIdle for ScaredyCat {
         }
         let w = self_.world();
         let avoid = |c: rustora_core::world_types::CPos| self.info.avoid_terrain_types.contains(&w.map().terrain_type_info(c).ty);
-        let filter: Option<&dyn Fn(rustora_core::world_types::CPos) -> bool> = if self.info.avoid_terrain_types.is_empty() { None } else { Some(&avoid) };
+        let filter: Option<&dyn Fn(rustora_core::world_types::CPos) -> bool> = if self.info.avoid_terrain_types.is_empty() {
+            None
+        } else {
+            Some(&avoid)
+        };
         if let Some(cell) = self.mobile.get_adjacent_cell(self_.location(), filter) {
             self_.queue_activity_queued(false, self.mobile.move_to(cell, 0, None, false));
         }
@@ -625,7 +654,13 @@ rustora_engine::conditional_simple!(Wanders);
 
 impl INotifyBecomingIdle for Wanders {
     fn on_becoming_idle(&self, self_: &ActorRef) {
-        self.countdown.set(self_.world().shared_random.borrow_mut().next_range(self.info.min_move_delay, self.info.max_move_delay));
+        self.countdown.set(
+            self_
+                .world()
+                .shared_random
+                .borrow_mut()
+                .next_range(self.info.min_move_delay, self.info.max_move_delay),
+        );
     }
 }
 
@@ -648,7 +683,8 @@ impl Wanders {
     fn pick_target_location(&self, self_: &ActorRef) -> Option<rustora_core::world_types::CPos> {
         let w = self_.world();
         let facing = w.shared_random.borrow_mut().next_max(255);
-        let target = self_.center_position() + WVec::new(0, -1024 * self.effective_move_radius.get(), 0).rotate(&rustora_core::world_types::WRot::from_facing(facing));
+        let target = self_.center_position()
+            + WVec::new(0, -1024 * self.effective_move_radius.get(), 0).rotate(&rustora_core::world_types::WRot::from_facing(facing));
         let cell = w.map().cell_containing(target);
         if !w.map().contains(cell) {
             self.ticks_idle.set(self.ticks_idle.get() + 1);
@@ -710,7 +746,11 @@ impl INotifyCreated for RejectsOrders {
 
 /// `RejectsOrdersExts.AcceptsOrder`.
 pub fn accepts_order(a: &ActorRef, order_string: &str) -> bool {
-    let traits: Vec<Rc<RejectsOrders>> = a.traits_implementing::<RejectsOrders>().into_iter().filter(|t| !t.state.is_trait_disabled()).collect();
+    let traits: Vec<Rc<RejectsOrders>> = a
+        .traits_implementing::<RejectsOrders>()
+        .into_iter()
+        .filter(|t| !t.state.is_trait_disabled())
+        .collect();
     if traits.is_empty() || traits.iter().any(|t| t.info.except.contains(order_string)) {
         return true;
     }
@@ -741,7 +781,9 @@ impl IValidateOrder for ValidateOrder {
         let Some(subject) = &order.subject else { return true };
         let Some(owner) = subject.owner_opt() else { return true };
         let subject_client_id = owner.client_index;
-        let Some(client) = world.lobby_info.client_with_index(subject_client_id) else { return false };
+        let Some(client) = world.lobby_info.client_with_index(subject_client_id) else {
+            return false;
+        };
         let is_bot_order = client.bot.is_some() && client_id == client.bot_controller_client_index;
         if subject_client_id != client_id && !is_bot_order {
             return false;

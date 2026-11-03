@@ -442,7 +442,11 @@ impl IWorldLoaded for MapStartingLocations {
             if !p.playable {
                 continue;
             }
-            let cells = rustora_engine::shroud::Shroud::projected_cells_in_cell_range(world.map(), p.home_location, self.info.initial_explore_range);
+            let cells = rustora_engine::shroud::Shroud::projected_cells_in_cell_range(
+                world.map(),
+                p.home_location,
+                self.info.initial_explore_range,
+            );
             for q in world.players() {
                 if p.is_allied_with(Some(&q)) {
                     q.shroud().explore_projected_cells(&cells);

@@ -11,7 +11,10 @@ use crate::terrain::TargetableType;
 
 /// `Actor.GetTargetablePositions`: falls back to the center position.
 pub fn targetable_positions(a: &ActorRef) -> Vec<WPos> {
-    let providers = a.cache_opt().map_or_else(|| a.traits_implementing::<dyn ITargetablePositions>(), |c| c.targetable_positions.clone());
+    let providers = a.cache_opt().map_or_else(
+        || a.traits_implementing::<dyn ITargetablePositions>(),
+        |c| c.targetable_positions.clone(),
+    );
     let mut out = Vec::new();
     let mut any = false;
     for p in &providers {
@@ -62,5 +65,6 @@ pub trait ITargetable {
 
 /// `Actor.Targetables`, cached at creation like the C# array.
 fn targetables(a: &ActorRef) -> Vec<std::rc::Rc<dyn ITargetable>> {
-    a.cache_opt().map_or_else(|| a.traits_implementing::<dyn ITargetable>(), |c| c.targetables.clone())
+    a.cache_opt()
+        .map_or_else(|| a.traits_implementing::<dyn ITargetable>(), |c| c.targetables.clone())
 }

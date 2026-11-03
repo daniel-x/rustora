@@ -196,7 +196,9 @@ impl AutoTarget {
     }
 
     fn active_target_priorities(&self) -> Vec<Rc<AutoTargetPriorityInfo>> {
-        self.target_priorities.get().map_or_else(Vec::new, |v| v.iter().filter(|t| !t.state.is_trait_disabled()).map(|t| t.info.clone()).collect())
+        self.target_priorities.get().map_or_else(Vec::new, |v| {
+            v.iter().filter(|t| !t.state.is_trait_disabled()).map(|t| t.info.clone()).collect()
+        })
     }
 
     pub fn set_stance(&self, self_: &ActorRef, value: UnitStance) {
@@ -235,13 +237,21 @@ impl AutoTarget {
                 }
             }
             if !ignore_scan_interval {
-                let next = self_.world().shared_random.borrow_mut().next_range(self.info.minimum_scan_time_interval, self.info.maximum_scan_time_interval);
+                let next = self_
+                    .world()
+                    .shared_random
+                    .borrow_mut()
+                    .next_range(self.info.minimum_scan_time_interval, self.info.maximum_scan_time_interval);
                 self.next_scan_time.set(next);
             }
             for ab in &active {
                 let stances = ab.unforced_attack_target_stances();
                 if stances != PlayerRelationship::NONE {
-                    let range = if self.info.scan_radius > 0 { WDist::from_cells(self.info.scan_radius) } else { ab.get_maximum_range() };
+                    let range = if self.info.scan_radius > 0 {
+                        WDist::from_cells(self.info.scan_radius)
+                    } else {
+                        ab.get_maximum_range()
+                    };
                     let target = self.choose_target(self_, ab, stances, range, allow_move, allow_turn);
                     if target.target_type() != TargetType::Invalid {
                         return target;
@@ -271,11 +281,22 @@ impl AutoTarget {
             return false;
         }
         self.active_target_priorities().iter().any(|ati| {
-            ati.valid_relationships.has_relationship(self_.owner().relationship_with(Some(owner))) && ati.valid_targets.overlaps(target_types) && !ati.invalid_targets.overlaps(target_types)
+            ati.valid_relationships
+                .has_relationship(self_.owner().relationship_with(Some(owner)))
+                && ati.valid_targets.overlaps(target_types)
+                && !ati.invalid_targets.overlaps(target_types)
         })
     }
 
-    fn choose_target(&self, self_: &ActorRef, ab: &Rc<AttackBase>, attack_stances: PlayerRelationship, scan_range: WDist, allow_move: bool, allow_turn: bool) -> Target {
+    fn choose_target(
+        &self,
+        self_: &ActorRef,
+        ab: &Rc<AttackBase>,
+        attack_stances: PlayerRelationship,
+        scan_range: WDist,
+        allow_move: bool,
+        allow_turn: bool,
+    ) -> Target {
         let mut chosen = Target::Invalid;
         let mut chosen_priority = i32::MIN;
         let mut chosen_range = 0;
@@ -285,10 +306,19 @@ impl AutoTarget {
         }
         let w = self_.world();
         let pos = self_.center_position();
-        let mut targets: Vec<Target> = w.find_actors_in_circle(pos, scan_range).iter().map(|a| Target::from_actor(Some(a))).collect();
+        let mut targets: Vec<Target> = w
+            .find_actors_in_circle(pos, scan_range)
+            .iter()
+            .map(|a| Target::from_actor(Some(a)))
+            .collect();
         if allow_move || ab.info.target_frozen_actors {
             if let Some(layer) = self_.owner().frozen_actor_layer() {
-                targets.extend(layer.frozen_actors_in_circle(&w, pos, scan_range, true).into_iter().map(Target::from_frozen_actor));
+                targets.extend(
+                    layer
+                        .frozen_actors_in_circle(&w, pos, scan_range, true)
+                        .into_iter()
+                        .map(Target::from_frozen_actor),
+                );
             }
         }
         let me = self_.owner();
@@ -321,12 +351,20 @@ impl AutoTarget {
             let relationship = me.relationship_with(Some(&owner));
             let valid: Vec<&Rc<AutoTargetPriorityInfo>> = active
                 .iter()
-                .filter(|ati| ati.priority >= chosen_priority && ati.valid_relationships.has_relationship(relationship) && ati.valid_targets.overlaps(&target_types) && !ati.invalid_targets.overlaps(&target_types))
+                .filter(|ati| {
+                    ati.priority >= chosen_priority
+                        && ati.valid_relationships.has_relationship(relationship)
+                        && ati.valid_targets.overlaps(&target_types)
+                        && !ati.invalid_targets.overlaps(&target_types)
+                })
                 .collect();
             if valid.is_empty() {
                 continue;
             }
-            let any_armament = ab.choose_armaments_for_target(&target, false).iter().any(|arm| allow_move || (target.is_in_range(pos, arm.max_range()) && !target.is_in_range(pos, arm.weapon.min_range)));
+            let any_armament = ab
+                .choose_armaments_for_target(&target, false)
+                .iter()
+                .any(|arm| allow_move || (target.is_in_range(pos, arm.max_range()) && !target.is_in_range(pos, arm.weapon.min_range)));
             if !any_armament {
                 continue;
             }
@@ -335,7 +373,10 @@ impl AutoTarget {
             }
             let target_range = (target.center_position() - pos).length();
             for ati in valid {
-                if chosen.target_type() == TargetType::Invalid || chosen_priority < ati.priority || (chosen_priority == ati.priority && target_range < chosen_range) {
+                if chosen.target_type() == TargetType::Invalid
+                    || chosen_priority < ati.priority
+                    || (chosen_priority == ati.priority && target_range < chosen_range)
+                {
                     chosen = target.clone();
                     chosen_priority = ati.priority;
                     chosen_range = target_range;
@@ -347,13 +388,23 @@ impl AutoTarget {
 }
 
 fn prevents_auto_target(attacker: &ActorRef, target: &ActorRef) -> bool {
-    target.traits_implementing::<dyn IDisableEnemyAutoTarget>().iter().any(|d| d.disable_enemy_auto_target(target, attacker))
+    target
+        .traits_implementing::<dyn IDisableEnemyAutoTarget>()
+        .iter()
+        .any(|d| d.disable_enemy_auto_target(target, attacker))
 }
 
 impl INotifyOwnerChanged for AutoTarget {
     fn on_owner_changed(&self, self_: &ActorRef, _old_owner: &PlayerRef, _new_owner: &PlayerRef) {
         let owner = self_.owner();
-        self.set_stance(self_, if owner.is_bot || !owner.playable { self.info.initial_stance_ai } else { self.info.initial_stance });
+        self.set_stance(
+            self_,
+            if owner.is_bot || !owner.playable {
+                self.info.initial_stance_ai
+            } else {
+                self.info.initial_stance
+            },
+        );
     }
 }
 
@@ -393,7 +444,11 @@ impl INotifyDamage for AutoTarget {
             return;
         }
         let attacker_as_target = Target::from_actor(Some(&attacker));
-        if !self.active_attack_bases().iter().any(|a| a.has_any_valid_weapons(&attacker_as_target, false, false)) {
+        if !self
+            .active_attack_bases()
+            .iter()
+            .any(|a| a.has_any_valid_weapons(&attacker_as_target, false, false))
+        {
             return;
         }
         if util::appears_friendly_to(&attacker, self_) {
@@ -450,7 +505,9 @@ impl Default for AutoTargetPriorityInfo {
             base: ConditionalTraitInfo::default(),
             valid_targets: BitSet::new(&["Ground", "Water", "Air"]),
             invalid_targets: BitSet::default(),
-            valid_relationships: PlayerRelationship(PlayerRelationship::ALLY.0 | PlayerRelationship::NEUTRAL.0 | PlayerRelationship::ENEMY.0),
+            valid_relationships: PlayerRelationship(
+                PlayerRelationship::ALLY.0 | PlayerRelationship::NEUTRAL.0 | PlayerRelationship::ENEMY.0,
+            ),
             priority: 1,
         }
     }
@@ -489,10 +546,15 @@ impl INotifyCreated for Guard {
 
 impl Guard {
     pub fn guard_target(&self, self_: &ActorRef, target: &Target, queued: bool) {
-        let Some(a) = target.actor().filter(|_| target.target_type() == TargetType::Actor) else { return };
+        let Some(a) = target.actor().filter(|_| target.target_type() == TargetType::Actor) else {
+            return;
+        };
         let range = a.info.trait_info::<GuardableInfo>().expect("guardable").range;
         let (mv, me, t) = (self.mv.get().unwrap().clone(), self_.clone(), target.clone());
-        self_.queue_activity_queued(queued, AttackMoveActivity::new(self_, Rc::new(move || mv.move_follow(&me, &t, WDist::ZERO, range, None)), false));
+        self_.queue_activity_queued(
+            queued,
+            AttackMoveActivity::new(self_, Rc::new(move || mv.move_follow(&me, &t, WDist::ZERO, range, None)), false),
+        );
     }
 }
 
@@ -513,7 +575,10 @@ pub struct GuardableInfo {
 
 impl Default for GuardableInfo {
     fn default() -> Self {
-        GuardableInfo { instance_name: None, range: WDist::from_cells(2) }
+        GuardableInfo {
+            instance_name: None,
+            range: WDist::from_cells(2),
+        }
     }
 }
 

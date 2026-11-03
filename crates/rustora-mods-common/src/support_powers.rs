@@ -237,7 +237,11 @@ impl SupportPower {
     }
 
     fn key(&self) -> String {
-        if self.info.allow_multiple { format!("{}_{}", self.info.order_name, self.self_.id) } else { self.info.order_name.clone() }
+        if self.info.allow_multiple {
+            format!("{}_{}", self.info.order_name, self.self_.id)
+        } else {
+            self.info.order_name.clone()
+        }
     }
 
     fn charged(&self, self_: &ActorRef, key: &str) {
@@ -269,7 +273,13 @@ impl SupportPower {
             PowerKind::Gps => {
                 let (a, info) = (self_.clone(), self.info.clone());
                 self_.world().add_frame_end_task(Box::new(move |w| {
-                    w.add_effect(SatelliteLaunch::new(w, &a, &info.door_image, &info.door_sequence, info.reveal_delay));
+                    w.add_effect(SatelliteLaunch::new(
+                        w,
+                        &a,
+                        &info.door_image,
+                        &info.door_sequence,
+                        info.reveal_delay,
+                    ));
                 }));
             }
         }
@@ -285,9 +295,22 @@ impl SupportPower {
     }
 
     /// Start and finish positions of a fly-over, like `SendAirstrike` and `SendParatroopers`.
-    fn flight_path(&self, w: &World, target: rustora_core::world_types::WPos, facing: WAngle) -> (rustora_core::world_types::WPos, rustora_core::world_types::WPos, rustora_core::world_types::WPos, WRot) {
+    fn flight_path(
+        &self,
+        w: &World,
+        target: rustora_core::world_types::WPos,
+        facing: WAngle,
+    ) -> (
+        rustora_core::world_types::WPos,
+        rustora_core::world_types::WPos,
+        rustora_core::world_types::WPos,
+        WRot,
+    ) {
         let unit_type = self.info.unit_type.to_lowercase();
-        let ai = w.rules().actor(&unit_type).unwrap_or_else(|| panic!("Actors ruleset does not include the entry '{unit_type}'"));
+        let ai = w
+            .rules()
+            .actor(&unit_type)
+            .unwrap_or_else(|| panic!("Actors ruleset does not include the entry '{unit_type}'"));
         let altitude = ai.trait_info::<AircraftInfo>().expect("AircraftInfo").cruise_altitude.length;
         let rotation = WRot::from_yaw(facing);
         let delta = WVec::new(0, -1024, 0).rotate(&rotation);
@@ -315,15 +338,31 @@ impl SupportPower {
             let a = w.create_actor_add(
                 false,
                 &self.info.unit_type,
-                ActorInits::new().with(CenterPositionInit::new(start_edge + spawn_offset)).with(OwnerInit::from_player(&self_.owner())).with(FacingInit::new(facing)),
+                ActorInits::new()
+                    .with(CenterPositionInit::new(start_edge + spawn_offset))
+                    .with(OwnerInit::from_player(&self_.owner()))
+                    .with(FacingInit::new(facing)),
             );
             tracker.in_range.borrow_mut().push((a.clone(), false));
-            let attack = a.traits_implementing::<AttackBase>().into_iter().find(|t| t.info.kind == crate::attack::AttackKind::Bomber).expect("AttackBomber");
+            let attack = a
+                .traits_implementing::<AttackBase>()
+                .into_iter()
+                .find(|t| t.info.kind == crate::attack::AttackKind::Bomber)
+                .expect("AttackBomber");
             attack.set_bomber_target(target + target_offset);
             let (t1, t2, t3) = (tracker.clone(), tracker.clone(), tracker.clone());
-            attack.on_entered_attack_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, false)));
-            attack.on_exited_attack_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
-            attack.on_removed_from_world.borrow_mut().push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
+            attack
+                .on_entered_attack_range
+                .borrow_mut()
+                .push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, false)));
+            attack
+                .on_exited_attack_range
+                .borrow_mut()
+                .push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
+            attack
+                .on_removed_from_world
+                .borrow_mut()
+                .push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
             aircraft.push(a);
         }
         let (list, indices) = (aircraft.clone(), self.squad_indices());
@@ -349,13 +388,23 @@ impl SupportPower {
         let mut aircraft = Vec::new();
         for i in self.squad_indices() {
             let spawn_offset = WVec::new(i * so.y, -i.abs() * so.x, 0).rotate(&rotation);
-            aircraft.push(w.create_actor_add(
-                false,
-                &self.info.unit_type,
-                ActorInits::new().with(CenterPositionInit::new(start_edge + spawn_offset)).with(OwnerInit::from_player(&owner)).with(FacingInit::new(facing)),
-            ));
+            aircraft.push(
+                w.create_actor_add(
+                    false,
+                    &self.info.unit_type,
+                    ActorInits::new()
+                        .with(CenterPositionInit::new(start_edge + spawn_offset))
+                        .with(OwnerInit::from_player(&owner))
+                        .with(FacingInit::new(facing)),
+                ),
+            );
         }
-        let units: Vec<ActorRef> = self.info.drop_items.iter().map(|p| w.create_actor_add(false, &p.to_lowercase(), ActorInits::new().with(OwnerInit::from_player(&owner)))).collect();
+        let units: Vec<ActorRef> = self
+            .info
+            .drop_items
+            .iter()
+            .map(|p| w.create_actor_add(false, &p.to_lowercase(), ActorInits::new().with(OwnerInit::from_player(&owner))))
+            .collect();
         let (info, indices) = (self.info.clone(), self.squad_indices());
         w.add_frame_end_task(Box::new(move |w| {
             let per_plane = ((info.drop_items.len() as i32 + info.squad_size - 1) / info.squad_size) as usize;
@@ -367,9 +416,15 @@ impl SupportPower {
                 let drop = a.trait_::<ParaDrop>();
                 drop.set_lz(w.map().cell_containing(target + target_offset), !info.allow_impassable_cells);
                 let (t1, t2, t3) = (tracker.clone(), tracker.clone(), tracker.clone());
-                drop.on_entered_drop_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, true)));
-                drop.on_exited_drop_range.borrow_mut().push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
-                drop.on_removed_from_world.borrow_mut().push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
+                drop.on_entered_drop_range
+                    .borrow_mut()
+                    .push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, true)));
+                drop.on_exited_drop_range
+                    .borrow_mut()
+                    .push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
+                drop.on_removed_from_world
+                    .borrow_mut()
+                    .push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
                 let cargo = a.trait_::<Cargo>();
                 for unit in units.iter().skip(added).take(per_plane) {
                     cargo.load(a, unit);
@@ -399,7 +454,14 @@ struct FlyOverTracker {
 
 impl FlyOverTracker {
     fn new(info: Rc<SupportPowerInfo>, owner_actor: &ActorRef, camera_cell: rustora_core::world_types::CPos) -> Rc<Self> {
-        Rc::new_cyclic(|me| FlyOverTracker { info, owner_actor: owner_actor.clone(), camera_cell, camera: RefCell::new(None), in_range: RefCell::new(Vec::new()), me: me.clone() })
+        Rc::new_cyclic(|me| FlyOverTracker {
+            info,
+            owner_actor: owner_actor.clone(),
+            camera_cell,
+            camera: RefCell::new(None),
+            in_range: RefCell::new(Vec::new()),
+            me: me.clone(),
+        })
     }
 
     fn set(&self, a: &ActorRef, v: bool) {
@@ -419,7 +481,10 @@ impl FlyOverTracker {
             if self.camera.borrow().is_none() && !self.any_in_range() {
                 let (me, owner, cell) = (self.me.clone(), self.owner_actor.owner(), self.camera_cell);
                 self.owner_actor.world().add_frame_end_task(Box::new(move |w| {
-                    let c = w.create_actor(&cam, ActorInits::new().with(LocationInit::new(cell)).with(OwnerInit::from_player(&owner)));
+                    let c = w.create_actor(
+                        &cam,
+                        ActorInits::new().with(LocationInit::new(cell)).with(OwnerInit::from_player(&owner)),
+                    );
                     if let Some(t) = me.upgrade() {
                         *t.camera.borrow_mut() = Some(c);
                     }
@@ -496,7 +561,10 @@ impl SupportPowerInstance {
 
     pub fn disabled(&self) -> bool {
         let m = self.manager();
-        m.self_.owner().win_state.get() == WinState::Lost || (!self.prereqs_available.get() && !m.dev_mode.all_tech()) || !self.instances_enabled.get() || self.one_shot_fired.get()
+        m.self_.owner().win_state.get() == WinState::Lost
+            || (!self.prereqs_available.get() && !m.dev_mode.all_tech())
+            || !self.instances_enabled.get()
+            || self.one_shot_fired.get()
     }
 
     pub fn info(&self) -> Option<Rc<SupportPowerInfo>> {
@@ -525,7 +593,8 @@ impl SupportPowerInstance {
             self.remaining_sub_ticks.set(2500);
         }
         if self.remaining_sub_ticks.get() > 0 {
-            self.remaining_sub_ticks.set((self.remaining_sub_ticks.get() - 100).clamp(0, self.total_ticks * 100));
+            self.remaining_sub_ticks
+                .set((self.remaining_sub_ticks.get() - 100).clamp(0, self.total_ticks * 100));
         }
         if !self.notified_charging.get() {
             self.notified_charging.set(true);
@@ -700,7 +769,11 @@ impl SupportPower {
 
     fn no_active_radar(&self, self_: &ActorRef) -> bool {
         let owner = self_.owner();
-        !self_.world().actors_with_trait::<ProvidesRadar>().iter().any(|(a, r)| !r.is_trait_disabled() && Rc::ptr_eq(&a.owner(), &owner))
+        !self_
+            .world()
+            .actors_with_trait::<ProvidesRadar>()
+            .iter()
+            .any(|(a, r)| !r.is_trait_disabled() && Rc::ptr_eq(&a.owner(), &owner))
     }
 }
 
@@ -733,7 +806,8 @@ impl ITick for SupportPower {
         if !self.gps_was_paused.get() && blocked {
             self.gps_was_paused.set(true);
             self.remove_gps(self_);
-        } else if self.gps_was_paused.get() && !self.is_trait_paused() && !(self.info.requires_active_radar && self.no_active_radar(self_)) {
+        } else if self.gps_was_paused.get() && !self.is_trait_paused() && !(self.info.requires_active_radar && self.no_active_radar(self_))
+        {
             self.gps_was_paused.set(false);
             let g = self.gps_owner.borrow().clone().expect("gps watcher");
             g.gps_add(self_);
@@ -746,7 +820,10 @@ impl SupportPower {
     pub fn launch_nuke(&self, self_: &ActorRef, target_position: rustora_core::world_types::WPos) {
         let info = &self.info;
         let w = self_.world();
-        let weapon = w.rules().weapon(&info.missile_weapon.to_lowercase()).unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", info.missile_weapon.to_lowercase()));
+        let weapon = w
+            .rules()
+            .weapon(&info.missile_weapon.to_lowercase())
+            .unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", info.missile_weapon.to_lowercase()));
         let body = self_.trait_or_default::<crate::render::BodyOrientation>();
         let skip_ascent = info.skip_ascent || body.is_none();
         let launch_pos = match (&body, skip_ascent) {
@@ -756,10 +833,29 @@ impl SupportPower {
         let missile = NukeLaunch::new(self_.owner(), weapon, launch_pos, target_position, info, skip_ascent);
         w.add_frame_end_task(Box::new(move |w| w.add_effect(missile)));
         if info.camera_range != WDist::ZERO {
-            let ty = if info.reveal_generated_shroud { rustora_engine::shroud::SourceType::Visibility } else { rustora_engine::shroud::SourceType::PassiveVisibility };
-            let (owner, range, rel, delay, duration) =
-                (self_.owner(), info.camera_range, info.camera_relationships, info.flight_delay - info.camera_spawn_advance, info.camera_spawn_advance + info.camera_remove_delay);
-            w.add_frame_end_task(Box::new(move |w| w.add_effect(crate::death::RevealShroudEffect::new(target_position, range, ty, owner, rel, delay, duration))));
+            let ty = if info.reveal_generated_shroud {
+                rustora_engine::shroud::SourceType::Visibility
+            } else {
+                rustora_engine::shroud::SourceType::PassiveVisibility
+            };
+            let (owner, range, rel, delay, duration) = (
+                self_.owner(),
+                info.camera_range,
+                info.camera_relationships,
+                info.flight_delay - info.camera_spawn_advance,
+                info.camera_spawn_advance + info.camera_remove_delay,
+            );
+            w.add_frame_end_task(Box::new(move |w| {
+                w.add_effect(crate::death::RevealShroudEffect::new(
+                    target_position,
+                    range,
+                    ty,
+                    owner,
+                    rel,
+                    delay,
+                    duration,
+                ))
+            }));
         }
     }
 }
@@ -859,7 +955,13 @@ impl rustora_engine::effect::Effect for NukeLaunch {
         let pos = if !descending {
             lerp(self.ascend_source, self.ascend_target, WAngle::ZERO, ticks, self.turn)
         } else {
-            lerp(self.descend_source, self.descend_target, WAngle::ZERO, ticks - self.turn, self.impact_delay - self.turn)
+            lerp(
+                self.descend_source,
+                self.descend_target,
+                WAngle::ZERO,
+                ticks - self.turn,
+                self.impact_delay - self.turn,
+            )
         };
         self.pos.set(pos);
         if self.trail_image.is_some() {

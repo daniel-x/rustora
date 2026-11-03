@@ -158,13 +158,23 @@ impl AircraftInfo {
         if !w.map().contains(cell) || !self.landable_terrain_types.contains(&w.map().terrain_type_info(cell).ty) {
             return false;
         }
-        check == BlockedByActor::None || !w.actor_map().get_actors_at(cell).iter().any(|x| ignore_actor.is_none_or(|i| i.id != x.id))
+        check == BlockedByActor::None
+            || !w
+                .actor_map()
+                .get_actors_at(cell)
+                .iter()
+                .any(|x| ignore_actor.is_none_or(|i| i.id != x.id))
     }
 }
 
 /// `Reservable.IsReserved`.
 pub fn is_reserved(a: &ActorRef) -> bool {
-    a.trait_or_default::<Reservable>().is_some_and(|r| r.reserved_for_aircraft.borrow().as_ref().is_some_and(|f| !f.may_yield_reservation()))
+    a.trait_or_default::<Reservable>().is_some_and(|r| {
+        r.reserved_for_aircraft
+            .borrow()
+            .as_ref()
+            .is_some_and(|f| !f.may_yield_reservation())
+    })
 }
 
 /// `Reservable.IsAvailableFor`.
@@ -357,18 +367,30 @@ impl Aircraft {
     }
 
     pub fn turn_speed(&self) -> WAngle {
-        if self.is_trait_disabled() || self.is_trait_paused() { WAngle::ZERO } else { self.info.turn_speed }
+        if self.is_trait_disabled() || self.is_trait_paused() {
+            WAngle::ZERO
+        } else {
+            self.info.turn_speed
+        }
     }
 
     pub fn idle_turn_speed(&self) -> Option<WAngle> {
-        if self.is_trait_disabled() || self.is_trait_paused() { None } else { self.info.idle_turn_speed }
+        if self.is_trait_disabled() || self.is_trait_paused() {
+            None
+        } else {
+            self.info.idle_turn_speed
+        }
     }
 
     pub fn get_turn_speed(&self, is_idle_turn: bool) -> WAngle {
         if (is_idle_turn && self.idle_movement_speed() == 0) || self.movement_speed() == 0 {
             return WAngle::ZERO;
         }
-        let turn_speed = if is_idle_turn { self.idle_turn_speed().unwrap_or_else(|| self.turn_speed()) } else { self.turn_speed() };
+        let turn_speed = if is_idle_turn {
+            self.idle_turn_speed().unwrap_or_else(|| self.turn_speed())
+        } else {
+            self.turn_speed()
+        };
         WAngle::new(self.apply_speed_modifiers(turn_speed.angle).clamp(1, 1024))
     }
 
@@ -378,7 +400,11 @@ impl Aircraft {
     }
 
     pub fn movement_speed(&self) -> i32 {
-        if !self.is_trait_disabled() && !self.is_trait_paused() { self.apply_speed_modifiers(self.info.speed) } else { 0 }
+        if !self.is_trait_disabled() && !self.is_trait_paused() {
+            self.apply_speed_modifiers(self.info.speed)
+        } else {
+            0
+        }
     }
 
     pub fn idle_movement_speed(&self) -> i32 {
@@ -416,7 +442,11 @@ impl Aircraft {
         if force == WVec::ZERO {
             return;
         }
-        let speed = if self.info.repulsion_speed != -1 { self.info.repulsion_speed } else { self.movement_speed() };
+        let speed = if self.info.repulsion_speed != -1 {
+            self.info.repulsion_speed
+        } else {
+            self.movement_speed()
+        };
         self.notify.set(false);
         self.set_position(self_, self.center_position.get() + self.fly_step_speed(speed, force.yaw()));
         self.notify.set(true);
@@ -442,7 +472,9 @@ impl Aircraft {
             if actor.is_dead() {
                 continue;
             }
-            let Some(ai) = actor.info.trait_info::<AircraftInfo>() else { continue };
+            let Some(ai) = actor.info.trait_info::<AircraftInfo>() else {
+                continue;
+            };
             if !ai.repulsable || ai.cruise_altitude != self.info.cruise_altitude {
                 continue;
             }
@@ -486,7 +518,10 @@ impl Aircraft {
         if w.map().distance_above_terrain(self.center_position.get()) != self.land_altitude() {
             return None;
         }
-        w.actor_map().get_actors_at(self.self_.location()).into_iter().find(|a| a.info.has_trait_info::<ReservableInfo>())
+        w.actor_map()
+            .get_actors_at(self.self_.location())
+            .into_iter()
+            .find(|a| a.info.has_trait_info::<ReservableInfo>())
     }
 
     pub fn make_reservation(&self, self_: &ActorRef, target: &ActorRef) {
@@ -594,7 +629,8 @@ impl Aircraft {
     }
 
     pub fn can_rearm_at(&self, host: &ActorRef) -> bool {
-        self.rearmable().is_some_and(|r| r.info.rearm_actors.contains(&host.info.name) && r.rearmable_ammo_pools().iter().any(|p| !p.has_full_ammo()))
+        self.rearmable()
+            .is_some_and(|r| r.info.rearm_actors.contains(&host.info.name) && r.rearmable_ammo_pools().iter().any(|p| !p.has_full_ammo()))
     }
 
     pub fn can_repair_at(&self, self_: &ActorRef, host: &ActorRef) -> bool {
@@ -632,7 +668,10 @@ impl Aircraft {
     }
 
     pub fn add_influence(&self, landing_cell: CPos) {
-        assert!(!self.has_influence(), "Cannot AddInfluence until previous influence is removed with RemoveInfluence");
+        assert!(
+            !self.has_influence(),
+            "Cannot AddInfluence until previous influence is removed with RemoveInfluence"
+        );
         *self.landing_cells.borrow_mut() = vec![(landing_cell, FULL_CELL)];
         if self.self_.is_in_world() {
             self.self_.world().actor_map().add_influence(&self.self_, self);
@@ -655,7 +694,8 @@ impl Aircraft {
             return;
         }
         if self.airborne_token.get() == INVALID_CONDITION_TOKEN {
-            self.airborne_token.set(self_.grant_condition(self.info.airborne_condition.as_deref().unwrap_or("")));
+            self.airborne_token
+                .set(self_.grant_condition(self.info.airborne_condition.as_deref().unwrap_or("")));
         }
     }
 
@@ -673,7 +713,8 @@ impl Aircraft {
             return;
         }
         if self.cruising_token.get() == INVALID_CONDITION_TOKEN {
-            self.cruising_token.set(self_.grant_condition(self.info.cruising_condition.as_deref().unwrap_or("")));
+            self.cruising_token
+                .set(self_.grant_condition(self.info.cruising_condition.as_deref().unwrap_or("")));
         }
     }
 
@@ -731,7 +772,12 @@ impl INotifyActorDisposing for Aircraft {
 impl ITick for Aircraft {
     fn tick(&self, self_: &ActorRef) {
         let current = self_.current_activity().map(|a| a.type_name());
-        if !self.force_landing.get() && self.is_trait_paused() && self.airborne.get() && self.can_land(self_.location(), None, true) && !matches!(current, Some("Land") | Some("Turn")) {
+        if !self.force_landing.get()
+            && self.is_trait_paused()
+            && self.airborne.get()
+            && self.can_land(self_.location(), None, true)
+            && !matches!(current, Some("Land") | Some("Turn"))
+        {
             self_.queue_activity_queued(false, Land::new(self_));
             self.force_landing.set(true);
         }
@@ -870,19 +916,49 @@ impl IPositionable for Aircraft {
 impl IMove for Aircraft {
     fn move_to(&self, cell: CPos, near_enough: i32, _ignore_actor: Option<ActorRef>, _evaluate_nearest_movable_cell: bool) -> ActivityRef {
         let w = self.self_.world();
-        Fly::full(&self.self_, Target::from_cell(&w, cell, FULL_CELL), FlyArgs { near_enough: WDist::from_cells(near_enough), ..Default::default() })
+        Fly::full(
+            &self.self_,
+            Target::from_cell(&w, cell, FULL_CELL),
+            FlyArgs {
+                near_enough: WDist::from_cells(near_enough),
+                ..Default::default()
+            },
+        )
     }
 
     fn move_within_range(&self, target: &Target, min_range: WDist, max_range: WDist, initial_target_position: Option<WPos>) -> ActivityRef {
-        Fly::full(&self.self_, target.clone(), FlyArgs { min_range, max_range, initial: initial_target_position, ..Default::default() })
+        Fly::full(
+            &self.self_,
+            target.clone(),
+            FlyArgs {
+                min_range,
+                max_range,
+                initial: initial_target_position,
+                ..Default::default()
+            },
+        )
     }
 
-    fn move_follow(&self, self_: &ActorRef, target: &Target, min_range: WDist, max_range: WDist, initial_target_position: Option<WPos>) -> ActivityRef {
+    fn move_follow(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        min_range: WDist,
+        max_range: WDist,
+        initial_target_position: Option<WPos>,
+    ) -> ActivityRef {
         FlyFollow::new(self_, target, min_range, max_range, initial_target_position)
     }
 
     fn move_to_target(&self, self_: &ActorRef, target: &Target, initial_target_position: Option<WPos>) -> Option<ActivityRef> {
-        Some(Fly::full(self_, target.clone(), FlyArgs { initial: initial_target_position, ..Default::default() }))
+        Some(Fly::full(
+            self_,
+            target.clone(),
+            FlyArgs {
+                initial: initial_target_position,
+                ..Default::default()
+            },
+        ))
     }
 
     fn return_to_cell(&self, _self_: &ActorRef) -> Option<ActivityRef> {
@@ -894,7 +970,16 @@ impl IMove for Aircraft {
     }
 
     fn move_onto_target(&self, self_: &ActorRef, target: &Target, offset: WVec, facing: Option<WAngle>) -> ActivityRef {
-        Land::full(self_, target.clone(), LandArgs { land_range: WDist::ZERO, offset, facing, ..Default::default() })
+        Land::full(
+            self_,
+            target.clone(),
+            LandArgs {
+                land_range: WDist::ZERO,
+                offset,
+                facing,
+                ..Default::default()
+            },
+        )
     }
 
     fn local_move(&self, self_: &ActorRef, from: WPos, to: WPos) -> ActivityRef {
@@ -932,7 +1017,11 @@ impl IMove for Aircraft {
         let w = self_.world();
         let target_actor = target.actor().cloned();
         for p in target.positions() {
-            let blocked = w.actor_map().get_actors_at(w.map().cell_containing(p)).iter().any(|a| a.id != self_.id && target_actor.as_ref().is_none_or(|t| t.id != a.id));
+            let blocked = w
+                .actor_map()
+                .get_actors_at(w.map().cell_containing(p))
+                .iter()
+                .any(|a| a.id != self_.id && target_actor.as_ref().is_none_or(|t| t.id != a.id));
             if blocked {
                 return false;
             }
@@ -1029,7 +1118,14 @@ impl IResolveOrder for Aircraft {
                 let activity = if is_land {
                     Land::full(self_, target, LandArgs::default())
                 } else {
-                    Fly::full(self_, target, FlyArgs { near_enough: WDist::from_cells(8), ..Default::default() })
+                    Fly::full(
+                        self_,
+                        target,
+                        FlyArgs {
+                            near_enough: WDist::from_cells(8),
+                            ..Default::default()
+                        },
+                    )
                 };
                 self_.queue_activity_queued(queued, activity);
             }
@@ -1039,7 +1135,8 @@ impl IResolveOrder for Aircraft {
                 }
                 let target_actor = order.target.actor().unwrap().clone();
                 let is_force_enter = order.order_string == "ForceEnter";
-                let can_resupply_at = self.aircraft_can_resupply_at(self_, &target_actor, is_force_enter || !self.info.take_off_on_resupply);
+                let can_resupply_at =
+                    self.aircraft_can_resupply_at(self_, &target_actor, is_force_enter || !self.info.take_off_on_resupply);
                 if !can_resupply_at || !is_available_for(&target_actor, self_) {
                     return;
                 }
@@ -1059,7 +1156,10 @@ impl IResolveOrder for Aircraft {
             }
             "ReturnToBase" => {
                 let current = self_.current_activity().map(|a| a.type_name());
-                if self.rearmable().is_none_or(|r| r.info.rearm_actors.is_empty()) || current == Some("ReturnToBase") || self.get_actor_below().is_some() {
+                if self.rearmable().is_none_or(|r| r.info.rearm_actors.is_empty())
+                    || current == Some("ReturnToBase")
+                    || self.get_actor_below().is_some()
+                {
                     return;
                 }
                 if !queued {
@@ -1139,7 +1239,8 @@ impl Activity for AssociateWithAirfieldActivity {
         if let Some(rally) = &self.rally_point {
             for cell in rally {
                 let (a, c) = (self.aircraft.clone(), *cell);
-                self.base.queue_child(AttackMoveActivity::new(self_, Rc::new(move || a.move_to(c, 1, None, true)), false));
+                self.base
+                    .queue_child(AttackMoveActivity::new(self_, Rc::new(move || a.move_to(c, 1, None, true)), false));
             }
         }
         if !self.creation_by_map {
@@ -1175,7 +1276,11 @@ info_impl!(ReservableInfo => |_info, _init| Some(Rc::new(Reservable {
 impl Reservable {
     /// `Reserve`; the C# disposable returned to the aircraft becomes [`Reservable::dispose_reservation`].
     fn reserve(&self, self_: &ActorRef, for_actor: &ActorRef, for_aircraft: Rc<Aircraft>) {
-        let yields = self.reserved_for_aircraft.borrow().as_ref().is_some_and(|a| a.may_yield_reservation());
+        let yields = self
+            .reserved_for_aircraft
+            .borrow()
+            .as_ref()
+            .is_some_and(|a| a.may_yield_reservation());
         if yields {
             self.un_reserve(self_);
         }
@@ -1189,10 +1294,17 @@ impl Reservable {
     }
 
     fn un_reserve(&self, self_: &ActorRef) {
-        let Some(aircraft) = self.reserved_for_aircraft.borrow().clone() else { return };
+        let Some(aircraft) = self.reserved_for_aircraft.borrow().clone() else {
+            return;
+        };
         if aircraft.get_actor_below().is_some_and(|b| b.id == self_.id) {
             let reserved_for = self.reserved_for.borrow().clone().expect("reserved aircraft without actor");
-            let path = self.rally_point.get().and_then(|r| r.as_ref()).map(|r| r.path.borrow().clone()).unwrap_or_default();
+            let path = self
+                .rally_point
+                .get()
+                .and_then(|r| r.as_ref())
+                .map(|r| r.path.borrow().clone())
+                .unwrap_or_default();
             if !path.is_empty() {
                 for cell in path {
                     let a = aircraft.clone();
@@ -1215,7 +1327,9 @@ impl INotifyCreated for Reservable {
 
 impl ITick for Reservable {
     fn tick(&self, self_: &ActorRef) {
-        let Some(reserved_for) = self.reserved_for.borrow().clone() else { return };
+        let Some(reserved_for) = self.reserved_for.borrow().clone() else {
+            return;
+        };
         if !Target::from_actor(Some(&reserved_for)).is_valid_for(self_) {
             let aircraft = self.reserved_for_aircraft.borrow().clone();
             if let Some(a) = aircraft {
@@ -1255,7 +1369,9 @@ pub struct RemoveSelf {
 
 impl RemoveSelf {
     pub fn new() -> ActivityRef {
-        Rc::new(RemoveSelf { base: ActivityBase::default() })
+        Rc::new(RemoveSelf {
+            base: ActivityBase::default(),
+        })
     }
 }
 
@@ -1273,7 +1389,14 @@ impl Activity for RemoveSelf {
 }
 
 /// `FlyTick`.
-pub fn fly_tick(self_: &ActorRef, aircraft: &Aircraft, desired_facing: WAngle, desired_altitude: WDist, move_override: WVec, idle_turn: bool) {
+pub fn fly_tick(
+    self_: &ActorRef,
+    aircraft: &Aircraft,
+    desired_facing: WAngle,
+    desired_altitude: WDist,
+    move_override: WVec,
+    idle_turn: bool,
+) {
     let dat = self_.world().map().distance_above_terrain(aircraft.center_position());
     let mut mv = if move_override != WVec::ZERO {
         move_override
@@ -1283,8 +1406,16 @@ pub fn fly_tick(self_: &ActorRef, aircraft: &Aircraft, desired_facing: WAngle, d
         aircraft.fly_step(aircraft.facing())
     };
     let old_facing = aircraft.facing();
-    aircraft.set_facing(util::tick_facing(aircraft.facing(), desired_facing, aircraft.get_turn_speed(idle_turn)));
-    let roll = if idle_turn { aircraft.info.idle_roll.unwrap_or(aircraft.info.roll) } else { aircraft.info.roll };
+    aircraft.set_facing(util::tick_facing(
+        aircraft.facing(),
+        desired_facing,
+        aircraft.get_turn_speed(idle_turn),
+    ));
+    let roll = if idle_turn {
+        aircraft.info.idle_roll.unwrap_or(aircraft.info.roll)
+    } else {
+        aircraft.info.roll
+    };
     if roll != WAngle::ZERO {
         let desired_roll = if aircraft.facing() == desired_facing {
             WAngle::ZERO
@@ -1317,8 +1448,18 @@ fn clamp_cs(v: i32, min: i32, max: i32) -> i32 {
 }
 
 /// `VerticalTakeOffOrLandTick`.
-pub fn vertical_take_off_or_land_tick(self_: &ActorRef, aircraft: &Aircraft, desired_facing: WAngle, desired_altitude: WDist, idle_turn: bool) -> bool {
-    let turn_speed = if idle_turn { aircraft.idle_turn_speed().unwrap_or_else(|| aircraft.turn_speed()) } else { aircraft.turn_speed() };
+pub fn vertical_take_off_or_land_tick(
+    self_: &ActorRef,
+    aircraft: &Aircraft,
+    desired_facing: WAngle,
+    desired_altitude: WDist,
+    idle_turn: bool,
+) -> bool {
+    let turn_speed = if idle_turn {
+        aircraft.idle_turn_speed().unwrap_or_else(|| aircraft.turn_speed())
+    } else {
+        aircraft.turn_speed()
+    };
     aircraft.set_facing(util::tick_facing(aircraft.facing(), desired_facing, turn_speed));
     let dat = self_.world().map().distance_above_terrain(aircraft.center_position());
     if dat == desired_altitude {
@@ -1392,7 +1533,10 @@ impl Activity for Fly {
         }
         if self.base.is_canceling() {
             let land_when_idle = aircraft.info.idle_behavior == IdleBehaviorType::Land;
-            let skip_height_adjustment = land_when_idle && self_.current_activity().is_some_and(|c| c.base().is_canceling() && c.base().next_activity().is_none());
+            let skip_height_adjustment = land_when_idle
+                && self_
+                    .current_activity()
+                    .is_some_and(|c| c.base().is_canceling() && c.base().next_activity().is_none());
             if aircraft.info.can_hover && !skip_height_adjustment && dat != aircraft.info.cruise_altitude {
                 if is_landed {
                     self.base.queue_child(TakeOff::new(self_));
@@ -1416,7 +1560,11 @@ impl Activity for Fly {
         if use_last && !self.last_visible_target.borrow().is_valid_for(self_) {
             return true;
         }
-        let check_target = if use_last { self.last_visible_target.borrow().clone() } else { target };
+        let check_target = if use_last {
+            self.last_visible_target.borrow().clone()
+        } else {
+            target
+        };
         let pos = aircraft.get_position();
         let delta = check_target.center_position() - pos;
         let inside_max_range = self.max_range.length > 0 && check_target.is_in_range(pos, self.max_range);
@@ -1434,12 +1582,23 @@ impl Activity for Fly {
                 desired_facing = facing;
             }
         }
-        let mv = if is_slider { aircraft.fly_step(desired_facing) } else { aircraft.fly_step(aircraft.facing()) };
+        let mv = if is_slider {
+            aircraft.fly_step(desired_facing)
+        } else {
+            aircraft.fly_step(aircraft.facing())
+        };
         if inside_min_range {
             if is_slider {
                 fly_tick(self_, aircraft, desired_facing, aircraft.info.cruise_altitude, -mv, false);
             } else {
-                fly_tick(self_, aircraft, desired_facing + WAngle::new(512), aircraft.info.cruise_altitude, mv, false);
+                fly_tick(
+                    self_,
+                    aircraft,
+                    desired_facing + WAngle::new(512),
+                    aircraft.info.cruise_altitude,
+                    mv,
+                    false,
+                );
             }
             return false;
         }
@@ -1534,7 +1693,8 @@ impl Activity for FlyForward {
             return true;
         }
         if self.remaining_distance.get() != 0 {
-            self.remaining_distance.set(self.remaining_distance.get() - aircraft.fly_step(aircraft.facing()).horizontal_length());
+            self.remaining_distance
+                .set(self.remaining_distance.get() - aircraft.fly_step(aircraft.facing()).horizontal_length());
         }
         fly_tick(self_, aircraft, aircraft.facing(), self.cruise_altitude, WVec::ZERO, false);
         false
@@ -1615,7 +1775,12 @@ impl FlyOffMap {
     pub fn new(self_: &ActorRef, target: Option<Target>) -> ActivityRef {
         let base = ActivityBase::default();
         base.child_has_priority.set(false);
-        Rc::new(FlyOffMap { base, aircraft: self_.trait_::<Aircraft>(), target, ending_delay: Cell::new(25) })
+        Rc::new(FlyOffMap {
+            base,
+            aircraft: self_.trait_::<Aircraft>(),
+            target,
+            ending_delay: Cell::new(25),
+        })
     }
 }
 
@@ -1704,7 +1869,11 @@ impl Activity for FlyFollow {
             return true;
         }
         let pos = self_.center_position();
-        let check_target = if use_last { self.last_visible_target.borrow().clone() } else { target.clone() };
+        let check_target = if use_last {
+            self.last_visible_target.borrow().clone()
+        } else {
+            target.clone()
+        };
         if check_target.is_in_range(pos, self.max_range) && !check_target.is_in_range(pos, self.min_range) {
             if !aircraft.info.can_hover {
                 fly_tick(self_, aircraft, aircraft.facing(), aircraft.info.cruise_altitude, WVec::ZERO, false);
@@ -1712,7 +1881,8 @@ impl Activity for FlyFollow {
             return use_last;
         }
         self.was_moving_within_range.set(true);
-        self.base.queue_child(aircraft.move_within_range(&target, self.min_range, self.max_range, Some(check_target.center_position())));
+        self.base
+            .queue_child(aircraft.move_within_range(&target, self.min_range, self.max_range, Some(check_target.center_position())));
         false
     }
 }
@@ -1727,7 +1897,12 @@ pub struct LandArgs {
 
 impl Default for LandArgs {
     fn default() -> Self {
-        LandArgs { land_range: WDist::new(-1), offset: WVec::ZERO, facing: None, clear_cells: Vec::new() }
+        LandArgs {
+            land_range: WDist::new(-1),
+            offset: WVec::ZERO,
+            facing: None,
+            clear_cells: Vec::new(),
+        }
     }
 }
 
@@ -1755,8 +1930,16 @@ impl Land {
 
     fn make(self_: &ActorRef, target: Target, args: LandArgs, assign_target_on_first_run: bool) -> ActivityRef {
         let aircraft = self_.trait_::<Aircraft>();
-        let land_range = if args.land_range.length >= 0 { args.land_range } else { aircraft.info.land_range };
-        let desired_facing = if args.facing.is_none() && aircraft.info.turn_to_land { Some(aircraft.info.initial_facing) } else { args.facing };
+        let land_range = if args.land_range.length >= 0 {
+            args.land_range
+        } else {
+            aircraft.info.land_range
+        };
+        let desired_facing = if args.facing.is_none() && aircraft.info.turn_to_land {
+            Some(aircraft.info.initial_facing)
+        } else {
+            args.facing
+        };
         Rc::new(Land {
             base: ActivityBase::default(),
             aircraft,
@@ -1788,7 +1971,10 @@ impl Activity for Land {
         if self.base.is_canceling() || self.target.borrow().target_type() == TargetType::Invalid {
             if self.landing_initiated.get() {
                 let should_land = aircraft.info.idle_behavior == IdleBehaviorType::Land;
-                let continue_landing = should_land && self_.current_activity().is_some_and(|c| c.base().is_canceling() && c.base().next_activity().is_none());
+                let continue_landing = should_land
+                    && self_
+                        .current_activity()
+                        .is_some_and(|c| c.base().is_canceling() && c.base().next_activity().is_none());
                 if !continue_landing {
                     let dat = w.map().distance_above_terrain(aircraft.center_position());
                     if dat > aircraft.land_altitude() && dat < aircraft.info.cruise_altitude {
@@ -1882,7 +2068,11 @@ impl Land {
         let fwd = -WVec::new(angle.sin(), angle.cos(), 0);
         let side = WVec::new(-fwd.y, fwd.x, fwd.z);
         let approach_delta = self_.center_position() - approach_start;
-        let side_toward_base = if WVec::dot(-side, approach_delta) < WVec::dot(side, approach_delta) { -side } else { side };
+        let side_toward_base = if WVec::dot(-side, approach_delta) < WVec::dot(side, approach_delta) {
+            -side
+        } else {
+            side
+        };
         let cp = self_.center_position() + side_toward_base * turn_radius / 1024;
         let pos_center = WPos::new(cp.x, cp.y, altitude);
         let approach_center = approach_start + WVec::new(0, turn_radius * (self_.center_position().y - approach_start.y).signum(), 0);
@@ -1899,9 +2089,23 @@ impl Land {
         let w2 = approach_center + tangent_offset;
         let w3 = approach_start;
         turn_radius = calculate_turn_radius(aircraft.info.speed, aircraft.turn_speed());
-        self.base.queue_child(Fly::full(self_, Target::from_pos(w1), FlyArgs { max_range: WDist::new(turn_radius * 3), ..Default::default() }));
+        self.base.queue_child(Fly::full(
+            self_,
+            Target::from_pos(w1),
+            FlyArgs {
+                max_range: WDist::new(turn_radius * 3),
+                ..Default::default()
+            },
+        ));
         self.base.queue_child(Fly::new(self_, Target::from_pos(w2)));
-        self.base.queue_child(Fly::full(self_, Target::from_pos(w3), FlyArgs { max_range: WDist::new(turn_radius / 2), ..Default::default() }));
+        self.base.queue_child(Fly::full(
+            self_,
+            Target::from_pos(w3),
+            FlyArgs {
+                max_range: WDist::new(turn_radius / 2),
+                ..Default::default()
+            },
+        ));
         self.finished_approach.set(true);
     }
 }
@@ -1913,7 +2117,10 @@ pub struct TakeOff {
 
 impl TakeOff {
     pub fn new(self_: &ActorRef) -> ActivityRef {
-        Rc::new(TakeOff { base: ActivityBase::default(), aircraft: self_.trait_::<Aircraft>() })
+        Rc::new(TakeOff {
+            base: ActivityBase::default(),
+            aircraft: self_.trait_::<Aircraft>(),
+        })
     }
 }
 
@@ -1983,10 +2190,17 @@ impl ReturnToBase {
         if self.always_land {
             return true;
         }
-        if self.repairable_info.as_ref().is_some_and(|r| r.repair_actors.contains(&dest.info.name)) && has_damage(self_) {
+        if self
+            .repairable_info
+            .as_ref()
+            .is_some_and(|r| r.repair_actors.contains(&dest.info.name))
+            && has_damage(self_)
+        {
             return true;
         }
-        self.rearmable.as_ref().is_some_and(|r| r.info.rearm_actors.contains(&dest.info.name) && r.rearmable_ammo_pools().iter().any(|p| !p.has_full_ammo()))
+        self.rearmable
+            .as_ref()
+            .is_some_and(|r| r.info.rearm_actors.contains(&dest.info.name) && r.rearmable_ammo_pools().iter().any(|p| !p.has_full_ammo()))
     }
 }
 
@@ -1999,7 +2213,11 @@ impl Activity for ReturnToBase {
             return true;
         }
         let w = self_.world();
-        let dest_invalid = self.dest.borrow().as_ref().is_none_or(|d| d.is_dead() || !is_available_for(d, self_));
+        let dest_invalid = self
+            .dest
+            .borrow()
+            .as_ref()
+            .is_none_or(|d| d.is_dead() || !is_available_for(d, self_));
         if dest_invalid {
             *self.dest.borrow_mut() = ReturnToBase::choose_resupplier(self_, true);
         }
@@ -2012,20 +2230,32 @@ impl Activity for ReturnToBase {
                     if distance > wait.length {
                         let random_position = WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2) * wait.length / 1024;
                         let target = Target::from_pos(nearest.center_position() + random_position);
-                        self.base.queue_child(Fly::full(self_, target, FlyArgs { max_range: wait, ..Default::default() }));
+                        self.base.queue_child(Fly::full(
+                            self_,
+                            target,
+                            FlyArgs {
+                                max_range: wait,
+                                ..Default::default()
+                            },
+                        ));
                     }
                     return false;
                 } else {
                     self.base.queue_child(Fly::full(
                         self_,
                         Target::from_actor(Some(&nearest)),
-                        FlyArgs { max_range: aircraft.info.wait_distance_from_resupply_base, ..Default::default() },
+                        FlyArgs {
+                            max_range: aircraft.info.wait_distance_from_resupply_base,
+                            ..Default::default()
+                        },
                     ));
-                    self.base.queue_child(FlyIdle::new(self_, aircraft.info.number_of_ticks_to_verify_available_airport, true));
+                    self.base
+                        .queue_child(FlyIdle::new(self_, aircraft.info.number_of_ticks_to_verify_available_airport, true));
                     return false;
                 }
             }
-            self.base.queue_child(FlyIdle::new(self_, aircraft.info.number_of_ticks_to_verify_available_airport, true));
+            self.base
+                .queue_child(FlyIdle::new(self_, aircraft.info.number_of_ticks_to_verify_available_airport, true));
             return true;
         };
         if self.should_land_at_building(self_, &dest) {
@@ -2037,7 +2267,8 @@ impl Activity for ReturnToBase {
                 facing = e.info.facing;
             }
             aircraft.make_reservation(self_, &dest);
-            self.base.queue_child(aircraft.move_onto_target(self_, &Target::from_actor(Some(&dest)), offset, facing));
+            self.base
+                .queue_child(aircraft.move_onto_target(self_, &Target::from_actor(Some(&dest)), offset, facing));
             self.base.queue_child(Resupply::new(self_, &dest, WDist::ZERO, self.always_land));
             return true;
         }

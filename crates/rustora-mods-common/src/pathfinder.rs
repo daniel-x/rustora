@@ -288,7 +288,9 @@ impl Graph {
     pub fn set(&mut self, c: CPos, v: CellInfo) {
         match self {
             Graph::Map { infos, width, .. } => infos[(c.y() * *width + c.x()) as usize] = v,
-            Graph::Grid { infos, grid, .. } => infos[((c.y() - grid.top_left.y()) * grid.width() + (c.x() - grid.top_left.x())) as usize] = v,
+            Graph::Grid { infos, grid, .. } => {
+                infos[((c.y() - grid.top_left.y()) * grid.width() + (c.x() - grid.top_left.x())) as usize] = v
+            }
             Graph::Sparse { info, .. } => {
                 info.insert(c, v);
             }
@@ -500,7 +502,16 @@ impl PathSearch {
             Box::new(move |here, _| e.estimate(here, target))
         });
         let mut search = PathSearch::new(graph, heuristic, weight, Box::new(move |l| l == target));
-        search.add_initial_cells(world, locomotor, self_, froms, check, custom_cost.as_ref(), ignore_actor, in_reverse);
+        search.add_initial_cells(
+            world,
+            locomotor,
+            self_,
+            froms,
+            check,
+            custom_cost.as_ref(),
+            ignore_actor,
+            in_reverse,
+        );
         search
     }
 
@@ -518,7 +529,9 @@ impl PathSearch {
     ) {
         for &sl in froms {
             if cell_allows_movement(world, sl, custom_cost)
-                && (!in_reverse || locomotor.movement_cost_to_enter_cell(self_, sl, check, ignore_actor, true, FULL_CELL) != MOVEMENT_COST_FOR_UNREACHABLE_CELL)
+                && (!in_reverse
+                    || locomotor.movement_cost_to_enter_cell(self_, sl, check, ignore_actor, true, FULL_CELL)
+                        != MOVEMENT_COST_FOR_UNREACHABLE_CELL)
             {
                 self.add_initial_cell(sl, custom_cost);
             }
@@ -531,7 +544,12 @@ impl PathSearch {
             info: HashMap::new(),
         };
         let e = CostEstimator::new(locomotor);
-        let mut search = PathSearch::new(graph, Box::new(move |here, _| e.estimate(here, target)), 100, Box::new(move |l| l == target));
+        let mut search = PathSearch::new(
+            graph,
+            Box::new(move |here, _| e.estimate(here, target)),
+            100,
+            Box::new(move |l| l == target),
+        );
         search.add_initial_cell(from, None);
         search
     }

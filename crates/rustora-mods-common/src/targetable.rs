@@ -92,7 +92,9 @@ impl ITargetable for Targetable {
         if cloaks.is_empty() || (!viewer.is_dead() && viewer.info.has_trait_info_named("IgnoresCloak")) {
             return true;
         }
-        cloaks.iter().all(|c| c.is_trait_disabled() || c.is_visible_to(self_, Some(&viewer.owner())))
+        cloaks
+            .iter()
+            .all(|c| c.is_trait_disabled() || c.is_visible_to(self_, Some(&viewer.owner())))
     }
 
     fn requires_force_fire(&self) -> bool {
@@ -204,7 +206,11 @@ impl ICrushable for Crushable {
         }
         let w = self_.world();
         let all = w.all_players_mask.get();
-        if self.info.crushed_by_friendlies { all } else { all & !self_.owner().allied_players_mask.get() }
+        if self.info.crushed_by_friendlies {
+            all
+        } else {
+            all & !self_.owner().allied_players_mask.get()
+        }
     }
 }
 
@@ -213,7 +219,9 @@ impl INotifyCrushed for Crushable {
         if !self.crushable_inner(classes, &crusher.owner()) {
             return;
         }
-        if self_.trait_or_default::<Mobile>().is_some() && self_.world().shared_random.borrow_mut().next_max(100) <= self.info.warn_probability {
+        if self_.trait_or_default::<Mobile>().is_some()
+            && self_.world().shared_random.borrow_mut().next_max(100) <= self.info.warn_probability
+        {
             self_.queue_activity_queued(false, crate::activities::Nudge::new(crusher));
         }
     }

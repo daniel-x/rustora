@@ -119,9 +119,16 @@ impl RenderSprites {
     pub fn add(&self, anim: AnimationWithOffset, palette: Option<String>, is_player_palette: bool) {
         let (palette, is_player_palette) = match palette {
             Some(p) => (Some(p), is_player_palette),
-            None => (self.info.palette.clone().or_else(|| Some(self.info.player_palette.clone())), self.info.palette.is_none()),
+            None => (
+                self.info.palette.clone().or_else(|| Some(self.info.player_palette.clone())),
+                self.info.palette.is_none(),
+            ),
         };
-        self.anims.borrow_mut().push(Rc::new(AnimationWrapper { animation: anim, palette, is_player_palette }));
+        self.anims.borrow_mut().push(Rc::new(AnimationWrapper {
+            animation: anim,
+            palette,
+            is_player_palette,
+        }));
     }
 
     pub fn remove(&self, anim: &Rc<Animation>) {
@@ -130,7 +137,11 @@ impl RenderSprites {
 
     /// Animations with their palette, for the renderer.
     pub fn animations(&self) -> Vec<(AnimationWithOffset, Option<String>, bool)> {
-        self.anims.borrow().iter().map(|a| (a.animation.clone(), a.palette.clone(), a.is_player_palette)).collect()
+        self.anims
+            .borrow()
+            .iter()
+            .map(|a| (a.animation.clone(), a.palette.clone(), a.is_player_palette))
+            .collect()
     }
 }
 
@@ -163,7 +174,8 @@ pub fn normalize_sequence(anim: &Animation, state: DamageState, sequence: &str) 
 
 /// `Actor.GetDamageState`.
 pub fn get_damage_state(a: &ActorRef) -> DamageState {
-    a.trait_or_default::<dyn IHealth>().map_or(DamageState::UNDAMAGED, |h| h.damage_state())
+    a.trait_or_default::<dyn IHealth>()
+        .map_or(DamageState::UNDAMAGED, |h| h.damage_state())
 }
 
 pub fn make_facing_func(a: &ActorRef) -> Rc<dyn Fn() -> WAngle> {
@@ -213,8 +225,14 @@ pub struct WithFacingSpriteBodyInfo {
 
 enum BodyVariant {
     Plain,
-    ResourceLevel { stages: i32, player_resources: RefCell<Rc<crate::player::PlayerResources>> },
-    Harvester { image_by_fullness: Vec<String>, harv: Rc<crate::harvester::Harvester> },
+    ResourceLevel {
+        stages: i32,
+        player_resources: RefCell<Rc<crate::player::PlayerResources>>,
+    },
+    Harvester {
+        image_by_fullness: Vec<String>,
+        harv: Rc<crate::harvester::Harvester>,
+    },
 }
 
 pub struct WithSpriteBody {
@@ -266,7 +284,10 @@ fn new_sprite_body(
         let (m, a) = (me.clone(), self_.clone());
         let paused: Rc<dyn Fn() -> bool> = Rc::new(move || {
             let Some(b) = m.upgrade() else { return false };
-            b.state.is_trait_paused() && b.default_animation.current_sequence().is_some_and(|s| s.name == b.normalize_sequence(&a, &b.info.sequence))
+            b.state.is_trait_paused()
+                && b.default_animation
+                    .current_sequence()
+                    .is_some_and(|s| s.name == b.normalize_sequence(&a, &b.info.sequence))
         });
         WithSpriteBody {
             class_name,
@@ -279,7 +300,17 @@ fn new_sprite_body(
     });
     let offset_func: Option<Rc<dyn Fn() -> WVec>> = if info.force_to_ground {
         let (a, w2) = (self_.clone(), Rc::downgrade(&w));
-        Some(Rc::new(move || WVec::new(0, 0, -w2.upgrade().expect("world").map().distance_above_terrain(a.center_position()).length)))
+        Some(Rc::new(move || {
+            WVec::new(
+                0,
+                0,
+                -w2.upgrade()
+                    .expect("world")
+                    .map()
+                    .distance_above_terrain(a.center_position())
+                    .length,
+            )
+        }))
     } else {
         None
     };
@@ -347,7 +378,9 @@ info_impl!(WithHarvesterSpriteBodyInfo => |info, init| {
 
 impl ITick for WithSpriteBody {
     fn tick(&self, _self_: &ActorRef) {
-        let BodyVariant::Harvester { image_by_fullness, harv } = &self.variant else { return };
+        let BodyVariant::Harvester { image_by_fullness, harv } = &self.variant else {
+            return;
+        };
         if image_by_fullness.is_empty() {
             return;
         }
@@ -382,7 +415,9 @@ conditional_plumbing!(WithSpriteBody);
 
 impl WithSpriteBody {
     fn configure_animation(&self, self_: &ActorRef) {
-        let BodyVariant::ResourceLevel { stages, player_resources } = &self.variant else { return };
+        let BodyVariant::ResourceLevel { stages, player_resources } = &self.variant else {
+            return;
+        };
         let (anim, stages, pr) = (self.default_animation.clone(), *stages, player_resources.borrow().clone());
         let a2 = anim.clone();
         anim.play_fetch_index(
@@ -390,7 +425,8 @@ impl WithSpriteBody {
             Rc::new(move || {
                 let cap = pr.resource_capacity.get();
                 if cap != 0 {
-                    (stages.wrapping_mul(a2.current_sequence().expect("sequence").length()) - 1).wrapping_mul(pr.resources.get()) / (stages.wrapping_mul(cap))
+                    (stages.wrapping_mul(a2.current_sequence().expect("sequence").length()) - 1).wrapping_mul(pr.resources.get())
+                        / (stages.wrapping_mul(cap))
                 } else {
                     0
                 }
@@ -401,13 +437,20 @@ impl WithSpriteBody {
     fn base_trait_enabled(&self, self_: &ActorRef) {
         match &self.info.start_sequence {
             Some(start) => {
-                let (a, anim, seq, me) = (self_.clone(), self.default_animation.clone(), self.info.sequence.clone(), self.self_.clone());
+                let (a, anim, seq, me) = (
+                    self_.clone(),
+                    self.default_animation.clone(),
+                    self.info.sequence.clone(),
+                    self.self_.clone(),
+                );
                 let _ = me;
                 let body_seq = move || normalize_sequence(&anim, get_damage_state(&a), &seq);
                 let anim2 = self.default_animation.clone();
                 self.play_custom_animation(self_, start, Some(Rc::new(move || anim2.play_repeating(&body_seq()))));
             }
-            None => self.default_animation.play_repeating(&self.normalize_sequence(self_, &self.info.sequence)),
+            None => self
+                .default_animation
+                .play_repeating(&self.normalize_sequence(self_, &self.info.sequence)),
         }
     }
 }
@@ -437,7 +480,11 @@ impl WithSpriteBody {
 
     fn after_custom(&self, self_: &ActorRef, after: Option<Rc<dyn Fn()>>) -> Rc<dyn Fn()> {
         let a = self_.clone();
-        let me = a.traits_implementing::<WithSpriteBody>().into_iter().find(|w| std::ptr::eq(Rc::as_ptr(w), self)).expect("body registered");
+        let me = a
+            .traits_implementing::<WithSpriteBody>()
+            .into_iter()
+            .find(|w| std::ptr::eq(Rc::as_ptr(w), self))
+            .expect("body registered");
         Rc::new(move || {
             me.cancel_custom_animation(&a);
             if let Some(f) = &after {
@@ -447,7 +494,8 @@ impl WithSpriteBody {
     }
 
     pub fn play_custom_animation(&self, self_: &ActorRef, name: &str, after: Option<Rc<dyn Fn()>>) {
-        self.default_animation.play_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
+        self.default_animation
+            .play_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
     }
 
     pub fn play_custom_animation_repeating(&self, self_: &ActorRef, name: &str) {
@@ -455,7 +503,8 @@ impl WithSpriteBody {
     }
 
     pub fn play_custom_animation_backwards(&self, self_: &ActorRef, name: &str, after: Option<Rc<dyn Fn()>>) {
-        self.default_animation.play_backwards_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
+        self.default_animation
+            .play_backwards_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
     }
 
     pub fn cancel_custom_animation(&self, self_: &ActorRef) {
@@ -463,7 +512,8 @@ impl WithSpriteBody {
             self.configure_animation(self_);
             return;
         }
-        self.default_animation.play_repeating(&self.normalize_sequence(self_, &self.info.sequence));
+        self.default_animation
+            .play_repeating(&self.normalize_sequence(self_, &self.info.sequence));
     }
 }
 
@@ -551,7 +601,13 @@ impl WithMakeAnimation {
 
     /// `Reverse(self, activity, queued)`.
     pub fn reverse_then_activity(&self, self_: &ActorRef, activity: ActivityRef, queued: bool) {
-        let (a, wsb, seq, token, cond) = (self_.clone(), self.first_enabled(), self.info.sequence.clone(), self.token.clone(), self.info.condition.clone());
+        let (a, wsb, seq, token, cond) = (
+            self_.clone(),
+            self.first_enabled(),
+            self.info.sequence.clone(),
+            self.token.clone(),
+            self.info.condition.clone(),
+        );
         self.reverse(
             self_,
             Rc::new(move || {
@@ -737,7 +793,8 @@ impl IDockClientBody for WithDockingAnimation {
     }
 
     fn play_reverse_dock_animation(&self, self_: &ActorRef, after: Rc<dyn Fn()>) {
-        self.wsb.play_custom_animation_backwards(self_, &self.info.dock_sequence, Some(after));
+        self.wsb
+            .play_custom_animation_backwards(self_, &self.info.dock_sequence, Some(after));
     }
 }
 
@@ -870,7 +927,8 @@ conditional_simple!(WithIdleOverlay);
 impl INotifyDamageStateChanged for WithIdleOverlay {
     fn damage_state_changed(&self, _self_: &ActorRef, e: &AttackInfo) {
         if let Some(s) = self.overlay.current_sequence() {
-            self.overlay.replace_anim(&normalize_sequence(&self.overlay, e.damage_state, &s.name));
+            self.overlay
+                .replace_anim(&normalize_sequence(&self.overlay, e.damage_state, &s.name));
         }
     }
 }
@@ -1073,11 +1131,13 @@ impl IDisabledTrait for QuantizeFacingsFromSequence {
 }
 
 const SPRITE_RANGES: [i32; 32] = [
-    20, 56, 88, 132, 156, 184, 212, 240, 268, 296, 324, 352, 384, 416, 452, 488, 532, 568, 604, 644, 668, 696, 724, 752, 780, 808, 836, 864, 896, 928, 964, 1000,
+    20, 56, 88, 132, 156, 184, 212, 240, 268, 296, 324, 352, 384, 416, 452, 488, 532, 568, 604, 644, 668, 696, 724, 752, 780, 808, 836,
+    864, 896, 928, 964, 1000,
 ];
 
 const SPRITE_FACINGS: [i32; 32] = [
-    0, 40, 74, 112, 146, 172, 200, 228, 256, 284, 312, 340, 370, 402, 436, 472, 512, 552, 588, 626, 658, 684, 712, 740, 768, 796, 824, 852, 882, 914, 948, 984,
+    0, 40, 74, 112, 146, 172, 200, 228, 256, 284, 312, 340, 370, 402, 436, 472, 512, 552, 588, 626, 658, 684, 712, 740, 768, 796, 824, 852,
+    882, 914, 948, 984,
 ];
 
 /// `ClassicIndexFacing` of `Mods.Cnc/Util.cs`.
@@ -1108,7 +1168,11 @@ pub struct WithProductionDoorOverlayInfo {
 
 impl Default for WithProductionDoorOverlayInfo {
     fn default() -> Self {
-        WithProductionDoorOverlayInfo { instance_name: None, base: ConditionalTraitInfo::default(), sequence: "build-door".into() }
+        WithProductionDoorOverlayInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sequence: "build-door".into(),
+        }
     }
 }
 

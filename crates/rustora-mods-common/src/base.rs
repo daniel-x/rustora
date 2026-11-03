@@ -127,7 +127,8 @@ impl INotifyCreated for DeveloperMode {
     fn created(&self, self_: &ActorRef) {
         let w = self_.world();
         let non_bot_players = w.lobby_info.clients.iter().filter(|c| !c.is_bot() && !c.is_observer()).count();
-        self.enabled.set(non_bot_players == 1 || w.lobby_info.global_settings.option_bool("cheats", self.info.checkbox_enabled));
+        self.enabled
+            .set(non_bot_players == 1 || w.lobby_info.global_settings.option_bool("cheats", self.info.checkbox_enabled));
     }
 }
 
@@ -170,12 +171,23 @@ impl IResolveOrder for DeveloperMode {
         if !self.enabled.get() {
             return;
         }
-        let amount = if order.extra_data != 0 { order.extra_data as i32 } else { self.info.cash };
+        let amount = if order.extra_data != 0 {
+            order.extra_data as i32
+        } else {
+            self.info.cash
+        };
         match order.order_string.as_str() {
             "DevAll" => {
                 toggle(&self.enable_all);
                 let e = self.enable_all.get();
-                for c in [&self.all_tech, &self.fast_charge, &self.fast_build, &self.disable_shroud, &self.unlimited_power, &self.build_anywhere] {
+                for c in [
+                    &self.all_tech,
+                    &self.fast_charge,
+                    &self.fast_build,
+                    &self.disable_shroud,
+                    &self.unlimited_power,
+                    &self.build_anywhere,
+                ] {
                     c.set(e);
                 }
                 if e {
@@ -297,7 +309,8 @@ impl INotifyCreated for MapOptions {
     fn created(&self, self_: &ActorRef) {
         let w = self_.world();
         let gs = &w.lobby_info.global_settings;
-        self.short_game.set(gs.option_bool("shortgame", self.info.short_game_checkbox_enabled));
+        self.short_game
+            .set(gs.option_bool("shortgame", self.info.short_game_checkbox_enabled));
         *self.tech_level.borrow_mut() = gs.option_str("techlevel", &self.info.tech_level).to_string();
     }
 }
@@ -343,8 +356,10 @@ impl INotifyCreated for MapBuildRadius {
     fn created(&self, self_: &ActorRef) {
         let w = self_.world();
         let gs = &w.lobby_info.global_settings;
-        self.ally_build_radius_enabled.set(gs.option_bool("allybuild", self.info.ally_build_radius_checkbox_enabled));
-        self.build_radius_enabled.set(gs.option_bool("buildradius", self.info.build_radius_checkbox_enabled));
+        self.ally_build_radius_enabled
+            .set(gs.option_bool("allybuild", self.info.ally_build_radius_checkbox_enabled));
+        self.build_radius_enabled
+            .set(gs.option_bool("buildradius", self.info.build_radius_checkbox_enabled));
     }
 }
 
@@ -409,7 +424,9 @@ impl ISync for PowerManager {
 impl INotifyCreated for PowerManager {
     fn created(&self, self_: &ActorRef) {
         let me = self_.clone();
-        self_.world().add_frame_end_task(Box::new(move |_| me.trait_::<PowerManager>().update_power_requiring_actors()));
+        self_
+            .world()
+            .add_frame_end_task(Box::new(move |_| me.trait_::<PowerManager>().update_power_requiring_actors()));
     }
 }
 
@@ -501,7 +518,9 @@ impl PowerManager {
         if a.is_in_world() {
             return;
         }
-        let Some(amount) = self.power_drain.borrow_mut().remove(&a.id) else { return };
+        let Some(amount) = self.power_drain.borrow_mut().remove(&a.id) else {
+            return;
+        };
         if self.dev_mode.unlimited_power() {
             return;
         }
@@ -1184,7 +1203,13 @@ pub fn can_place_building(world: &World, cell: CPos, bi: &BuildingInfo, to_ignor
 }
 
 /// `BuildingUtils.GetLineBuildCells`.
-pub fn get_line_build_cells(world: &World, cell: CPos, ai: &ActorInfo, bi: &BuildingInfo, owner: &PlayerRef) -> Vec<(CPos, Option<ActorRef>)> {
+pub fn get_line_build_cells(
+    world: &World,
+    cell: CPos,
+    ai: &ActorInfo,
+    bi: &BuildingInfo,
+    owner: &PlayerRef,
+) -> Vec<(CPos, Option<ActorRef>)> {
     let lbi = ai.trait_info::<LineBuildInfo>().expect("LineBuild");
     let mut out = Vec::new();
     if is_cell_buildable(world, cell, bi, None) {
@@ -1204,7 +1229,10 @@ pub fn get_line_build_cells(world: &World, cell: CPos, ai: &ActorInfo, bi: &Buil
                     let sbi = si.trait_info::<BuildingInfo>().expect("segment Building");
                     (si, sbi)
                 }
-                None => (world.rules().actor(&ai.name).expect("actor"), ai.trait_info::<BuildingInfo>().expect("Building")),
+                None => (
+                    world.rules().actor(&ai.name).expect("actor"),
+                    ai.trait_info::<BuildingInfo>().expect("Building"),
+                ),
             };
             let _ = si;
             let c = cell + vecs[d] * i;
@@ -1270,12 +1298,17 @@ fn any_gives_buildable_area(actors: &[ActorRef], p: &PlayerRef, ally_build: bool
 
 /// `BuildingInfo.IsCloseEnoughToBase`.
 pub fn is_close_enough_to_base(bi: &BuildingInfo, world: &World, p: &PlayerRef, ai: &ActorInfo, top_left: CPos) -> bool {
-    let Some(rba) = ai.trait_info::<RequiresBuildableAreaInfo>() else { return true };
+    let Some(rba) = ai.trait_info::<RequiresBuildableAreaInfo>() else {
+        return true;
+    };
     if p.player_actor().trait_::<DeveloperMode>().build_anywhere() {
         return true;
     }
     let radius = world.world_actor().trait_or_default::<MapBuildRadius>();
-    if radius.as_ref().is_some_and(|r| r.build_radius_enabled.get()) && bi.requires_base_provider && find_base_provider(bi, world, p, top_left).is_none() {
+    if radius.as_ref().is_some_and(|r| r.build_radius_enabled.get())
+        && bi.requires_base_provider
+        && find_base_provider(bi, world, p, top_left).is_none()
+    {
         return false;
     }
     let adjacent = rba.adjacent;
@@ -1288,13 +1321,19 @@ pub fn is_close_enough_to_base(bi: &BuildingInfo, world: &World, p: &PlayerRef, 
     for y in scan_start.y()..scan_end.y() {
         for x in scan_start.x()..scan_end.x() {
             let c = CPos::new(x, y);
-            if any_gives_buildable_area(&am.get_actors_at(c), p, ally_build, &rba) || any_gives_buildable_area(&influence.get_buildings_at(c), p, ally_build, &rba) {
+            if any_gives_buildable_area(&am.get_actors_at(c), p, ally_build, &rba)
+                || any_gives_buildable_area(&influence.get_buildings_at(c), p, ally_build, &rba)
+            {
                 candidates.push(c);
             }
         }
     }
     let tiles = bi.tiles(top_left);
-    candidates.iter().any(|a| tiles.iter().any(|b| (a.x() - b.x()).abs() <= adjacent && (a.y() - b.y()).abs() <= adjacent))
+    candidates.iter().any(|a| {
+        tiles
+            .iter()
+            .any(|b| (a.x() - b.x()).abs() <= adjacent && (a.y() - b.y()).abs() <= adjacent)
+    })
 }
 
 /// `Traits/Buildings/RepairableBuilding.cs`.
@@ -1370,7 +1409,12 @@ impl INotifyCreated for RepairableBuilding {
 
 impl ISync for RepairableBuilding {
     fn sync_hash(&self) -> i32 {
-        self.state.sync_hash() ^ self.repairers.borrow().iter().fold(0, |h, p| h ^ rustora_engine::player::hash_player(Some(p)))
+        self.state.sync_hash()
+            ^ self
+                .repairers
+                .borrow()
+                .iter()
+                .fold(0, |h, p| h ^ rustora_engine::player::hash_player(Some(p)))
     }
 }
 
@@ -1380,7 +1424,9 @@ impl RepairableBuilding {
     }
 
     fn update_condition(&self, self_: &ActorRef) {
-        let Some(c) = self.info.repair_condition.as_deref().filter(|c| !c.is_empty()) else { return };
+        let Some(c) = self.info.repair_condition.as_deref().filter(|c| !c.is_empty()) else {
+            return;
+        };
         let count = self.repairers.borrow().len();
         while count > self.repair_tokens.borrow().len() {
             let t = self_.grant_condition(c);
@@ -1424,7 +1470,9 @@ impl ITick for RepairableBuilding {
             return;
         }
         let owner = self_.owner();
-        self.repairers.borrow_mut().retain(|p| p.win_state.get() == rustora_engine::player::WinState::Undefined && owner.relationship_with(Some(p)) == PlayerRelationship::ALLY);
+        self.repairers.borrow_mut().retain(|p| {
+            p.win_state.get() == rustora_engine::player::WinState::Undefined && owner.relationship_with(Some(p)) == PlayerRelationship::ALLY
+        });
         self.update_condition(self_);
         if self.repairers.borrow().is_empty() {
             self.repair_active.set(false);
@@ -1435,14 +1483,22 @@ impl ITick for RepairableBuilding {
         let hp_to_repair = self.info.repair_step.min(max_hp - hp);
         let cost = 1.max((hp_to_repair as i64 * self.info.repair_percent as i64 * building_value as i64 / (max_hp as i64 * 100)) as i32);
         let repairers = self.repairers.borrow().clone();
-        let active_players = repairers.iter().filter(|p| p.player_actor().trait_::<PlayerResources>().take_cash(cost, true)).count();
+        let active_players = repairers
+            .iter()
+            .filter(|p| p.player_actor().trait_::<PlayerResources>().take_cash(cost, true))
+            .count();
         self.repair_active.set(active_players > 0);
         if active_players == 0 {
             self.remaining_ticks.set(1);
             return;
         }
         let amount = -(hp_to_repair * self.info.repair_bonuses[active_players - 1] / 100);
-        self.health.inflict_damage(self_, Some(self_), &rustora_engine::damage::Damage::new(amount, self.info.repair_damage_types.clone()), false);
+        self.health.inflict_damage(
+            self_,
+            Some(self_),
+            &rustora_engine::damage::Damage::new(amount, self.info.repair_damage_types.clone()),
+            false,
+        );
         if self.health.damage_state() == rustora_engine::damage::DamageState::UNDAMAGED {
             for r in &repairers {
                 if !Rc::ptr_eq(r, &owner) {

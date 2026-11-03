@@ -244,7 +244,8 @@ impl ActorMap {
             cur.clear();
             for a in self.actors_in_box(pos - delta, pos + delta) {
                 if (a.center_position() - pos).horizontal_length_squared() < range.length_squared()
-                    && (v_range.length == 0 || self.map.distance_above_terrain(a.center_position()).length_squared() <= v_range.length_squared())
+                    && (v_range.length == 0
+                        || self.map.distance_above_terrain(a.center_position()).length_squared() <= v_range.length_squared())
                 {
                     cur.insert(ById(a));
                 }
@@ -316,7 +317,10 @@ impl ActorMap {
 
     fn nodes_any_with(nodes: &CellNodes, sub: u8, with_condition: &dyn Fn(&ActorRef) -> bool) -> bool {
         let always = sub == FULL_CELL || sub == ANY;
-        nodes.iter().rev().any(|i| (always || i.0 == sub || i.0 == FULL_CELL) && with_condition(&i.1))
+        nodes
+            .iter()
+            .rev()
+            .any(|i| (always || i.0 == sub || i.0 == FULL_CELL) && with_condition(&i.1))
     }
 
     pub fn free_subcell(&self, cell: CPos, preferred: u8, check_transient: bool) -> u8 {
@@ -459,7 +463,9 @@ impl ActorMap {
 
     /// C# keeps the removed trigger in `cellTriggers`, where it stays ticking.
     pub fn remove_cell_trigger(&self, id: i32) {
-        let Some(trigger) = self.cell_triggers.borrow().get(&id).cloned() else { return };
+        let Some(trigger) = self.cell_triggers.borrow().get(&id).cloned() else {
+            return;
+        };
         let mut tin = self.cell_trigger_influence.borrow_mut();
         for c in &trigger.footprint {
             if let Some(v) = tin.get_mut(c) {
@@ -483,7 +489,14 @@ impl ActorMap {
         out
     }
 
-    pub fn add_proximity_trigger(&self, pos: WPos, range: WDist, v_range: WDist, on_entry: Option<ActorCallback>, on_exit: Option<ActorCallback>) -> i32 {
+    pub fn add_proximity_trigger(
+        &self,
+        pos: WPos,
+        range: WDist,
+        v_range: WDist,
+        on_entry: Option<ActorCallback>,
+        on_exit: Option<ActorCallback>,
+    ) -> i32 {
         let id = self.next_trigger_id.get();
         self.next_trigger_id.set(id + 1);
         let t = Rc::new(ProximityTrigger {
@@ -509,7 +522,9 @@ impl ActorMap {
 
     /// C# leaves the removed trigger in `proximityTriggers`, where it stays ticking.
     pub fn remove_proximity_trigger(&self, id: i32) {
-        let Some(t) = self.proximity_triggers.borrow().get(&id).cloned() else { return };
+        let Some(t) = self.proximity_triggers.borrow().get(&id).cloned() else {
+            return;
+        };
         {
             let mut bins = self.bins.borrow_mut();
             for i in self.bin_indices_in_box(t.top_left.get(), t.bottom_right.get()) {
@@ -525,7 +540,9 @@ impl ActorMap {
     }
 
     pub fn update_proximity_trigger(&self, id: i32, pos: WPos, range: WDist, v_range: WDist) {
-        let Some(t) = self.proximity_triggers.borrow().get(&id).cloned() else { return };
+        let Some(t) = self.proximity_triggers.borrow().get(&id).cloned() else {
+            return;
+        };
         let mut bins = self.bins.borrow_mut();
         for i in self.bin_indices_in_box(t.top_left.get(), t.bottom_right.get()) {
             remove_first(&mut bins[i].proximity_triggers, &t);
@@ -584,7 +601,9 @@ pub trait WorldExt {
 
 impl WorldExt for World {
     fn actor_map(&self) -> Rc<ActorMap> {
-        let any: &Rc<dyn Any> = self.actor_map_slot.get_or_init(|| self.trait_dict().get::<ActorMap>(self.world_actor()) as Rc<dyn Any>);
+        let any: &Rc<dyn Any> = self
+            .actor_map_slot
+            .get_or_init(|| self.trait_dict().get::<ActorMap>(self.world_actor()) as Rc<dyn Any>);
         any.clone().downcast::<ActorMap>().expect("actor map type")
     }
 

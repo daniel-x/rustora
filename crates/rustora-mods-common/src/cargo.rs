@@ -250,7 +250,10 @@ impl Cargo {
     pub fn current_adjacent_cells(&self) -> Vec<CPos> {
         let w = self.self_.world();
         let loc = self.self_.location();
-        util::adjacent_cells(&w, &Target::from_actor(Some(&self.self_))).into_iter().filter(|c| *c != loc).collect()
+        util::adjacent_cells(&w, &Target::from_actor(Some(&self.self_)))
+            .into_iter()
+            .filter(|c| *c != loc)
+            .collect()
     }
 
     pub fn can_unload(&self, check: BlockedByActor) -> bool {
@@ -273,7 +276,11 @@ impl Cargo {
             }
         }
         let passengers = self.cargo.borrow().clone();
-        self.current_adjacent_cells().iter().any(|c| passengers.iter().any(|p| !p.is_dead() && p.trait_::<dyn IPositionable>().can_enter_cell(*c, None, check)))
+        self.current_adjacent_cells().iter().any(|c| {
+            passengers
+                .iter()
+                .any(|p| !p.is_dead() && p.trait_::<dyn IPositionable>().can_enter_cell(*c, None, check))
+        })
     }
 
     pub fn can_load(&self, a: &ActorRef) -> bool {
@@ -293,7 +300,8 @@ impl Cargo {
             return false;
         }
         if self.loading_token.get() == INVALID_CONDITION_TOKEN {
-            self.loading_token.set(self.self_.grant_condition(self.info.loading_condition.as_deref().unwrap_or("")));
+            self.loading_token
+                .set(self.self_.grant_condition(self.info.loading_condition.as_deref().unwrap_or("")));
         }
         self.reserves.borrow_mut().push(a.clone());
         self.reserved_weight.set(self.reserved_weight.get() + w);
@@ -361,7 +369,12 @@ impl Cargo {
 
     pub fn unload(&self, self_: &ActorRef, passenger: Option<&ActorRef>) -> ActorRef {
         let passenger = passenger.cloned().unwrap_or_else(|| self.peek());
-        let idx = self.cargo.borrow().iter().position(|c| c.id == passenger.id).expect("Attempted to unload an actor that is not a passenger.");
+        let idx = self
+            .cargo
+            .borrow()
+            .iter()
+            .position(|c| c.id == passenger.id)
+            .expect("Attempted to unload an actor that is not a passenger.");
         self.cargo.borrow_mut().remove(idx);
         self.total_weight.set(self.total_weight.get() - weight_of(&passenger));
         self.set_passenger_facing(&passenger);
@@ -372,7 +385,11 @@ impl Cargo {
             nec.on_exited_cargo(&passenger, self_);
         }
         *passenger.trait_::<Passenger>().transport.borrow_mut() = None;
-        let token = self.passenger_tokens.borrow_mut().get_mut(&passenger.info.name).and_then(|t| t.pop());
+        let token = self
+            .passenger_tokens
+            .borrow_mut()
+            .get_mut(&passenger.info.name)
+            .and_then(|t| t.pop());
         if let Some(t) = token {
             self_.revoke_condition(t);
         }
@@ -384,7 +401,9 @@ impl Cargo {
     }
 
     fn set_passenger_facing(&self, passenger: &ActorRef) {
-        let Some(facing) = self.self_.trait_or_default::<dyn IFacing>() else { return };
+        let Some(facing) = self.self_.trait_or_default::<dyn IFacing>() else {
+            return;
+        };
         if let Some(pf) = passenger.trait_or_default::<dyn IFacing>() {
             pf.set_facing(facing.facing() + self.info.passenger_facing);
         }
@@ -416,7 +435,9 @@ impl Cargo {
         let self_ = self.self_.clone();
         self_.world().add_frame_end_task(Box::new(move |w| {
             w.add(&passenger);
-            passenger.trait_::<dyn IPositionable>().set_position_cell(&passenger, self_.location(), ANY);
+            passenger
+                .trait_::<dyn IPositionable>()
+                .set_position_cell(&passenger, self_.location(), ANY);
         }));
     }
 }
@@ -435,7 +456,11 @@ impl IResolveOrder for Cargo {
 impl INotifyKilled for Cargo {
     fn killed(&self, self_: &ActorRef, e: &AttackInfo) {
         let w = self_.world();
-        let on_unload_terrain = !self.check_terrain_type || self.info.unload_terrain_types.contains(&w.map().terrain_type_info(self_.location()).ty);
+        let on_unload_terrain = !self.check_terrain_type
+            || self
+                .info
+                .unload_terrain_types
+                .contains(&w.map().terrain_type_info(self_.location()).ty);
         if self.info.eject_on_death && util::is_at_ground_level(self_) && on_unload_terrain {
             while !self.is_empty() {
                 let passenger = self.unload(self_, None);
@@ -499,7 +524,10 @@ impl INotifyOwnerChanged for Cargo {
 
 impl ITransformActorInitModifier for Cargo {
     fn modify_transform_actor_init(&self, _self_: &ActorRef, init: &mut ActorInits) {
-        init.push(Rc::new(RuntimeCargoInit { value: self.passengers(), instance_name: self.info.instance_name.clone() }));
+        init.push(Rc::new(RuntimeCargoInit {
+            value: self.passengers(),
+            instance_name: self.info.instance_name.clone(),
+        }));
     }
 }
 
@@ -516,7 +544,14 @@ pub struct PassengerInfo {
 
 impl Default for PassengerInfo {
     fn default() -> Self {
-        PassengerInfo { instance_name: None, cargo_type: None, weight: 1, cargo_condition: None, cargo_conditions: IndexMap::new(), require_force_move_condition: None }
+        PassengerInfo {
+            instance_name: None,
+            cargo_type: None,
+            weight: 1,
+            cargo_condition: None,
+            cargo_conditions: IndexMap::new(),
+            require_force_move_condition: None,
+        }
     }
 }
 
@@ -541,7 +576,9 @@ info_impl!(PassengerInfo => |info, _init| Some(Rc::new(Passenger {
 
 impl IObservesVariables for Passenger {
     fn get_variable_observers(self: Rc<Self>) -> Vec<VariableObserver> {
-        let Some(e) = &self.info.require_force_move_condition else { return Vec::new() };
+        let Some(e) = &self.info.require_force_move_condition else {
+            return Vec::new();
+        };
         let w = Rc::downgrade(&self);
         let e2 = e.clone();
         vec![VariableObserver {
@@ -557,7 +594,9 @@ impl IObservesVariables for Passenger {
 
 impl Passenger {
     fn can_enter(&self, target: &ActorRef) -> bool {
-        target.trait_or_default::<Cargo>().is_some_and(|c| !c.is_trait_disabled() && c.has_space(self.info.weight))
+        target
+            .trait_or_default::<Cargo>()
+            .is_some_and(|c| !c.is_trait_disabled() && c.has_space(self.info.weight))
     }
 
     fn is_correct_cargo_type(&self, target: &ActorRef) -> bool {
@@ -597,7 +636,8 @@ impl Passenger {
 impl INotifyEnteredCargo for Passenger {
     fn on_entered_cargo(&self, self_: &ActorRef, cargo: &ActorRef) {
         if self.any_cargo_token.get() == INVALID_CONDITION_TOKEN {
-            self.any_cargo_token.set(self_.grant_condition(self.info.cargo_condition.as_deref().unwrap_or("")));
+            self.any_cargo_token
+                .set(self_.grant_condition(self.info.cargo_condition.as_deref().unwrap_or("")));
         }
         if self.specific_cargo_token.get() == INVALID_CONDITION_TOKEN {
             if let Some(c) = self.info.cargo_conditions.get(&cargo.info.name) {
@@ -620,7 +660,8 @@ impl INotifyExitedCargo for Passenger {
             self.any_cargo_token.set(self_.revoke_condition(self.any_cargo_token.get()));
         }
         if self.specific_cargo_token.get() != INVALID_CONDITION_TOKEN {
-            self.specific_cargo_token.set(self_.revoke_condition(self.specific_cargo_token.get()));
+            self.specific_cargo_token
+                .set(self_.revoke_condition(self.specific_cargo_token.get()));
         }
     }
 }
@@ -663,7 +704,11 @@ pub struct ParaDropInfo {
 
 impl Default for ParaDropInfo {
     fn default() -> Self {
-        ParaDropInfo { instance_name: None, drop_range: WDist::from_cells(4), drop_interval: 5 }
+        ParaDropInfo {
+            instance_name: None,
+            drop_range: WDist::from_cells(4),
+            drop_interval: 5,
+        }
     }
 }
 
@@ -855,7 +900,11 @@ impl Activity for Enter {
                 }
                 if target.target_type() != TargetType::Invalid && !self.mv.can_enter_target_now(self_, &target) {
                     self.helper.notify_move_queued();
-                    let initial = if use_last { self.last_visible_target.borrow().center_position() } else { target.center_position() };
+                    let initial = if use_last {
+                        self.last_visible_target.borrow().center_position()
+                    } else {
+                        target.center_position()
+                    };
                     if let Some(a) = self.mv.move_to_target(self_, &target, Some(initial)) {
                         self.base.queue_child(a);
                     }
@@ -922,7 +971,11 @@ impl RideTransport {
         Enter::new(
             self_,
             target,
-            Box::new(RideTransportHooks { passenger: self_.trait_::<Passenger>(), enter_actor: RefCell::new(None), enter_cargo: RefCell::new(None) }),
+            Box::new(RideTransportHooks {
+                passenger: self_.trait_::<Passenger>(),
+                enter_actor: RefCell::new(None),
+                enter_cargo: RefCell::new(None),
+            }),
         )
     }
 }
@@ -936,7 +989,9 @@ impl EnterHooks for RideTransportHooks {
         *self.enter_actor.borrow_mut() = Some(target_actor.clone());
         let cargo = target_actor.trait_or_default::<Cargo>();
         *self.enter_cargo.borrow_mut() = cargo.clone();
-        let reserved = cargo.as_ref().is_some_and(|c| !c.is_trait_disabled() && self.passenger.reserve(self_, c));
+        let reserved = cargo
+            .as_ref()
+            .is_some_and(|c| !c.is_trait_disabled() && self.passenger.reserve(self_, c));
         if !reserved {
             enter.cancel_keep_queue(self_);
             return false;
@@ -1046,7 +1101,14 @@ impl Activity for UnloadCargo {
         }
         let destination = self.destination.borrow().clone();
         if let Some(a) = &self.aircraft {
-            self.base.queue_child(Land::full(self_, destination, LandArgs { land_range: self.unload_range, ..Default::default() }));
+            self.base.queue_child(Land::full(
+                self_,
+                destination,
+                LandArgs {
+                    land_range: self.unload_range,
+                    ..Default::default()
+                },
+            ));
             self.take_off_after_unload.set(!a.at_land_altitude());
         } else if self.mobile.is_some() {
             let cell = w.map().clamp(w.map().cell_containing(destination.center_position()));
@@ -1092,7 +1154,8 @@ impl Activity for UnloadCargo {
         }
         if !self.unload_all || !self.cargo.can_unload(BlockedByActor::None) {
             if self.cargo.info.after_unload_delay > 0 {
-                self.base.queue_child(Wait::new_interruptible(self.cargo.info.after_unload_delay, false));
+                self.base
+                    .queue_child(Wait::new_interruptible(self.cargo.info.after_unload_delay, false));
             }
             if self.take_off_after_unload.get() {
                 self.base.queue_child(TakeOff::new(self_));

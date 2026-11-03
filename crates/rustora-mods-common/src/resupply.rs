@@ -40,7 +40,10 @@ pub fn register(r: &mut TraitRegistry) {
 
 /// `self.GetDamageState() != DamageState.Undamaged`.
 pub fn has_damage(a: &ActorRef) -> bool {
-    a.cache().health.as_ref().is_some_and(|h| h.damage_state() != DamageState::UNDAMAGED)
+    a.cache()
+        .health
+        .as_ref()
+        .is_some_and(|h| h.damage_state() != DamageState::UNDAMAGED)
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -124,7 +127,8 @@ impl AmmoPool {
         if self.current_ammo_count.get() >= self.info.ammo || count < 0 {
             return false;
         }
-        self.current_ammo_count.set((self.current_ammo_count.get() + count).clamp(0, self.info.ammo));
+        self.current_ammo_count
+            .set((self.current_ammo_count.get() + count).clamp(0, self.info.ammo));
         self.update_condition(self_);
         true
     }
@@ -133,13 +137,16 @@ impl AmmoPool {
         if self.current_ammo_count.get() <= 0 || count < 0 {
             return false;
         }
-        self.current_ammo_count.set((self.current_ammo_count.get() - count).clamp(0, self.info.ammo));
+        self.current_ammo_count
+            .set((self.current_ammo_count.get() - count).clamp(0, self.info.ammo));
         self.update_condition(self_);
         true
     }
 
     fn update_condition(&self, self_: &ActorRef) {
-        let Some(condition) = self.info.ammo_condition.as_deref().filter(|c| !c.is_empty()) else { return };
+        let Some(condition) = self.info.ammo_condition.as_deref().filter(|c| !c.is_empty()) else {
+            return;
+        };
         while self.current_ammo_count.get() > self.tokens.borrow().len() as i32 && (self.tokens.borrow().len() as i32) < self.info.ammo {
             let t = self_.grant_condition(condition);
             self.tokens.borrow_mut().push(t);
@@ -162,7 +169,11 @@ pub struct RearmableInfo {
 
 impl Default for RearmableInfo {
     fn default() -> Self {
-        RearmableInfo { instance_name: None, rearm_actors: IndexSet::new(), ammo_pools: IndexSet::from(["primary".to_string()]) }
+        RearmableInfo {
+            instance_name: None,
+            rearm_actors: IndexSet::new(),
+            ammo_pools: IndexSet::from(["primary".to_string()]),
+        }
     }
 }
 
@@ -176,7 +187,11 @@ info_impl!(RearmableInfo => |info, _init| Some(Rc::new(Rearmable { info, rearmab
 
 impl INotifyCreated for Rearmable {
     fn created(&self, self_: &ActorRef) {
-        *self.rearmable_ammo_pools.borrow_mut() = self_.traits_implementing::<AmmoPool>().into_iter().filter(|p| self.info.ammo_pools.contains(&p.info.name)).collect();
+        *self.rearmable_ammo_pools.borrow_mut() = self_
+            .traits_implementing::<AmmoPool>()
+            .into_iter()
+            .filter(|p| self.info.ammo_pools.contains(&p.info.name))
+            .collect();
     }
 }
 
@@ -238,7 +253,12 @@ pub struct RepairableInfo {
 
 impl Default for RepairableInfo {
     fn default() -> Self {
-        RepairableInfo { instance_name: None, repair_actors: IndexSet::new(), hp_per_step: -1, require_force_move_condition: None }
+        RepairableInfo {
+            instance_name: None,
+            repair_actors: IndexSet::new(),
+            hp_per_step: -1,
+            require_force_move_condition: None,
+        }
     }
 }
 
@@ -272,7 +292,10 @@ impl IObservesVariables for Repairable {
 
 impl Repairable {
     fn can_rearm(&self) -> bool {
-        self.rearmable.get().and_then(|r| r.as_ref()).is_some_and(|r| r.rearmable_ammo_pools().iter().any(|p| !p.has_full_ammo()))
+        self.rearmable
+            .get()
+            .and_then(|r| r.as_ref())
+            .is_some_and(|r| r.rearmable_ammo_pools().iter().any(|p| !p.has_full_ammo()))
     }
 
     /// `FindRepairBuilding`.
@@ -299,9 +322,16 @@ fn find_repair_building(self_: &ActorRef, repair_actors: &IndexSet<String>) -> O
     let mut buildings: Vec<ActorRef> = w
         .actors_having_trait::<RepairsUnits>()
         .into_iter()
-        .filter(|a| !a.is_dead() && a.is_in_world() && a.owner().is_allied_with(Some(&self_.owner())) && repair_actors.contains(&a.info.name))
+        .filter(|a| {
+            !a.is_dead() && a.is_in_world() && a.owner().is_allied_with(Some(&self_.owner())) && repair_actors.contains(&a.info.name)
+        })
         .collect();
-    buildings.sort_by_key(|a| (if Rc::ptr_eq(&a.owner(), &self_.owner()) { 0 } else { 1 }, (self_.location() - a.location()).length_squared()));
+    buildings.sort_by_key(|a| {
+        (
+            if Rc::ptr_eq(&a.owner(), &self_.owner()) { 0 } else { 1 },
+            (self_.location() - a.location()).length_squared(),
+        )
+    });
     buildings.into_iter().next()
 }
 
@@ -317,7 +347,12 @@ pub struct RepairableNearInfo {
 
 impl Default for RepairableNearInfo {
     fn default() -> Self {
-        RepairableNearInfo { instance_name: None, repair_actors: IndexSet::new(), close_enough: WDist::from_cells(4), require_force_move_condition: None }
+        RepairableNearInfo {
+            instance_name: None,
+            repair_actors: IndexSet::new(),
+            close_enough: WDist::from_cells(4),
+            require_force_move_condition: None,
+        }
     }
 }
 
@@ -433,12 +468,15 @@ impl Resupply {
         let name = &host.info.name;
         let cannot_repair_at_host = health.as_ref().is_none_or(|h| h.damage_state() == DamageState::UNDAMAGED)
             || all_repairs_units.is_empty()
-            || (repairable.as_ref().is_none_or(|r| !r.info.repair_actors.contains(name)) && repairable_near.as_ref().is_none_or(|r| !r.info.repair_actors.contains(name)));
+            || (repairable.as_ref().is_none_or(|r| !r.info.repair_actors.contains(name))
+                && repairable_near.as_ref().is_none_or(|r| !r.info.repair_actors.contains(name)));
         let mut active = 0;
         if !cannot_repair_at_host {
             active |= RESUPPLY_REPAIR;
         }
-        let cannot_rearm_at_host = rearmable.as_ref().is_none_or(|r| !r.info.rearm_actors.contains(name) || r.rearmable_ammo_pools().iter().all(|p| p.has_full_ammo()));
+        let cannot_rearm_at_host = rearmable
+            .as_ref()
+            .is_none_or(|r| !r.info.rearm_actors.contains(name) || r.rearmable_ammo_pools().iter().all(|p| p.has_full_ammo()));
         if !cannot_rearm_at_host {
             active |= RESUPPLY_REARM;
         }
@@ -471,14 +509,26 @@ impl Resupply {
     }
 
     fn on_resupply_ending(&self, self_: &ActorRef, is_host_invalid: bool) {
-        let rp = if is_host_invalid { None } else { self.host_actor().trait_or_default::<RallyPoint>() };
+        let rp = if is_host_invalid {
+            None
+        } else {
+            self.host_actor().trait_or_default::<RallyPoint>()
+        };
         let rally_path = rp.as_ref().map(|r| r.path.borrow().clone()).unwrap_or_default();
         let next_is_none = self_.current_activity().is_some_and(|c| c.base().next_activity().is_none());
-        let ignore_host = if self.repairable_near.is_some() || is_host_invalid { None } else { Some(self.host_actor().clone()) };
+        let ignore_host = if self.repairable_near.is_some() || is_host_invalid {
+            None
+        } else {
+            Some(self.host_actor().clone())
+        };
         let queue_rally = |evaluate: bool| {
             for cell in &rally_path {
                 let (mv, c, ignore) = (self.mv.clone(), *cell, ignore_host.clone());
-                self.base.queue_child(AttackMoveActivity::new(self_, Rc::new(move || mv.move_to(c, 1, ignore.clone(), evaluate)), false));
+                self.base.queue_child(AttackMoveActivity::new(
+                    self_,
+                    Rc::new(move || mv.move_to(c, 1, ignore.clone(), evaluate)),
+                    false,
+                ));
             }
         };
         if let Some(aircraft) = &self.aircraft {
@@ -503,7 +553,12 @@ impl Resupply {
                         self.base.queue_child(a);
                     }
                 }
-            } else if self.repairable_near.is_none() && self_.current_activity().and_then(|c| c.base().next_activity()).is_some_and(|n| n.type_name() != "Move") {
+            } else if self.repairable_near.is_none()
+                && self_
+                    .current_activity()
+                    .and_then(|c| c.base().next_activity())
+                    .is_some_and(|n| n.type_name() != "Move")
+            {
                 if let Some(a) = self.mv.move_to_target(self_, &self.host, None) {
                     self.base.queue_child(a);
                 }
@@ -521,7 +576,10 @@ impl Resupply {
     }
 
     fn repair_tick(&self, self_: &ActorRef) {
-        let repairs_units = self.all_repairs_units.iter().find(|r| !r.state.is_trait_disabled() && !r.state.is_trait_paused());
+        let repairs_units = self
+            .all_repairs_units
+            .iter()
+            .find(|r| !r.state.is_trait_disabled() && !r.state.is_trait_paused());
         let Some(repairs_units) = repairs_units else {
             if !self.all_repairs_units.iter().any(|r| r.state.is_trait_paused()) {
                 self.active_resupply_types.set(self.active_resupply_types.get() & !RESUPPLY_REPAIR);
@@ -545,12 +603,21 @@ impl Resupply {
                 _ => repairs_units.info.hp_per_step,
             };
             let value = self.unit_cost as i64 * repairs_units.info.value_percentage as i64;
-            let cost = if value == 0 { 0 } else { 1.max((hp_to_repair as i64 * value / (health.max_hp() as i64 * 100)) as i32) };
+            let cost = if value == 0 {
+                0
+            } else {
+                1.max((hp_to_repair as i64 * value / (health.max_hp() as i64 * 100)) as i32)
+            };
             if !self.player_resources.take_cash(cost, true) {
                 self.remaining_ticks.set(1);
                 return;
             }
-            health.inflict_damage(self_, Some(self.host_actor()), &Damage::new(-hp_to_repair, repairs_units.info.repair_damage_types), false);
+            health.inflict_damage(
+                self_,
+                Some(self.host_actor()),
+                &Damage::new(-hp_to_repair, repairs_units.info.repair_damage_types),
+                false,
+            );
             self.remaining_ticks.set(repairs_units.info.interval);
         } else {
             self.remaining_ticks.set(self.remaining_ticks.get() - 1);
@@ -574,7 +641,8 @@ impl Activity for Resupply {
             } else if self.repairable_near.is_some() {
                 is_close_enough = self.host.is_in_range(self_.center_position(), self.close_enough);
             } else {
-                is_close_enough = (self.host.center_position() - self_.center_position()).horizontal_length_squared() <= self.close_enough.length_squared();
+                is_close_enough = (self.host.center_position() - self_.center_position()).horizontal_length_squared()
+                    <= self.close_enough.length_squared();
             }
         }
         if !self.base.is_canceling() && is_host_invalid {
@@ -594,7 +662,8 @@ impl Activity for Resupply {
             if self.repairable_near.is_none() {
                 self.base.queue_child(self.mv.move_onto_target(self_, &self.host, WVec::ZERO, None));
             } else {
-                self.base.queue_child(self.mv.move_within_range(&self.host, WDist::ZERO, self.close_enough, None));
+                self.base
+                    .queue_child(self.mv.move_within_range(&self.host, WDist::ZERO, self.close_enough, None));
             }
             return false;
         }

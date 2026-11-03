@@ -38,7 +38,10 @@ pub fn parse_bots(s: &str) -> Result<Vec<BotSpec>, String> {
                 slot: p[0].to_string(),
                 bot: p[1].to_string(),
                 faction: p.get(2).map(|f| f.to_string()),
-                spawn: p.get(3).map(|s| s.parse().map_err(|_| format!("invalid spawn in {b}"))).transpose()?,
+                spawn: p
+                    .get(3)
+                    .map(|s| s.parse().map_err(|_| format!("invalid spawn in {b}")))
+                    .transpose()?,
             })
         })
         .collect()
@@ -81,7 +84,11 @@ fn sync_client_to_player_reference(c: &mut Client, pr: &PlayerReference) {
 /// Bot colors are not random like on the C# server; they do not affect the simulation.
 pub fn skirmish_session(map: &MapPackage, bots: &[BotSpec], seed: i32) -> Result<Session, String> {
     let players: IndexMap<String, PlayerReference> = map_players(map.section_nodes("Players"));
-    let slots: IndexMap<String, Slot> = players.values().filter_map(make_slot).map(|s| (s.player_reference.clone(), s)).collect();
+    let slots: IndexMap<String, Slot> = players
+        .values()
+        .filter_map(make_slot)
+        .map(|s| (s.player_reference.clone(), s))
+        .collect();
     let mut clients = vec![Client {
         index: 0,
         faction: Some("Random".into()),
@@ -147,7 +154,10 @@ impl Connection for LocalConnection {
         for i in 0..LOCAL_ORDER_LATENCY {
             self.incoming.push_back(Incoming::Orders {
                 client_id: 0,
-                orders: OrderPacket { frame: 1 + i, orders: Vec::new() },
+                orders: OrderPacket {
+                    frame: 1 + i,
+                    orders: Vec::new(),
+                },
             });
         }
     }

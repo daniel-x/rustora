@@ -258,7 +258,11 @@ impl Locomotor {
         }
         let w = self.world();
         let am = w.actor_map();
-        let others = if sub == FULL_CELL { am.get_actors_at(cell) } else { am.get_actors_at_sub(cell, sub) };
+        let others = if sub == FULL_CELL {
+            am.get_actors_at(cell)
+        } else {
+            am.get_actors_at_sub(cell, sub)
+        };
         if ignore_self {
             let mut is_blocked = false;
             for other in &others {
@@ -280,7 +284,14 @@ impl Locomotor {
         self.get_cache(cell).flag & HAS_TRANSIT_ONLY_ACTOR == 0
     }
 
-    pub fn get_available_subcell(&self, self_: &ActorRef, cell: CPos, check: BlockedByActor, preferred: u8, ignore_actor: Option<&ActorRef>) -> u8 {
+    pub fn get_available_subcell(
+        &self,
+        self_: &ActorRef,
+        cell: CPos,
+        check: BlockedByActor,
+        preferred: u8,
+        ignore_actor: Option<&ActorRef>,
+    ) -> u8 {
         if self.movement_cost_for_cell(cell) == MOVEMENT_COST_FOR_UNREACHABLE_CELL {
             return INVALID;
         }
@@ -290,17 +301,33 @@ impl Locomotor {
             let flag = self.get_cache(cell).flag;
             let check_transient = |o: &ActorRef| self.is_blocked_by(self_, o, ignore_actor, cell, check, flag);
             if !self.info.shares_cell {
-                return if am.any_actors_at_with(cell, FULL_CELL, &check_transient) { INVALID } else { FULL_CELL };
+                return if am.any_actors_at_with(cell, FULL_CELL, &check_transient) {
+                    INVALID
+                } else {
+                    FULL_CELL
+                };
             }
             return am.free_subcell_with(cell, preferred, &check_transient);
         }
         if !self.info.shares_cell {
-            return if am.any_actors_at_sub(cell, FULL_CELL, true) { INVALID } else { FULL_CELL };
+            return if am.any_actors_at_sub(cell, FULL_CELL, true) {
+                INVALID
+            } else {
+                FULL_CELL
+            };
         }
         am.free_subcell(cell, preferred, true)
     }
 
-    fn is_blocked_by(&self, actor: &ActorRef, other: &ActorRef, ignore_actor: Option<&ActorRef>, cell: CPos, check: BlockedByActor, flag: u8) -> bool {
+    fn is_blocked_by(
+        &self,
+        actor: &ActorRef,
+        other: &ActorRef,
+        ignore_actor: Option<&ActorRef>,
+        cell: CPos,
+        check: BlockedByActor,
+        flag: u8,
+    ) -> bool {
         if ignore_actor.is_some_and(|i| i.id == other.id) {
             return false;
         }
@@ -345,7 +372,11 @@ impl Locomotor {
     fn update_cell_cost(&self, cell: CPos) {
         let w = self.world();
         let index = w.map().terrain_index(cell);
-        let cost = if index != u8::MAX { self.terrain_infos[index as usize].cost } else { MOVEMENT_COST_FOR_UNREACHABLE_CELL };
+        let cost = if index != u8::MAX {
+            self.terrain_infos[index as usize].cost
+        } else {
+            MOVEMENT_COST_FOR_UNREACHABLE_CELL
+        };
         let old = {
             let mut c = self.cells_cost.get().expect("locomotor loaded").borrow_mut();
             let old = *c.at(cell);
@@ -437,4 +468,3 @@ pub fn locomotor_by_name(w: &World, name: &str) -> Rc<Locomotor> {
         .find(|l| l.info.name == name)
         .unwrap_or_else(|| panic!("no locomotor named {name}"))
 }
-

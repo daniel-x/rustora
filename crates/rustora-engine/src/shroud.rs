@@ -126,7 +126,8 @@ impl INotifyCreated for Shroud {
         let w = self_.world();
         let gs = &w.lobby_info.global_settings;
         self.fog_enabled.set(gs.option_bool("fog", self.info.fog_checkbox_enabled));
-        self.explore_map_enabled.set(gs.option_bool("explored", self.info.explored_map_checkbox_enabled));
+        self.explore_map_enabled
+            .set(gs.option_bool("explored", self.info.explored_map_checkbox_enabled));
         if self.explore_map_enabled.get() {
             let me = self_.clone();
             w.add_frame_end_task(Box::new(move |_| me.trait_::<Shroud>().explore_all()));
@@ -164,7 +165,8 @@ impl ITick for Shroud {
                 }
             }
         }
-        self.hash.set(hash_player(Some(&self_.owner())).wrapping_add(self_.world().world_tick()));
+        self.hash
+            .set(hash_player(Some(&self_.owner())).wrapping_add(self_.world().world_tick()));
         self.disabled_changed.set(false);
     }
 }
@@ -273,7 +275,10 @@ impl Shroud {
     /// `key` identifies the source (C# uses the object reference).
     pub fn add_source(&self, key: usize, ty: SourceType, projected_cells: Rc<[PPos]>) {
         let mut l = self.l.borrow_mut();
-        assert!(l.sources.insert(key, (ty, projected_cells.clone())).is_none(), "Attempting to add duplicate shroud source");
+        assert!(
+            l.sources.insert(key, (ty, projected_cells.clone())).is_none(),
+            "Attempting to add duplicate shroud source"
+        );
         for &puv in projected_cells.iter() {
             if !self.map.contains_ppos(puv) {
                 continue;

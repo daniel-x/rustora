@@ -80,7 +80,13 @@ pub fn open_map(engine: &Path, name: &str) -> Option<Arc<dyn Package>> {
 }
 
 /// Loads the RA mod and the map `pkg` with its custom rules and creates the world for `lobby`.
-pub fn load_world(engine: &Path, support: &str, pkg: Arc<dyn Package>, lobby: rustora_net::session::Session, is_replay: bool) -> (Rc<World>, Rc<ModData>, ReadFile) {
+pub fn load_world(
+    engine: &Path,
+    support: &str,
+    pkg: Arc<dyn Package>,
+    lobby: rustora_net::session::Session,
+    is_replay: bool,
+) -> (Rc<World>, Rc<ModData>, ReadFile) {
     let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
 
@@ -167,7 +173,11 @@ impl ReplayDriver {
 fn format_actors(actors: &Option<Vec<Option<rustora_engine::actor::ActorRef>>>) -> String {
     match actors {
         None => "-".into(),
-        Some(v) => v.iter().map(|a| a.as_ref().map_or_else(|| "null".to_string(), |a| a.id.to_string())).collect::<Vec<_>>().join(","),
+        Some(v) => v
+            .iter()
+            .map(|a| a.as_ref().map_or_else(|| "null".to_string(), |a| a.id.to_string()))
+            .collect::<Vec<_>>()
+            .join(","),
     }
 }
 

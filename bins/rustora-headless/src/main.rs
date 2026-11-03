@@ -78,7 +78,9 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
     rustora_mods_common::bots::activate_bots(world);
     let issued: Rc<std::cell::RefCell<Vec<String>>> = Rc::default();
     let sink = issued.clone();
-    world.set_order_observer(Rc::new(move |w, o| sink.borrow_mut().push(rustora_launch::format_order(w.world_tick(), o))));
+    world.set_order_observer(Rc::new(move |w, o| {
+        sink.borrow_mut().push(rustora_launch::format_order(w.world_tick(), o))
+    }));
     let mut next = 0;
     let mut failure: Option<String> = None;
     run_replay(world, replay, i32::MAX, |w, _| {
@@ -98,7 +100,10 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
             match expected.get(next) {
                 Some(e) if *e == got => next += 1,
                 e => {
-                    failure = Some(format!("order {next} differs\n  expected {}\n  got      {got}", e.map_or("<end>", |s| s.as_str())));
+                    failure = Some(format!(
+                        "order {next} differs\n  expected {}\n  got      {got}",
+                        e.map_or("<end>", |s| s.as_str())
+                    ));
                     return false;
                 }
             }
@@ -133,7 +138,9 @@ fn skirmish(args: &[String]) {
     let map_package = rustora_game::map::MapPackage::load(pkg.clone()).expect("load map");
     let lobby = skirmish_session(&map_package, &parse_bots(bots).expect("bots"), seed).expect("lobby");
     let (world, _, _) = rustora_launch::load_world(&engine, support, pkg, lobby, false);
-    let mut out = args.get(8).map(|p| std::io::BufWriter::new(std::fs::File::create(p).expect("create sync dump")));
+    let mut out = args
+        .get(8)
+        .map(|p| std::io::BufWriter::new(std::fs::File::create(p).expect("create sync dump")));
     let expected = args.get(9).map(|p| read_sync_dump(p));
     let start = std::time::Instant::now();
     let mut driver = SkirmishDriver::new(&world);
@@ -141,14 +148,22 @@ fn skirmish(args: &[String]) {
     while world.world_tick() < ticks {
         match driver.step() {
             Step::Ticked => {
-                let line = format!("{} {} {}", world.world_tick(), world.sync_hash(), world.bot_random.borrow().total_count);
+                let line = format!(
+                    "{} {} {}",
+                    world.world_tick(),
+                    world.sync_hash(),
+                    world.bot_random.borrow().total_count
+                );
                 if let Some(o) = out.as_mut() {
                     use std::io::Write;
                     writeln!(o, "{line}").expect("write sync dump");
                 }
                 if let Some(e) = expected.as_ref().and_then(|e| e.get(&world.world_tick())) {
                     if *e != line {
-                        mismatch = Some(format!("first mismatch at tick {}\n  expected {e}\n  got      {line}", world.world_tick()));
+                        mismatch = Some(format!(
+                            "first mismatch at tick {}\n  expected {e}\n  got      {line}",
+                            world.world_tick()
+                        ));
                         break;
                     }
                 }
@@ -157,7 +172,12 @@ fn skirmish(args: &[String]) {
             Step::Ended => break,
         }
     }
-    println!("ticks {} in {:?}, game over: {}", world.world_tick(), start.elapsed(), world.is_game_over());
+    println!(
+        "ticks {} in {:?}, game over: {}",
+        world.world_tick(),
+        start.elapsed(),
+        world.is_game_over()
+    );
     if let Some(e) = &expected {
         let last = e.keys().copied().max().unwrap_or(0);
         match mismatch {
@@ -197,16 +217,42 @@ fn main() {
                 });
                 run_replay(&world, replay, tick, |w, _| {
                     if let Some(a) = trace.and_then(|id| w.get_actor_by_id(id)) {
-                        let facing = a.trait_or_default::<dyn rustora_engine::traits::IFacing>().map(|f| f.facing().angle);
-                        let prone = (a.trait_or_default::<rustora_mods_common::turreted::Turreted>().map(|t| t.is_prone()), a.trait_or_default::<rustora_mods_common::mobile::Mobile>().map(|m| m.movement_speed_for_cell(a.location())));
-                        eprintln!("trace {} pos={:?} facing={:?} prone={:?} activity={:?}", w.world_tick(), a.center_position(), facing, prone, activity_chain(a.current_activity()));
+                        let facing = a
+                            .trait_or_default::<dyn rustora_engine::traits::IFacing>()
+                            .map(|f| f.facing().angle);
+                        let prone = (
+                            a.trait_or_default::<rustora_mods_common::turreted::Turreted>()
+                                .map(|t| t.is_prone()),
+                            a.trait_or_default::<rustora_mods_common::mobile::Mobile>()
+                                .map(|m| m.movement_speed_for_cell(a.location())),
+                        );
+                        eprintln!(
+                            "trace {} pos={:?} facing={:?} prone={:?} activity={:?}",
+                            w.world_tick(),
+                            a.center_position(),
+                            facing,
+                            prone,
+                            activity_chain(a.current_activity())
+                        );
                     }
                     if let Some((pi, fid)) = trace_frozen {
-                        let p = w.players().into_iter().find(|p| p.player_actor().id as usize == pi).expect("player");
+                        let p = w
+                            .players()
+                            .into_iter()
+                            .find(|p| p.player_actor().id as usize == pi)
+                            .expect("player");
                         if let Some(fa) = p.frozen_actor_layer().and_then(|l| l.from_id(fid)) {
                             let sh = p.shroud();
                             let vis: Vec<u8> = fa.footprint.iter().map(|&c| sh.get_visibility(c)).collect();
-                            eprintln!("frozen {} {} visible={} actor_alive={} footprint={:?} cell_visibility={:?}", w.world_tick(), fa.info().name, fa.visible(), fa.actor().is_some(), fa.footprint, vis);
+                            eprintln!(
+                                "frozen {} {} visible={} actor_alive={} footprint={:?} cell_visibility={:?}",
+                                w.world_tick(),
+                                fa.info().name,
+                                fa.visible(),
+                                fa.actor().is_some(),
+                                fa.footprint,
+                                vis
+                            );
                         }
                     }
                     true

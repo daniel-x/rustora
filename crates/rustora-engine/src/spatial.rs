@@ -13,7 +13,13 @@ use crate::net_collections::NetMap;
 
 fn div_away(a: i32, b: i32) -> i32 {
     let (q, r) = (a / b, a % b);
-    if r != 0 && ((a < 0) == (b < 0)) { q + 1 } else if r != 0 { q - 1 } else { q }
+    if r != 0 && ((a < 0) == (b < 0)) {
+        q + 1
+    } else if r != 0 {
+        q - 1
+    } else {
+        q
+    }
 }
 
 fn intersects(a: &Rectangle, b: &Rectangle) -> bool {
@@ -75,7 +81,9 @@ impl<K: Hash + Eq + Clone, V: Clone> SpatiallyPartitioned<K, V> {
     }
 
     pub fn remove(&mut self, key: &K) -> bool {
-        let Some(bounds) = self.item_bounds.get(key).copied() else { return false };
+        let Some(bounds) = self.item_bounds.get(key).copied() else {
+            return false;
+        };
         let (r0, r1, c0, c1) = self.rows_cols(&bounds);
         for r in r0..r1 {
             for c in c0..c1 {

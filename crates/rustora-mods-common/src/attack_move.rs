@@ -34,7 +34,12 @@ pub struct AttackMoveInfo {
 
 impl Default for AttackMoveInfo {
     fn default() -> Self {
-        AttackMoveInfo { instance_name: None, attack_move_condition: None, assault_move_condition: None, move_into_shroud: true }
+        AttackMoveInfo {
+            instance_name: None,
+            attack_move_condition: None,
+            assault_move_condition: None,
+            move_into_shroud: true,
+        }
     }
 }
 
@@ -62,7 +67,10 @@ impl IResolveOrder for AttackMove {
         let target_location = self.mv.nearest_moveable_cell(cell);
         let assault = order.order_string == "AssaultMove";
         let mv = self.mv.clone();
-        self_.queue_activity_queued(order.queued, AttackMoveActivity::new(self_, Rc::new(move || mv.move_to(target_location, 8, None, false)), assault));
+        self_.queue_activity_queued(
+            order.queued,
+            AttackMoveActivity::new(self_, Rc::new(move || mv.move_to(target_location, 8, None, false)), assault),
+        );
     }
 }
 
@@ -102,12 +110,20 @@ impl Activity for AttackMoveActivity {
             self.base.queue_child((self.get_move)());
             return;
         };
-        let condition = if self.is_assault_move { &attack_move.info.assault_move_condition } else { &attack_move.info.attack_move_condition };
+        let condition = if self.is_assault_move {
+            &attack_move.info.assault_move_condition
+        } else {
+            &attack_move.info.attack_move_condition
+        };
         self.token.set(self_.grant_condition(condition.as_deref().unwrap_or("")));
     }
 
     fn tick(&self, self_: &ActorRef) -> bool {
-        let Some(auto_target) = self.auto_target.as_ref().filter(|_| !self.base.is_canceling() && self.attack_move.is_some()) else {
+        let Some(auto_target) = self
+            .auto_target
+            .as_ref()
+            .filter(|_| !self.base.is_canceling() && self.attack_move.is_some())
+        else {
             return self.base.tick_child(self_);
         };
         if self.base.child_activity().is_none() || self.running_move_activity.get() {
@@ -119,7 +135,8 @@ impl Activity for AttackMoveActivity {
                     c.cancel(self_, false);
                 }
                 for ab in auto_target.active_attack_bases() {
-                    self.base.queue_child(ab.get_attack_activity(self_, AttackSource::AttackMove, &t, auto_target.allow_move(), false));
+                    self.base
+                        .queue_child(ab.get_attack_activity(self_, AttackSource::AttackMove, &t, auto_target.allow_move(), false));
                 }
             }
             if self.base.child_activity().is_none() {

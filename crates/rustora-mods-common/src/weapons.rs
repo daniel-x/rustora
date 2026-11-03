@@ -76,7 +76,8 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.projectiles.insert("TeslaZap", projectile_loader!(TeslaZapInfo));
     r.warheads.insert("SpreadDamage", |y| load_damage(y, DamageKind::Spread));
     r.warheads.insert("TargetDamage", |y| load_damage(y, DamageKind::Target));
-    r.warheads.insert("HealthPercentageDamage", |y| load_damage(y, DamageKind::HealthPercentage));
+    r.warheads
+        .insert("HealthPercentageDamage", |y| load_damage(y, DamageKind::HealthPercentage));
     r.warheads.insert("CreateEffect", warhead_loader!(CreateEffectWarhead));
     r.warheads.insert("CreateResource", warhead_loader!(CreateResourceWarhead));
     r.warheads.insert("DestroyResource", warhead_loader!(DestroyResourceWarhead));
@@ -151,8 +152,16 @@ fn find_blocking_actors_on_line(w: &World, start: WPos, end: WPos, width: WDist)
 fn any_blocking_actors_between(w: &World, owner: &PlayerRef, start: WPos, end: WPos, width: WDist) -> Option<WPos> {
     let length = (end - start).length();
     for a in find_blocking_actors_on_line(w, start, end, width) {
-        let blockers: Vec<Rc<BlocksProjectiles>> =
-            a.traits_implementing::<BlocksProjectiles>().into_iter().filter(|t| !t.state.is_trait_disabled() && t.info.valid_relationships.has_relationship(a.owner().relationship_with(Some(owner)))).collect();
+        let blockers: Vec<Rc<BlocksProjectiles>> = a
+            .traits_implementing::<BlocksProjectiles>()
+            .into_iter()
+            .filter(|t| {
+                !t.state.is_trait_disabled()
+                    && t.info
+                        .valid_relationships
+                        .has_relationship(a.owner().relationship_with(Some(owner)))
+            })
+            .collect();
         if blockers.is_empty() {
             continue;
         }
@@ -196,7 +205,11 @@ pub struct ArmorInfo {
 
 impl Default for ArmorInfo {
     fn default() -> Self {
-        ArmorInfo { instance_name: None, base: ConditionalTraitInfo::default(), ty: None }
+        ArmorInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            ty: None,
+        }
     }
 }
 
@@ -224,7 +237,12 @@ pub struct BlocksProjectilesInfo {
 
 impl Default for BlocksProjectilesInfo {
     fn default() -> Self {
-        BlocksProjectilesInfo { instance_name: None, base: ConditionalTraitInfo::default(), height: WDist::from_cells(1), valid_relationships: all_relationships() }
+        BlocksProjectilesInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            height: WDist::from_cells(1),
+            valid_relationships: all_relationships(),
+        }
     }
 }
 
@@ -253,7 +271,13 @@ pub struct JamsMissilesInfo {
 
 impl Default for JamsMissilesInfo {
     fn default() -> Self {
-        JamsMissilesInfo { instance_name: None, base: ConditionalTraitInfo::default(), range: WDist::ZERO, deflection_relationships: all_relationships(), chance: 100 }
+        JamsMissilesInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            range: WDist::ZERO,
+            deflection_relationships: all_relationships(),
+            chance: 100,
+        }
     }
 }
 
@@ -299,7 +323,9 @@ impl WarheadBase {
     }
 
     fn relationship_and_types_valid(&self, victim: &ActorRef, fired_by: &ActorRef) -> bool {
-        self.valid_relationships.has_relationship(fired_by.owner().relationship_with(Some(&victim.owner()))) && self.is_valid_target(&enabled_target_types(victim))
+        self.valid_relationships
+            .has_relationship(fired_by.owner().relationship_with(Some(&victim.owner())))
+            && self.is_valid_target(&enabled_target_types(victim))
     }
 
     fn is_valid_against(&self, victim: &ActorRef, fired_by: &ActorRef) -> bool {
@@ -429,10 +455,16 @@ impl DamageWarhead {
                 if !self.is_valid_against(&victim, fired_by) {
                     continue;
                 }
-                let Some((shape, closest)) = closest_active_shape(&victim, pos) else { continue };
+                let Some((shape, closest)) = closest_active_shape(&victim, pos) else {
+                    continue;
+                };
                 let falloff = match self.damage_calculation_type {
                     DamageCalculationType::HitShape => closest,
-                    DamageCalculationType::ClosestTargetablePosition => targetable_positions(&victim).iter().map(|x| (*x - pos).length()).min().expect("targetable position"),
+                    DamageCalculationType::ClosestTargetablePosition => targetable_positions(&victim)
+                        .iter()
+                        .map(|x| (*x - pos).length())
+                        .min()
+                        .expect("targetable position"),
                     DamageCalculationType::CenterPosition => (victim.center_position() - pos).length(),
                 };
                 if falloff > last.length {
@@ -451,7 +483,9 @@ impl DamageWarhead {
                 if !self.is_valid_against(&victim, fired_by) {
                     continue;
                 }
-                let Some((shape, closest)) = closest_active_shape(&victim, pos) else { continue };
+                let Some((shape, closest)) = closest_active_shape(&victim, pos) else {
+                    continue;
+                };
                 if closest > spread.length {
                     continue;
                 }
@@ -478,7 +512,9 @@ impl IWarhead for DamageWarhead {
                 if !self.is_valid_against(victim, fired_by) {
                     return;
                 }
-                let Some((shape, _)) = closest_active_shape(victim, victim.center_position()) else { return };
+                let Some((shape, _)) = closest_active_shape(victim, victim.center_position()) else {
+                    return;
+                };
                 self.inflict_damage(victim, fired_by, &shape, &args.damage_modifiers);
             }
             TargetType::Invalid => {}
@@ -498,7 +534,11 @@ pub struct CreateEffectWarhead {
 
 impl Default for CreateEffectWarhead {
     fn default() -> Self {
-        CreateEffectWarhead { base: WarheadBase::default(), impact_actors: true, inaccuracy: WDist::ZERO }
+        CreateEffectWarhead {
+            base: WarheadBase::default(),
+            impact_actors: true,
+            inaccuracy: WDist::ZERO,
+        }
     }
 }
 
@@ -516,7 +556,10 @@ impl CreateEffectWarhead {
             if !self.base.affects_parent && victim.id == fired_by.id {
                 continue;
             }
-            let hit = victim.traits_implementing::<HitShape>().iter().any(|s| !s.is_trait_disabled() && s.distance_from_edge(&victim, pos).length <= 0);
+            let hit = victim
+                .traits_implementing::<HitShape>()
+                .iter()
+                .any(|s| !s.is_trait_disabled() && s.distance_from_edge(&victim, pos).length <= 0);
             if !hit {
                 continue;
             }
@@ -525,7 +568,11 @@ impl CreateEffectWarhead {
             }
             any_invalid = true;
         }
-        if any_invalid { ImpactActorType::Invalid } else { ImpactActorType::None }
+        if any_invalid {
+            ImpactActorType::Invalid
+        } else {
+            ImpactActorType::None
+        }
     }
 
     fn is_valid_against_terrain(&self, w: &World, pos: WPos) -> bool {
@@ -553,7 +600,11 @@ impl IWarhead for CreateEffectWarhead {
         let fired_by = &args.source_actor;
         let pos = target.center_position();
         let w = fired_by.world();
-        let at_impact = if self.impact_actors { self.actor_type_at_impact(&w, pos, fired_by) } else { ImpactActorType::None };
+        let at_impact = if self.impact_actors {
+            self.actor_type_at_impact(&w, pos, fired_by)
+        } else {
+            ImpactActorType::None
+        };
         if at_impact == ImpactActorType::Invalid || (at_impact == ImpactActorType::None && !self.is_valid_against_terrain(&w, pos)) {
             return;
         }
@@ -579,7 +630,11 @@ pub struct CreateResourceWarhead {
 
 impl Default for CreateResourceWarhead {
     fn default() -> Self {
-        CreateResourceWarhead { base: WarheadBase::default(), size: vec![0, 0], adds_resource_type: String::new() }
+        CreateResourceWarhead {
+            base: WarheadBase::default(),
+            size: vec![0, 0],
+            adds_resource_type: String::new(),
+        }
     }
 }
 
@@ -604,7 +659,10 @@ impl IWarhead for CreateResourceWarhead {
             if !layer.can_add_resource(ty, cell, 1) {
                 continue;
             }
-            let splash = w.shared_random.borrow_mut().next_range(1, max_density - layer.get_resource(cell).density);
+            let splash = w
+                .shared_random
+                .borrow_mut()
+                .next_range(1, max_density - layer.get_resource(cell).density);
             layer.add_resource(ty, cell, splash);
         }
     }
@@ -621,7 +679,12 @@ pub struct DestroyResourceWarhead {
 
 impl Default for DestroyResourceWarhead {
     fn default() -> Self {
-        DestroyResourceWarhead { base: WarheadBase::default(), size: vec![0, 0], resource_amount: 0, resource_types: IndexSet::new() }
+        DestroyResourceWarhead {
+            base: WarheadBase::default(),
+            size: vec![0, 0],
+            resource_amount: 0,
+            resource_types: IndexSet::new(),
+        }
     }
 }
 
@@ -669,7 +732,13 @@ pub struct FireClusterWarhead {
 
 impl Default for FireClusterWarhead {
     fn default() -> Self {
-        FireClusterWarhead { base: WarheadBase::default(), weapon: String::new(), random_cluster_count: -1, dimensions: CVec::ZERO, footprint: String::new() }
+        FireClusterWarhead {
+            base: WarheadBase::default(),
+            weapon: String::new(),
+            random_cluster_count: -1,
+            dimensions: CVec::ZERO,
+            footprint: String::new(),
+        }
     }
 }
 
@@ -740,7 +809,11 @@ impl IWarhead for FireClusterWarhead {
         }
         if self.random_cluster_count != 0 {
             let cells = self.cells_matching(cell, true);
-            let count = if self.random_cluster_count < 0 { cells.len() as i32 } else { self.random_cluster_count };
+            let count = if self.random_cluster_count < 0 {
+                cells.len() as i32
+            } else {
+                self.random_cluster_count
+            };
             if !cells.is_empty() {
                 for _ in 0..count {
                     let i = w.shared_random.borrow_mut().next_max(cells.len() as i32) as usize;
@@ -804,8 +877,20 @@ impl IProjectileInfo for BulletInfo {
     fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
         let info = Rc::new(self.clone());
         let w = args.source_actor.world();
-        let angle = if info.launch_angle.len() > 1 { WAngle::new(w.shared_random.borrow_mut().next_range(info.launch_angle[0].angle, info.launch_angle[1].angle)) } else { info.launch_angle[0] };
-        let speed = if info.speed.len() > 1 { WDist::new(w.shared_random.borrow_mut().next_range(info.speed[0].length, info.speed[1].length)) } else { info.speed[0] };
+        let angle = if info.launch_angle.len() > 1 {
+            WAngle::new(
+                w.shared_random
+                    .borrow_mut()
+                    .next_range(info.launch_angle[0].angle, info.launch_angle[1].angle),
+            )
+        } else {
+            info.launch_angle[0]
+        };
+        let speed = if info.speed.len() > 1 {
+            WDist::new(w.shared_random.borrow_mut().next_range(info.speed[0].length, info.speed[1].length))
+        } else {
+            info.speed[0]
+        };
         let mut target = args.passive_target;
         if info.inaccuracy.length > 0 {
             let max = get_projectile_inaccuracy(info.inaccuracy.length, info.inaccuracy_type, &args);
@@ -860,7 +945,9 @@ impl Bullet {
     fn should_explode(&self, w: &Rc<World>) -> bool {
         let info = &self.info;
         if info.blockable {
-            if let Some(hit) = any_blocking_actors_between(w, &self.args.source_actor.owner(), self.last_pos.get(), self.pos.get(), info.width) {
+            if let Some(hit) =
+                any_blocking_actors_between(w, &self.args.source_actor.owner(), self.last_pos.get(), self.pos.get(), info.width)
+            {
                 self.pos.set(hit);
                 return true;
             }
@@ -880,7 +967,10 @@ impl Bullet {
         if flight_length_reached && should_bounce {
             let pos = self.pos.get();
             let cell = w.map().cell_containing(pos);
-            if !w.map().contains(cell) || info.invalid_bounce_terrain.contains(&w.map().terrain_type_info(cell).ty) || self.any_valid_targets_in_radius(w, pos) {
+            if !w.map().contains(cell)
+                || info.invalid_bounce_terrain.contains(&w.map().terrain_type_info(cell).ty)
+                || self.any_valid_targets_in_radius(w, pos)
+            {
                 return true;
             }
             let mut target = self.target.get() + (pos - self.source.get()) * info.bounce_range_modifier / 100;
@@ -909,10 +999,19 @@ impl Bullet {
                 continue;
             }
             let is_guided = self.args.guided_target.actor().is_some_and(|g| g.id == victim.id);
-            if !is_guided && !self.info.valid_bounce_blocker_relationships.has_relationship(fired_by.owner().relationship_with(Some(&victim.owner()))) {
+            if !is_guided
+                && !self
+                    .info
+                    .valid_bounce_blocker_relationships
+                    .has_relationship(fired_by.owner().relationship_with(Some(&victim.owner())))
+            {
                 continue;
             }
-            if victim.traits_implementing::<HitShape>().iter().any(|h| !h.is_trait_disabled() && h.distance_from_edge(&victim, pos).length <= 0) {
+            if victim
+                .traits_implementing::<HitShape>()
+                .iter()
+                .any(|h| !h.is_trait_disabled() && h.distance_from_edge(&victim, pos).length <= 0)
+            {
                 return true;
             }
         }
@@ -923,7 +1022,13 @@ impl Bullet {
 impl Effect for Bullet {
     fn tick(&self, world: &Rc<World>) {
         self.last_pos.set(self.pos.get());
-        self.pos.set(WPos::lerp_quadratic(self.source.get(), self.target.get(), self.angle, self.ticks.get(), self.length.get()));
+        self.pos.set(WPos::lerp_quadratic(
+            self.source.get(),
+            self.target.get(),
+            self.angle,
+            self.ticks.get(),
+            self.length.get(),
+        ));
         if self.should_explode(world) {
             let me: EffectRef = self.me.upgrade().expect("bullet");
             world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
@@ -958,7 +1063,12 @@ pub struct InstantHitInfo {
 
 impl Default for InstantHitInfo {
     fn default() -> Self {
-        InstantHitInfo { inaccuracy: WDist::ZERO, inaccuracy_type: InaccuracyType::Maximum, blockable: false, width: WDist::new(1) }
+        InstantHitInfo {
+            inaccuracy: WDist::ZERO,
+            inaccuracy_type: InaccuracyType::Maximum,
+            blockable: false,
+            width: WDist::new(1),
+        }
     }
 }
 
@@ -974,7 +1084,12 @@ impl IProjectileInfo for InstantHitInfo {
         } else {
             Target::from_pos(args.passive_target)
         };
-        Some(Rc::new_cyclic(|me: &Weak<InstantHit>| InstantHit { me: me.clone(), info: self.clone(), args, target: RefCell::new(target) }))
+        Some(Rc::new_cyclic(|me: &Weak<InstantHit>| InstantHit {
+            me: me.clone(),
+            info: self.clone(),
+            args,
+            target: RefCell::new(target),
+        }))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1027,7 +1142,13 @@ pub struct GravityBombInfo {
 
 impl Default for GravityBombInfo {
     fn default() -> Self {
-        GravityBombInfo { image: None, sequences: vec!["idle".to_string()], open_sequence: None, velocity: WVec::ZERO, acceleration: WVec::new(0, 0, -15) }
+        GravityBombInfo {
+            image: None,
+            sequences: vec!["idle".to_string()],
+            open_sequence: None,
+            velocity: WVec::ZERO,
+            acceleration: WVec::new(0, 0, -15),
+        }
     }
 }
 
@@ -1040,9 +1161,12 @@ impl IProjectileInfo for GravityBombInfo {
                 Some(open) => {
                     let a = rustora_engine::sequence::Animation::new(w.map().sequences().clone(), image, None, None);
                     let (world, count) = (w.clone(), self.sequences.len() as i32);
-                    a.play_then(open, Some(Rc::new(move || {
-                        world.shared_random.borrow_mut().next_max(count);
-                    })));
+                    a.play_then(
+                        open,
+                        Some(Rc::new(move || {
+                            world.shared_random.borrow_mut().next_max(count);
+                        })),
+                    );
                     anim = Some(a);
                 }
                 None => random_sequence_draw(&w, &self.sequences),
@@ -1121,7 +1245,11 @@ pub struct TeslaZapInfo {
 
 impl Default for TeslaZapInfo {
     fn default() -> Self {
-        TeslaZapInfo { duration: 2, damage_duration: 1, track_target: true }
+        TeslaZapInfo {
+            duration: 2,
+            damage_duration: 1,
+            track_target: true,
+        }
     }
 }
 
@@ -1161,13 +1289,21 @@ impl Effect for TeslaZap {
         }
         let args = &self.args;
         if self.info.track_target && args.guided_target.is_valid_for(&args.source_actor) {
-            let p = if args.weapon.target_actor_center { args.guided_target.center_position() } else { util::closest_position(&args.guided_target.positions(), args.source).unwrap_or(WPos::ZERO) };
+            let p = if args.weapon.target_actor_center {
+                args.guided_target.center_position()
+            } else {
+                util::closest_position(&args.guided_target.positions(), args.source).unwrap_or(WPos::ZERO)
+            };
             self.target.set(p);
         }
         let d = self.damage_duration.get();
         self.damage_duration.set(d - 1);
         if d > 0 {
-            weapon_impact_args(&args.weapon, &Target::from_pos(self.target.get()), &WarheadArgs::from_projectile(args));
+            weapon_impact_args(
+                &args.weapon,
+                &Target::from_pos(self.target.get()),
+                &WarheadArgs::from_projectile(args),
+            );
         }
     }
 
@@ -1301,23 +1437,36 @@ fn normalize_facing(f: i32) -> i32 {
 }
 
 fn facing_rotated(v: WVec, v_facing: i32, h_facing: i32) -> WVec {
-    v.rotate(&WRot::new(WAngle::from_facing(v_facing), WAngle::ZERO, WAngle::ZERO)).rotate(&WRot::new(WAngle::ZERO, WAngle::ZERO, WAngle::from_facing(h_facing)))
+    v.rotate(&WRot::new(WAngle::from_facing(v_facing), WAngle::ZERO, WAngle::ZERO))
+        .rotate(&WRot::new(WAngle::ZERO, WAngle::ZERO, WAngle::from_facing(h_facing)))
 }
 
 impl IProjectileInfo for MissileInfo {
     fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
         let info = Rc::new(self.clone());
         let w = args.source_actor.world();
-        let limit = if info.range_limit != WDist::ZERO { info.range_limit } else { args.weapon.range };
+        let limit = if info.range_limit != WDist::ZERO {
+            info.range_limit
+        } else {
+            args.weapon.range
+        };
         let range_limit = WDist::new(util::apply_percentage_modifiers(limit.length, args.range_modifiers.iter().copied()));
         let lock_on = w.shared_random.borrow_mut().next_max(100) <= info.lock_on_probability;
-        let inaccuracy = if lock_on && info.lock_on_inaccuracy.length > -1 { info.lock_on_inaccuracy.length } else { info.inaccuracy.length };
+        let inaccuracy = if lock_on && info.lock_on_inaccuracy.length > -1 {
+            info.lock_on_inaccuracy.length
+        } else {
+            info.inaccuracy.length
+        };
         let mut offset = WVec::ZERO;
         if inaccuracy > 0 {
             let max = get_projectile_inaccuracy(inaccuracy, info.inaccuracy_type, &args);
             offset = WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2) * max / 1024;
         }
-        let max_launch_speed = if info.maximum_launch_speed.length > -1 { info.maximum_launch_speed.length } else { info.speed.length };
+        let max_launch_speed = if info.maximum_launch_speed.length > -1 {
+            info.maximum_launch_speed.length
+        } else {
+            info.speed.length
+        };
         let speed = max_launch_speed;
         let radius = loop_radius(speed, info.vertical_rate_of_turn.facing());
         let pos = args.source;
@@ -1327,7 +1476,11 @@ impl IProjectileInfo for MissileInfo {
         if v_facing == -1 {
             v_facing = 0;
         }
-        v_facing = exts_clamp(v_facing, sbyte_angle(info.minimum_launch_angle), sbyte_angle(info.maximum_launch_angle));
+        v_facing = exts_clamp(
+            v_facing,
+            sbyte_angle(info.minimum_launch_angle),
+            sbyte_angle(info.maximum_launch_angle),
+        );
         let h_facing = args.facing.facing();
         let velocity = facing_rotated(WVec::new(0, -speed, 0), v_facing, h_facing);
         if info.image.as_deref().is_some_and(|i| !i.is_empty()) {
@@ -1405,7 +1558,8 @@ impl Missile {
     }
 
     fn change_speed(&self, sign: i32) {
-        self.speed.set((self.speed.get() + sign * self.info.acceleration.length).clamp(0, self.max_speed));
+        self.speed
+            .set((self.speed.get() + sign * self.info.acceleration.length).clamp(0, self.max_speed));
         self.loop_radius.set(loop_radius(self.speed.get(), self.vrot()));
     }
 
@@ -1414,7 +1568,11 @@ impl Missile {
         if (a.center_position() - self.pos.get()).horizontal_length_squared() > range.length_squared() {
             return false;
         }
-        if !t.info.deflection_relationships.has_relationship(a.owner().relationship_with(Some(&self.args.source_actor.owner()))) {
+        if !t
+            .info
+            .deflection_relationships
+            .has_relationship(a.owner().relationship_with(Some(&self.args.source_actor.owner())))
+        {
             return false;
         }
         a.world().shared_random.borrow_mut().next_max(100) < t.info.chance
@@ -1435,7 +1593,11 @@ impl Missile {
     fn cruise_facing(&self, diff: i32) -> i32 {
         let cruise = self.info.cruise_altitude.length;
         let v_dist = WVec::new(-diff - cruise, -self.speed.get(), 0);
-        let mut d = if v_dist.horizontal_length_squared() as i8 != 0 { v_dist.yaw().facing() } else { self.v_facing.get() };
+        let mut d = if v_dist.horizontal_length_squared() as i8 != 0 {
+            v_dist.yaw().facing()
+        } else {
+            self.v_facing.get()
+        };
         if -diff > cruise {
             d = -d;
         }
@@ -1459,14 +1621,22 @@ impl Missile {
         }
         if !self.allow_pass_by.get() && (LAST_HT < target_z || passed) {
             let v_dist = WVec::new(-rel_hgt, -rel_hor, 0);
-            let mut d = if v_dist.horizontal_length_squared() as i8 != 0 { v_dist.yaw().facing() } else { v_facing };
+            let mut d = if v_dist.horizontal_length_squared() as i8 != 0 {
+                v_dist.yaw().facing()
+            } else {
+                v_facing
+            };
             if d == -1 {
                 d = 0;
             }
             if passed {
                 d = exts_clamp(d, -self.vrot(), self.vrot());
             } else {
-                let tar_hgt = exts_clamp(radius.wrapping_mul(WAngle::from_facing(v_facing).cos()) / 1024 - rel_hgt.abs(), 0, radius);
+                let tar_hgt = exts_clamp(
+                    radius.wrapping_mul(WAngle::from_facing(v_facing).cos()) / 1024 - rel_hgt.abs(),
+                    0,
+                    radius,
+                );
                 let tar_dist = isqrt_i32(radius.wrapping_mul(radius).wrapping_sub(tar_hgt.wrapping_mul(tar_hgt)));
                 let miss_dist = radius.wrapping_mul(WAngle::from_facing(v_facing).sin()) / 1024;
                 if rel_hor <= tar_dist - rel_hgt.signum() * miss_dist {
@@ -1503,7 +1673,11 @@ impl Missile {
 
     fn passing_facing(&self, v_dist: WVec) -> i32 {
         let v_facing = self.v_facing.get();
-        let d = if v_dist.horizontal_length_squared() as i8 != 0 { v_dist.yaw().facing() } else { v_facing };
+        let d = if v_dist.horizontal_length_squared() as i8 != 0 {
+            v_dist.yaw().facing()
+        } else {
+            v_facing
+        };
         if d < 0 && self.vrot() < v_facing as i8 as i32 { 0 } else { d }
     }
 
@@ -1513,7 +1687,11 @@ impl Missile {
         let rel_hgt = tar_dist.z;
         let vel_vec = tar_dist + self.pred_vel.get();
         let h_facing = self.h_facing.get();
-        let mut desired_h = if vel_vec.horizontal_length_squared() != 0 { vel_vec.yaw().facing() } else { h_facing };
+        let mut desired_h = if vel_vec.horizontal_length_squared() != 0 {
+            vel_vec.yaw().facing()
+        } else {
+            h_facing
+        };
         let delta = normalize_facing(h_facing - desired_h);
         let mut passed = false;
         if self.allow_pass_by.get() && delta > 64 && delta < 192 {
@@ -1534,9 +1712,14 @@ impl Missile {
         } else if !self.args.guided_target.is_valid_for(&self.args.source_actor) {
             desired_h = h_facing;
         }
-        self.h_facing.set(tick_facing_int(h_facing, desired_h, info.horizontal_rate_of_turn.facing()));
+        self.h_facing
+            .set(tick_facing_int(h_facing, desired_h, info.horizontal_rate_of_turn.facing()));
         self.v_facing.set(tick_facing_int(self.v_facing.get(), desired_v, self.vrot()));
-        facing_rotated(WVec::new(0, -1024i32.wrapping_mul(self.speed.get()), 0), self.v_facing.get(), self.h_facing.get()) / 1024
+        facing_rotated(
+            WVec::new(0, -1024i32.wrapping_mul(self.speed.get()), 0),
+            self.v_facing.get(),
+            self.h_facing.get(),
+        ) / 1024
     }
 }
 
@@ -1552,25 +1735,45 @@ impl Effect for Missile {
         }
         if self.range_limit >= WDist::ZERO && self.distance_covered.get() > self.range_limit {
             self.state.set(MissileState::Freefall);
-            self.velocity.set(facing_rotated(WVec::new(0, -self.speed.get(), 0), self.v_facing.get(), self.h_facing.get()));
+            self.velocity.set(facing_rotated(
+                WVec::new(0, -self.speed.get(), 0),
+                self.v_facing.get(),
+                self.h_facing.get(),
+            ));
         }
         let mut new_tar = self.target_position.get();
         if args.guided_target.is_valid_for(&args.source_actor) && self.lock_on {
-            let p = if args.weapon.target_actor_center { args.guided_target.center_position() } else { util::closest_position(&args.guided_target.positions(), args.source).unwrap_or(WPos::ZERO) };
+            let p = if args.weapon.target_actor_center {
+                args.guided_target.center_position()
+            } else {
+                util::closest_position(&args.guided_target.positions(), args.source).unwrap_or(WPos::ZERO)
+            };
             new_tar = p + WVec::new(0, 0, info.airburst_altitude.length);
         }
         let facing_angle = WAngle::from_facing(self.h_facing.get());
         let old_vel = self.tar_vel.get();
-        let yaw1 = if old_vel.horizontal_length_squared() != 0 { old_vel.yaw() } else { facing_angle };
+        let yaw1 = if old_vel.horizontal_length_squared() != 0 {
+            old_vel.yaw()
+        } else {
+            facing_angle
+        };
         let tar_vel = new_tar - self.target_position.get();
         self.tar_vel.set(tar_vel);
-        let yaw2 = if tar_vel.horizontal_length_squared() != 0 { tar_vel.yaw() } else { facing_angle };
+        let yaw2 = if tar_vel.horizontal_length_squared() != 0 {
+            tar_vel.yaw()
+        } else {
+            facing_angle
+        };
         self.pred_vel.set(tar_vel.rotate(&WRot::from_yaw(yaw2 - yaw1)));
         self.target_position.set(new_tar);
         let tar_dist = new_tar + self.offset - self.pos.get();
         let rel_dist = tar_dist.length();
         let rel_hor = tar_dist.horizontal_length();
-        let mv = if self.state.get() == MissileState::Freefall { self.freefall_tick() } else { self.homing_tick(world, tar_dist, rel_hor) };
+        let mv = if self.state.get() == MissileState::Freefall {
+            self.freefall_tick()
+        } else {
+            self.homing_tick(world, tar_dist, rel_hor)
+        };
         let last_pos = self.pos.get();
         if info.allow_snapping && self.state.get() != MissileState::Freefall && rel_dist < mv.length() {
             self.pos.set(new_tar + self.offset);
@@ -1592,7 +1795,8 @@ impl Effect for Missile {
                 self.ticks_to_next_smoke.set(info.trail_interval);
             }
         }
-        self.distance_covered.set(self.distance_covered.get() + WDist::new(self.speed.get()));
+        self.distance_covered
+            .set(self.distance_covered.get() + WDist::new(self.speed.get()));
         let pos = self.pos.get();
         let cell = world.map().cell_containing(pos);
         let height = world.map().distance_above_terrain(pos);
@@ -1609,7 +1813,11 @@ impl Effect for Missile {
                 return;
             }
             let mut a = WarheadArgs::from_projectile(args);
-            a.impact_orientation = WRot::new(WAngle::ZERO, WAngle::from_facing(self.v_facing.get()), WAngle::from_facing(self.h_facing.get()));
+            a.impact_orientation = WRot::new(
+                WAngle::ZERO,
+                WAngle::from_facing(self.v_facing.get()),
+                WAngle::from_facing(self.h_facing.get()),
+            );
             a.impact_position = pos;
             weapon_impact_args(&args.weapon, &Target::from_pos(pos), &a);
         }

@@ -227,8 +227,12 @@ impl AffectsShroud {
             return WDist::ZERO;
         }
         let r = match self.modifiers.get() {
-            Some(Modifiers::Reveals(m)) => apply_percentage_modifiers(self.info.range.length, m.iter().map(|x| x.get_reveals_shroud_modifier())),
-            Some(Modifiers::Creates(m)) => apply_percentage_modifiers(self.info.range.length, m.iter().map(|x| x.get_creates_shroud_modifier())),
+            Some(Modifiers::Reveals(m)) => {
+                apply_percentage_modifiers(self.info.range.length, m.iter().map(|x| x.get_reveals_shroud_modifier()))
+            }
+            Some(Modifiers::Creates(m)) => {
+                apply_percentage_modifiers(self.info.range.length, m.iter().map(|x| x.get_creates_shroud_modifier()))
+            }
             None => self.info.range.length,
         };
         WDist::new(r)
@@ -425,7 +429,10 @@ impl INotifyCreated for FrozenUnderFog {
         let me: Rc<dyn ICreatesFrozenActors> = self.me.upgrade().expect("trait alive");
         for player in w.players() {
             let fa = FrozenActor::new(self_, me.clone(), &self.footprint, &player, self.starts_revealed);
-            player.player_actor().trait_::<rustora_engine::frozen::FrozenActorLayer>().add(fa.clone());
+            player
+                .player_actor()
+                .trait_::<rustora_engine::frozen::FrozenActorLayer>()
+                .add(fa.clone());
             let vis = !fa.visible();
             self.frozen_states.borrow_mut().push((
                 player,
@@ -557,7 +564,14 @@ impl HiddenUnderShroud {
     fn shroud_inner(&self, self_: &ActorRef, by: &PlayerRef) -> bool {
         let s = by.shroud();
         if self.ty == VisibilityType::Footprint {
-            return self_.cache().occupies_space.as_ref().expect("occupies space").occupied_cells().iter().any(|(c, _)| s.is_explored(*c));
+            return self_
+                .cache()
+                .occupies_space
+                .as_ref()
+                .expect("occupies space")
+                .occupied_cells()
+                .iter()
+                .any(|(c, _)| s.is_explored(*c));
         }
         s.is_explored_wpos(ground_pos(&self_.world(), self_, self.ty))
     }
@@ -568,7 +582,14 @@ impl HiddenUnderShroud {
             return self.shroud_inner(self_, by);
         }
         if self.ty == VisibilityType::Footprint {
-            return self_.cache().occupies_space.as_ref().expect("occupies space").occupied_cells().iter().any(|(c, _)| s.is_visible(*c));
+            return self_
+                .cache()
+                .occupies_space
+                .as_ref()
+                .expect("occupies space")
+                .occupied_cells()
+                .iter()
+                .any(|(c, _)| s.is_visible(*c));
         }
         s.is_visible_wpos(ground_pos(&self_.world(), self_, self.ty))
     }
@@ -578,7 +599,12 @@ impl IDefaultVisibility for HiddenUnderShroud {
     fn is_visible(&self, self_: &ActorRef, by_player: Option<&PlayerRef>) -> bool {
         let Some(by) = by_player else { return true };
         let r = self_.owner().relationship_with(Some(by));
-        self.always_visible.has_relationship(r) || if self.fog { self.fog_inner(self_, by) } else { self.shroud_inner(self_, by) }
+        self.always_visible.has_relationship(r)
+            || if self.fog {
+                self.fog_inner(self_, by)
+            } else {
+                self.shroud_inner(self_, by)
+            }
     }
 }
 

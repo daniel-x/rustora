@@ -60,7 +60,12 @@ pub struct Ruleset {
 
 impl Ruleset {
     /// Builds actor infos from merged rule nodes; abstract (`^`) definitions are skipped.
-    pub fn load(registry: &TraitRegistry, weapon_registry: &WeaponRegistry, rules: &[MiniYamlNode], weapon_rules: &[MiniYamlNode]) -> Result<Ruleset, String> {
+    pub fn load(
+        registry: &TraitRegistry,
+        weapon_registry: &WeaponRegistry,
+        rules: &[MiniYamlNode],
+        weapon_rules: &[MiniYamlNode],
+    ) -> Result<Ruleset, String> {
         let mut actors = IndexMap::new();
         for n in rules {
             if n.key.starts_with('^') {

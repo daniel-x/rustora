@@ -214,7 +214,13 @@ pub fn weapon_impact_args(weapon: &WeaponInfo, target: &Target, args: &WarheadAr
         if warhead.delay() > 0 {
             let (w, t, a) = (warhead.clone(), target.clone(), args.clone());
             world.add_frame_end_task(Box::new(move |world| {
-                world.add_effect(Rc::new_cyclic(|me: &std::rc::Weak<DelayedImpact>| DelayedImpact { me: me.clone(), delay: std::cell::Cell::new(w.delay()), warhead: w, target: t, args: a }));
+                world.add_effect(Rc::new_cyclic(|me: &std::rc::Weak<DelayedImpact>| DelayedImpact {
+                    me: me.clone(),
+                    delay: std::cell::Cell::new(w.delay()),
+                    warhead: w,
+                    target: t,
+                    args: a,
+                }));
             }));
         } else {
             warhead.do_impact(target, args);

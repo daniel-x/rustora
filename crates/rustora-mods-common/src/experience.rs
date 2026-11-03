@@ -64,12 +64,19 @@ macro_rules! multiplier {
 macro_rules! simple_modifier {
     ($method:ident) => {
         fn $method(&self) -> i32 {
-            if self.state.is_trait_disabled() { 100 } else { self.info.modifier }
+            if self.state.is_trait_disabled() {
+                100
+            } else {
+                self.info.modifier
+            }
         }
     };
 }
 
-multiplier!(DamageMultiplier, DamageMultiplierInfo, IDamageModifier,
+multiplier!(
+    DamageMultiplier,
+    DamageMultiplierInfo,
+    IDamageModifier,
     fn get_damage_modifier(&self, _attacker: Option<&ActorRef>, _damage: &Damage) -> i32 {
         if self.state.is_trait_disabled() { 100 } else { self.info.modifier }
     }
@@ -116,7 +123,11 @@ pub struct GainsExperienceInfo {
 
 impl Default for GainsExperienceInfo {
     fn default() -> Self {
-        GainsExperienceInfo { instance_name: None, conditions: IndexMap::new(), experience_modifier: -1 }
+        GainsExperienceInfo {
+            instance_name: None,
+            conditions: IndexMap::new(),
+            experience_modifier: -1,
+        }
     }
 }
 
@@ -149,8 +160,17 @@ impl ISync for GainsExperience {
 
 impl INotifyCreated for GainsExperience {
     fn created(&self, self_: &ActorRef) {
-        let required = if self.info.experience_modifier < 0 { self_.info.trait_info::<ValuedInfo>().map_or(1, |v| v.cost) } else { self.info.experience_modifier };
-        *self.next_level.borrow_mut() = self.info.conditions.iter().map(|(k, v)| (k.wrapping_mul(required), v.clone())).collect();
+        let required = if self.info.experience_modifier < 0 {
+            self_.info.trait_info::<ValuedInfo>().map_or(1, |v| v.cost)
+        } else {
+            self.info.experience_modifier
+        };
+        *self.next_level.borrow_mut() = self
+            .info
+            .conditions
+            .iter()
+            .map(|(k, v)| (k.wrapping_mul(required), v.clone()))
+            .collect();
         if self.initial_experience > 0 {
             self.give_experience(self.initial_experience);
         }
@@ -249,7 +269,11 @@ info_impl!(GivesExperienceInfo => |info, _init| Some(Rc::new(GivesExperience { i
 
 impl INotifyCreated for GivesExperience {
     fn created(&self, self_: &ActorRef) {
-        let exp = if self.info.experience >= 0 { self.info.experience } else { self_.info.trait_info::<ValuedInfo>().map_or(0, |v| v.cost) };
+        let exp = if self.info.experience >= 0 {
+            self.info.experience
+        } else {
+            self_.info.trait_info::<ValuedInfo>().map_or(0, |v| v.cost)
+        };
         self.exp.set(exp);
         let _ = self.modifiers.set(self_.traits_implementing::<dyn IGivesExperienceModifier>());
     }
@@ -257,19 +281,35 @@ impl INotifyCreated for GivesExperience {
 
 impl INotifyKilled for GivesExperience {
     fn killed(&self, self_: &ActorRef, e: &AttackInfo) {
-        let Some(attacker) = e.attacker.as_ref().filter(|a| self.exp.get() != 0 && !a.disposed()) else { return };
-        if !self.info.valid_relationships.has_relationship(attacker.owner().relationship_with(Some(&self_.owner()))) {
+        let Some(attacker) = e.attacker.as_ref().filter(|a| self.exp.get() != 0 && !a.disposed()) else {
+            return;
+        };
+        if !self
+            .info
+            .valid_relationships
+            .has_relationship(attacker.owner().relationship_with(Some(&self_.owner())))
+        {
             return;
         }
         let mods = self.modifiers.get().expect("modifiers");
-        self.exp.set(util::apply_percentage_modifiers(self.exp.get(), mods.iter().map(|m| m.get_gives_experience_modifier()).collect::<Vec<_>>()));
+        self.exp.set(util::apply_percentage_modifiers(
+            self.exp.get(),
+            mods.iter().map(|m| m.get_gives_experience_modifier()).collect::<Vec<_>>(),
+        ));
         if let Some(killer) = attacker.trait_or_default::<GainsExperience>() {
-            let mut list: Vec<i32> = attacker.traits_implementing::<dyn IGainsExperienceModifier>().iter().map(|x| x.get_gains_experience_modifier()).collect();
+            let mut list: Vec<i32> = attacker
+                .traits_implementing::<dyn IGainsExperienceModifier>()
+                .iter()
+                .map(|x| x.get_gains_experience_modifier())
+                .collect();
             list.push(self.info.actor_experience_modifier);
             killer.give_experience(util::apply_percentage_modifiers(self.exp.get(), list));
         }
         if let Some(p) = attacker.owner().player_actor().trait_or_default::<PlayerExperience>() {
-            p.give_experience(util::apply_percentage_modifiers(self.exp.get(), [self.info.player_experience_modifier]));
+            p.give_experience(util::apply_percentage_modifiers(
+                self.exp.get(),
+                [self.info.player_experience_modifier],
+            ));
         }
     }
 }
@@ -290,7 +330,16 @@ pub struct ChangesHealthInfo {
 
 impl Default for ChangesHealthInfo {
     fn default() -> Self {
-        ChangesHealthInfo { instance_name: None, base: ConditionalTraitInfo::default(), step: 5, percentage_step: 0, delay: 5, start_if_below: 50, damage_cooldown: 0, damage_types: DamageTypes::default() }
+        ChangesHealthInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            step: 5,
+            percentage_step: 0,
+            delay: 5,
+            start_if_below: 50,
+            damage_cooldown: 0,
+            damage_types: DamageTypes::default(),
+        }
     }
 }
 
@@ -345,7 +394,8 @@ impl ITick for ChangesHealth {
         if self.ticks.get() <= 0 {
             self.ticks.set(info.delay);
             let amount = -(info.step as i64 + info.percentage_step as i64 * max_hp / 100);
-            self.health.inflict_damage(self_, Some(self_), &Damage::new(amount as i32, info.damage_types), false);
+            self.health
+                .inflict_damage(self_, Some(self_), &Damage::new(amount as i32, info.damage_types), false);
         }
     }
 }
@@ -444,7 +494,12 @@ pub struct GrantConditionOnDamageStateInfo {
 
 impl Default for GrantConditionOnDamageStateInfo {
     fn default() -> Self {
-        GrantConditionOnDamageStateInfo { instance_name: None, condition: String::new(), valid_damage_states: DamageState(DamageState::HEAVY.0 | DamageState::CRITICAL.0), grant_permanently: false }
+        GrantConditionOnDamageStateInfo {
+            instance_name: None,
+            condition: String::new(),
+            valid_damage_states: DamageState(DamageState::HEAVY.0 | DamageState::CRITICAL.0),
+            grant_permanently: false,
+        }
     }
 }
 
@@ -528,7 +583,13 @@ impl ExternalCondition {
 
     pub fn can_grant_condition(&self, source: usize) -> bool {
         let info = &self.info;
-        if info.source_cap > 0 && self.permanent_tokens.borrow().get(&source).is_some_and(|t| t.len() as i32 >= info.source_cap) {
+        if info.source_cap > 0
+            && self
+                .permanent_tokens
+                .borrow()
+                .get(&source)
+                .is_some_and(|t| t.len() as i32 >= info.source_cap)
+        {
             return false;
         }
         !(info.total_cap > 0 && self.permanent_count() >= info.total_cap)
@@ -566,7 +627,11 @@ impl ExternalCondition {
                     }
                 }
             }
-            let new = TimedToken { expires: self_.world().world_tick() + remaining, token, source };
+            let new = TimedToken {
+                expires: self_.world().world_tick() + remaining,
+                token,
+                source,
+            };
             match timed.iter().position(|t| t.expires >= new.expires) {
                 Some(i) => timed.insert(i, new),
                 None => timed.push(new),
@@ -622,13 +687,19 @@ fn source_key(source: &ActorRef) -> usize {
 }
 
 pub fn accepts_external_condition(a: &ActorRef, condition: &str, source: &ActorRef) -> bool {
-    a.traits_implementing::<ExternalCondition>().iter().any(|t| t.info.condition == condition && t.can_grant_condition(source_key(source)))
+    a.traits_implementing::<ExternalCondition>()
+        .iter()
+        .any(|t| t.info.condition == condition && t.can_grant_condition(source_key(source)))
 }
 
 /// `GrantExternalConditionCrateAction.GrantCondition`.
 pub fn grant_external_condition(a: &ActorRef, condition: &str, levels: i32, duration: i32, source: &ActorRef) {
     let key = source_key(source);
-    let externals: Vec<Rc<ExternalCondition>> = a.traits_implementing::<ExternalCondition>().into_iter().filter(|t| t.info.condition == condition).collect();
+    let externals: Vec<Rc<ExternalCondition>> = a
+        .traits_implementing::<ExternalCondition>()
+        .into_iter()
+        .filter(|t| t.info.condition == condition)
+        .collect();
     let mut external: Option<Rc<ExternalCondition>> = None;
     for _ in 0..levels {
         if external.as_ref().is_none_or(|e| !e.can_grant_condition(key)) {
@@ -764,7 +835,13 @@ impl ITick for GrantConditionOnAttack {
 }
 
 impl INotifyAttack for GrantConditionOnAttack {
-    fn attacking(&self, self_: &ActorRef, target: &rustora_engine::target::Target, a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {
+    fn attacking(
+        &self,
+        self_: &ActorRef,
+        target: &rustora_engine::target::Target,
+        a: &crate::attack::Armament,
+        _barrel: &crate::attack::Barrel,
+    ) {
         if self.state.is_trait_disabled() || self.state.is_trait_paused() || !self.info.armament_names.contains(&a.info.name) {
             return;
         }
@@ -781,7 +858,11 @@ impl INotifyAttack for GrantConditionOnAttack {
         }
         self.shots_fired.set(self.shots_fired.get() + 1);
         let shots = &self.info.required_shots_per_instance;
-        let required = if count < shots.len() { shots[count] } else { *shots.last().unwrap() };
+        let required = if count < shots.len() {
+            shots[count]
+        } else {
+            *shots.last().unwrap()
+        };
         if self.shots_fired.get() >= required {
             if self.info.is_cyclic && count as i32 == self.info.maximum_instances {
                 self.revoke_instance(self_, true);
@@ -793,7 +874,14 @@ impl INotifyAttack for GrantConditionOnAttack {
         }
     }
 
-    fn preparing_attack(&self, _self_: &ActorRef, _target: &rustora_engine::target::Target, _a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {}
+    fn preparing_attack(
+        &self,
+        _self_: &ActorRef,
+        _target: &rustora_engine::target::Target,
+        _a: &crate::attack::Armament,
+        _barrel: &crate::attack::Barrel,
+    ) {
+    }
 }
 
 /// `Traits/Conditions/GrantConditionWhileAiming.cs`.
@@ -838,7 +926,11 @@ pub struct ProducibleWithLevelInfo {
 
 impl Default for ProducibleWithLevelInfo {
     fn default() -> Self {
-        ProducibleWithLevelInfo { instance_name: None, prerequisites: Vec::new(), initial_levels: 1 }
+        ProducibleWithLevelInfo {
+            instance_name: None,
+            prerequisites: Vec::new(),
+            initial_levels: 1,
+        }
     }
 }
 
@@ -851,7 +943,12 @@ info_impl!(ProducibleWithLevelInfo => |info, _| Some(Rc::new(ProducibleWithLevel
 
 impl INotifyCreated for ProducibleWithLevel {
     fn created(&self, self_: &ActorRef) {
-        if !self_.owner().player_actor().trait_::<crate::production::TechTree>().has_prerequisites(&self.info.prerequisites) {
+        if !self_
+            .owner()
+            .player_actor()
+            .trait_::<crate::production::TechTree>()
+            .has_prerequisites(&self.info.prerequisites)
+        {
             return;
         }
         let ge = self_.trait_::<GainsExperience>();

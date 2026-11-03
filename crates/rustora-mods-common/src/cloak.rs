@@ -51,7 +51,23 @@ impl UncloakType {
     }
 }
 
-field_flags!(UncloakType, [None, Attack, Move, Load, Unload, Infiltrate, Demolish, Damage, Heal, SelfHeal, Dock, SupportPower]);
+field_flags!(
+    UncloakType,
+    [
+        None,
+        Attack,
+        Move,
+        Load,
+        Unload,
+        Infiltrate,
+        Demolish,
+        Damage,
+        Heal,
+        SelfHeal,
+        Dock,
+        SupportPower
+    ]
+);
 
 /// Tag of `BitSet<DetectionType>`.
 pub struct DetectionType;
@@ -77,7 +93,9 @@ impl Default for CloakInfo {
             base: PausableConditionalTraitInfo::default(),
             initial_delay: 10,
             cloak_delay: 30,
-            uncloak_on: UncloakType(UncloakType::Attack.0 | UncloakType::Unload.0 | UncloakType::Infiltrate.0 | UncloakType::Demolish.0 | UncloakType::Dock.0),
+            uncloak_on: UncloakType(
+                UncloakType::Attack.0 | UncloakType::Unload.0 | UncloakType::Infiltrate.0 | UncloakType::Demolish.0 | UncloakType::Dock.0,
+            ),
             detection_types: BitSet::new(&["Cloak"]),
             cloaked_condition: None,
             cloak_type: None,
@@ -150,7 +168,11 @@ impl ISync for Cloak {
 impl INotifyCreated for Cloak {
     fn created(&self, self_: &ActorRef) {
         let others = self.info.cloak_type.as_ref().map(|ct| {
-            self_.traits_implementing::<Cloak>().into_iter().filter(|c| !std::ptr::eq(c.as_ref(), self) && c.info.cloak_type.as_ref() == Some(ct)).collect()
+            self_
+                .traits_implementing::<Cloak>()
+                .into_iter()
+                .filter(|c| !std::ptr::eq(c.as_ref(), self) && c.info.cloak_type.as_ref() == Some(ct))
+                .collect()
         });
         let _ = self.other_cloaks.set(others);
         if self.cloaked() {
@@ -186,7 +208,8 @@ impl Cloak {
 
     fn grant_cloaked_condition(&self, self_: &ActorRef) {
         if self.cloaked_token.get() == INVALID_CONDITION_TOKEN {
-            self.cloaked_token.set(self_.grant_condition(self.info.cloaked_condition.as_deref().unwrap_or("")));
+            self.cloaked_token
+                .set(self_.grant_condition(self.info.cloaked_condition.as_deref().unwrap_or("")));
         }
     }
 
@@ -248,7 +271,11 @@ impl INotifyDamage for Cloak {
             return;
         }
         let t = if e.damage.value < 0 {
-            if e.attacker.as_ref().is_some_and(|a| a.id == self_.id) { UncloakType::SelfHeal } else { UncloakType::Heal }
+            if e.attacker.as_ref().is_some_and(|a| a.id == self_.id) {
+                UncloakType::SelfHeal
+            } else {
+                UncloakType::Heal
+            }
         } else {
             UncloakType::Damage
         };
@@ -310,7 +337,12 @@ pub struct DetectCloakedInfo {
 
 impl Default for DetectCloakedInfo {
     fn default() -> Self {
-        DetectCloakedInfo { instance_name: None, base: ConditionalTraitInfo::default(), detection_types: BitSet::new(&["Cloak"]), range: WDist::from_cells(5) }
+        DetectCloakedInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            detection_types: BitSet::new(&["Cloak"]),
+            range: WDist::from_cells(5),
+        }
     }
 }
 
@@ -330,6 +362,10 @@ rustora_engine::conditional_simple!(DetectCloaked);
 
 impl DetectCloaked {
     pub fn range(&self) -> WDist {
-        if self.state.is_trait_disabled() { WDist::ZERO } else { self.info.range }
+        if self.state.is_trait_disabled() {
+            WDist::ZERO
+        } else {
+            self.info.range
+        }
     }
 }

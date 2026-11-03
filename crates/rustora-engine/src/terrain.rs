@@ -60,7 +60,12 @@ pub struct TerrainInfo {
 
 impl TerrainInfo {
     pub fn load(yaml: &[MiniYamlNode]) -> Result<TerrainInfo, String> {
-        let section = |k: &str| yaml.iter().find(|n| n.key == k).map(|n| &n.value).ok_or_else(|| format!("tileset lacks {k}"));
+        let section = |k: &str| {
+            yaml.iter()
+                .find(|n| n.key == k)
+                .map(|n| &n.value)
+                .ok_or_else(|| format!("tileset lacks {k}"))
+        };
         let general = section("General")?;
         let g = |k: &str| general.nodes.iter().find(|n| n.key == k).map(|n| n.value.value_str().to_string());
         let mut terrain_types = Vec::new();
@@ -85,12 +90,18 @@ impl TerrainInfo {
             };
             let pick_any = f("PickAny").is_some_and(|n| n.value.value_str().eq_ignore_ascii_case("true"));
             let tiles_node = f("Tiles").ok_or("template lacks Tiles")?;
-            let len = if pick_any { tiles_node.value.nodes.len() } else { (size.0 * size.1) as usize };
+            let len = if pick_any {
+                tiles_node.value.nodes.len()
+            } else {
+                (size.0 * size.1) as usize
+            };
             let mut tiles = vec![None; len];
             for tn in &tiles_node.value.nodes {
                 let key: usize = tn.key.trim().parse().map_err(|_| format!("bad tile key {}", tn.key))?;
                 let type_name = tn.value.value_str();
-                let terrain_type = *index_by_type.get(type_name).ok_or_else(|| format!("unknown terrain type {type_name}"))?;
+                let terrain_type = *index_by_type
+                    .get(type_name)
+                    .ok_or_else(|| format!("unknown terrain type {type_name}"))?;
                 let base = terrain_types[terrain_type as usize].color;
                 let col = |k: &str| -> Color {
                     tn.value
@@ -109,7 +120,15 @@ impl TerrainInfo {
             }
             first_template.get_or_insert(id);
             let strs = |k: &str| -> Vec<String> {
-                f(k).map(|n| n.value.value_str().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default()
+                f(k).map(|n| {
+                    n.value
+                        .value_str()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
             };
             templates.insert(
                 id,
@@ -138,7 +157,10 @@ impl TerrainInfo {
     }
 
     pub fn terrain_index(&self, ty: &str) -> u8 {
-        *self.index_by_type.get(ty).unwrap_or_else(|| panic!("Tileset '{}' lacks terrain type '{ty}'", self.id))
+        *self
+            .index_by_type
+            .get(ty)
+            .unwrap_or_else(|| panic!("Tileset '{}' lacks terrain type '{ty}'", self.id))
     }
 
     pub fn tile_info(&self, r: TerrainTile) -> Option<&TileInfo> {

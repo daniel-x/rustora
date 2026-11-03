@@ -11,8 +11,8 @@ use rustora_core::world_types::{CPos, CVec, Int2, PPos, WDist, WPos};
 use rustora_derive::FieldLoad;
 
 use crate::actor::ActorRef;
-use crate::actor_info::ActorInfo;
 use crate::actor_ext::{enabled_target_types, targetable_positions};
+use crate::actor_info::ActorInfo;
 use crate::bitset::BitSet;
 use crate::damage::DamageState;
 use crate::net_collections::NetMap;
@@ -305,7 +305,9 @@ impl FrozenActorLayer {
             .in_box(Rectangle::new(tl.x(), tl.y(), br.x() - tl.x(), br.y() - tl.y()))
             .into_iter()
             .filter(|fa| {
-                fa.is_valid() && (!only_visible || fa.visible()) && (fa.center_position - origin).horizontal_length_squared() <= r.length_squared()
+                fa.is_valid()
+                    && (!only_visible || fa.visible())
+                    && (fa.center_position - origin).horizontal_length_squared() <= r.length_squared()
             })
             .collect()
     }

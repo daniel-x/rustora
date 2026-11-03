@@ -26,8 +26,8 @@ use rustora_engine::traits::*;
 use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
-use crate::actor_map::WorldExt;
 use crate::activities::Parachute;
+use crate::actor_map::WorldExt;
 use crate::aircraft::{AircraftInfo, Fly, RemoveSelf};
 use crate::base::BaseBuilding;
 use crate::cargo::{Cargo, ParaDrop};
@@ -53,7 +53,9 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("DuplicateUnitCrateAction", |n| load_action(n, ActionKind::DuplicateUnit));
     r.register("GiveBaseBuilderCrateAction", |n| load_action(n, ActionKind::GiveBaseBuilder));
     r.register("GiveUnitCrateAction", |n| load_action(n, ActionKind::GiveUnit));
-    r.register("GrantExternalConditionCrateAction", |n| load_action(n, ActionKind::GrantExternalCondition));
+    r.register("GrantExternalConditionCrateAction", |n| {
+        load_action(n, ActionKind::GrantExternalCondition)
+    });
     r.register("SupportPowerCrateAction", |n| load_action(n, ActionKind::SupportPower));
 }
 
@@ -112,7 +114,13 @@ info_impl!(CrateSpawnerInfo => |info, _init| {
 
 impl INotifyCreated for CrateSpawner {
     fn created(&self, self_: &ActorRef) {
-        self.enabled.set(self_.world().lobby_info.global_settings.option_bool("crates", self.info.checkbox_enabled));
+        self.enabled.set(
+            self_
+                .world()
+                .lobby_info
+                .global_settings
+                .option_bool("crates", self.info.checkbox_enabled),
+        );
     }
 }
 
@@ -125,7 +133,12 @@ impl ITick for CrateSpawner {
         if self.ticks.get() <= 0 {
             self.ticks.set(self.info.spawn_interval);
             let crates = self.crates.get();
-            let to_spawn = 0.max(self.info.minimum - crates) + if crates < self.info.maximum && self.info.maximum > self.info.minimum { 1 } else { 0 };
+            let to_spawn = 0.max(self.info.minimum - crates)
+                + if crates < self.info.maximum && self.info.maximum > self.info.minimum {
+                    1
+                } else {
+                    0
+                };
             for _ in 0..to_spawn {
                 self.spawn_crate(self_);
             }
@@ -137,27 +150,48 @@ impl CrateSpawner {
     fn spawn_crate(&self, self_: &ActorRef) {
         let w = self_.world();
         let in_water = w.shared_random.borrow_mut().next_max(100) < self.info.water_chance;
-        let Some(p) = self.choose_drop_cell(&w, in_water, 100) else { return };
+        let Some(p) = self.choose_drop_cell(&w, in_water, 100) else {
+            return;
+        };
         let crate_actor = self.choose_crate_actor(&w);
         let info = self.info.clone();
         let me = self_.clone();
         w.add_frame_end_task(Box::new(move |w| {
             let crate_actor = crate_actor.expect("crate actor share");
             let Some(delivery) = &info.delivery_aircraft else {
-                w.create_actor(&crate_actor, ActorInits::new().with(OwnerInit::from_player(&w.world_actor().owner())).with(LocationInit::new(p)));
+                w.create_actor(
+                    &crate_actor,
+                    ActorInits::new()
+                        .with(OwnerInit::from_player(&w.world_actor().owner()))
+                        .with(LocationInit::new(p)),
+                );
                 return;
             };
-            let crate_ = w.create_actor_add(false, &crate_actor, ActorInits::new().with(OwnerInit::from_player(&w.world_actor().owner())));
+            let crate_ = w.create_actor_add(
+                false,
+                &crate_actor,
+                ActorInits::new().with(OwnerInit::from_player(&w.world_actor().owner())),
+            );
             let facing_index = w.shared_random.borrow_mut().next_max(info.quantized_facings);
             let drop_facing = WAngle::new(1024 * facing_index / info.quantized_facings);
             let delta = WVec::new(0, -1024, 0).rotate(&WRot::from_yaw(drop_facing));
-            let altitude = w.rules().actor(delivery).expect("delivery aircraft").trait_info::<AircraftInfo>().expect("aircraft info").cruise_altitude.length;
+            let altitude = w
+                .rules()
+                .actor(delivery)
+                .expect("delivery aircraft")
+                .trait_info::<AircraftInfo>()
+                .expect("aircraft info")
+                .cruise_altitude
+                .length;
             let target: WPos = w.map().center_of_cell(p) + WVec::new(0, 0, altitude);
             let start_edge = target - delta * (w.map().distance_to_edge(target, -delta) + info.cordon).length / 1024;
             let finish_edge = target + delta * (w.map().distance_to_edge(target, delta) + info.cordon).length / 1024;
             let plane = w.create_actor(
                 delivery,
-                ActorInits::new().with(CenterPositionInit::new(start_edge)).with(OwnerInit::from_player(&me.owner())).with(FacingInit::new(drop_facing)),
+                ActorInits::new()
+                    .with(CenterPositionInit::new(start_edge))
+                    .with(OwnerInit::from_player(&me.owner()))
+                    .with(FacingInit::new(drop_facing)),
             );
             plane.trait_::<ParaDrop>().set_lz(p, true);
             plane.trait_::<Cargo>().load(&plane, &crate_);
@@ -170,7 +204,13 @@ impl CrateSpawner {
         for _ in 0..max_tries {
             let p = w.map().choose_random_cell(&mut w.shared_random.borrow_mut());
             let terrain = &w.map().terrain_type_info(p).ty;
-            if !(if in_water { &self.info.valid_water } else { &self.info.valid_ground }).contains(terrain) {
+            if !(if in_water {
+                &self.info.valid_water
+            } else {
+                &self.info.valid_ground
+            })
+            .contains(terrain)
+            {
                 continue;
             }
             if w.actor_map().any_actors_at(p) {
@@ -214,7 +254,12 @@ pub struct CrateInfo {
 
 impl Default for CrateInfo {
     fn default() -> Self {
-        CrateInfo { instance_name: None, duration: 0, terrain_types: IndexSet::new(), crush_class: "crate".to_string() }
+        CrateInfo {
+            instance_name: None,
+            duration: 0,
+            terrain_types: IndexSet::new(),
+            crush_class: "crate".to_string(),
+        }
     }
 }
 
@@ -230,7 +275,15 @@ impl CrateInfo {
         if check == BlockedByActor::None {
             return FULL_CELL;
         }
-        if w.actor_map().get_actors_at(cell).iter().any(|x| ignore_actor.is_none_or(|i| i.id != x.id)) { INVALID } else { FULL_CELL }
+        if w.actor_map()
+            .get_actors_at(cell)
+            .iter()
+            .any(|x| ignore_actor.is_none_or(|i| i.id != x.id))
+        {
+            INVALID
+        } else {
+            FULL_CELL
+        }
     }
 }
 
@@ -288,10 +341,13 @@ impl Crate {
         let actions = self_.traits_implementing::<CrateAction>();
         self_.dispose();
         self.collected.set(true);
-        let shares: Vec<(Rc<CrateAction>, i32)> = actions.into_iter().map(|a| {
-            let s = a.get_selection_shares_outer(crusher);
-            (a, s)
-        }).collect();
+        let shares: Vec<(Rc<CrateAction>, i32)> = actions
+            .into_iter()
+            .map(|a| {
+                let s = a.get_selection_shares_outer(crusher);
+                (a, s)
+            })
+            .collect();
         if shares.is_empty() {
             return;
         }
@@ -336,7 +392,9 @@ impl INotifyParachute for Crate {
                 continue;
             }
             any_other_actors = true;
-            let Some(mi) = other.info.trait_info::<MobileInfo>() else { continue };
+            let Some(mi) = other.info.trait_info::<MobileInfo>() else {
+                continue;
+            };
             if util::is_at_ground_level(self_) && mi.locomotor_info(&w).crushes.contains(&self.info.crush_class) {
                 collector = Some(other);
                 break;
@@ -431,7 +489,11 @@ impl ICrushable for Crate {
     }
 
     fn crushable_by(&self, self_: &ActorRef, classes: BitSet<CrushClass>) -> u64 {
-        if classes.contains(&self.info.crush_class) { self_.world().all_players_mask.get() } else { 0 }
+        if classes.contains(&self.info.crush_class) {
+            self_.world().all_players_mask.get()
+        } else {
+            0
+        }
     }
 }
 
@@ -625,25 +687,41 @@ fn info_can_enter_cell(a: &ActorInfo, w: &World, self_: &ActorRef, cell: CPos) -
 
 impl CrateAction {
     pub fn get_selection_shares_outer(&self, collector: &ActorRef) -> i32 {
-        if self.state.is_trait_disabled() || self.self_.world().world_tick() < self.info.time_delay || self.info.excluded_actor_types.contains(&collector.info.name) {
+        if self.state.is_trait_disabled()
+            || self.self_.world().world_tick() < self.info.time_delay
+            || self.info.excluded_actor_types.contains(&collector.info.name)
+        {
             return 0;
         }
-        if !self.info.prerequisites.is_empty() && !collector.owner().player_actor().trait_::<TechTree>().has_prerequisites(&self.info.prerequisites) {
+        if !self.info.prerequisites.is_empty()
+            && !collector
+                .owner()
+                .player_actor()
+                .trait_::<TechTree>()
+                .has_prerequisites(&self.info.prerequisites)
+        {
             return 0;
         }
         self.get_selection_shares(collector)
     }
 
     fn valid_faction(&self, collector: &ActorRef) -> bool {
-        !collector.owner().non_combatant && (self.info.valid_factions.is_empty() || self.info.valid_factions.contains(&collector.owner().faction))
+        !collector.owner().non_combatant
+            && (self.info.valid_factions.is_empty() || self.info.valid_factions.contains(&collector.owner().faction))
     }
 
     fn duplicate_can_give_to(&self, collector: &ActorRef) -> bool {
         if !self.valid_faction(collector) || !self.info.valid_targets.overlaps(&enabled_target_types(collector)) {
             return false;
         }
-        let Some(positionable) = collector.trait_or_default::<dyn IPositionable>() else { return false };
-        collector.world().map().find_tiles_in_circle(collector.location(), self.info.max_radius, false).any(|c| positionable.can_enter_cell(c, None, BlockedByActor::All))
+        let Some(positionable) = collector.trait_or_default::<dyn IPositionable>() else {
+            return false;
+        };
+        collector
+            .world()
+            .map()
+            .find_tiles_in_circle(collector.location(), self.info.max_radius, false)
+            .any(|c| positionable.can_enter_cell(c, None, BlockedByActor::All))
     }
 
     fn suitable_cells(&self, w: &World, near: CPos, unit: &str) -> Vec<CPos> {
@@ -655,7 +733,9 @@ impl CrateAction {
             for j in -1..=1 {
                 let cell = near + CVec::new(i, j);
                 if info_can_enter_cell(&rules, w, &self.self_, cell)
-                    && locomotor.as_ref().is_none_or(|l| path_finder.path_might_exist_for_locomotor_blocked_by_immovable(l, cell, near))
+                    && locomotor
+                        .as_ref()
+                        .is_none_or(|l| path_finder.path_might_exist_for_locomotor_blocked_by_immovable(l, cell, near))
                 {
                     out.push(cell);
                 }
@@ -669,7 +749,10 @@ impl CrateAction {
             return false;
         }
         let w = collector.world();
-        self.info.units.iter().all(|u| !self.suitable_cells(&w, collector.location(), u).is_empty())
+        self.info
+            .units
+            .iter()
+            .all(|u| !self.suitable_cells(&w, collector.location(), u).is_empty())
     }
 
     fn get_selection_shares(&self, collector: &ActorRef) -> i32 {
@@ -677,34 +760,71 @@ impl CrateAction {
         match info.kind {
             ActionKind::GiveCash => {
                 let pr = collector.owner().player_actor().trait_::<PlayerResources>();
-                if info.amount < 0 && pr.get_cash_and_resources() == 0 { 0 } else { info.selection_shares }
+                if info.amount < 0 && pr.get_cash_and_resources() == 0 {
+                    0
+                } else {
+                    info.selection_shares
+                }
             }
             ActionKind::LevelUp => {
-                if crate::experience::can_gain_level(collector) { info.selection_shares } else { 0 }
+                if crate::experience::can_gain_level(collector) {
+                    info.selection_shares
+                } else {
+                    0
+                }
             }
             ActionKind::HideMap => {
                 let owner = collector.owner();
                 let pa = owner.player_actor();
-                let prevent_reset = pa.traits_implementing::<dyn crate::gps::IPreventsShroudReset>().iter().any(|p| p.prevent_shroud_reset(pa));
-                if prevent_reset || owner.shroud().explore_map_enabled() { 0 } else { info.selection_shares }
+                let prevent_reset = pa
+                    .traits_implementing::<dyn crate::gps::IPreventsShroudReset>()
+                    .iter()
+                    .any(|p| p.prevent_shroud_reset(pa));
+                if prevent_reset || owner.shroud().explore_map_enabled() {
+                    0
+                } else {
+                    info.selection_shares
+                }
             }
             ActionKind::DuplicateUnit => {
-                if self.duplicate_can_give_to(collector) { info.selection_shares } else { 0 }
+                if self.duplicate_can_give_to(collector) {
+                    info.selection_shares
+                } else {
+                    0
+                }
             }
             ActionKind::GiveUnit => {
-                if self.give_unit_can_give_to(collector) { info.selection_shares } else { 0 }
+                if self.give_unit_can_give_to(collector) {
+                    info.selection_shares
+                } else {
+                    0
+                }
             }
             ActionKind::GiveBaseBuilder => {
                 if !self.give_unit_can_give_to(collector) {
                     return 0;
                 }
-                let has_base = collector.world().actors_having_trait::<BaseBuilding>().iter().any(|a| Rc::ptr_eq(&a.owner(), &collector.owner()));
-                if has_base { info.selection_shares } else { info.no_base_selection_shares }
+                let has_base = collector
+                    .world()
+                    .actors_having_trait::<BaseBuilding>()
+                    .iter()
+                    .any(|a| Rc::ptr_eq(&a.owner(), &collector.owner()));
+                if has_base {
+                    info.selection_shares
+                } else {
+                    info.no_base_selection_shares
+                }
             }
             ActionKind::GrantExternalCondition => {
-                if crate::experience::accepts_external_condition(collector, info.condition.as_deref().unwrap_or(""), &self.self_) { info.selection_shares } else { 0 }
+                if crate::experience::accepts_external_condition(collector, info.condition.as_deref().unwrap_or(""), &self.self_) {
+                    info.selection_shares
+                } else {
+                    0
+                }
             }
-            ActionKind::Plain | ActionKind::Explode | ActionKind::HealActors | ActionKind::RevealMap | ActionKind::SupportPower => info.selection_shares,
+            ActionKind::Plain | ActionKind::Explode | ActionKind::HealActors | ActionKind::RevealMap | ActionKind::SupportPower => {
+                info.selection_shares
+            }
         }
     }
 
@@ -721,7 +841,11 @@ impl CrateAction {
             }
             ActionKind::LevelUp => self.activate_level_up(collector),
             ActionKind::Explode => {
-                crate::combat::weapon_impact(info.weapon.as_ref().expect("Weapon"), &Target::from_pos(collector.center_position()), collector);
+                crate::combat::weapon_impact(
+                    info.weapon.as_ref().expect("Weapon"),
+                    &Target::from_pos(collector.center_position()),
+                    collector,
+                );
             }
             ActionKind::HideMap => {
                 self.for_players(collector, |p| p.shroud().reset_exploration());
@@ -745,7 +869,10 @@ impl CrateAction {
             ActionKind::SupportPower => {
                 let c = collector.clone();
                 w.add_frame_end_task(Box::new(move |w| {
-                    w.create_actor(&info.proxy.as_ref().expect("Proxy").to_lowercase(), ActorInits::new().with(OwnerInit::from_player(&c.owner())));
+                    w.create_actor(
+                        &info.proxy.as_ref().expect("Proxy").to_lowercase(),
+                        ActorInits::new().with(OwnerInit::from_player(&c.owner())),
+                    );
                 }));
             }
         }
@@ -788,8 +915,14 @@ impl CrateAction {
         let info = self.info.clone();
         let c = collector.clone();
         collector.world().add_frame_end_task(Box::new(move |w| {
-            let Some(positionable) = c.trait_or_default::<dyn IPositionable>() else { return };
-            let mut cells: Vec<CPos> = w.map().find_tiles_in_circle(c.location(), info.max_radius, false).filter(|x| positionable.can_enter_cell(*x, None, BlockedByActor::All)).collect();
+            let Some(positionable) = c.trait_or_default::<dyn IPositionable>() else {
+                return;
+            };
+            let mut cells: Vec<CPos> = w
+                .map()
+                .find_tiles_in_circle(c.location(), info.max_radius, false)
+                .filter(|x| positionable.can_enter_cell(*x, None, BlockedByActor::All))
+                .collect();
             if let Some(m) = c.info.trait_info::<MobileInfo>() {
                 let locomotor = locomotor_by_name(w, &m.locomotor);
                 let path_finder = w.world_actor().trait_::<PathFinder>();
@@ -803,7 +936,10 @@ impl CrateAction {
                 }
             }
             for cell in shuffled.iter().take(duplicates.max(0) as usize) {
-                let actor = w.create_actor(&c.info.name, ActorInits::new().with(LocationInit::new(*cell)).with(owner_init(&info, &c)));
+                let actor = w.create_actor(
+                    &c.info.name,
+                    ActorInits::new().with(LocationInit::new(*cell)).with(owner_init(&info, &c)),
+                );
                 place_on_free_subcell(&actor, actor.location());
             }
         }));
@@ -812,7 +948,12 @@ impl CrateAction {
     fn activate_give_unit(&self, collector: &ActorRef) {
         let info = self.info.clone();
         let c = collector.clone();
-        let me = self.self_.traits_implementing::<CrateAction>().into_iter().find(|a| Rc::ptr_eq(&a.info, &info)).expect("crate action");
+        let me = self
+            .self_
+            .traits_implementing::<CrateAction>()
+            .into_iter()
+            .find(|a| Rc::ptr_eq(&a.info, &info))
+            .expect("crate action");
         collector.world().add_frame_end_task(Box::new(move |w| {
             for unit in &info.units {
                 let cells = me.suitable_cells(w, c.location(), unit);
@@ -821,7 +962,10 @@ impl CrateAction {
                 }
                 let index = w.shared_random.borrow_mut().next_max(cells.len() as i32) as usize;
                 let location = cells[index];
-                let actor = w.create_actor(unit, ActorInits::new().with(LocationInit::new(location)).with(owner_init(&info, &c)));
+                let actor = w.create_actor(
+                    unit,
+                    ActorInits::new().with(LocationInit::new(location)).with(owner_init(&info, &c)),
+                );
                 place_on_free_subcell(&actor, location);
             }
         }));
@@ -839,7 +983,14 @@ impl CrateAction {
             .world()
             .find_actors_in_circle(center, info.range)
             .into_iter()
-            .filter(|a| a.id != crate_.id && a.id != collector.id && a.is_in_world() && !a.is_dead() && Rc::ptr_eq(&a.owner(), &collector.owner()) && crate::experience::accepts_external_condition(a, condition, crate_))
+            .filter(|a| {
+                a.id != crate_.id
+                    && a.id != collector.id
+                    && a.is_in_world()
+                    && !a.is_dead()
+                    && Rc::ptr_eq(&a.owner(), &collector.owner())
+                    && crate::experience::accepts_external_condition(a, condition, crate_)
+            })
             .collect();
         actors.sort_by_key(|a| (a.center_position() - center).length_squared());
         if info.max_extra_collectors > -1 {

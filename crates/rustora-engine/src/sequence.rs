@@ -52,7 +52,11 @@ pub struct Sequence {
 impl Sequence {
     fn new(image: &str, name: &str, data: &MiniYaml, defaults: &MiniYaml, tileset: &str, read_file: ReadFile) -> Sequence {
         let is_star = node_d(data, defaults, "Length").is_some_and(|n| n.value.value_str() == "*");
-        let declared_length = if is_star { None } else { Some(field_i32(data, defaults, "Length", 1)) };
+        let declared_length = if is_star {
+            None
+        } else {
+            Some(field_i32(data, defaults, "Length", 1))
+        };
         let mut facings = field_i32(data, defaults, "Facings", 1);
         let reverse_facings = facings < 0;
         if reverse_facings {
@@ -66,7 +70,8 @@ impl Sequence {
             stride: node_d(data, defaults, "Stride").map(|n| get_value::<i32>("Stride", n.value.value.as_deref()).expect("Stride")),
             facings,
             reverse_facings,
-            interpolated_facings: node_d(data, defaults, "InterpolatedFacings").map(|n| get_value::<i32>("InterpolatedFacings", n.value.value.as_deref()).expect("InterpolatedFacings")),
+            interpolated_facings: node_d(data, defaults, "InterpolatedFacings")
+                .map(|n| get_value::<i32>("InterpolatedFacings", n.value.value.as_deref()).expect("InterpolatedFacings")),
             tick: field_i32(data, defaults, "Tick", 40),
             reverses: field_bool(data, defaults, "Reverses"),
             data: data.clone(),
@@ -114,7 +119,11 @@ impl Sequence {
         }
         for key in ["TilesetFilenamesPattern", "FilenamePattern"] {
             if let Some(p) = node_d(&self.data, &self.defaults, key) {
-                let pat = if key == "TilesetFilenamesPattern" { node(&p.value, &self.tileset).map(|n| &n.value) } else { Some(&p.value) };
+                let pat = if key == "TilesetFilenamesPattern" {
+                    node(&p.value, &self.tileset).map(|n| &n.value)
+                } else {
+                    Some(&p.value)
+                };
                 if let Some(pat) = pat {
                     return node(pat, "Count").map_or(1, |n| get_value::<i32>("Count", n.value.value.as_deref()).expect("Count"));
                 }
@@ -158,7 +167,10 @@ impl SequenceSet {
                 if s.key == "Defaults" {
                     continue;
                 }
-                seqs.insert(s.key.clone(), Rc::new(Sequence::new(&img.key, &s.key, &s.value, defaults, tileset, read_file.clone())));
+                seqs.insert(
+                    s.key.clone(),
+                    Rc::new(Sequence::new(&img.key, &s.key, &s.value, defaults, tileset, read_file.clone())),
+                );
             }
             images.insert(img.key.clone(), seqs);
         }
@@ -166,8 +178,13 @@ impl SequenceSet {
     }
 
     pub fn get_sequence(&self, image: &str, sequence: &str) -> Rc<Sequence> {
-        let seqs = self.images.get(image).unwrap_or_else(|| panic!("Image `{image}` does not have any sequences defined."));
-        seqs.get(sequence).cloned().unwrap_or_else(|| panic!("Image `{image}` does not have a sequence named `{sequence}`."))
+        let seqs = self
+            .images
+            .get(image)
+            .unwrap_or_else(|| panic!("Image `{image}` does not have any sequences defined."));
+        seqs.get(sequence)
+            .cloned()
+            .unwrap_or_else(|| panic!("Image `{image}` does not have a sequence named `{sequence}`."))
     }
 
     pub fn has_sequence(&self, image: &str, sequence: &str) -> bool {
@@ -207,7 +224,12 @@ pub struct Animation {
 }
 
 impl Animation {
-    pub fn new(sequences: Rc<SequenceSet>, name: &str, facing_func: Option<Rc<dyn Fn() -> WAngle>>, paused: Option<Rc<dyn Fn() -> bool>>) -> Rc<Animation> {
+    pub fn new(
+        sequences: Rc<SequenceSet>,
+        name: &str,
+        facing_func: Option<Rc<dyn Fn() -> WAngle>>,
+        paused: Option<Rc<dyn Fn() -> bool>>,
+    ) -> Rc<Animation> {
         Rc::new(Animation {
             name: RefCell::new(name.to_lowercase()),
             is_decoration: Cell::new(false),
@@ -232,7 +254,11 @@ impl Animation {
     }
 
     pub fn current_frame(&self) -> i32 {
-        if self.backwards.get() { self.current().length() - self.frame.get() - 1 } else { self.frame.get() }
+        if self.backwards.get() {
+            self.current().length() - self.frame.get() - 1
+        } else {
+            self.frame.get()
+        }
     }
 
     fn tick_or_default(&self) -> i32 {
@@ -261,7 +287,8 @@ impl Animation {
             return false;
         }
         *self.current.borrow_mut() = Some(self.get_sequence(name));
-        self.time_until_next_frame.set(self.tick_or_default().min(self.time_until_next_frame.get()));
+        self.time_until_next_frame
+            .set(self.tick_or_default().min(self.time_until_next_frame.get()));
         self.frame.set(self.frame.get() % self.current().length());
         true
     }
@@ -347,7 +374,8 @@ impl Animation {
             self.time_until_next_frame.set(self.time_until_next_frame.get() - t);
             while self.time_until_next_frame.get() <= 0 {
                 self.invoke_tick_func();
-                self.time_until_next_frame.set(self.time_until_next_frame.get() + self.tick_or_default());
+                self.time_until_next_frame
+                    .set(self.time_until_next_frame.get() + self.tick_or_default());
             }
         }
     }
@@ -372,7 +400,11 @@ impl Animation {
     }
 
     /// `GetRandomExistingSequence`.
-    pub fn get_random_existing_sequence(&self, sequences: &[String], random: &mut rustora_core::world_types::MersenneTwister) -> Option<String> {
+    pub fn get_random_existing_sequence(
+        &self,
+        sequences: &[String],
+        random: &mut rustora_core::world_types::MersenneTwister,
+    ) -> Option<String> {
         let v: Vec<&String> = sequences.iter().filter(|s| self.has_sequence(s)).collect();
         if v.is_empty() {
             return None;

@@ -6,15 +6,15 @@
 use std::cell::{Cell, OnceCell};
 use std::rc::Rc;
 
+use indexmap::IndexMap;
 use rustora_core::world_types::{WAngle, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::conditional::*;
+use rustora_engine::damage::{AttackInfo, Damage, DamageTypes};
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
-use indexmap::IndexMap;
-use rustora_engine::damage::{AttackInfo, Damage, DamageTypes};
 use rustora_engine::{info_impl, load_info};
 
 use crate::actor_reference::TurretFacingInit;
@@ -231,7 +231,9 @@ impl INotifyCreated for Turreted {
 impl ITick for Turreted {
     fn tick(&self, self_: &ActorRef) {
         self.turreted_tick(self_);
-        let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) else { return };
+        let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) else {
+            return;
+        };
         if self.is_trait_disabled() || ci.duration < 0 {
             return;
         }
@@ -323,7 +325,12 @@ impl Turreted {
         if self.quantized_facings.get() == 0 {
             return world;
         }
-        WRot::from_yaw(self.body.get().expect("created").quantize_facing_to(world.yaw, self.quantized_facings.get()))
+        WRot::from_yaw(
+            self.body
+                .get()
+                .expect("created")
+                .quantize_facing_to(world.yaw, self.quantized_facings.get()),
+        )
     }
 
     fn desired_local_facing(&self) -> WAngle {
@@ -340,7 +347,11 @@ impl Turreted {
     }
 
     fn desired(&self) -> WAngle {
-        if self.realign_desired.get() { self.info.initial_facing } else { self.desired_local_facing() }
+        if self.realign_desired.get() {
+            self.info.initial_facing
+        } else {
+            self.desired_local_facing()
+        }
     }
 
     fn move_turret(&self) {
@@ -349,7 +360,8 @@ impl Turreted {
         if desired == lo.yaw {
             return;
         }
-        self.local_orientation.set(lo.with_yaw(util::tick_facing(lo.yaw, desired, self.info.turn_speed)));
+        self.local_orientation
+            .set(lo.with_yaw(util::tick_facing(lo.yaw, desired, self.info.turn_speed)));
         if desired == self.local_orientation.get().yaw {
             self.realign_desired.set(false);
             self.desired_direction.set(WVec::ZERO);
@@ -357,7 +369,9 @@ impl Turreted {
     }
 
     pub fn face_target(&self, self_: &ActorRef, target: &Target) -> bool {
-        let Some(attack) = self.attack.get().and_then(|a| a.as_ref()) else { return false };
+        let Some(attack) = self.attack.get().and_then(|a| a.as_ref()) else {
+            return false;
+        };
         if self.is_trait_disabled() || self.is_trait_paused() || attack.is_trait_disabled() || attack.is_trait_paused() {
             return false;
         }
@@ -386,7 +400,9 @@ impl Turreted {
 
 impl INotifyDamage for Turreted {
     fn damaged(&self, _self_: &ActorRef, e: &AttackInfo) {
-        let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) else { return };
+        let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) else {
+            return;
+        };
         if self.is_trait_paused() || self.is_trait_disabled() {
             return;
         }
@@ -406,13 +422,23 @@ impl IDamageModifier for Turreted {
             return 100;
         }
         let ci = self.cover_info().expect("TakeCover");
-        util::apply_percentage_modifiers(100, ci.damage_modifiers.iter().filter(|(k, _)| damage.damage_types.contains(k)).map(|(_, v)| *v))
+        util::apply_percentage_modifiers(
+            100,
+            ci.damage_modifiers
+                .iter()
+                .filter(|(k, _)| damage.damage_types.contains(k))
+                .map(|(_, v)| *v),
+        )
     }
 }
 
 impl ISpeedModifier for Turreted {
     fn get_speed_modifier(&self) -> i32 {
-        if self.is_prone() { self.cover_info().expect("TakeCover").speed_modifier } else { 100 }
+        if self.is_prone() {
+            self.cover_info().expect("TakeCover").speed_modifier
+        } else {
+            100
+        }
     }
 }
 

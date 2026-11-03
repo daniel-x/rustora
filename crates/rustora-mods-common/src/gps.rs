@@ -115,7 +115,12 @@ impl GpsWatcher {
     fn refresh_granted(&self) {
         let (was_granted, was_granted_allies) = (self.granted.get(), self.granted_allies.get());
         let world = self.owner.player_actor().world();
-        let allies: Vec<Rc<GpsWatcher>> = world.actors_with_trait::<GpsWatcher>().into_iter().filter(|(a, _)| a.owner().is_allied_with(Some(&self.owner))).map(|(_, w)| w).collect();
+        let allies: Vec<Rc<GpsWatcher>> = world
+            .actors_with_trait::<GpsWatcher>()
+            .into_iter()
+            .filter(|(a, _)| a.owner().is_allied_with(Some(&self.owner)))
+            .map(|(_, w)| w)
+            .collect();
         self.granted.set(!self.actors.borrow().is_empty() && self.launched.get());
         self.granted_allies.set(allies.iter().any(|w| w.granted.get()));
         if !self.explored.get() && (self.launched.get() || allies.iter().any(|w| w.launched.get())) {
@@ -138,7 +143,9 @@ impl GpsWatcher {
     }
 
     pub fn unregister_for_on_gps_refreshed(&self, actor: &ActorRef, t: &Rc<dyn IOnGpsRefreshed>) {
-        self.notify_on_refresh.borrow_mut().retain(|(a, x)| !(a.id == actor.id && Rc::ptr_eq(x, t)));
+        self.notify_on_refresh
+            .borrow_mut()
+            .retain(|(a, x)| !(a.id == actor.id && Rc::ptr_eq(x, t)));
     }
 }
 
@@ -286,7 +293,13 @@ pub struct GpsSatellite {
 
 impl GpsSatellite {
     pub fn new(pos: WPos, reveal_delay: i32, launcher: PlayerRef) -> EffectRef {
-        Rc::new_cyclic(|me| GpsSatellite { me: me.clone(), launcher, reveal_delay, pos: Cell::new(pos), tick: Cell::new(0) })
+        Rc::new_cyclic(|me| GpsSatellite {
+            me: me.clone(),
+            launcher,
+            reveal_delay,
+            pos: Cell::new(pos),
+            tick: Cell::new(0),
+        })
     }
 }
 

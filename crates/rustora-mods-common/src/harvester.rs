@@ -200,7 +200,11 @@ impl StoresPlayerResources {
     fn stored(&self) -> i32 {
         let p = self.player.borrow();
         let cap = p.resource_capacity.get();
-        if cap == 0 { 0 } else { (self.info.capacity as i64 * p.resources.get() as i64 / cap as i64) as i32 }
+        if cap == 0 {
+            0
+        } else {
+            (self.info.capacity as i64 * p.resources.get() as i64 / cap as i64) as i32
+        }
     }
 }
 
@@ -211,7 +215,14 @@ impl INotifyOwnerChanged for StoresPlayerResources {
 }
 
 impl INotifyCapture for StoresPlayerResources {
-    fn on_capture(&self, _self_: &ActorRef, _captor: &ActorRef, old_owner: &PlayerRef, new_owner: &PlayerRef, _types: BitSet<crate::capture::CaptureType>) {
+    fn on_capture(
+        &self,
+        _self_: &ActorRef,
+        _captor: &ActorRef,
+        old_owner: &PlayerRef,
+        new_owner: &PlayerRef,
+        _types: BitSet<crate::capture::CaptureType>,
+    ) {
         let resources = self.stored();
         old_owner.player_actor().trait_::<PlayerResources>().take_resources(resources);
         new_owner.player_actor().trait_::<PlayerResources>().give_resources(resources);
@@ -257,7 +268,10 @@ impl ResourceClaimLayer {
         let mut by_cell = self.claim_by_cell.borrow_mut();
         if let Some(claimers) = by_cell.get_mut(&cell) {
             claimers.retain(|a| !a.is_dead());
-            if claimers.iter().any(|c| c.id != claimer.id && claimer.owner().is_allied_with(Some(&c.owner()))) {
+            if claimers
+                .iter()
+                .any(|c| c.id != claimer.id && claimer.owner().is_allied_with(Some(&c.owner())))
+            {
                 return false;
             }
         }
@@ -278,7 +292,9 @@ impl ResourceClaimLayer {
     pub fn can_claim_cell(&self, claimer: &ActorRef, cell: CPos) -> bool {
         match self.claim_by_cell.borrow().get(&cell) {
             None => true,
-            Some(claimers) => !claimers.iter().any(|c| c.id != claimer.id && !c.is_dead() && claimer.owner().is_allied_with(Some(&c.owner()))),
+            Some(claimers) => !claimers
+                .iter()
+                .any(|c| c.id != claimer.id && !c.is_dead() && claimer.owner().is_allied_with(Some(&c.owner()))),
         }
     }
 
@@ -344,7 +360,9 @@ impl INotifyOwnerChanged for Refinery {
 impl IAcceptResources for Refinery {
     fn accept_resources(&self, self_: &ActorRef, resource_type: &str, mut count: i32) -> i32 {
         let pr = self.player_resources.borrow().clone();
-        let Some(resource_value) = pr.info.resource_values.get(resource_type).copied() else { return 0 };
+        let Some(resource_value) = pr.info.resource_values.get(resource_type).copied() else {
+            return 0;
+        };
         let mods = self.modifiers.get().expect("created");
         let apply = |c: i32| util::apply_percentage_modifiers(c * resource_value, mods.iter().map(|m| m.get_resource_value_modifier()));
         let mut value = apply(count);
@@ -663,23 +681,29 @@ impl DockClientManager {
     }
 
     pub fn can_dock_at(&self, host_actor: &ActorRef, host: &Rc<DockHost>, force_enter: bool, ignore_occupancy: bool) -> bool {
-        !self.is_trait_disabled() && self.clients().iter().any(|c| c.can_dock_at(host_actor, host, force_enter, ignore_occupancy))
+        !self.is_trait_disabled()
+            && self
+                .clients()
+                .iter()
+                .any(|c| c.can_dock_at(host_actor, host, force_enter, ignore_occupancy))
     }
 
     pub fn can_dock_at_actor(&self, target: &ActorRef, force_enter: bool, ignore_occupancy: bool) -> bool {
         !self.is_trait_disabled()
-            && target
-                .traits_implementing::<DockHost>()
-                .iter()
-                .any(|h| self.clients().iter().any(|c| c.can_dock_at(target, h, force_enter, ignore_occupancy)))
+            && target.traits_implementing::<DockHost>().iter().any(|h| {
+                self.clients()
+                    .iter()
+                    .any(|c| c.can_dock_at(target, h, force_enter, ignore_occupancy))
+            })
     }
 
     pub fn can_queue_dock_at(&self, target: &ActorRef, force_enter: bool, is_queued: bool) -> bool {
         !self.is_trait_disabled()
-            && target
-                .traits_implementing::<DockHost>()
-                .iter()
-                .any(|h| self.clients().iter().any(|c| c.can_queue_dock_at(target, h, force_enter, is_queued)))
+            && target.traits_implementing::<DockHost>().iter().any(|h| {
+                self.clients()
+                    .iter()
+                    .any(|c| c.can_queue_dock_at(target, h, force_enter, is_queued))
+            })
     }
 
     fn available_clients(&self, ty: BitSet<DockType>, force_enter: bool) -> Vec<Rc<dyn IDockClient>> {
@@ -689,19 +713,33 @@ impl DockClientManager {
         self.clients().into_iter().filter(|c| c.can_dock(ty, force_enter)).collect()
     }
 
-    pub fn closest_dock(&self, ignore: Option<&Rc<DockHost>>, ty: BitSet<DockType>, force_enter: bool, ignore_occupancy: bool) -> Option<(ActorRef, Rc<DockHost>)> {
+    pub fn closest_dock(
+        &self,
+        ignore: Option<&Rc<DockHost>>,
+        ty: BitSet<DockType>,
+        force_enter: bool,
+        ignore_occupancy: bool,
+    ) -> Option<(ActorRef, Rc<DockHost>)> {
         let clients = self.available_clients(ty, force_enter);
         let docks: Vec<(ActorRef, Rc<DockHost>)> = self
             .self_
             .world()
             .actors_with_trait::<DockHost>()
             .into_iter()
-            .filter(|(a, h)| !ignore.is_some_and(|i| Rc::ptr_eq(i, h)) && clients.iter().any(|c| c.can_dock_at(a, h, force_enter, ignore_occupancy)))
+            .filter(|(a, h)| {
+                !ignore.is_some_and(|i| Rc::ptr_eq(i, h)) && clients.iter().any(|c| c.can_dock_at(a, h, force_enter, ignore_occupancy))
+            })
             .collect();
         closest_dock(&docks, &self.self_, self)
     }
 
-    pub fn available_dock_hosts(&self, target: &ActorRef, ty: BitSet<DockType>, force_enter: bool, ignore_occupancy: bool) -> Vec<(ActorRef, Rc<DockHost>)> {
+    pub fn available_dock_hosts(
+        &self,
+        target: &ActorRef,
+        ty: BitSet<DockType>,
+        force_enter: bool,
+        ignore_occupancy: bool,
+    ) -> Vec<(ActorRef, Rc<DockHost>)> {
         let clients = self.available_clients(ty, force_enter);
         target
             .traits_implementing::<DockHost>()
@@ -713,12 +751,18 @@ impl DockClientManager {
 }
 
 /// `DockExts.ClosestDock`.
-pub fn closest_dock(docks: &[(ActorRef, Rc<DockHost>)], client_actor: &ActorRef, client: &DockClientManager) -> Option<(ActorRef, Rc<DockHost>)> {
+pub fn closest_dock(
+    docks: &[(ActorRef, Rc<DockHost>)],
+    client_actor: &ActorRef,
+    client: &DockClientManager,
+) -> Option<(ActorRef, Rc<DockHost>)> {
     let w = client_actor.world();
     if let Some(mobile) = client_actor.trait_or_default::<Mobile>() {
         let mut lookup: IndexMap<CPos, (ActorRef, Rc<DockHost>)> = IndexMap::new();
         for d in docks {
-            lookup.entry(w.map().cell_containing(d.1.dock_position())).or_insert_with(|| d.clone());
+            lookup
+                .entry(w.map().cell_containing(d.1.dock_position()))
+                .or_insert_with(|| d.clone());
         }
         let keys: Vec<CPos> = lookup.keys().copied().collect();
         let lookup = Rc::new(lookup);
@@ -741,7 +785,8 @@ pub fn closest_dock(docks: &[(ActorRef, Rc<DockHost>)], client_actor: &ActorRef,
         None
     } else {
         let key = |d: &(ActorRef, Rc<DockHost>)| {
-            (client_actor.location() - w.map().cell_containing(d.1.dock_position())).length_squared() + d.1.reservation_count() * client.info.occupancy_cost_modifier
+            (client_actor.location() - w.map().cell_containing(d.1.dock_position())).length_squared()
+                + d.1.reservation_count() * client.info.occupancy_cost_modifier
         };
         let mut best: Option<&(ActorRef, Rc<DockHost>)> = None;
         for d in docks {
@@ -826,7 +871,9 @@ conditional_observers_impl!(DockHost);
 
 impl ISync for DockHost {
     fn sync_hash(&self) -> i32 {
-        self.state.sync_hash() ^ sync_bool(self.prevent_dock.get()) ^ rustora_engine::actor::hash_actor(self.docked_client_actor.borrow().as_ref())
+        self.state.sync_hash()
+            ^ sync_bool(self.prevent_dock.get())
+            ^ rustora_engine::actor::hash_actor(self.docked_client_actor.borrow().as_ref())
     }
 }
 
@@ -939,7 +986,13 @@ impl DockHost {
     }
 
     fn queue_dock_activity(&self, base: &ActivityBase, self_: &ActorRef, client_actor: &ActorRef, client: &Rc<DockClientManager>) {
-        base.queue_child(GenericDockSequence::new(client_actor, client, self_, &self.me.upgrade().expect("trait alive"), &self.info));
+        base.queue_child(GenericDockSequence::new(
+            client_actor,
+            client,
+            self_,
+            &self.me.upgrade().expect("trait alive"),
+            &self.info,
+        ));
     }
 }
 
@@ -950,7 +1003,14 @@ impl INotifyOwnerChanged for DockHost {
 }
 
 impl INotifyCapture for DockHost {
-    fn on_capture(&self, self_: &ActorRef, _captor: &ActorRef, _old: &PlayerRef, new_owner: &PlayerRef, _types: BitSet<crate::capture::CaptureType>) {
+    fn on_capture(
+        &self,
+        self_: &ActorRef,
+        _captor: &ActorRef,
+        _old: &PlayerRef,
+        new_owner: &PlayerRef,
+        _types: BitSet<crate::capture::CaptureType>,
+    ) {
         let a = self.docked_client_actor.borrow().clone();
         if let Some(a) = a.filter(|a| !a.is_dead() && a.is_in_world()) {
             a.change_owner(new_owner.clone());
@@ -1118,7 +1178,9 @@ impl Harvester {
     }
 
     fn update_condition(&self, self_: &ActorRef) {
-        let Some(c) = self.info.empty_condition.as_deref().filter(|c| !c.is_empty()) else { return };
+        let Some(c) = self.info.empty_condition.as_deref().filter(|c| !c.is_empty()) else {
+            return;
+        };
         let enabled = self.is_empty();
         if enabled && self.token.get() == INVALID_CONDITION_TOKEN {
             self.token.set(self_.grant_condition(c));
@@ -1160,11 +1222,14 @@ impl IDockClient for Harvester {
     fn can_dock_at(&self, host_actor: &ActorRef, host: &Rc<DockHost>, force_enter: bool, ignore_occupancy: bool) -> bool {
         self.can_dock(host.info.ty, force_enter)
             && host.is_docking_possible(self.dock_client_manager.as_ref(), ignore_occupancy)
-            && (Rc::ptr_eq(&self.self_.owner(), &host_actor.owner()) || (ignore_occupancy && self.self_.owner().is_allied_with(Some(&host_actor.owner()))))
+            && (Rc::ptr_eq(&self.self_.owner(), &host_actor.owner())
+                || (ignore_occupancy && self.self_.owner().is_allied_with(Some(&host_actor.owner()))))
     }
 
     fn can_queue_dock_at(&self, host_actor: &ActorRef, host: &Rc<DockHost>, _force_enter: bool, _is_queued: bool) -> bool {
-        self.can_dock(host.info.ty, true) && host.is_docking_possible(self.dock_client_manager.as_ref(), true) && self.self_.owner().is_allied_with(Some(&host_actor.owner()))
+        self.can_dock(host.info.ty, true)
+            && host.is_docking_possible(self.dock_client_manager.as_ref(), true)
+            && self.self_.owner().is_allied_with(Some(&host_actor.owner()))
     }
 
     fn on_dock_started(&self, _self_: &ActorRef, host_actor: &ActorRef, host: &Rc<DockHost>) {
@@ -1175,7 +1240,9 @@ impl IDockClient for Harvester {
 
     fn on_dock_tick(&self, self_: &ActorRef, host_actor: &ActorRef, _host: &Rc<DockHost>) -> bool {
         let accept = self.accept_resources.borrow().clone();
-        let Some(accept) = accept.filter(|_| !self.is_trait_disabled()) else { return true };
+        let Some(accept) = accept.filter(|_| !self.is_trait_disabled()) else {
+            return true;
+        };
         self.current_unload_ticks.set(self.current_unload_ticks.get() - 1);
         if self.current_unload_ticks.get() > 0 {
             return false;
@@ -1213,11 +1280,18 @@ impl IDockClient for Harvester {
 
 impl IResolveOrder for Harvester {
     fn resolve_order(&self, self_: &ActorRef, order: &Order) {
-        let Some(mobile) = self.mobile().filter(|_| order.order_string == "Harvest") else { return };
+        let Some(mobile) = self.mobile().filter(|_| order.order_string == "Harvest") else {
+            return;
+        };
         let loc = if order.target.target_type() != TargetType::Invalid {
             let cell = self_.world().map().cell_containing(order.target.center_position());
             let (m, c, a) = (mobile.clone(), self.claim_layer.clone(), self_.clone());
-            mobile.nearest_cell(cell, &move |p| m.can_enter_cell(p, None, BlockedByActor::All) && c.try_claim_cell(&a, p), 1, 6)
+            mobile.nearest_cell(
+                cell,
+                &move |p| m.can_enter_cell(p, None, BlockedByActor::All) && c.try_claim_cell(&a, p),
+                1,
+                6,
+            )
         } else {
             self_.location()
         };
@@ -1519,7 +1593,13 @@ pub struct MoveToDock {
 }
 
 impl MoveToDock {
-    pub fn new(self_: &ActorRef, dock_host_actor: Option<ActorRef>, dock_host: Option<Rc<DockHost>>, force_enter: bool, ignore_occupancy: bool) -> ActivityRef {
+    pub fn new(
+        self_: &ActorRef,
+        dock_host_actor: Option<ActorRef>,
+        dock_host: Option<Rc<DockHost>>,
+        force_enter: bool,
+        ignore_occupancy: bool,
+    ) -> ActivityRef {
         let helper = MoveCooldownHelper::new(self_.trait_or_default::<Mobile>());
         helper.retry_if_destination_blocked.set(true);
         Rc::new(MoveToDock {
@@ -1549,7 +1629,9 @@ impl Activity for MoveToDock {
                 self.docking_cancelled.set(true);
                 return;
             }
-            let hosts = self.dock_client.available_dock_hosts(&a, BitSet::default(), self.force_enter, self.ignore_occupancy);
+            let hosts = self
+                .dock_client
+                .available_dock_hosts(&a, BitSet::default(), self.force_enter, self.ignore_occupancy);
             match closest_dock(&hosts, self_, &self.dock_client) {
                 Some(l) => *self.dock_host.borrow_mut() = Some(l.1),
                 None => self.docking_cancelled.set(true),
@@ -1631,7 +1713,13 @@ pub struct GenericDockSequence {
 }
 
 impl GenericDockSequence {
-    fn new(self_: &ActorRef, client: &Rc<DockClientManager>, host_actor: &ActorRef, host: &Rc<DockHost>, info: &DockHostInfo) -> ActivityRef {
+    fn new(
+        self_: &ActorRef,
+        client: &Rc<DockClientManager>,
+        host_actor: &ActorRef,
+        host: &Rc<DockHost>,
+        info: &DockHostInfo,
+    ) -> ActivityRef {
         let a = Rc::new(GenericDockSequence {
             base: ActivityBase::default(),
             dock_host_actor: host_actor.clone(),
@@ -1662,18 +1750,25 @@ impl Activity for GenericDockSequence {
         match state.get() {
             DockingState::Wait => false,
             DockingState::Drag => {
-                if self.base.is_canceling() || self.host_gone() || !self.dock_client.can_dock_at(&self.dock_host_actor, &self.dock_host, false, true) {
+                if self.base.is_canceling()
+                    || self.host_gone()
+                    || !self.dock_client.can_dock_at(&self.dock_host_actor, &self.dock_host, false, true)
+                {
                     self.dock_client.unreserve_host();
                     return true;
                 }
                 state.set(DockingState::Dock);
                 if self.is_drag_required {
-                    self.base.queue_child(Drag::new(self_, self.start_drag, self.end_drag, self.drag_length, None));
+                    self.base
+                        .queue_child(Drag::new(self_, self.start_drag, self.end_drag, self.drag_length, None));
                 }
                 false
             }
             DockingState::Dock => {
-                if !self.base.is_canceling() && !self.host_gone() && self.dock_client.can_dock_at(&self.dock_host_actor, &self.dock_host, false, true) {
+                if !self.base.is_canceling()
+                    && !self.host_gone()
+                    && self.dock_client.can_dock_at(&self.dock_host_actor, &self.dock_host, false, true)
+                {
                     self.dock_initiated.set(true);
                     match &self.dock_client_body {
                         Some(b) => {
@@ -1691,7 +1786,10 @@ impl Activity for GenericDockSequence {
                 false
             }
             DockingState::Loop => {
-                if self.base.is_canceling() || self.host_gone() || self.dock_client.on_dock_tick(self_, &self.dock_host_actor, &self.dock_host) {
+                if self.base.is_canceling()
+                    || self.host_gone()
+                    || self.dock_client.on_dock_tick(self_, &self.dock_host_actor, &self.dock_host)
+                {
                     state.set(DockingState::Undock);
                 }
                 false
@@ -1715,7 +1813,8 @@ impl Activity for GenericDockSequence {
                 self.dock_host.on_dock_completed(&self.dock_host_actor, self_, &self.dock_client);
                 self.dock_client.on_dock_completed(self_, &self.dock_host_actor, &self.dock_host);
                 if self.is_drag_required {
-                    self.base.queue_child(Drag::new(self_, self.end_drag, self.start_drag, self.drag_length, None));
+                    self.base
+                        .queue_child(Drag::new(self_, self.end_drag, self.start_drag, self.drag_length, None));
                 }
                 true
             }
@@ -1726,4 +1825,3 @@ impl Activity for GenericDockSequence {
         vec![Target::from_actor(Some(&self.dock_host_actor))]
     }
 }
-

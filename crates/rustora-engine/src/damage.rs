@@ -22,7 +22,11 @@ impl DamageState {
 impl rustora_core::fieldloader::FieldValue for DamageState {
     const TYPE_NAME: &'static str = "DamageState";
 
-    fn parse(field: &str, value: Option<&str>, _yaml: Option<&rustora_core::miniyaml::MiniYaml>) -> Result<Self, rustora_core::fieldloader::LoadError> {
+    fn parse(
+        field: &str,
+        value: Option<&str>,
+        _yaml: Option<&rustora_core::miniyaml::MiniYaml>,
+    ) -> Result<Self, rustora_core::fieldloader::LoadError> {
         let mut flags = 0;
         for part in value.unwrap_or("").split(',').map(str::trim).filter(|p| !p.is_empty()) {
             flags |= match part {

@@ -93,7 +93,11 @@ pub enum DamageSource {
 
 impl rustora_core::fieldloader::FieldValue for DamageSource {
     const TYPE_NAME: &'static str = "DamageSource";
-    fn parse(field: &str, value: Option<&str>, _yaml: Option<&rustora_core::miniyaml::MiniYaml>) -> Result<Self, rustora_core::fieldloader::LoadError> {
+    fn parse(
+        field: &str,
+        value: Option<&str>,
+        _yaml: Option<&rustora_core::miniyaml::MiniYaml>,
+    ) -> Result<Self, rustora_core::fieldloader::LoadError> {
         match value.unwrap_or("").trim() {
             s if s.eq_ignore_ascii_case("Self") => Ok(DamageSource::Self_),
             s if s.eq_ignore_ascii_case("Killer") => Ok(DamageSource::Killer),
@@ -175,7 +179,11 @@ impl INotifyCreated for FireWarheadsOnDeath {
         let world = self_.world();
         let rules = world.rules();
         let lookup = |name: &str| {
-            Some(rules.weapon(&name.to_lowercase()).unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", name.to_lowercase())))
+            Some(
+                rules
+                    .weapon(&name.to_lowercase())
+                    .unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", name.to_lowercase())),
+            )
         };
         let weapon = Some(self.info.weapon.as_str()).filter(|w| !w.is_empty()).and_then(lookup);
         let empty = self.info.empty_weapon.as_deref().filter(|w| !w.is_empty()).and_then(lookup);
@@ -220,7 +228,9 @@ impl INotifyKilled for FireWarheadsOnDeath {
         if !self.info.death_types.is_empty() && !e.damage.damage_types.overlaps(&self.info.death_types) {
             return;
         }
-        let Some(weapon) = self.choose_weapon_for_explosion(self_) else { return };
+        let Some(weapon) = self.choose_weapon_for_explosion(self_) else {
+            return;
+        };
         let source = self.source(self_, e).expect("explosion source");
         match (self.info.ty, self.building_info.get().and_then(|b| b.as_ref())) {
             (ExplosionType::Footprint, Some(bi)) => {
@@ -332,7 +342,9 @@ impl INotifyKilled for SpawnActorOnDeath {
 
 impl INotifyRemovedFromWorld for SpawnActorOnDeath {
     fn removed_from_world(&self, self_: &ActorRef) {
-        let Some(attacking_player) = self.attacking_player.borrow().clone() else { return };
+        let Some(attacking_player) = self.attacking_player.borrow().clone() else {
+            return;
+        };
         let w = self_.world();
         let owner = self_.owner();
         let defeated = owner.win_state.get() == WinState::Lost;
@@ -350,7 +362,9 @@ impl INotifyRemovedFromWorld for SpawnActorOnDeath {
             .with(FactionInit::new(self.faction.clone()));
         let mut has_effective_owner = true;
         match self_.cache().effective_owner.as_ref().filter(|eo| eo.disguised()) {
-            Some(eo) => td.push(Rc::new(EffectiveOwnerInit { value: eo.owner().expect("effective owner") })),
+            Some(eo) => td.push(Rc::new(EffectiveOwnerInit {
+                value: eo.owner().expect("effective owner"),
+            })),
             None if self.info.effective_owner_from_owner => td.push(Rc::new(EffectiveOwnerInit { value: owner.clone() })),
             None => has_effective_owner = false,
         }
@@ -374,7 +388,10 @@ impl INotifyRemovedFromWorld for SpawnActorOnDeath {
         for m in self_.traits_implementing::<dyn IDeathActorInitModifier>() {
             m.modify_death_actor_init(self_, &mut td);
         }
-        let husk = self_.traits_implementing::<dyn IHuskModifier>().into_iter().find_map(|m| m.husk_actor(self_));
+        let husk = self_
+            .traits_implementing::<dyn IHuskModifier>()
+            .into_iter()
+            .find_map(|m| m.husk_actor(self_));
         let actor = husk.unwrap_or_else(|| self.info.actor.clone());
         w.add_frame_end_task(Box::new(move |w| {
             w.create_actor(&actor, td);
@@ -393,14 +410,26 @@ pub struct HuskInfo {
 
 impl Default for HuskInfo {
     fn default() -> Self {
-        HuskInfo { instance_name: None, allowed_terrain: IndexSet::new(), preview_facing: WAngle::new(384), locomotor: None }
+        HuskInfo {
+            instance_name: None,
+            allowed_terrain: IndexSet::new(),
+            preview_facing: WAngle::new(384),
+            locomotor: None,
+        }
     }
 }
 
 impl HuskInfo {
     fn locomotor_info(&self, self_: &ActorRef) -> Option<Rc<LocomotorInfo>> {
         let name = self.locomotor.as_deref().filter(|l| !l.is_empty())?;
-        self_.world().rules().actor("world").expect("world").trait_infos::<LocomotorInfo>().into_iter().find(|l| l.name == name)
+        self_
+            .world()
+            .rules()
+            .actor("world")
+            .expect("world")
+            .trait_infos::<LocomotorInfo>()
+            .into_iter()
+            .find(|l| l.name == name)
     }
 }
 
@@ -499,7 +528,15 @@ impl IPositionable for Husk {
             return FULL_CELL;
         }
         let w = self.self_.world();
-        if w.actor_map().get_actors_at(cell).iter().all(|x| ignore_actor.is_some_and(|i| i.id == x.id)) { FULL_CELL } else { INVALID }
+        if w.actor_map()
+            .get_actors_at(cell)
+            .iter()
+            .all(|x| ignore_actor.is_some_and(|i| i.id == x.id))
+        {
+            FULL_CELL
+        } else {
+            INVALID
+        }
     }
 
     fn set_position_cell(&self, self_: &ActorRef, cell: CPos, _sub: u8) {
@@ -582,9 +619,18 @@ impl DragAndCrush {
     pub fn new(self_: &ActorRef, info: Option<Rc<LocomotorInfo>>, drag_speed: i32, final_position: WPos) -> ActivityRef {
         let distance = (final_position - self_.center_position()).length();
         if drag_speed > 0 && distance > 0 {
-            self_.queue_activity(Drag::new(self_, self_.center_position(), final_position, distance / drag_speed, None));
+            self_.queue_activity(Drag::new(
+                self_,
+                self_.center_position(),
+                final_position,
+                distance / drag_speed,
+                None,
+            ));
         }
-        Rc::new(DragAndCrush { base: ActivityBase::default(), info })
+        Rc::new(DragAndCrush {
+            base: ActivityBase::default(),
+            info,
+        })
     }
 }
 
@@ -595,7 +641,9 @@ impl Activity for DragAndCrush {
         if !util::is_at_ground_level(self_) {
             return;
         }
-        let Some(info) = self.info.as_ref().filter(|i| !i.crushes.is_empty()) else { return };
+        let Some(info) = self.info.as_ref().filter(|i| !i.crushes.is_empty()) else {
+            return;
+        };
         let w = self_.world();
         for a in w.actor_map().get_actors_at(w.map().cell_containing(self_.center_position())) {
             if a.id == self_.id {
@@ -622,7 +670,11 @@ pub struct HarvesterHuskModifierInfo {
 
 impl Default for HarvesterHuskModifierInfo {
     fn default() -> Self {
-        HarvesterHuskModifierInfo { instance_name: None, full_husk_actor: None, fullness_threshold: 50 }
+        HarvesterHuskModifierInfo {
+            instance_name: None,
+            full_husk_actor: None,
+            fullness_threshold: 50,
+        }
     }
 }
 
@@ -635,7 +687,11 @@ info_impl!(HarvesterHuskModifierInfo => |info, _| Some(Rc::new(HarvesterHuskModi
 
 impl IHuskModifier for HarvesterHuskModifier {
     fn husk_actor(&self, self_: &ActorRef) -> Option<String> {
-        if self_.trait_::<Harvester>().fullness() > self.info.fullness_threshold { self.info.full_husk_actor.clone() } else { None }
+        if self_.trait_::<Harvester>().fullness() > self.info.fullness_threshold {
+            self.info.full_husk_actor.clone()
+        } else {
+            None
+        }
     }
 }
 
@@ -686,7 +742,11 @@ impl IEffectiveOwner for FallsToEarth {
 impl INotifyCreated for FallsToEarth {
     fn created(&self, self_: &ActorRef) {
         let weapon = self.info.explosion.as_deref().filter(|e| !e.is_empty()).map(|e| {
-            self_.world().rules().weapon(&e.to_lowercase()).unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", e.to_lowercase()))
+            self_
+                .world()
+                .rules()
+                .weapon(&e.to_lowercase())
+                .unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", e.to_lowercase()))
         });
         self_.queue_activity_queued(false, FallToEarth::new(self_, self.info.clone(), weapon));
     }
@@ -706,8 +766,19 @@ impl FallToEarth {
     pub fn new(self_: &ActorRef, info: Rc<FallsToEarthInfo>, weapon: Option<Rc<WeaponInfo>>) -> ActivityRef {
         let base = ActivityBase::default();
         base.is_interruptible.set(false);
-        let acceleration = if info.maximum_spin_speed.is_none_or(|m| m != WAngle::ZERO) { self_.world().shared_random.borrow_mut().next_max(2) * 2 - 1 } else { 0 };
-        Rc::new(FallToEarth { base, aircraft: self_.trait_::<crate::aircraft::Aircraft>(), info, weapon, acceleration, spin: Cell::new(0) })
+        let acceleration = if info.maximum_spin_speed.is_none_or(|m| m != WAngle::ZERO) {
+            self_.world().shared_random.borrow_mut().next_max(2) * 2 - 1
+        } else {
+            0
+        };
+        Rc::new(FallToEarth {
+            base,
+            aircraft: self_.trait_::<crate::aircraft::Aircraft>(),
+            info,
+            weapon,
+            acceleration,
+            spin: Cell::new(0),
+        })
     }
 }
 
@@ -730,9 +801,14 @@ impl Activity for FallToEarth {
             if self.info.maximum_spin_speed.is_none_or(|m| self.spin.get().abs() < m.angle) {
                 self.spin.set(self.spin.get() + 4 * self.acceleration);
             }
-            self.aircraft.set_facing(WAngle::new(self.aircraft.facing().angle + self.spin.get()));
+            self.aircraft
+                .set_facing(WAngle::new(self.aircraft.facing().angle + self.spin.get()));
         }
-        let mut mv = if self.info.moves { self.aircraft.fly_step(self.aircraft.facing()) } else { WVec::ZERO };
+        let mut mv = if self.info.moves {
+            self.aircraft.fly_step(self.aircraft.facing())
+        } else {
+            WVec::ZERO
+        };
         mv = mv - WVec::new(0, 0, self.info.velocity.length);
         let pos = self.aircraft.center_position() + mv;
         IPositionable::set_position(self.aircraft.as_ref(), self_, pos);
@@ -806,7 +882,9 @@ impl INotifyKilled for EjectOnDeath {
                     return;
                 }
             }
-            let mut td = ActorInits::new().with(OwnerInit::from_player(&a.owner())).with(LocationInit::new(loc));
+            let mut td = ActorInits::new()
+                .with(OwnerInit::from_player(&a.owner()))
+                .with(LocationInit::new(loc));
             let mut spawn_pos = cp;
             if in_air {
                 let sub = w.actor_map().free_subcell(loc, ANY, true);
@@ -882,8 +960,20 @@ impl INotifyKilled for RevealOnDeath {
             if a.disposed() {
                 return;
             }
-            let ty = if info.reveal_generated_shroud { rustora_engine::shroud::SourceType::Visibility } else { rustora_engine::shroud::SourceType::PassiveVisibility };
-            w.add_effect(RevealShroudEffect::new(a.center_position(), info.radius, ty, owner, info.reveal_for_relationships, 0, info.duration));
+            let ty = if info.reveal_generated_shroud {
+                rustora_engine::shroud::SourceType::Visibility
+            } else {
+                rustora_engine::shroud::SourceType::PassiveVisibility
+            };
+            w.add_effect(RevealShroudEffect::new(
+                a.center_position(),
+                info.radius,
+                ty,
+                owner,
+                info.reveal_for_relationships,
+                0,
+                info.duration,
+            ));
         }));
     }
 }
@@ -910,7 +1000,16 @@ impl RevealShroudEffect {
         delay: i32,
         duration: i32,
     ) -> rustora_engine::effect::EffectRef {
-        Rc::new_cyclic(|me| RevealShroudEffect { me: me.clone(), pos, player, source_type: ty, reveal_radius: radius, valid_stances: stances, duration, ticks: Cell::new(-delay) })
+        Rc::new_cyclic(|me| RevealShroudEffect {
+            me: me.clone(),
+            pos,
+            player,
+            source_type: ty,
+            reveal_radius: radius,
+            valid_stances: stances,
+            duration,
+            ticks: Cell::new(-delay),
+        })
     }
 
     fn key(&self) -> usize {
@@ -928,7 +1027,13 @@ impl rustora_engine::effect::Effect for RevealShroudEffect {
             let cells: Rc<[rustora_core::world_types::PPos]> = if self.reveal_radius == rustora_core::world_types::WDist::ZERO {
                 Rc::from(Vec::new())
             } else {
-                Rc::from(rustora_engine::shroud::Shroud::projected_cells_in_range(world.map(), self.pos, rustora_core::world_types::WDist::ZERO, self.reveal_radius, -1))
+                Rc::from(rustora_engine::shroud::Shroud::projected_cells_in_range(
+                    world.map(),
+                    self.pos,
+                    rustora_core::world_types::WDist::ZERO,
+                    self.reveal_radius,
+                    -1,
+                ))
             };
             for p in world.players() {
                 if self.applies_to(&p) {

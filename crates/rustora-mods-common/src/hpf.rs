@@ -22,7 +22,11 @@ const GRID_SIZE: i32 = 10;
 
 fn div_away(a: i32, b: i32) -> i32 {
     let (q, r) = (a / b, a % b);
-    if r == 0 { q } else { q + if a.signum() == b.signum() { 1 } else { -1 } }
+    if r == 0 {
+        q
+    } else {
+        q + if a.signum() == b.signum() { 1 } else { -1 }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -312,8 +316,12 @@ impl HierarchicalPathFinder {
                             if !self.movement_allowed_between_cells(candidate) {
                                 continue;
                             }
-                            let Some(a) = self.abstract_cell_no_accessible_check(cell) else { continue };
-                            let Some(b) = self.abstract_cell_no_accessible_check(candidate) else { continue };
+                            let Some(a) = self.abstract_cell_no_accessible_check(cell) else {
+                                continue;
+                            };
+                            let Some(b) = self.abstract_cell_no_accessible_check(candidate) else {
+                                continue;
+                            };
                             edges.insert((a, b));
                         }
                     }
@@ -359,7 +367,11 @@ impl HierarchicalPathFinder {
             }
         }
         let set = self.cells_with_blocking_actor.as_ref().expect("blocking set");
-        let changed = if has_blocking { set.borrow_mut().insert(cell) } else { set.borrow_mut().remove(&cell) };
+        let changed = if has_blocking {
+            set.borrow_mut().insert(cell)
+        } else {
+            set.borrow_mut().remove(&cell)
+        };
         if changed {
             self.dirty_grid_indexes.borrow_mut().insert(self.grid_index(cell));
         }
@@ -437,7 +449,9 @@ impl HierarchicalPathFinder {
             return Vec::new();
         }
         self.rebuild_dirty_grids();
-        let Some(target_abstract) = self.abstract_cell_for_local_cell(target) else { return Vec::new() };
+        let Some(target_abstract) = self.abstract_cell_for_local_cell(target) else {
+            return Vec::new();
+        };
         self.rebuild_domains();
         let target_domain = self.domain(target_abstract);
 
@@ -463,7 +477,9 @@ impl HierarchicalPathFinder {
                 if !self.movement_allowed_between_cells(adjacent) {
                     continue;
                 }
-                let Some(a) = self.abstract_cell_for_local_cell(adjacent) else { continue };
+                let Some(a) = self.abstract_cell_for_local_cell(adjacent) else {
+                    continue;
+                };
                 if self.domain(a) != target_domain {
                     unpathable.push(adjacent);
                     continue;
@@ -521,8 +537,14 @@ impl HierarchicalPathFinder {
         const CLOSE_GRID_DISTANCE: i32 = 2;
         if (target - source).length_squared() < GRID_SIZE * GRID_SIZE * CLOSE_GRID_DISTANCE * CLOSE_GRID_DISTANCE {
             let grid_to_search = Grid {
-                top_left: CPos::new(source.x().min(target.x()) - GRID_SIZE / 2, source.y().min(target.y()) - GRID_SIZE / 2),
-                bottom_right: CPos::new(source.x().max(target.x()) + GRID_SIZE / 2, source.y().max(target.y()) + GRID_SIZE / 2),
+                top_left: CPos::new(
+                    source.x().min(target.x()) - GRID_SIZE / 2,
+                    source.y().min(target.y()) - GRID_SIZE / 2,
+                ),
+                bottom_right: CPos::new(
+                    source.x().max(target.x()) + GRID_SIZE / 2,
+                    source.y().max(target.y()) + GRID_SIZE / 2,
+                ),
             };
             let mut search = PathSearch::to_target_cell(
                 &world,
@@ -545,9 +567,21 @@ impl HierarchicalPathFinder {
             }
         }
         self.rebuild_dirty_grids();
-        let Some(target_abstract) = self.abstract_cell_for_local_cell(target) else { return Vec::new() };
+        let Some(target_abstract) = self.abstract_cell_for_local_cell(target) else {
+            return Vec::new();
+        };
         let Some(source_abstract) = self.abstract_cell_for_local_cell(source) else {
-            return self.find_path_multi(self_, &[source], target, check, weight, custom_cost, ignore_actor, in_reverse, lane_bias);
+            return self.find_path_multi(
+                self_,
+                &[source],
+                target,
+                check,
+                weight,
+                custom_cost,
+                ignore_actor,
+                in_reverse,
+                lane_bias,
+            );
         };
         self.rebuild_domains();
         if self.domain(source_abstract) != self.domain(target_abstract) {
@@ -607,7 +641,9 @@ impl HierarchicalPathFinder {
             return false;
         }
         self.rebuild_domains();
-        let Some(abs_target) = self.abstract_cell_for_local_cell(target) else { return false };
+        let Some(abs_target) = self.abstract_cell_for_local_cell(target) else {
+            return false;
+        };
         let target_domain = self.domain(abs_target);
         if let Some(a) = self.abstract_cell_for_local_cell(source) {
             return self.domain(a) == target_domain;
@@ -617,7 +653,9 @@ impl HierarchicalPathFinder {
             if !self.movement_allowed_between_cells(adjacent) {
                 continue;
             }
-            let Some(a) = self.abstract_cell_for_local_cell(adjacent) else { continue };
+            let Some(a) = self.abstract_cell_for_local_cell(adjacent) else {
+                continue;
+            };
             if self.domain(a) == target_domain {
                 return true;
             }
@@ -706,7 +744,12 @@ impl HierarchicalPathFinder {
         }
     }
 
-    fn make_heuristic(self: &Rc<Self>, mut abstract_search: PathSearch, sources: Option<IndexSet<CPos>>, unpathable: Option<Vec<CPos>>) -> Heuristic {
+    fn make_heuristic(
+        self: &Rc<Self>,
+        mut abstract_search: PathSearch,
+        sources: Option<IndexSet<CPos>>,
+        unpathable: Option<Vec<CPos>>,
+    ) -> Heuristic {
         let hpf = self.clone();
         let mut node_for_cost_lookup: HashMap<CPos, CPos> = HashMap::new();
         Box::new(move |cell, known_accessible| {
@@ -750,7 +793,11 @@ impl HierarchicalPathFinder {
             let node_for_cost = *node_for_cost_lookup
                 .entry(abstract_node)
                 .or_insert_with(|| hpf.abstract_node_for_cost(&abstract_search.graph, abstract_cell, abstract_node));
-            abstract_search.graph.get(node_for_cost).cost_so_far.wrapping_add(hpf.est().estimate(cell, node_for_cost))
+            abstract_search
+                .graph
+                .get(node_for_cost)
+                .cost_so_far
+                .wrapping_add(hpf.est().estimate(cell, node_for_cost))
         })
     }
 

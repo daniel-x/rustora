@@ -97,7 +97,9 @@ impl Default for ArmamentInfo {
             recoil_recovery: WDist::new(9),
             reloading_condition: None,
             target_relationships: PlayerRelationship::ENEMY,
-            force_target_relationships: PlayerRelationship(PlayerRelationship::ENEMY.0 | PlayerRelationship::NEUTRAL.0 | PlayerRelationship::ALLY.0),
+            force_target_relationships: PlayerRelationship(
+                PlayerRelationship::ENEMY.0 | PlayerRelationship::NEUTRAL.0 | PlayerRelationship::ALLY.0,
+            ),
             ammo_usage: 1,
         }
     }
@@ -174,11 +176,20 @@ rustora_engine::conditional_plumbing!(Armament);
 
 impl INotifyCreated for Armament {
     fn created(&self, self_: &ActorRef) {
-        let _ = self.turret.set(self_.traits_implementing::<Turreted>().into_iter().find(|t| t.name() == self.info.turret));
+        let _ = self.turret.set(
+            self_
+                .traits_implementing::<Turreted>()
+                .into_iter()
+                .find(|t| t.name() == self.info.turret),
+        );
         let _ = self.hovers.set(self_.trait_or_default::<crate::conditions::Hovers>());
         let _ = self.coords.set(self_.trait_::<BodyOrientation>());
         *self.notify_burst_complete.borrow_mut() = self_.traits_implementing::<dyn INotifyBurstComplete>();
-        *self.notify_attacks.borrow_mut() = self_.traits_implementing::<dyn INotifyAttack>().into_iter().map(|a| (self_.clone(), a)).collect();
+        *self.notify_attacks.borrow_mut() = self_
+            .traits_implementing::<dyn INotifyAttack>()
+            .into_iter()
+            .map(|a| (self_.clone(), a))
+            .collect();
         *self.range_modifiers.borrow_mut() = self_.traits_implementing::<dyn IRangeModifier>();
         *self.reload_modifiers.borrow_mut() = self_.traits_implementing::<dyn IReloadModifier>();
         *self.damage_modifiers.borrow_mut() = self_.traits_implementing::<dyn IFirepowerModifier>();
@@ -199,7 +210,8 @@ impl ITick for Armament {
         if self.fire_delay.get() > 0 {
             self.fire_delay.set(self.fire_delay.get() - 1);
         }
-        self.recoil.set(WDist::new(0.max(self.recoil.get().length - self.info.recoil_recovery.length)));
+        self.recoil
+            .set(WDist::new(0.max(self.recoil.get().length - self.info.recoil_recovery.length)));
         let mut list = std::mem::take(&mut *self.delayed_actions.borrow_mut());
         for x in list.iter_mut() {
             x.0 -= 1;
@@ -237,19 +249,28 @@ impl Armament {
     }
 
     pub fn max_range(&self) -> WDist {
-        WDist::new(util::apply_percentage_modifiers(self.weapon.range.length, self.range_modifiers.borrow().iter().map(|m| m.get_range_modifier())))
+        WDist::new(util::apply_percentage_modifiers(
+            self.weapon.range.length,
+            self.range_modifiers.borrow().iter().map(|m| m.get_range_modifier()),
+        ))
     }
 
     pub fn add_notify_attacks(&self, attacker: &ActorRef, list: &[Rc<dyn INotifyAttack>]) {
-        self.notify_attacks.borrow_mut().extend(list.iter().map(|a| (attacker.clone(), a.clone())));
+        self.notify_attacks
+            .borrow_mut()
+            .extend(list.iter().map(|a| (attacker.clone(), a.clone())));
     }
 
     pub fn remove_notify_attacks(&self, list: &[Rc<dyn INotifyAttack>]) {
-        self.notify_attacks.borrow_mut().retain(|(_, n)| !list.iter().any(|x| Rc::ptr_eq(x, n)));
+        self.notify_attacks
+            .borrow_mut()
+            .retain(|(_, n)| !list.iter().any(|x| Rc::ptr_eq(x, n)));
     }
 
     fn update_condition(&self, self_: &ActorRef) {
-        let Some(c) = self.info.reloading_condition.as_deref().filter(|c| !c.is_empty()) else { return };
+        let Some(c) = self.info.reloading_condition.as_deref().filter(|c| !c.is_empty()) else {
+            return;
+        };
         let enabled = !self.is_trait_disabled() && self.is_reloading();
         if enabled && self.condition_token.get() == INVALID_CONDITION_TOKEN {
             self.condition_token.set(self_.grant_condition(c));
@@ -270,11 +291,18 @@ impl Armament {
         if self.is_reloading() || self.is_trait_paused() {
             return false;
         }
-        if self.turret.get().and_then(|t| t.as_ref()).is_some_and(|t| !t.has_achieved_desired_facing()) {
+        if self
+            .turret
+            .get()
+            .and_then(|t| t.as_ref())
+            .is_some_and(|t| !t.has_achieved_desired_facing())
+        {
             return false;
         }
         let pos = self_.center_position();
-        if !target.is_in_range(pos, self.max_range()) || (self.weapon.min_range != WDist::ZERO && target.is_in_range(pos, self.weapon.min_range)) {
+        if !target.is_in_range(pos, self.max_range())
+            || (self.weapon.min_range != WDist::ZERO && target.is_in_range(pos, self.weapon.min_range))
+        {
             return false;
         }
         self.weapon.is_valid_against(target, &self_.world(), self_)
@@ -337,7 +365,12 @@ impl Armament {
         let make_args = {
             let weapon = self.weapon.clone();
             let damage: Vec<i32> = self.damage_modifiers.borrow().iter().map(|m| m.get_firepower_modifier()).collect();
-            let inaccuracy: Vec<i32> = self.inaccuracy_modifiers.borrow().iter().map(|m| m.get_inaccuracy_modifier()).collect();
+            let inaccuracy: Vec<i32> = self
+                .inaccuracy_modifiers
+                .borrow()
+                .iter()
+                .map(|m| m.get_inaccuracy_modifier())
+                .collect();
             let range: Vec<i32> = self.range_modifiers.borrow().iter().map(|m| m.get_range_modifier()).collect();
             let facing = muzzle_facing();
             let source = muzzle_position();
@@ -384,10 +417,14 @@ impl Armament {
             if self.weapon.burst_delays.len() == 1 {
                 self.fire_delay.set(self.weapon.burst_delays[0]);
             } else {
-                self.fire_delay.set(self.weapon.burst_delays[(self.weapon.burst - (self.burst.get() + 1)) as usize]);
+                self.fire_delay
+                    .set(self.weapon.burst_delays[(self.weapon.burst - (self.burst.get() + 1)) as usize]);
             }
         } else {
-            let d = util::apply_percentage_modifiers(self.weapon.reload_delay, self.reload_modifiers.borrow().iter().map(|m| m.get_reload_modifier()));
+            let d = util::apply_percentage_modifiers(
+                self.weapon.reload_delay,
+                self.reload_modifiers.borrow().iter().map(|m| m.get_reload_modifier()),
+            );
             self.fire_delay.set(if d <= 0 { 1 } else { d });
             self.burst.set(self.weapon.burst);
             let list = self.notify_burst_complete.borrow().clone();
@@ -416,7 +453,11 @@ impl Armament {
     }
 
     pub fn muzzle_orientation(&self, self_: &ActorRef, b: &Barrel) -> WRot {
-        let base = self.turret.get().and_then(|t| t.as_ref()).map_or_else(|| self_.orientation(), |t| t.world_orientation());
+        let base = self
+            .turret
+            .get()
+            .and_then(|t| t.as_ref())
+            .map_or_else(|| self_.orientation(), |t| t.world_orientation());
         WRot::from_yaw(b.yaw).rotate(&base)
     }
 }
@@ -461,7 +502,10 @@ impl AttackKind {
     }
 
     fn is_follow(self) -> bool {
-        matches!(self, AttackKind::Follow | AttackKind::Turreted | AttackKind::Garrisoned | AttackKind::Aircraft)
+        matches!(
+            self,
+            AttackKind::Follow | AttackKind::Turreted | AttackKind::Garrisoned | AttackKind::Aircraft
+        )
     }
 
     fn is_frontal(self) -> bool {
@@ -720,7 +764,11 @@ impl INotifyCreated for AttackBase {
         let _ = self.positionable.set(self_.trait_or_default::<dyn IPositionable>());
         *self.notify_aiming.borrow_mut() = self_.traits_implementing::<dyn INotifyAiming>();
         if self.info.kind != AttackKind::Garrisoned {
-            *self.armaments.borrow_mut() = self_.traits_implementing::<Armament>().into_iter().filter(|a| self.info.armaments.contains(&a.info.name)).collect();
+            *self.armaments.borrow_mut() = self_
+                .traits_implementing::<Armament>()
+                .into_iter()
+                .filter(|a| self.info.armaments.contains(&a.info.name))
+                .collect();
         }
         conditional_created(self, self_);
     }
@@ -738,11 +786,18 @@ impl ITick for AttackBase {
                 return;
             }
             AttackKind::Charges => {
-                self.charging.set(self.charging.get() && self_.current_activity().is_some_and(|c| c.type_name() == "SetTarget"));
-                let delta = if self.charging.get() { self.info.charge_rate } else { -self.info.discharge_rate };
-                self.charge_level.set((self.charge_level.get() + delta).clamp(0, self.info.charge_level));
+                self.charging
+                    .set(self.charging.get() && self_.current_activity().is_some_and(|c| c.type_name() == "SetTarget"));
+                let delta = if self.charging.get() {
+                    self.info.charge_rate
+                } else {
+                    -self.info.discharge_rate
+                };
+                self.charge_level
+                    .set((self.charge_level.get() + delta).clamp(0, self.info.charge_level));
                 if self.charge_level.get() > 0 && self.charging_token.get() == INVALID_CONDITION_TOKEN {
-                    self.charging_token.set(self_.grant_condition(self.info.charging_condition.as_deref().unwrap_or("")));
+                    self.charging_token
+                        .set(self_.grant_condition(self.info.charging_condition.as_deref().unwrap_or("")));
                 }
                 if self.charge_level.get() == 0 && self.charging_token.get() != INVALID_CONDITION_TOKEN {
                     self.charging_token.set(self_.revoke_condition(self.charging_token.get()));
@@ -807,7 +862,10 @@ impl AttackBase {
         }
         let preset = self.requested_target_preset.borrow().clone();
         if let Some(p) = preset {
-            let is_next = self_.current_activity().and_then(|c| c.base().next_activity()).is_some_and(|n| Rc::ptr_eq(&n, &p));
+            let is_next = self_
+                .current_activity()
+                .and_then(|c| c.base().next_activity())
+                .is_some_and(|n| Rc::ptr_eq(&n, &p));
             if is_next {
                 let t = self.requested_target.borrow().recalculate(&self_.owner()).0;
                 *self.requested_target.borrow_mut() = t;
@@ -815,12 +873,18 @@ impl AttackBase {
                 self.clear_requested_target();
             }
         }
-        if self.mobile.get().and_then(|m| m.as_ref()).is_some_and(|m| !m.can_interact_with_ground_layer(self_)) {
+        if self
+            .mobile
+            .get()
+            .and_then(|m| m.as_ref())
+            .is_some_and(|m| !m.can_interact_with_ground_layer(self_))
+        {
             return true;
         }
         let requested = self.requested_target();
         if requested.is_valid_for(self_) {
-            self.is_aiming.set(self.can_aim_at_target(self_, &requested, self.requested_force_attack.get()));
+            self.is_aiming
+                .set(self.can_aim_at_target(self_, &requested, self.requested_force_attack.get()));
             if self.is_aiming.get() {
                 self.do_attack(self_, &requested);
             }
@@ -828,7 +892,8 @@ impl AttackBase {
             self.is_aiming.set(false);
             let opp = self.opportunity_target.borrow().clone();
             if opp.is_valid_for(self_) {
-                self.is_aiming.set(self.can_aim_at_target(self_, &opp, self.opportunity_force_attack.get()));
+                self.is_aiming
+                    .set(self.can_aim_at_target(self_, &opp, self.opportunity_force_attack.get()));
             }
             if !self.is_aiming.get() && self.info.opportunity_fire {
                 if let Some(at) = self.auto_target.get().and_then(|a| a.as_ref()) {
@@ -838,7 +903,8 @@ impl AttackBase {
                         self.opportunity_force_attack.set(false);
                         self.opportunity_target_is_persistent.set(false);
                         if t.is_valid_for(self_) {
-                            self.is_aiming.set(self.can_aim_at_target(self_, &t, self.opportunity_force_attack.get()));
+                            self.is_aiming
+                                .set(self.can_aim_at_target(self_, &t, self.opportunity_force_attack.get()));
                         }
                     }
                 }
@@ -861,7 +927,8 @@ impl AttackBase {
             let target = Target::from_pos(c - WVec::from_dists(WDist::ZERO, WDist::ZERO, dat));
             *self.bomber_target.borrow_mut() = target.clone();
             let was_facing_target = self.facing_target.get();
-            self.facing_target.set(self.target_in_firing_arc(self_, &target, self.info.facing_tolerance));
+            self.facing_target
+                .set(self.target_in_firing_arc(self_, &target, self.info.facing_tolerance));
             let armaments = self.armaments();
             for a in &armaments {
                 if !target.is_in_range(self_.center_position(), a.max_range()) {
@@ -871,7 +938,8 @@ impl AttackBase {
                 a.check_fire(self_, &target);
             }
             if armaments.is_empty() {
-                self.in_attack_range.set(!was_in_attack_range && !self.facing_target.get() && was_facing_target);
+                self.in_attack_range
+                    .set(!was_in_attack_range && !self.facing_target.get() && was_facing_target);
             }
         }
         if self.in_attack_range.get() && !was_in_attack_range {
@@ -924,7 +992,9 @@ impl AttackBase {
     }
 
     pub fn target_in_firing_arc(&self, self_: &ActorRef, target: &Target, tolerance: WAngle) -> bool {
-        let Some(facing) = self.facing.get().and_then(|f| f.as_ref()) else { return true };
+        let Some(facing) = self.facing.get().and_then(|f| f.as_ref()) else {
+            return true;
+        };
         let pos = self_.center_position();
         let delta = self.get_target_position(pos, target) - pos;
         if delta.horizontal_length_squared() == 0 {
@@ -935,10 +1005,18 @@ impl AttackBase {
 
     /// The base `AttackBase.CanAttack`.
     fn can_attack_base(&self, self_: &ActorRef, target: &Target) -> bool {
-        if !self_.is_in_world() || self.is_trait_disabled() || self.is_trait_paused() || !target.is_valid_for(self_) || !self.has_any_valid_weapons(target, false, true) {
+        if !self_.is_in_world()
+            || self.is_trait_disabled()
+            || self.is_trait_paused()
+            || !target.is_valid_for(self_)
+            || !self.has_any_valid_weapons(target, false, true)
+        {
             return false;
         }
-        !self.positionable.get().and_then(|p| p.as_ref()).is_some() || self_.trait_or_default::<Mobile>().is_none_or(|m| m.can_interact_with_ground_layer(self_))
+        !self.positionable.get().and_then(|p| p.as_ref()).is_some()
+            || self_
+                .trait_or_default::<Mobile>()
+                .is_none_or(|m| m.can_interact_with_ground_layer(self_))
     }
 
     pub fn can_attack(&self, self_: &ActorRef, target: &Target) -> bool {
@@ -966,7 +1044,8 @@ impl AttackBase {
                 ready && self.can_attack_base(self_, target)
             }
             AttackKind::Charges => {
-                self.charging.set(self.can_attack_base(self_, target) && self.is_reachable_target(target, true));
+                self.charging
+                    .set(self.can_attack_base(self_, target) && self.is_reachable_target(target, true));
                 self.charge_level.get() >= self.info.charge_level && self.charging.get()
             }
             AttackKind::Aircraft => {
@@ -1025,7 +1104,9 @@ impl AttackBase {
             if a.is_trait_disabled() {
                 continue;
             }
-            let Some(port) = self.select_fire_port(self_, target_yaw) else { return };
+            let Some(port) = self.select_fire_port(self_, target_yaw) else {
+                return;
+            };
             let (f, p) = self.pax.borrow().get(&a.actor.id).cloned().expect("passenger entry");
             f.set_facing(target_yaw);
             let body = coords.quantize_orientation(self_.orientation());
@@ -1048,19 +1129,40 @@ impl AttackBase {
         self_.cancel_activity();
     }
 
-    pub fn get_attack_activity(&self, self_: &ActorRef, source: AttackSource, target: &Target, allow_move: bool, force_attack: bool) -> ActivityRef {
+    pub fn get_attack_activity(
+        &self,
+        self_: &ActorRef,
+        source: AttackSource,
+        target: &Target,
+        allow_move: bool,
+        force_attack: bool,
+    ) -> ActivityRef {
         let me = self.me.upgrade().expect("attack");
         match self.info.kind {
             AttackKind::Frontal => Attack::new(self_, target, allow_move, force_attack),
-            AttackKind::Omni | AttackKind::Charges => Rc::new(SetTarget { base: ActivityBase::default(), attack: me, allow_move, force_attack, target: RefCell::new(target.clone()) }),
+            AttackKind::Omni | AttackKind::Charges => Rc::new(SetTarget {
+                base: ActivityBase::default(),
+                attack: me,
+                allow_move,
+                force_attack,
+                target: RefCell::new(target.clone()),
+            }),
             AttackKind::Follow | AttackKind::Turreted | AttackKind::Garrisoned => {
-                let force = force_attack || (self.opportunity_target_is_persistent.get() && self.opportunity_force_attack.get() && self.opportunity_target.borrow().same_as(target));
+                let force = force_attack
+                    || (self.opportunity_target_is_persistent.get()
+                        && self.opportunity_force_attack.get()
+                        && self.opportunity_target.borrow().same_as(target));
                 AttackActivity::new(self_, me, source, target, allow_move, force)
             }
             AttackKind::Aircraft => FlyAttack::new(self_, me, source, target, force_attack),
             AttackKind::Bomber => panic!("AttackBomber requires a scripted target"),
             AttackKind::Leap => LeapAttack::new(self_, target, allow_move, force_attack, me),
-            AttackKind::Tesla => Rc::new(ChargeAttack { base: ActivityBase::default(), attack: me, target: target.clone(), force_attack }),
+            AttackKind::Tesla => Rc::new(ChargeAttack {
+                base: ActivityBase::default(),
+                attack: me,
+                target: target.clone(),
+                force_attack,
+            }),
         }
     }
 
@@ -1069,14 +1171,22 @@ impl AttackBase {
             return false;
         }
         if self.info.attack_requires_entering_cell {
-            let can_enter = self.positionable.get().and_then(|p| p.as_ref()).is_some_and(|p| p.can_enter_cell(t.actor().expect("target actor").location(), None, BlockedByActor::None));
+            let can_enter = self
+                .positionable
+                .get()
+                .and_then(|p| p.as_ref())
+                .is_some_and(|p| p.can_enter_cell(t.actor().expect("target actor").location(), None, BlockedByActor::None));
             if !can_enter {
                 return false;
             }
         }
         let w = self.self_.world();
         self.armaments.borrow().iter().any(|a| {
-            let check = if check_for_center_targeting_weapons { a.weapon.target_actor_center } else { !a.is_trait_paused() };
+            let check = if check_for_center_targeting_weapons {
+                a.weapon.target_actor_center
+            } else {
+                !a.is_trait_paused()
+            };
             check && (!reloading_is_invalid || !a.is_reloading()) && !a.is_trait_disabled() && a.weapon.is_valid_against(t, &w, &self.self_)
         })
     }
@@ -1093,14 +1203,25 @@ impl AttackBase {
         if self.is_trait_disabled() {
             return WDist::ZERO;
         }
-        self.armaments.borrow().iter().filter(|a| !a.is_trait_disabled() && !a.is_trait_paused()).map(|a| a.weapon.min_range).min().unwrap_or(WDist::ZERO)
+        self.armaments
+            .borrow()
+            .iter()
+            .filter(|a| !a.is_trait_disabled() && !a.is_trait_paused())
+            .map(|a| a.weapon.min_range)
+            .min()
+            .unwrap_or(WDist::ZERO)
     }
 
     pub fn get_maximum_range(&self) -> WDist {
         if self.is_trait_disabled() {
             return WDist::ZERO;
         }
-        self.armaments.borrow().iter().filter(|a| !a.is_trait_disabled() && !a.is_trait_paused()).map(|a| a.max_range()).fold(WDist::ZERO, WDist::max)
+        self.armaments
+            .borrow()
+            .iter()
+            .filter(|a| !a.is_trait_disabled() && !a.is_trait_paused())
+            .map(|a| a.max_range())
+            .fold(WDist::ZERO, WDist::max)
     }
 
     pub fn get_minimum_range_versus_target(&self, target: &Target) -> WDist {
@@ -1138,7 +1259,11 @@ impl AttackBase {
 
     pub fn choose_armaments_for_target(&self, t: &Target, force_attack: bool) -> Vec<Rc<Armament>> {
         let tt = t.target_type();
-        if !force_attack && ((tt == TargetType::Terrain && !self.info.target_terrain_without_force_fire) || tt == TargetType::Invalid || t.requires_force_fire()) {
+        if !force_attack
+            && ((tt == TargetType::Terrain && !self.info.target_terrain_without_force_fire)
+                || tt == TargetType::Invalid
+                || t.requires_force_fire())
+        {
             return Vec::new();
         }
         let owner = match tt {
@@ -1154,7 +1279,11 @@ impl AttackBase {
             .filter(|a| {
                 !a.is_trait_disabled()
                     && owner.as_ref().is_none_or(|o| {
-                        let r = if force_attack { a.info.force_target_relationships } else { a.info.target_relationships };
+                        let r = if force_attack {
+                            a.info.force_target_relationships
+                        } else {
+                            a.info.target_relationships
+                        };
                         r.has_relationship(me.relationship_with(Some(o)))
                     })
                     && a.weapon.is_valid_against(t, &w, &self.self_)
@@ -1177,7 +1306,8 @@ impl AttackBase {
 
     pub fn is_reachable_target(&self, target: &Target, allow_move: bool) -> bool {
         self.has_any_valid_weapons(target, false, false)
-            && (target.is_in_range(self.self_.center_position(), self.get_maximum_range_versus_target(target)) || (allow_move && self.self_.trait_or_default::<dyn IMove>().is_some()))
+            && (target.is_in_range(self.self_.center_position(), self.get_maximum_range_versus_target(target))
+                || (allow_move && self.self_.trait_or_default::<dyn IMove>().is_some()))
     }
 
     pub fn unforced_attack_target_stances(&self) -> PlayerRelationship {
@@ -1191,7 +1321,8 @@ impl AttackBase {
     }
 
     pub fn grant_leap_condition(&self, self_: &ActorRef) {
-        self.leap_token.set(self_.grant_condition(self.info.leap_condition.as_deref().unwrap_or("")));
+        self.leap_token
+            .set(self_.grant_condition(self.info.leap_condition.as_deref().unwrap_or("")));
     }
 
     pub fn revoke_leap_condition(&self, self_: &ActorRef) {
@@ -1291,7 +1422,10 @@ fn has_valid_priority(target: &Target, self_: &ActorRef, auto_target: &AutoTarge
 
 impl INotifyPassengerEntered for AttackBase {
     fn on_passenger_entered(&self, self_: &ActorRef, passenger: &ActorRef) {
-        self.pax.borrow_mut().insert(passenger.id, (passenger.trait_::<dyn IFacing>(), passenger.trait_::<dyn IPositionable>()));
+        self.pax.borrow_mut().insert(
+            passenger.id,
+            (passenger.trait_::<dyn IFacing>(), passenger.trait_::<dyn IPositionable>()),
+        );
         let notify = self.notify_attacks.borrow().clone();
         for a in passenger.traits_implementing::<Armament>() {
             if self.info.armaments.contains(&a.info.name) {
@@ -1360,12 +1494,19 @@ struct LastVisible {
 
 impl LastVisible {
     fn new() -> Self {
-        LastVisible { target: RefCell::new(Target::Invalid), maximum_range: Cell::new(WDist::ZERO), target_types: RefCell::new(BitSet::default()), owner: RefCell::new(None) }
+        LastVisible {
+            target: RefCell::new(Target::Invalid),
+            maximum_range: Cell::new(WDist::ZERO),
+            target_types: RefCell::new(BitSet::default()),
+            owner: RefCell::new(None),
+        }
     }
 
     fn visible_on_creation(self_: &ActorRef, target: &Target) -> bool {
         let tt = target.target_type();
-        (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner()))) || tt == TargetType::FrozenActor || tt == TargetType::Terrain
+        (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner())))
+            || tt == TargetType::FrozenActor
+            || tt == TargetType::Terrain
     }
 
     fn set_owner_types(&self, target: &Target) {
@@ -1385,7 +1526,8 @@ impl LastVisible {
     }
 
     fn has_valid_priority(&self, self_: &ActorRef, auto_target: &AutoTarget) -> bool {
-        self.target.borrow().is_valid_for(self_) && auto_target.has_valid_target_priority(self_, self.owner.borrow().as_ref(), &self.target_types.borrow())
+        self.target.borrow().is_valid_for(self_)
+            && auto_target.has_valid_target_priority(self_, self.owner.borrow().as_ref(), &self.target_types.borrow())
     }
 }
 
@@ -1421,7 +1563,11 @@ pub struct Attack {
 
 impl Attack {
     pub fn new(self_: &ActorRef, target: &Target, allow_movement: bool, force_attack: bool) -> ActivityRef {
-        let attack_traits: Vec<Rc<AttackBase>> = self_.traits_implementing::<AttackBase>().into_iter().filter(|a| a.info.kind.is_frontal()).collect();
+        let attack_traits: Vec<Rc<AttackBase>> = self_
+            .traits_implementing::<AttackBase>()
+            .into_iter()
+            .filter(|a| a.info.kind.is_frontal())
+            .collect();
         let imove = self_.trait_or_default::<dyn IMove>();
         let mobile = self_.trait_or_default::<Mobile>();
         let a = Attack {
@@ -1451,13 +1597,22 @@ impl Attack {
     }
 
     fn min_max_range(&self, target: &Target) -> WDist {
-        self.active_traits().iter().map(|x| x.get_maximum_range_versus_target(target)).min().expect("Attack without enabled attack traits")
+        self.active_traits()
+            .iter()
+            .map(|x| x.get_maximum_range_versus_target(target))
+            .min()
+            .expect("Attack without enabled attack traits")
     }
 
     fn queue_move(&self, min_range: WDist, max_range: WDist, initial: WPos) {
         self.helper.notify_move_queued();
         let target = self.target.borrow().clone();
-        self.base.queue_child(self.mv.as_ref().unwrap().move_within_range(&target, min_range, max_range, Some(initial)));
+        self.base.queue_child(
+            self.mv
+                .as_ref()
+                .unwrap()
+                .move_within_range(&target, min_range, max_range, Some(initial)),
+        );
     }
 
     fn add_status(&self, s: i32) {
@@ -1469,7 +1624,11 @@ impl Attack {
         if !target.is_valid_for(self_) {
             return 0;
         }
-        if attack.info.attack_requires_entering_cell && !self.positionable.can_enter_cell(target.actor().expect("target actor").location(), None, BlockedByActor::None) {
+        if attack.info.attack_requires_entering_cell
+            && !self
+                .positionable
+                .can_enter_cell(target.actor().expect("target actor").location(), None, BlockedByActor::None)
+        {
             return 0;
         }
         if !attack.info.target_frozen_actors && !self.force_attack && target.target_type() == TargetType::FrozenActor {
@@ -1486,23 +1645,37 @@ impl Attack {
         }
         let active: Vec<&Rc<Armament>> = armaments.iter().filter(|x| !x.is_trait_paused()).collect();
         let (min_range, max_range) = if !active.is_empty() {
-            (active.iter().map(|a| a.weapon.min_range).max().unwrap(), active.iter().map(|a| a.max_range()).min().unwrap())
+            (
+                active.iter().map(|a| a.weapon.min_range).max().unwrap(),
+                active.iter().map(|a| a.max_range()).min().unwrap(),
+            )
         } else {
             (WDist::ZERO, armaments.iter().map(|a| a.max_range()).max().unwrap())
         };
         let pos = self_.center_position();
-        if !target.is_in_range(pos, max_range) || (min_range.length != 0 && target.is_in_range(pos, min_range)) || self.mobile.as_ref().is_some_and(|m| !m.can_interact_with_ground_layer(self_)) {
+        if !target.is_in_range(pos, max_range)
+            || (min_range.length != 0 && target.is_in_range(pos, min_range))
+            || self.mobile.as_ref().is_some_and(|m| !m.can_interact_with_ground_layer(self_))
+        {
             if self.mv.is_none() {
                 return 0;
             }
             self.add_status(STATUS_NEEDS_TO_MOVE);
-            let check = if self.use_last_visible_target.get() { self.last_visible.target.borrow().clone() } else { target };
+            let check = if self.use_last_visible_target.get() {
+                self.last_visible.target.borrow().clone()
+            } else {
+                target
+            };
             self.queue_move(min_range, max_range, check.center_position());
             return STATUS_NEEDS_TO_MOVE;
         }
         if !attack.target_in_firing_arc(self_, &target, attack.info.facing_tolerance) {
             if self.mobile.as_ref().is_none_or(|m| !m.is_trait_disabled() && !m.is_trait_paused()) {
-                self.facing.set_facing(util::tick_facing(self.facing.facing(), (attack.get_target_position(pos, &target) - pos).yaw(), self.facing.turn_speed()));
+                self.facing.set_facing(util::tick_facing(
+                    self.facing.facing(),
+                    (attack.get_target_position(pos, &target) - pos).yaw(),
+                    self.facing.turn_speed(),
+                ));
                 if !attack.target_in_firing_arc(self_, &target, attack.info.facing_tolerance) {
                     self.add_status(STATUS_NEEDS_TO_TURN);
                     return STATUS_NEEDS_TO_TURN;
@@ -1591,7 +1764,14 @@ pub struct AttackActivity {
 }
 
 impl AttackActivity {
-    fn new(self_: &ActorRef, attack: Rc<AttackBase>, source: AttackSource, target: &Target, allow_move: bool, force_attack: bool) -> ActivityRef {
+    fn new(
+        self_: &ActorRef,
+        attack: Rc<AttackBase>,
+        source: AttackSource,
+        target: &Target,
+        allow_move: bool,
+        force_attack: bool,
+    ) -> ActivityRef {
         let mv = if allow_move { self_.trait_or_default::<dyn IMove>() } else { None };
         let helper = MoveCooldownHelper::new(if mv.is_some() { self_.trait_or_default::<Mobile>() } else { None });
         helper.retry_if_destination_blocked.set(true);
@@ -1648,7 +1828,13 @@ impl Activity for AttackActivity {
                 let prefer_min = (min.length + leeway).min(max.length);
                 let prefer_max = (max.length - leeway).max(min.length);
                 let v = max.length - leeway;
-                max = WDist::new(if v < prefer_min { prefer_min } else if v > prefer_max { prefer_max } else { v });
+                max = WDist::new(if v < prefer_min {
+                    prefer_min
+                } else if v > prefer_max {
+                    prefer_max
+                } else {
+                    v
+                });
             }
             self.last_visible.maximum_range.set(max);
             self.last_visible_minimum_range.set(min);
@@ -1671,7 +1857,12 @@ impl Activity for AttackActivity {
         }
         let w = self_.world();
         if let Some(rearmable) = &self.rearmable {
-            if !use_last && attack.armaments().iter().all(|x| x.is_trait_paused() || !x.weapon.is_valid_against(&target, &w, self_)) {
+            if !use_last
+                && attack
+                    .armaments()
+                    .iter()
+                    .all(|x| x.is_trait_paused() || !x.weapon.is_valid_against(&target, &w, self_))
+            {
                 if self.source == AttackSource::AttackMove {
                     return true;
                 }
@@ -1686,9 +1877,19 @@ impl Activity for AttackActivity {
                     let mut hosts: Vec<ActorRef> = w
                         .actors_having_trait::<crate::aircraft::Reservable>()
                         .into_iter()
-                        .filter(|a| !a.is_dead() && a.is_in_world() && a.owner().is_allied_with(Some(&self_.owner())) && rearmable.info.rearm_actors.contains(&a.info.name))
+                        .filter(|a| {
+                            !a.is_dead()
+                                && a.is_in_world()
+                                && a.owner().is_allied_with(Some(&self_.owner()))
+                                && rearmable.info.rearm_actors.contains(&a.info.name)
+                        })
                         .collect();
-                    hosts.sort_by_key(|a| (if Rc::ptr_eq(&a.owner(), &self_.owner()) { 0 } else { 1 }, (self_.location() - a.location()).length_squared()));
+                    hosts.sort_by_key(|a| {
+                        (
+                            if Rc::ptr_eq(&a.owner(), &self_.owner()) { 0 } else { 1 },
+                            (self_.location() - a.location()).length_squared(),
+                        )
+                    });
                     if let Some(h) = hosts.first() {
                         self.base.queue_child(Resupply::new(self_, h, WDist::new(512), false));
                     }
@@ -1697,7 +1898,11 @@ impl Activity for AttackActivity {
             }
         }
         let pos = self_.center_position();
-        let check = if use_last { self.last_visible.target.borrow().clone() } else { target.clone() };
+        let check = if use_last {
+            self.last_visible.target.borrow().clone()
+        } else {
+            target.clone()
+        };
         if check.is_in_range(pos, max_range) && !check.is_in_range(pos, min_range) {
             return use_last;
         }
@@ -1706,7 +1911,8 @@ impl Activity for AttackActivity {
             return true;
         }
         self.helper.notify_move_queued();
-        self.base.queue_child(mv.move_within_range(&target, min_range, max_range, Some(check.center_position())));
+        self.base
+            .queue_child(mv.move_within_range(&target, min_range, max_range, Some(check.center_position())));
         false
     }
 
@@ -1760,7 +1966,11 @@ impl Activity for ChargeAttack {
             n.charging(self_, &self.target);
         }
         self.base.queue_child(Wait::new(self.attack.info.initial_charge_delay));
-        self.base.queue_child(Rc::new(ChargeFire { base: ActivityBase::default(), attack: self.attack.clone(), target: self.target.clone() }));
+        self.base.queue_child(Rc::new(ChargeFire {
+            base: ActivityBase::default(),
+            attack: self.attack.clone(),
+            target: self.target.clone(),
+        }));
         false
     }
 }
@@ -1843,7 +2053,8 @@ impl Activity for FlyAttack {
         attack.set_requested_target(&target, self.force_attack, None);
         self.has_ticked.set(true);
         let tt = target.target_type();
-        if (!hidden && tt == TargetType::Actor) || (tt == TargetType::FrozenActor && !self.last_visible.target.borrow().is_valid_for(self_)) {
+        if (!hidden && tt == TargetType::Actor) || (tt == TargetType::FrozenActor && !self.last_visible.target.borrow().is_valid_for(self_))
+        {
             *self.last_visible.target.borrow_mut() = Target::from_target_positions(&target);
             self.last_visible.maximum_range.set(attack.get_maximum_range_versus_target(&target));
             self.last_visible.set_owner_types(&target);
@@ -1853,7 +2064,13 @@ impl Activity for FlyAttack {
             return true;
         }
         let w = self_.world();
-        if self.rearmable.is_some() && !use_last && attack.armaments().iter().all(|x| x.is_trait_paused() || !x.weapon.is_valid_against(&target, &w, self_)) {
+        if self.rearmable.is_some()
+            && !use_last
+            && attack
+                .armaments()
+                .iter()
+                .all(|x| x.is_trait_paused() || !x.weapon.is_valid_against(&target, &w, self_))
+        {
             if self.source == AttackSource::AttackMove {
                 return true;
             }
@@ -1866,26 +2083,55 @@ impl Activity for FlyAttack {
             return attack.info.abort_on_resupply;
         }
         let pos = self_.center_position();
-        let check = if use_last { self.last_visible.target.borrow().clone() } else { target.clone() };
-        let minimum_range = if attack.info.attack_type == AirAttackType::Strafe { WDist::ZERO } else { attack.get_minimum_range_versus_target(&target) };
+        let check = if use_last {
+            self.last_visible.target.borrow().clone()
+        } else {
+            target.clone()
+        };
+        let minimum_range = if attack.info.attack_type == AirAttackType::Strafe {
+            WDist::ZERO
+        } else {
+            attack.get_minimum_range_versus_target(&target)
+        };
         let last_max = self.last_visible.maximum_range.get();
         if last_max == WDist::ZERO || last_max < minimum_range {
             return true;
         }
         let delta = attack.get_target_position(pos, &target) - pos;
-        let desired_facing = if delta.horizontal_length_squared() != 0 { delta.yaw() } else { aircraft.facing() };
+        let desired_facing = if delta.horizontal_length_squared() != 0 {
+            delta.yaw()
+        } else {
+            aircraft.facing()
+        };
         self.base.queue_child(TakeOff::new(self_));
         if !check.is_in_range(pos, last_max) || check.is_in_range(pos, minimum_range) {
-            self.base.queue_child(aircraft.move_within_range(&target, minimum_range, last_max, Some(check.center_position())));
+            self.base
+                .queue_child(aircraft.move_within_range(&target, minimum_range, last_max, Some(check.center_position())));
         } else if use_last {
             return true;
         } else if attack.info.attack_type == AirAttackType::Strafe {
-            let exit_range = if self.strafe_distance != WDist::ZERO { self.strafe_distance } else { last_max };
-            let run = StrafeAttackRun { base: ActivityBase::default(), attack: attack.clone(), aircraft: aircraft.clone(), exit_range, target: RefCell::new(target.clone()) };
+            let exit_range = if self.strafe_distance != WDist::ZERO {
+                self.strafe_distance
+            } else {
+                last_max
+            };
+            let run = StrafeAttackRun {
+                base: ActivityBase::default(),
+                attack: attack.clone(),
+                aircraft: aircraft.clone(),
+                exit_range,
+                target: RefCell::new(target.clone()),
+            };
             run.base.child_has_priority.set(false);
             self.base.queue_child(Rc::new(run));
         } else if attack.info.attack_type == AirAttackType::Default && !aircraft.info.can_hover {
-            let run = FlyAttackRun { base: ActivityBase::default(), attack: attack.clone(), exit_range: last_max, target: RefCell::new(target.clone()), target_is_visible_actor: Cell::new(false) };
+            let run = FlyAttackRun {
+                base: ActivityBase::default(),
+                attack: attack.clone(),
+                exit_range: last_max,
+                target: RefCell::new(target.clone()),
+                target_is_visible_actor: Cell::new(false),
+            };
             run.base.child_has_priority.set(false);
             self.base.queue_child(Rc::new(run));
         } else if !attack.target_in_firing_arc(self_, &target, attack.info.facing_tolerance) {
@@ -1914,9 +2160,25 @@ impl Activity for FlyAttackRun {
         let target = self.target.borrow().clone();
         if target.is_valid_for(self_) {
             let c = Some(target.center_position());
-            self.base.queue_child(Fly::full(self_, target.clone(), FlyArgs { initial: c, ..Default::default() }));
+            self.base.queue_child(Fly::full(
+                self_,
+                target.clone(),
+                FlyArgs {
+                    initial: c,
+                    ..Default::default()
+                },
+            ));
             self.base.queue_child(FlyForward::new_ticks(self_, 1));
-            self.base.queue_child(Fly::full(self_, target, FlyArgs { min_range: self.exit_range, max_range: WDist::MAX, initial: c, ..Default::default() }));
+            self.base.queue_child(Fly::full(
+                self_,
+                target,
+                FlyArgs {
+                    min_range: self.exit_range,
+                    max_range: WDist::MAX,
+                    initial: c,
+                    ..Default::default()
+                },
+            ));
         } else {
             self.cancel(self_, false);
         }
@@ -1929,7 +2191,8 @@ impl Activity for FlyAttackRun {
         let was_visible = self.target_is_visible_actor.get();
         let (target, hidden) = self.target.borrow().recalculate(&self_.owner());
         *self.target.borrow_mut() = target.clone();
-        self.target_is_visible_actor.set(target.target_type() == TargetType::Actor && !hidden);
+        self.target_is_visible_actor
+            .set(target.target_type() == TargetType::Actor && !hidden);
         if was_visible && (!target.is_valid_for(self_) || !self.attack.has_any_valid_weapons(&target, false, false)) {
             self.cancel(self_, false);
         }
@@ -1952,10 +2215,26 @@ impl Activity for StrafeAttackRun {
         let target = self.target.borrow().clone();
         if target.is_valid_for(self_) {
             let c = Some(target.center_position());
-            self.base.queue_child(Fly::full(self_, target.clone(), FlyArgs { initial: c, ..Default::default() }));
+            self.base.queue_child(Fly::full(
+                self_,
+                target.clone(),
+                FlyArgs {
+                    initial: c,
+                    ..Default::default()
+                },
+            ));
             self.base.queue_child(FlyForward::new_distance(self_, self.exit_range));
             let distance_to_turn = WDist::new(self.aircraft.info.speed * 256 / self.aircraft.info.turn_speed.angle);
-            self.base.queue_child(Fly::full(self_, target, FlyArgs { min_range: self.exit_range + distance_to_turn, max_range: WDist::MAX, initial: c, ..Default::default() }));
+            self.base.queue_child(Fly::full(
+                self_,
+                target,
+                FlyArgs {
+                    min_range: self.exit_range + distance_to_turn,
+                    max_range: WDist::MAX,
+                    initial: c,
+                    ..Default::default()
+                },
+            ));
         } else {
             self.cancel(self_, false);
         }
@@ -1968,7 +2247,8 @@ impl Activity for StrafeAttackRun {
         let (target, hidden) = self.target.borrow().recalculate(&self_.owner());
         *self.target.borrow_mut() = target.clone();
         if !hidden && target.target_type() == TargetType::Actor {
-            self.attack.set_requested_target(&Target::from_target_positions(&target), true, None);
+            self.attack
+                .set_requested_target(&Target::from_target_positions(&target), true, None);
         }
         false
     }
@@ -1983,7 +2263,11 @@ pub struct Hunt {
 
 impl Hunt {
     pub fn new(self_: &ActorRef) -> ActivityRef {
-        Rc::new(Hunt { base: ActivityBase::default(), mv: self_.trait_::<dyn IMove>(), attack: self_.trait_::<AttackBase>() })
+        Rc::new(Hunt {
+            base: ActivityBase::default(),
+            mv: self_.trait_::<dyn IMove>(),
+            attack: self_.trait_::<AttackBase>(),
+        })
     }
 }
 
@@ -1996,13 +2280,27 @@ impl Activity for Hunt {
         }
         let w = self_.world();
         let candidates = w.actors_having_trait::<crate::conditions::Huntable>().into_iter().filter(|a| {
-            a.id != self_.id && !a.is_dead() && a.is_in_world() && util::appears_hostile_to(a, self_) && rustora_engine::actor_ext::is_targetable_by(a, self_) && self.attack.has_any_valid_weapons(&Target::from_actor(Some(a)), false, false)
+            a.id != self_.id
+                && !a.is_dead()
+                && a.is_in_world()
+                && util::appears_hostile_to(a, self_)
+                && rustora_engine::actor_ext::is_targetable_by(a, self_)
+                && self.attack.has_any_valid_weapons(&Target::from_actor(Some(a)), false, false)
         });
-        let Some(target_actor) = util::closest_to_with_path_from(candidates, self_) else { return false };
+        let Some(target_actor) = util::closest_to_with_path_from(candidates, self_) else {
+            return false;
+        };
         let (mv, world, location) = (self.mv.clone(), w.clone(), target_actor.location());
         self.base.queue_child(crate::attack_move::AttackMoveActivity::new(
             self_,
-            Rc::new(move || mv.move_within_range(&Target::from_cell(&world, location, rustora_engine::traits::subcell::FULL_CELL), WDist::ZERO, WDist::from_cells(2), None)),
+            Rc::new(move || {
+                mv.move_within_range(
+                    &Target::from_cell(&world, location, rustora_engine::traits::subcell::FULL_CELL),
+                    WDist::ZERO,
+                    WDist::from_cells(2),
+                    None,
+                )
+            }),
             false,
         ));
         self.base.queue_child(Wait::new(25));
@@ -2086,7 +2384,9 @@ impl LeapAttack {
 
     fn update_ranges(&self, target: &Target) {
         self.last_visible_min_range.set(self.attack.get_minimum_range_versus_target(target));
-        self.last_visible.maximum_range.set(self.attack.get_maximum_range_versus_target(target));
+        self.last_visible
+            .maximum_range
+            .set(self.attack.get_maximum_range_versus_target(target));
     }
 }
 
@@ -2118,14 +2418,21 @@ impl Activity for LeapAttack {
             return true;
         }
         let pos = self_.center_position();
-        let check = if self.use_last_visible_target.get() { last_visible } else { target.clone() };
+        let check = if self.use_last_visible_target.get() {
+            last_visible
+        } else {
+            target.clone()
+        };
         let (min_range, max_range) = (self.last_visible_min_range.get(), self.last_visible.maximum_range.get());
         if !check.is_in_range(pos, max_range) || check.is_in_range(pos, min_range) {
             if !self.allow_movement || max_range == WDist::ZERO || max_range < min_range {
                 return true;
             }
             self.helper.notify_move_queued();
-            self.base.queue_child(self.mobile.move_within_range(&target, min_range, max_range, Some(check.center_position())));
+            self.base.queue_child(
+                self.mobile
+                    .move_within_range(&target, min_range, max_range, Some(check.center_position())),
+            );
             return false;
         }
         if hidden || target.target_type() != TargetType::Actor {
@@ -2135,12 +2442,16 @@ impl Activity for LeapAttack {
             return true;
         }
         let victim = target.actor().unwrap().clone();
-        let Some(edible) = victim.trait_or_default::<EdibleByLeap>().filter(|e| e.can_leap(self_)) else { return true };
+        let Some(edible) = victim.trait_or_default::<EdibleByLeap>().filter(|e| e.can_leap(self_)) else {
+            return true;
+        };
         if self.attack.armaments().iter().all(|a| a.is_reloading()) {
             return false;
         }
         let target_mobile = victim.trait_or_default::<Mobile>();
-        let target_subcell = target_mobile.as_ref().map_or(rustora_engine::traits::subcell::ANY, |m| m.to_subcell.get());
+        let target_subcell = target_mobile
+            .as_ref()
+            .map_or(rustora_engine::traits::subcell::ANY, |m| m.to_subcell.get());
         let destination = w.map().center_of_subcell(victim.location(), target_subcell);
         let origin = w.map().center_of_subcell(self_.location(), self.mobile.from_subcell.get());
         let desired_facing = (destination - origin).yaw();
@@ -2148,7 +2459,14 @@ impl Activity for LeapAttack {
             self.base.queue_child(Turn::new(self_, desired_facing));
             return false;
         }
-        self.base.queue_child(Leap::new(&target, self.mobile.clone(), target_mobile, self.attack.info.speed.length, self.attack.clone(), edible));
+        self.base.queue_child(Leap::new(
+            &target,
+            self.mobile.clone(),
+            target_mobile,
+            self.attack.info.speed.length,
+            self.attack.clone(),
+            edible,
+        ));
         false
     }
 
@@ -2178,7 +2496,14 @@ pub struct Leap {
 }
 
 impl Leap {
-    pub fn new(target: &Target, mobile: Rc<Mobile>, target_mobile: Option<Rc<Mobile>>, speed: i32, attack: Rc<AttackBase>, edible: Rc<EdibleByLeap>) -> ActivityRef {
+    pub fn new(
+        target: &Target,
+        mobile: Rc<Mobile>,
+        target_mobile: Option<Rc<Mobile>>,
+        speed: i32,
+        attack: Rc<AttackBase>,
+        edible: Rc<EdibleByLeap>,
+    ) -> ActivityRef {
         Rc::new(Leap {
             base: ActivityBase::default(),
             mobile,
@@ -2210,9 +2535,14 @@ impl Activity for Leap {
         }
         let w = self_.world();
         self.origin.set(self_.center_position());
-        self.destination.set(w.map().center_of_subcell(self.destination_cell.get(), self.destination_subcell.get()));
-        self.length.set(((self.origin.get() - self.destination.get()).length() / self.speed).max(1));
-        self.canceled.set(!self.edible.get_leap_at_by(self_) || self.target.target_type() != TargetType::Actor);
+        self.destination.set(
+            w.map()
+                .center_of_subcell(self.destination_cell.get(), self.destination_subcell.get()),
+        );
+        self.length
+            .set(((self.origin.get() - self.destination.get()).length() / self.speed).max(1));
+        self.canceled
+            .set(!self.edible.get_leap_at_by(self_) || self.target.target_type() != TargetType::Actor);
         self.base.is_interruptible.set(false);
         if self.canceled.get() {
             return;
@@ -2229,7 +2559,11 @@ impl Activity for Leap {
             self.target_position.set(self.target.center_position());
         }
         let length = self.length.get();
-        let position = if length > 1 { WPos::lerp(self.origin.get(), self.target_position.get(), self.ticks.get(), length - 1) } else { self.target_position.get() };
+        let position = if length > 1 {
+            WPos::lerp(self.origin.get(), self.target_position.get(), self.ticks.get(), length - 1)
+        } else {
+            self.target_position.get()
+        };
         self.mobile.set_center_position(self_, position);
         self.ticks.set(self.ticks.get() + 1);
         if self.ticks.get() >= length {
@@ -2255,6 +2589,10 @@ impl Activity for Leap {
     }
 
     fn get_targets(&self, _self_: &ActorRef) -> Vec<Target> {
-        vec![Target::from_pos(if self.ticks.get() < self.length.get() / 2 { self.origin.get() } else { self.destination.get() })]
+        vec![Target::from_pos(if self.ticks.get() < self.length.get() / 2 {
+            self.origin.get()
+        } else {
+            self.destination.get()
+        })]
     }
 }

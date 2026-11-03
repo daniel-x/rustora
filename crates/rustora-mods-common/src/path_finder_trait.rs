@@ -50,9 +50,10 @@ impl IWorldLoaded for PathFinder {
                 .insert(l.info.name.clone(), HierarchicalPathFinder::new(w, l.clone(), BlockedByActor::None));
         }
         for l in w.world_actor().traits_implementing::<Locomotor>() {
-            self.by_immovable
-                .borrow_mut()
-                .insert(l.info.name.clone(), HierarchicalPathFinder::new(w, l.clone(), BlockedByActor::Immovable));
+            self.by_immovable.borrow_mut().insert(
+                l.info.name.clone(),
+                HierarchicalPathFinder::new(w, l.clone(), BlockedByActor::Immovable),
+            );
         }
     }
 }
@@ -95,14 +96,16 @@ impl PathFinder {
             .copied()
             .filter(|t| {
                 cell_allows_movement(&world, *t, custom_cost.as_ref())
-                    && locomotor.movement_cost_to_enter_cell(Some(self_), *t, check, ignore_actor, true, FULL_CELL) != MOVEMENT_COST_FOR_UNREACHABLE_CELL
+                    && locomotor.movement_cost_to_enter_cell(Some(self_), *t, check, ignore_actor, true, FULL_CELL)
+                        != MOVEMENT_COST_FOR_UNREACHABLE_CELL
             })
             .collect();
         if accessible.is_empty() {
             return Vec::new();
         }
         let source_accessible = cell_allows_movement(&world, source, custom_cost.as_ref())
-            && locomotor.movement_cost_to_enter_cell(Some(self_), source, check, ignore_actor, true, FULL_CELL) != MOVEMENT_COST_FOR_UNREACHABLE_CELL;
+            && locomotor.movement_cost_to_enter_cell(Some(self_), source, check, ignore_actor, true, FULL_CELL)
+                != MOVEMENT_COST_FOR_UNREACHABLE_CELL;
         let mut path = if source_accessible {
             self.find_path_to_target(self_, targets, source, check, custom_cost, ignore_actor, true, lane_bias)
         } else {
@@ -145,7 +148,8 @@ impl PathFinder {
         let world = self_.world();
         let locomotor = actor_locomotor(self_);
         if !cell_allows_movement(&world, target, custom_cost.as_ref())
-            || locomotor.movement_cost_to_enter_cell(Some(self_), target, check, ignore_actor, in_reverse, FULL_CELL) == MOVEMENT_COST_FOR_UNREACHABLE_CELL
+            || locomotor.movement_cost_to_enter_cell(Some(self_), target, check, ignore_actor, in_reverse, FULL_CELL)
+                == MOVEMENT_COST_FOR_UNREACHABLE_CELL
         {
             return Vec::new();
         }
@@ -158,13 +162,37 @@ impl PathFinder {
                 }
                 return vec![target, source];
             }
-            return hpf.find_path(self_, source, target, check, DEFAULT_HEURISTIC_WEIGHT_PERCENTAGE, custom_cost, ignore_actor, in_reverse, lane_bias);
+            return hpf.find_path(
+                self_,
+                source,
+                target,
+                check,
+                DEFAULT_HEURISTIC_WEIGHT_PERCENTAGE,
+                custom_cost,
+                ignore_actor,
+                in_reverse,
+                lane_bias,
+            );
         }
-        hpf.find_path_multi(self_, sources, target, check, DEFAULT_HEURISTIC_WEIGHT_PERCENTAGE, custom_cost, ignore_actor, in_reverse, lane_bias)
+        hpf.find_path_multi(
+            self_,
+            sources,
+            target,
+            check,
+            DEFAULT_HEURISTIC_WEIGHT_PERCENTAGE,
+            custom_cost,
+            ignore_actor,
+            in_reverse,
+            lane_bias,
+        )
     }
 
     fn hierarchical(&self, locomotor: &Locomotor, check: BlockedByActor, ignore_actor: Option<&ActorRef>) -> Rc<HierarchicalPathFinder> {
-        let m = if check == BlockedByActor::None || ignore_actor.is_some() { &self.by_none } else { &self.by_immovable };
+        let m = if check == BlockedByActor::None || ignore_actor.is_some() {
+            &self.by_none
+        } else {
+            &self.by_immovable
+        };
         m.borrow()[&locomotor.info.name].clone()
     }
 

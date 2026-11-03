@@ -109,7 +109,9 @@ impl IWorldLoaded for ResourceLayer {
         let map = w.map();
         for cell in map.all_cells() {
             let resource = *map.resources.at(cell);
-            let Some(ty) = self.types_by_index.get(&resource.ty) else { continue };
+            let Some(ty) = self.types_by_index.get(&resource.ty) else {
+                continue;
+            };
             if !self.allow_resource_at(ty, cell) {
                 continue;
             }
@@ -134,7 +136,9 @@ impl IWorldLoaded for ResourceLayer {
                 }
             }
             let density = Int2::lerp_i32(0, ri.max_density, adjacent, 9).max(1);
-            self.content.borrow_mut().set_at(cell, ResourceLayerContents { ty: Some(ty), density });
+            self.content
+                .borrow_mut()
+                .set_at(cell, ResourceLayerContents { ty: Some(ty), density });
         }
     }
 }
@@ -183,7 +187,11 @@ impl ResourceLayer {
 
     pub fn get_resource(&self, cell: CPos) -> ResourceLayerContents {
         let c = self.content.borrow();
-        if c.contains_cell(cell) { c.at(cell).clone() } else { ResourceLayerContents::default() }
+        if c.contains_cell(cell) {
+            c.at(cell).clone()
+        } else {
+            ResourceLayerContents::default()
+        }
     }
 
     pub fn get_max_density(&self, ty: &str) -> i32 {
@@ -217,7 +225,13 @@ impl ResourceLayer {
         }
         let old = content.density;
         let density = ri.max_density.min(old + amount);
-        self.content.borrow_mut().set_at(cell, ResourceLayerContents { ty: content.ty.clone(), density });
+        self.content.borrow_mut().set_at(
+            cell,
+            ResourceLayerContents {
+                ty: content.ty.clone(),
+                density,
+            },
+        );
         self.fire(cell, content.ty.as_deref());
         density - old
     }
@@ -238,7 +252,13 @@ impl ResourceLayer {
             self.res_cells.set(self.res_cells.get() - 1);
             self.fire(cell, None);
         } else {
-            self.content.borrow_mut().set_at(cell, ResourceLayerContents { ty: content.ty.clone(), density });
+            self.content.borrow_mut().set_at(
+                cell,
+                ResourceLayerContents {
+                    ty: content.ty.clone(),
+                    density,
+                },
+            );
             self.fire(cell, content.ty.as_deref());
         }
         old - density

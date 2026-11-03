@@ -139,7 +139,9 @@ impl IResolveOrder for Minelayer {
                     .filter(|&c| {
                         self.is_cell_acceptable(self_, c)
                             && shroud.is_explored(c)
-                            && mobile.as_ref().is_some_and(|m| m.can_enter_cell(c, None, BlockedByActor::Immovable) && m.can_stay_in_cell(c))
+                            && mobile
+                                .as_ref()
+                                .is_some_and(|m| m.can_enter_cell(c, None, BlockedByActor::Immovable) && m.can_stay_in_cell(c))
                     })
                     .collect();
                 minefield.sort_by_key(|&c| (c - start).length_squared());
@@ -199,7 +201,12 @@ impl LayMines {
     }
 
     fn next_valid_cell(&self, self_: &ActorRef) -> Option<CPos> {
-        self.minefield.borrow().as_ref()?.iter().copied().find(|&c| Self::can_lay_mine(self_, c))
+        self.minefield
+            .borrow()
+            .as_ref()?
+            .iter()
+            .copied()
+            .find(|&c| Self::can_lay_mine(self_, c))
     }
 
     fn pool(&self) -> Option<&Rc<AmmoPool>> {
@@ -227,7 +234,12 @@ impl LayMines {
             if !Self::can_lay_mine(&a, a.location()) {
                 return;
             }
-            w.create_actor(&mine, ActorInits::new().with(LocationInit::new(a.location())).with(OwnerInit::from_player(&a.owner())));
+            w.create_actor(
+                &mine,
+                ActorInits::new()
+                    .with(LocationInit::new(a.location()))
+                    .with(OwnerInit::from_player(&a.owner())),
+            );
         }));
         true
     }
@@ -241,8 +253,14 @@ impl LayMines {
         let mine = &self.minelayer.info.mine;
         let positionable = self_.trait_::<dyn IPositionable>();
         minefield.retain(|&c| {
-            let has_mine = w.actor_map().get_actors_at(c).iter().any(|a| a.info.name.eq_ignore_ascii_case(mine) && a.can_be_viewed_by_player(Some(&owner)));
-            let blocked = (!positionable.can_enter_cell(c, None, BlockedByActor::Immovable) || self.mobile.as_ref().is_some_and(|m| !m.can_stay_in_cell(c))) && shroud.is_visible(c);
+            let has_mine = w
+                .actor_map()
+                .get_actors_at(c)
+                .iter()
+                .any(|a| a.info.name.eq_ignore_ascii_case(mine) && a.can_be_viewed_by_player(Some(&owner)));
+            let blocked = (!positionable.can_enter_cell(c, None, BlockedByActor::Immovable)
+                || self.mobile.as_ref().is_some_and(|m| !m.can_stay_in_cell(c)))
+                && shroud.is_visible(c);
             !(has_mine || blocked)
         });
     }
@@ -282,12 +300,21 @@ impl Activity for LayMines {
             if let Some(ri) = &self.rearmable_info {
                 if self.ammo_pools.iter().any(|p| p.info.name == info.ammo_pool_name && !p.has_ammo()) {
                     let owner = self_.owner();
-                    let candidates = w.actors().into_iter().filter(|a| owner.relationship_with(Some(&a.owner())) == PlayerRelationship::ALLY && ri.rearm_actors.contains(&a.info.name));
-                    let Some(rearm_target) = util::closest_to_with_path_from(candidates, self_) else { return true };
+                    let candidates = w.actors().into_iter().filter(|a| {
+                        owner.relationship_with(Some(&a.owner())) == PlayerRelationship::ALLY && ri.rearm_actors.contains(&a.info.name)
+                    });
+                    let Some(rearm_target) = util::closest_to_with_path_from(candidates, self_) else {
+                        return true;
+                    };
                     self.helper.notify_move_queued();
                     let t = Target::from_actor(Some(&rearm_target));
                     self.base.queue_child(MoveAdjacentTo::new_adjacent(self_, &t, None));
-                    self.base.queue_child(self.movement.move_to(w.map().cell_containing(rearm_target.center_position()), 0, Some(rearm_target.clone()), false));
+                    self.base.queue_child(self.movement.move_to(
+                        w.map().cell_containing(rearm_target.center_position()),
+                        0,
+                        Some(rearm_target.clone()),
+                        false,
+                    ));
                     self.base.queue_child(Resupply::new(self_, &rearm_target, WDist::new(512), false));
                     return false;
                 }
@@ -326,7 +353,13 @@ pub struct MineInfo {
 
 impl Default for MineInfo {
     fn default() -> Self {
-        MineInfo { instance_name: None, crush_classes: BitSet::default(), avoid_friendly: true, block_friendly: true, detonate_classes: BitSet::default() }
+        MineInfo {
+            instance_name: None,
+            crush_classes: BitSet::default(),
+            avoid_friendly: true,
+            block_friendly: true,
+            detonate_classes: BitSet::default(),
+        }
     }
 }
 
@@ -348,7 +381,9 @@ impl INotifyCrushed for Mine {
         if !self.info.crush_classes.overlaps(&classes) {
             return;
         }
-        if is_mine_immune(crusher) || (self_.owner().relationship_with(Some(&crusher.owner())) == PlayerRelationship::ALLY && self.info.avoid_friendly) {
+        if is_mine_immune(crusher)
+            || (self_.owner().relationship_with(Some(&crusher.owner())) == PlayerRelationship::ALLY && self.info.avoid_friendly)
+        {
             return;
         }
         let mobile = crusher.trait_or_default::<Mobile>();
@@ -366,7 +401,10 @@ impl INotifyCrushed for Mine {
 
 impl ICrushable for Mine {
     fn crushable_by_actor(&self, self_: &ActorRef, crusher: &ActorRef, classes: BitSet<CrushClass>) -> bool {
-        if self.info.block_friendly && !is_mine_immune(crusher) && self_.owner().relationship_with(Some(&crusher.owner())) == PlayerRelationship::ALLY {
+        if self.info.block_friendly
+            && !is_mine_immune(crusher)
+            && self_.owner().relationship_with(Some(&crusher.owner())) == PlayerRelationship::ALLY
+        {
             return false;
         }
         self.info.crush_classes.overlaps(&classes)
@@ -377,7 +415,11 @@ impl ICrushable for Mine {
             return 0;
         }
         let all = self_.world().all_players_mask.get();
-        if self.info.block_friendly { all & !self_.owner().allied_players_mask.get() } else { all }
+        if self.info.block_friendly {
+            all & !self_.owner().allied_players_mask.get()
+        } else {
+            all
+        }
     }
 }
 

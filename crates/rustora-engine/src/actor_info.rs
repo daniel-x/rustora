@@ -205,7 +205,9 @@ impl ActorInfo {
 
     /// `HasTraitInfo<I>` for a C# info interface or base class `name`, using the generated type table.
     pub fn has_trait_info_assignable_to(&self, name: &str) -> bool {
-        self.nodes.iter().any(|n| n.type_entry().is_some_and(|e| e.assignable.contains(&name)))
+        self.nodes
+            .iter()
+            .any(|n| n.type_entry().is_some_and(|e| e.assignable.contains(&name)))
     }
 
     pub fn has_trait_info<T: ?Sized + 'static>(&self) -> bool {

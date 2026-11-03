@@ -76,7 +76,8 @@ impl INotifyParachute for Parachutable {
     fn on_parachute(&self, self_: &ActorRef) {
         self.is_in_air.set(true);
         if self.token.get() == INVALID_CONDITION_TOKEN {
-            self.token.set(self_.grant_condition(self.info.parachuting_condition.as_deref().unwrap_or("")));
+            self.token
+                .set(self_.grant_condition(self.info.parachuting_condition.as_deref().unwrap_or("")));
         }
         crate::activities::notify_blocker(self_, self_.location());
     }

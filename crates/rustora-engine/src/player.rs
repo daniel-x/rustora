@@ -45,7 +45,11 @@ impl Default for PlayerRelationship {
 
 impl rustora_core::fieldloader::FieldValue for PlayerRelationship {
     const TYPE_NAME: &'static str = "PlayerRelationship";
-    fn parse(field: &str, value: Option<&str>, _yaml: Option<&rustora_core::miniyaml::MiniYaml>) -> Result<Self, rustora_core::fieldloader::LoadError> {
+    fn parse(
+        field: &str,
+        value: Option<&str>,
+        _yaml: Option<&rustora_core::miniyaml::MiniYaml>,
+    ) -> Result<Self, rustora_core::fieldloader::LoadError> {
         let mut r = 0;
         for p in value.unwrap_or("").split(',').map(str::trim).filter(|p| !p.is_empty()) {
             r |= match p {
@@ -157,7 +161,9 @@ impl Player {
         let _ = p.player_actor.set(actor.clone());
         actor.initialize(true);
         let _ = p.shroud.set(actor.trait_::<crate::shroud::Shroud>());
-        let _ = p.frozen_actor_layer.set(actor.trait_or_default::<crate::frozen::FrozenActorLayer>());
+        let _ = p
+            .frozen_actor_layer
+            .set(actor.trait_or_default::<crate::frozen::FrozenActorLayer>());
         *p.notify_disconnected.borrow_mut() = actor.traits_implementing::<dyn crate::traits::INotifyPlayerDisconnected>();
         *p.unlock_render_player.borrow_mut() = actor.traits_implementing::<dyn crate::traits::IUnlocksRenderPlayer>();
         p

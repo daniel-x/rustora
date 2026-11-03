@@ -360,7 +360,13 @@ impl Map {
     }
 
     /// Cells at distance `min_range..=max_range`, nearest first.
-    pub fn find_tiles_in_annulus(&self, center: CPos, min_range: i32, max_range: i32, allow_outside_bounds: bool) -> impl Iterator<Item = CPos> + '_ {
+    pub fn find_tiles_in_annulus(
+        &self,
+        center: CPos,
+        min_range: i32,
+        max_range: i32,
+        allow_outside_bounds: bool,
+    ) -> impl Iterator<Item = CPos> + '_ {
         assert!(max_range >= min_range, "Maximum range is less than the minimum range.");
         assert!(
             (max_range as usize) < self.tiles_by_distance.len(),
@@ -369,7 +375,11 @@ impl Map {
         (min_range..=max_range).flat_map(move |i| {
             self.tiles_by_distance[i as usize].iter().filter_map(move |offset| {
                 let t = center + *offset;
-                let ok = if allow_outside_bounds { self.tiles.contains_cell(t) } else { self.contains(t) };
+                let ok = if allow_outside_bounds {
+                    self.tiles.contains_cell(t)
+                } else {
+                    self.contains(t)
+                };
                 ok.then_some(t)
             })
         })
@@ -432,7 +442,11 @@ impl Map {
         let vertical = if v - b.top() < b.height / 2 { b.top() } else { b.bottom() };
         let du = (horizontal - u).abs();
         let dv = (vertical - v).abs();
-        if du < dv { CPos::new(horizontal, v) } else { CPos::new(u, vertical) }
+        if du < dv {
+            CPos::new(horizontal, v)
+        } else {
+            CPos::new(u, vertical)
+        }
     }
 
     pub fn all_edge_cells(&self) -> &[CPos] {

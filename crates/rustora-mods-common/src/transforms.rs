@@ -245,7 +245,10 @@ impl Activity for Transform {
     activity_common!("Transform");
 
     fn on_first_run(&self, self_: &ActorRef) {
-        if self_.info.has_trait_info::<crate::mobile::MobileInfo>() || self_.info.has_trait_info_named("Husk") || self_.info.has_trait_info_named("Aircraft") {
+        if self_.info.has_trait_info::<crate::mobile::MobileInfo>()
+            || self_.info.has_trait_info_named("Husk")
+            || self_.info.has_trait_info_named("Aircraft")
+        {
             self.base.queue_child(crate::activities::Turn::new(self_, self.args.facing));
         }
         if self_.info.has_trait_info_named("Aircraft") {
@@ -268,7 +271,12 @@ impl Activity for Transform {
         if let Some(m) = make_animation.as_ref().filter(|_| !self.args.skip_make_anims) {
             self.base.is_interruptible.set(false);
             self.base.queue_child(crate::activities::WaitFor::new(Box::new(|| false), true));
-            let (me, a, t, m2) = (self.me.upgrade().expect("activity alive"), self_.clone(), transforms.clone(), m.clone());
+            let (me, a, t, m2) = (
+                self.me.upgrade().expect("activity alive"),
+                self_.clone(),
+                transforms.clone(),
+                m.clone(),
+            );
             m.reverse(self_, Rc::new(move || me.do_transform(&a, t.clone(), Some(m2.clone()))));
             return false;
         }

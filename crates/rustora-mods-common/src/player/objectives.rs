@@ -109,15 +109,32 @@ impl IWorldLoaded for MissionObjectives {
     fn world_loaded(&self, world: &Rc<World>) {
         let players = world.players();
         let p = &self.player;
-        let _ = self.allies.set(players.iter().filter(|q| !q.non_combatant && p.is_allied_with(Some(q))).cloned().collect());
-        let _ = self.enemies.set(players.iter().filter(|q| !q.non_combatant && p.relationship_with(Some(q)) == PlayerRelationship::ENEMY).cloned().collect());
+        let _ = self.allies.set(
+            players
+                .iter()
+                .filter(|q| !q.non_combatant && p.is_allied_with(Some(q)))
+                .cloned()
+                .collect(),
+        );
+        let _ = self.enemies.set(
+            players
+                .iter()
+                .filter(|q| !q.non_combatant && p.relationship_with(Some(q)) == PlayerRelationship::ENEMY)
+                .cloned()
+                .collect(),
+        );
     }
 }
 
 impl MissionObjectives {
     pub fn add(&self, player: &PlayerRef, description: &str, ty: &str, required: bool) -> usize {
         let mut o = self.objectives.borrow_mut();
-        o.push(MissionObjective { required, description: description.into(), ty: ty.into(), state: ObjectiveState::Incomplete });
+        o.push(MissionObjective {
+            required,
+            description: description.into(),
+            ty: ty.into(),
+            state: ObjectiveState::Incomplete,
+        });
         player.has_objectives.set(true);
         o.len() - 1
     }
@@ -150,7 +167,10 @@ impl MissionObjectives {
     /// simulation, so this only files the request with the world for the host loop.
     fn check_if_game_is_over(&self, player: &PlayerRef) {
         let w = player.player_actor().world();
-        if w.players().iter().all(|p| p.non_combatant || p.win_state.get() != WinState::Undefined || !p.has_objectives.get()) {
+        if w.players()
+            .iter()
+            .all(|p| p.non_combatant || p.win_state.get() != WinState::Undefined || !p.has_objectives.get())
+        {
             w.request_end_game(self.info.game_over_delay);
         }
     }
@@ -194,7 +214,11 @@ impl INotifyWinStateChanged for MissionObjectives {
     fn on_player_won(&self, player: &PlayerRef) {
         if self.info.cooperative {
             self.win_state_cooperative.set(WinState::Won);
-            if self.allies().iter().all(|p| objectives_of(p).win_state_cooperative.get() == WinState::Won) {
+            if self
+                .allies()
+                .iter()
+                .all(|p| objectives_of(p).win_state_cooperative.get() == WinState::Won)
+            {
                 for p in self.allies() {
                     set_win_state(p, WinState::Won);
                 }
@@ -217,7 +241,11 @@ impl INotifyWinStateChanged for MissionObjectives {
     fn on_player_lost(&self, player: &PlayerRef) {
         if self.info.cooperative {
             self.win_state_cooperative.set(WinState::Lost);
-            if self.allies().iter().any(|p| objectives_of(p).win_state_cooperative.get() == WinState::Lost) {
+            if self
+                .allies()
+                .iter()
+                .any(|p| objectives_of(p).win_state_cooperative.get() == WinState::Lost)
+            {
                 for p in self.allies() {
                     set_win_state(p, WinState::Lost);
                 }
@@ -255,7 +283,10 @@ pub struct ConquestVictoryConditionsInfo {
 
 impl Default for ConquestVictoryConditionsInfo {
     fn default() -> Self {
-        ConquestVictoryConditionsInfo { instance_name: None, objective: "Destroy all opposition!".into() }
+        ConquestVictoryConditionsInfo {
+            instance_name: None,
+            objective: "Destroy all opposition!".into(),
+        }
     }
 }
 
@@ -283,7 +314,9 @@ info_impl!(ConquestVictoryConditionsInfo => |info, init| {
 pub fn has_no_required_units(world: &World, player: &PlayerRef, short_game: bool) -> bool {
     let actors = world.actors_with_trait::<MustBeDestroyed>();
     if short_game {
-        return !actors.iter().any(|(a, t)| t.info.required_for_short_game && Rc::ptr_eq(&a.owner(), player));
+        return !actors
+            .iter()
+            .any(|(a, t)| t.info.required_for_short_game && Rc::ptr_eq(&a.owner(), player));
     }
     !actors.iter().any(|(a, _)| Rc::ptr_eq(&a.owner(), player) && a.is_in_world())
 }
@@ -306,7 +339,12 @@ impl ITick for ConquestVictoryConditions {
         if has_no_required_units(&w, &owner, self.short_game) {
             self.mo.mark_failed(&owner, id);
         }
-        let others = self.other_players.get_or_init(|| w.players().into_iter().filter(|p| !p.non_combatant && !p.is_allied_with(Some(&owner))).collect());
+        let others = self.other_players.get_or_init(|| {
+            w.players()
+                .into_iter()
+                .filter(|p| !p.non_combatant && !p.is_allied_with(Some(&owner)))
+                .collect()
+        });
         if others.is_empty() || others.iter().any(|p| p.win_state.get() != WinState::Lost) {
             return;
         }
@@ -387,7 +425,12 @@ impl INotifyOwnerLost for OwnerLostAction {
             }
             OwnerLostActionType::Dispose => self_.dispose(),
             OwnerLostActionType::ChangeOwner => {
-                let p = self_.world().players().into_iter().find(|p| p.internal_name == self.info.owner).expect("owner");
+                let p = self_
+                    .world()
+                    .players()
+                    .into_iter()
+                    .find(|p| p.internal_name == self.info.owner)
+                    .expect("owner");
                 self_.change_owner(p);
             }
         }

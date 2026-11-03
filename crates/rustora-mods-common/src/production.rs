@@ -46,7 +46,9 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("RallyPoint", |n| load_info!(RallyPointInfo, n));
     r.register("PlaceBuilding", |n| load_info!(PlaceBuildingInfo, n));
     r.register("GrantConditionOnPrerequisite", |n| load_info!(GrantConditionOnPrerequisiteInfo, n));
-    r.register("GrantConditionOnPrerequisiteManager", |n| load_info!(GrantConditionOnPrerequisiteManagerInfo, n));
+    r.register("GrantConditionOnPrerequisiteManager", |n| {
+        load_info!(GrantConditionOnPrerequisiteManagerInfo, n)
+    });
     r.register("LobbyPrerequisiteCheckbox", |n| load_info!(LobbyPrerequisiteCheckboxInfo, n));
 }
 
@@ -125,7 +127,9 @@ register_traits!(Buildable);
 info_impl!(BuildableInfo => |_, _| Some(Rc::new(Buildable)));
 
 fn get_initial_faction(ai: &ActorInfo, default: &str) -> String {
-    ai.trait_info::<BuildableInfo>().and_then(|b| b.force_faction.clone()).unwrap_or_else(|| default.to_string())
+    ai.trait_info::<BuildableInfo>()
+        .and_then(|b| b.force_faction.clone())
+        .unwrap_or_else(|| default.to_string())
 }
 
 #[derive(Clone, Debug, Default, FieldLoad)]
@@ -154,7 +158,10 @@ impl Watcher {
     fn update(&self, owned: &HashMap<String, i32>) {
         let reached = self.limit > 0 && owned.get(&self.key).is_some_and(|c| *c >= self.limit);
         let now_has = !reached && !self.prerequisites.iter().any(|p| Self::prereq_unmet(p, owned));
-        let now_hidden = self.prerequisites.iter().any(|p| p.starts_with('~') && Self::prereq_unmet(p, owned));
+        let now_hidden = self
+            .prerequisites
+            .iter()
+            .any(|p| p.starts_with('~') && Self::prereq_unmet(p, owned));
         if !self.initialized.get() {
             self.initialized.set(true);
             self.has_prerequisites.set(!now_has);
@@ -335,10 +342,20 @@ pub fn exits(actor: &ActorRef, production_type: Option<&str>) -> Vec<Rc<Exit>> {
 }
 
 /// `ExitExts.NearestExitOrDefault`.
-pub fn nearest_exit_or_default(actor: &ActorRef, pos: rustora_core::world_types::WPos, production_type: Option<&str>, p: Option<&dyn Fn(&Exit) -> bool>) -> Option<Rc<Exit>> {
+pub fn nearest_exit_or_default(
+    actor: &ActorRef,
+    pos: rustora_core::world_types::WPos,
+    production_type: Option<&str>,
+    p: Option<&dyn Fn(&Exit) -> bool>,
+) -> Option<Rc<Exit>> {
     let w = actor.world();
     let mut all = exits(actor, production_type);
-    all.sort_by_key(|e| (std::cmp::Reverse(e.info.priority), (w.map().center_of_cell(actor.location() + e.info.exit_cell) - pos).length_squared()));
+    all.sort_by_key(|e| {
+        (
+            std::cmp::Reverse(e.info.priority),
+            (w.map().center_of_cell(actor.location() + e.info.exit_cell) - pos).length_squared(),
+        )
+    });
     match p {
         Some(f) => all.into_iter().find(|e| f(e)),
         None => all.into_iter().next(),
@@ -346,7 +363,12 @@ pub fn nearest_exit_or_default(actor: &ActorRef, pos: rustora_core::world_types:
 }
 
 /// `ExitExts.RandomExitOrDefault`.
-pub fn random_exit_or_default(actor: &ActorRef, world: &World, production_type: Option<&str>, p: Option<&dyn Fn(&Exit) -> bool>) -> Option<Rc<Exit>> {
+pub fn random_exit_or_default(
+    actor: &ActorRef,
+    world: &World,
+    production_type: Option<&str>,
+    p: Option<&dyn Fn(&Exit) -> bool>,
+) -> Option<Rc<Exit>> {
     if !actor.is_in_world() || actor.disposed() {
         return None;
     }
@@ -425,7 +447,9 @@ impl INotifyOwnerChanged for Production {
 }
 
 fn has_occupy_space_info(a: &ActorInfo) -> bool {
-    ["Mobile", "Aircraft", "Building", "Immobile", "Husk", "Crate"].iter().any(|n| a.has_trait_info_named(n))
+    ["Mobile", "Aircraft", "Building", "Immobile", "Husk", "Crate"]
+        .iter()
+        .any(|n| a.has_trait_info_named(n))
 }
 
 fn initial_facing_of(a: &ActorInfo) -> WAngle {
@@ -451,7 +475,14 @@ impl Production {
         self.faction.borrow().clone()
     }
 
-    pub fn do_production(&self, self_: &ActorRef, producee: &Rc<ActorInfo>, exit_info: Option<&Rc<ExitInfo>>, production_type: &str, inits: ActorInits) {
+    pub fn do_production(
+        &self,
+        self_: &ActorRef,
+        producee: &Rc<ActorInfo>,
+        exit_info: Option<&Rc<ExitInfo>>,
+        production_type: &str,
+        inits: ActorInits,
+    ) {
         let mut exit = CPos::ZERO;
         let mut td = inits;
         if let Some(e) = exit_info {
@@ -464,7 +495,11 @@ impl Production {
                     Some(f) => f,
                     None => {
                         let delta = to - spawn;
-                        if delta.horizontal_length_squared() == 0 { initial_facing_of(producee) } else { delta.yaw() }
+                        if delta.horizontal_length_squared() == 0 {
+                            initial_facing_of(producee)
+                        } else {
+                            delta.yaw()
+                        }
                     }
                 };
                 let exit_locations: Vec<CPos> = match self.rp.borrow().as_ref().filter(|r| !r.path.borrow().is_empty()) {
@@ -499,12 +534,24 @@ impl Production {
             None => random_exit_or_default(self_, &self_.world(), Some(production_type), Some(&check)),
             Some(r) => {
                 let first = r.path.borrow()[0];
-                nearest_exit_or_default(self_, self_.world().map().center_of_cell(first), Some(production_type), Some(&check))
+                nearest_exit_or_default(
+                    self_,
+                    self_.world().map().center_of_cell(first),
+                    Some(production_type),
+                    Some(&check),
+                )
             }
         }
     }
 
-    pub fn produce(&self, self_: &ActorRef, producee: &Rc<ActorInfo>, production_type: &str, inits: ActorInits, _refundable_value: i32) -> bool {
+    pub fn produce(
+        &self,
+        self_: &ActorRef,
+        producee: &Rc<ActorInfo>,
+        production_type: &str,
+        inits: ActorInits,
+        _refundable_value: i32,
+    ) -> bool {
         if self.is_trait_disabled() || self.is_trait_paused() || crate::aircraft::is_reserved(self_) {
             return false;
         }
@@ -520,9 +567,16 @@ impl Production {
 fn can_use_exit(self_: &ActorRef, producee: &ActorInfo, s: &ExitInfo) -> bool {
     let cell = self_.location() + s.exit_cell;
     crate::activities::notify_blocker(self_, cell);
-    producee
-        .trait_info::<MobileInfo>()
-        .is_none_or(|m| m.can_enter_cell(&self_.world(), Some(self_), cell, subcell::FULL_CELL, Some(self_), BlockedByActor::All))
+    producee.trait_info::<MobileInfo>().is_none_or(|m| {
+        m.can_enter_cell(
+            &self_.world(),
+            Some(self_),
+            cell,
+            subcell::FULL_CELL,
+            Some(self_),
+            BlockedByActor::All,
+        )
+    })
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -728,8 +782,15 @@ pub struct ProductionQueue {
     is_valid_faction: Cell<bool>,
 }
 
-fn new_queue(info: Rc<ProductionQueueInfo>, classic: Option<Rc<ClassicProductionQueueInfo>>, init: &rustora_engine::actor_init::ActorInitializer) -> Rc<ProductionQueue> {
-    let faction = init.inits.get::<FactionInit>().map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
+fn new_queue(
+    info: Rc<ProductionQueueInfo>,
+    classic: Option<Rc<ClassicProductionQueueInfo>>,
+    init: &rustora_engine::actor_init::ActorInitializer,
+) -> Rc<ProductionQueue> {
+    let faction = init
+        .inits
+        .get::<FactionInit>()
+        .map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
     let valid = info.factions.is_empty() || info.factions.contains(&faction);
     Rc::new_cyclic(|me| ProductionQueue {
         info,
@@ -759,7 +820,11 @@ impl TraitObject for ProductionQueue {
         dict.add::<dyn INotifyCreated>(actor, self);
     }
     fn type_name(&self) -> &'static str {
-        if self.classic.is_some() { "ClassicProductionQueue" } else { "ProductionQueue" }
+        if self.classic.is_some() {
+            "ClassicProductionQueue"
+        } else {
+            "ProductionQueue"
+        }
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -820,10 +885,14 @@ impl INotifyOwnerChanged for ProductionQueue {
         });
         if !self.info.sticky {
             let f = self_.owner().faction.clone();
-            self.is_valid_faction.set(self.info.factions.is_empty() || self.info.factions.contains(&f));
+            self.is_valid_faction
+                .set(self.info.factions.is_empty() || self.info.factions.contains(&f));
             *self.faction.borrow_mut() = f;
         }
-        old_owner.player_actor().trait_::<TechTree>().remove_element(self.me.as_ptr() as *const () as usize);
+        old_owner
+            .player_actor()
+            .trait_::<TechTree>()
+            .remove_element(self.me.as_ptr() as *const () as usize);
         self.cache_producibles();
         self.tech_tree().update();
     }
@@ -1043,7 +1112,12 @@ impl ProductionQueue {
                 .world()
                 .actors_with_trait::<Production>()
                 .iter()
-                .filter(|(a, p)| !p.is_trait_disabled() && !p.is_trait_paused() && Rc::ptr_eq(&a.owner(), &owner) && p.info.produces.iter().any(|x| x == ty))
+                .filter(|(a, p)| {
+                    !p.is_trait_disabled()
+                        && !p.is_trait_paused()
+                        && Rc::ptr_eq(&a.owner(), &owner)
+                        && p.info.produces.iter().any(|x| x == ty)
+                })
                 .count() as i32;
             let m = count.clamp(1, c.build_time_speed_reduction.len() as i32) - 1;
             time = time * c.build_time_speed_reduction[m as usize] / 100;
@@ -1162,11 +1236,20 @@ impl ProductionQueue {
                 .into_iter()
                 .filter(|(a, p)| Rc::ptr_eq(&a.owner(), &owner) && !p.is_trait_disabled() && p.info.produces.contains(&self.info.ty))
                 .collect();
-            v.sort_by_key(|(a, p)| (p.is_trait_paused(), std::cmp::Reverse(is_primary_building(a)), std::cmp::Reverse(a.id)));
+            v.sort_by_key(|(a, p)| {
+                (
+                    p.is_trait_paused(),
+                    std::cmp::Reverse(is_primary_building(a)),
+                    std::cmp::Reverse(a.id),
+                )
+            });
             return v.into_iter().next();
         }
         let traits = self.production_traits.borrow();
-        let mut v: Vec<&Rc<Production>> = traits.iter().filter(|p| !p.is_trait_disabled() && p.info.produces.contains(&self.info.ty)).collect();
+        let mut v: Vec<&Rc<Production>> = traits
+            .iter()
+            .filter(|p| !p.is_trait_disabled() && p.info.produces.contains(&self.info.ty))
+            .collect();
         v.sort_by_key(|p| p.is_trait_paused());
         v.first().map(|p| (self.actor.clone(), (*p).clone()))
     }
@@ -1192,7 +1275,9 @@ impl ProductionQueue {
                 if p.is_trait_paused() {
                     continue;
                 }
-                let inits = ActorInits::new().with(OwnerInit::from_player(&owner)).with(FactionInit::new(get_initial_faction(unit, &p.faction())));
+                let inits = ActorInits::new()
+                    .with(OwnerInit::from_player(&owner))
+                    .with(FactionInit::new(get_initial_faction(unit, &p.faction())));
                 let item = self.first_done(&unit.name);
                 if p.produce(&a, unit, &ty, inits, item.total_cost) {
                     self.end_production(&item);
@@ -1221,7 +1306,12 @@ impl ProductionQueue {
     }
 
     fn first_done(&self, name: &str) -> Rc<ProductionItem> {
-        self.queue.borrow().iter().find(|i| i.done.get() && i.item == name).cloned().expect("done item")
+        self.queue
+            .borrow()
+            .iter()
+            .find(|i| i.done.get() && i.item == name)
+            .cloned()
+            .expect("done item")
     }
 }
 
@@ -1401,7 +1491,11 @@ impl INotifyCreated for ProvidesPrerequisite {
 
 impl ITechTreePrerequisite for ProvidesPrerequisite {
     fn provides_prerequisites(&self) -> Vec<String> {
-        if self.enabled.get() { self.prerequisites.clone() } else { Vec::new() }
+        if self.enabled.get() {
+            self.prerequisites.clone()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -1438,7 +1532,11 @@ info_impl!(ProvidesTechPrerequisiteInfo => |info, init| {
 
 impl ITechTreePrerequisite for ProvidesTechPrerequisite {
     fn provides_prerequisites(&self) -> Vec<String> {
-        if self.enabled { self.info.prerequisites.clone() } else { Vec::new() }
+        if self.enabled {
+            self.info.prerequisites.clone()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -1463,13 +1561,23 @@ info_impl!(LobbyPrerequisiteCheckboxInfo => |info, _| Some(Rc::new(LobbyPrerequi
 
 impl INotifyCreated for LobbyPrerequisiteCheckbox {
     fn created(&self, self_: &ActorRef) {
-        self.enabled.set(self_.world().lobby_info.global_settings.option_bool(&self.info.id, self.info.enabled));
+        self.enabled.set(
+            self_
+                .world()
+                .lobby_info
+                .global_settings
+                .option_bool(&self.info.id, self.info.enabled),
+        );
     }
 }
 
 impl ITechTreePrerequisite for LobbyPrerequisiteCheckbox {
     fn provides_prerequisites(&self) -> Vec<String> {
-        if self.enabled.get() { self.info.prerequisites.iter().cloned().collect() } else { Vec::new() }
+        if self.enabled.get() {
+            self.info.prerequisites.iter().cloned().collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -1578,7 +1686,11 @@ impl GrantConditionOnPrerequisiteManager {
             let me: Rc<dyn ITechTreeElement> = self.me.upgrade().expect("trait alive");
             self.tech_tree.add(&key, prerequisites.to_vec(), 0, me);
         }
-        self.upgradables.borrow_mut().get_mut(&key).unwrap().push((actor.clone(), u.clone()));
+        self.upgradables
+            .borrow_mut()
+            .get_mut(&key)
+            .unwrap()
+            .push((actor.clone(), u.clone()));
         u.prerequisites_updated(actor, self.tech_tree.has_prerequisites(prerequisites));
     }
 
@@ -1691,14 +1803,18 @@ impl PrimaryBuilding {
                     if a.id != self_.id
                         && Rc::ptr_eq(&a.owner(), &owner)
                         && t.is_primary.get()
-                        && a.traits_implementing::<Production>().iter().filter(|p| !p.is_trait_disabled()).any(|p| p.info.produces.contains(&q))
+                        && a.traits_implementing::<Production>()
+                            .iter()
+                            .filter(|p| !p.is_trait_disabled())
+                            .any(|p| p.info.produces.contains(&q))
                     {
                         t.set_primary_producer(&a, false);
                     }
                 }
             }
             if self.token.get() == INVALID_CONDITION_TOKEN {
-                self.token.set(self_.grant_condition(self.info.primary_condition.as_deref().unwrap_or("")));
+                self.token
+                    .set(self_.grant_condition(self.info.primary_condition.as_deref().unwrap_or("")));
             }
         } else if self.token.get() != INVALID_CONDITION_TOKEN {
             self.token.set(self_.revoke_condition(self.token.get()));
@@ -1758,7 +1874,9 @@ impl IResolveOrder for RallyPoint {
         if !order.queued {
             self.path.borrow_mut().clear();
         }
-        self.path.borrow_mut().push(self_.world().map().cell_containing(order.target.center_position()));
+        self.path
+            .borrow_mut()
+            .push(self_.world().map().cell_containing(order.target.center_position()));
     }
 }
 
@@ -1789,7 +1907,9 @@ impl IResolveOrder for PlaceBuilding {
             return;
         }
         let (me, order) = (self_.clone(), order.clone());
-        self_.world().add_frame_end_task(Box::new(move |w: &Rc<World>| place_building(&me, &order, w)));
+        self_
+            .world()
+            .add_frame_end_task(Box::new(move |w: &Rc<World>| place_building(&me, &order, w)));
     }
 }
 
@@ -1797,11 +1917,17 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
     let os = order.order_string.as_str();
     let target_actor = w.get_actor_by_id(order.extra_data);
     let target_location = w.map().cell_containing(order.target.center_position());
-    let Some(target_actor) = target_actor.filter(|a| !a.is_dead()) else { return };
+    let Some(target_actor) = target_actor.filter(|a| !a.is_dead()) else {
+        return;
+    };
     let name = order.target_string.clone().unwrap_or_default();
     let actor_info = w.rules().actor(&name).unwrap_or_else(|| panic!("unknown actor {name}"));
     let done_item = |q: &ProductionQueue| q.all_queued().into_iter().find(|i| i.done.get() && i.item == name);
-    let Some(queue) = target_actor.traits_implementing::<ProductionQueue>().into_iter().find(|q| q.can_build(&name) && done_item(q).is_some()) else {
+    let Some(queue) = target_actor
+        .traits_implementing::<ProductionQueue>()
+        .into_iter()
+        .find(|q| q.can_build(&name) && done_item(q).is_some())
+    else {
         return;
     };
     let Some(item) = done_item(&queue) else { return };
@@ -1821,12 +1947,20 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
     if os == "LineBuild" {
         let placed = w.create_actor(&actor_info.name, new_inits(target_location).with(PlaceBuildingInit));
         let line = actor_info.trait_info::<LineBuildInfo>().expect("LineBuild");
-        let segment_type = line.segment_type.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| actor_info.name.clone());
+        let segment_type = line
+            .segment_type
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| actor_info.name.clone());
         for (cell, actor) in get_line_build_cells(w, target_location, &actor_info, &building_info, &player) {
             if cell == target_location {
                 continue;
             }
-            let dir = if cell.x() == target_location.x() { LineBuildDirection::Y } else { LineBuildDirection::X };
+            let dir = if cell.x() == target_location.x() {
+                LineBuildDirection::Y
+            } else {
+                LineBuildDirection::X
+            };
             w.create_actor(
                 &segment_type,
                 new_inits(cell)
@@ -1841,7 +1975,9 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
     } else if os == "PlacePlug" {
         return;
     } else {
-        if !can_place_building(w, target_location, &building_info, None) || !is_close_enough_to_base(&building_info, w, &player, &actor_info, target_location) {
+        if !can_place_building(w, target_location, &building_info, None)
+            || !is_close_enough_to_base(&building_info, w, &player, &actor_info, target_location)
+        {
             return;
         }
         w.create_actor(&actor_info.name, new_inits(target_location).with(PlaceBuildingInit));

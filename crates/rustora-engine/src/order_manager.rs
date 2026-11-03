@@ -60,19 +60,41 @@ impl Connection for ReplayConnection {
     fn receive(&mut self, net_frame_number: i32) -> Vec<Incoming> {
         let mut out = Vec::new();
         while let Some((frame, sync_hash, defeat_state)) = self.sync.pop_front() {
-            out.push(Incoming::Sync { frame, sync_hash, defeat_state });
+            out.push(Incoming::Sync {
+                frame,
+                sync_hash,
+                defeat_state,
+            });
         }
-        while self.chunks.front().is_some_and(|c| c.frame <= net_frame_number + self.order_latency) {
+        while self
+            .chunks
+            .front()
+            .is_some_and(|c| c.frame <= net_frame_number + self.order_latency)
+        {
             let chunk = self.chunks.pop_front().expect("chunk");
             for p in chunk.packets {
                 match Packet::parse(p.client_id, &p.data) {
                     Ok(Packet::Disconnect { frame, client_id }) => out.push(Incoming::Disconnect { client_id, frame }),
-                    Ok(Packet::Sync { frame, sync_hash, defeat_state }) => out.push(Incoming::Sync { frame, sync_hash, defeat_state }),
+                    Ok(Packet::Sync {
+                        frame,
+                        sync_hash,
+                        defeat_state,
+                    }) => out.push(Incoming::Sync {
+                        frame,
+                        sync_hash,
+                        defeat_state,
+                    }),
                     Ok(Packet::Orders(orders)) => {
                         if orders.frame == 0 {
-                            out.push(Incoming::Immediate { client_id: p.client_id, orders });
+                            out.push(Incoming::Immediate {
+                                client_id: p.client_id,
+                                orders,
+                            });
                         } else {
-                            out.push(Incoming::Orders { client_id: p.client_id, orders });
+                            out.push(Incoming::Orders {
+                                client_id: p.client_id,
+                                orders,
+                            });
                         }
                     }
                     Ok(_) => {}
@@ -146,7 +168,11 @@ impl OrderManager {
     fn receive_all_orders_and_check_sync(&mut self) {
         for inc in self.connection.receive(self.net_frame_number) {
             match inc {
-                Incoming::Sync { frame, sync_hash, defeat_state } => match self.sync_for_frame.get(&frame) {
+                Incoming::Sync {
+                    frame,
+                    sync_hash,
+                    defeat_state,
+                } => match self.sync_for_frame.get(&frame) {
                     Some(&(h, d)) => {
                         if (h != sync_hash || d != defeat_state) && self.out_of_sync.is_none() {
                             self.out_of_sync = Some(frame);
@@ -220,9 +246,26 @@ impl OrderManager {
     /// `UnitOrders.ProcessOrder`: world orders and pause; other orders concern the client UI.
     fn process_order(&mut self, client_id: i32, raw: &RawOrder) {
         match raw.order_string.as_str() {
-            "Message" | "FluentMessage" | "DisableChatEntry" | "StartKickVote" | "EndKickVote" | "Chat" | "TeamChat" | "StartGame" | "HandshakeRequest"
-            | "ServerError" | "AuthenticationError" | "SyncInfo" | "SyncLobbyClients" | "SyncLobbySlots" | "SyncLobbyGlobal" | "SyncClientPings"
-            | "SyncConnectionQuality" | "SyncMapPool" | "GameSaved" | "Kick" => {}
+            "Message"
+            | "FluentMessage"
+            | "DisableChatEntry"
+            | "StartKickVote"
+            | "EndKickVote"
+            | "Chat"
+            | "TeamChat"
+            | "StartGame"
+            | "HandshakeRequest"
+            | "ServerError"
+            | "AuthenticationError"
+            | "SyncInfo"
+            | "SyncLobbyClients"
+            | "SyncLobbySlots"
+            | "SyncLobbyGlobal"
+            | "SyncClientPings"
+            | "SyncConnectionQuality"
+            | "SyncMapPool"
+            | "GameSaved"
+            | "Kick" => {}
             "PauseGame" => {
                 if self.world.lobby_info.client_with_index(client_id).is_some() {
                     let pause = raw.target_string.as_deref() == Some("Pause");
@@ -250,7 +293,12 @@ impl OrderManager {
         if subject.is_dead() {
             return;
         }
-        if self.world.order_validators().iter().all(|v| v.order_validation(&self.world, client_id, order)) {
+        if self
+            .world
+            .order_validators()
+            .iter()
+            .all(|v| v.order_validation(&self.world, client_id, order))
+        {
             subject.resolve_order(order);
         }
     }

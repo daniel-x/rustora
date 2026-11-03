@@ -106,7 +106,14 @@ pub trait ITransformActorInitModifier {
 pub trait IMove {
     fn move_to(&self, cell: CPos, near_enough: i32, ignore_actor: Option<ActorRef>, evaluate_nearest_movable_cell: bool) -> ActivityRef;
     fn move_within_range(&self, target: &Target, min_range: WDist, max_range: WDist, initial_target_position: Option<WPos>) -> ActivityRef;
-    fn move_follow(&self, self_: &ActorRef, target: &Target, min_range: WDist, max_range: WDist, initial_target_position: Option<WPos>) -> ActivityRef;
+    fn move_follow(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        min_range: WDist,
+        max_range: WDist,
+        initial_target_position: Option<WPos>,
+    ) -> ActivityRef;
     fn move_to_target(&self, self_: &ActorRef, target: &Target, initial_target_position: Option<WPos>) -> Option<ActivityRef>;
     fn return_to_cell(&self, self_: &ActorRef) -> Option<ActivityRef>;
     fn move_into_target(&self, self_: &ActorRef, target: &Target) -> Option<ActivityRef>;
@@ -155,7 +162,14 @@ pub trait INotifyProduction {
 }
 
 pub trait INotifyOtherProduction {
-    fn unit_produced_by_other(&self, self_: &ActorRef, producer: &ActorRef, produced: &ActorRef, production_type: &str, init: &rustora_engine::actor_init::ActorInits);
+    fn unit_produced_by_other(
+        &self,
+        self_: &ActorRef,
+        producer: &ActorRef,
+        produced: &ActorRef,
+        production_type: &str,
+        init: &rustora_engine::actor_init::ActorInits,
+    );
 }
 
 pub trait INotifyBuildingPlaced {
@@ -209,7 +223,14 @@ pub trait INotifyHarvestAction {
 }
 
 pub trait INotifyCapture {
-    fn on_capture(&self, self_: &ActorRef, captor: &ActorRef, old_owner: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef, types: BitSet<crate::capture::CaptureType>);
+    fn on_capture(
+        &self,
+        self_: &ActorRef,
+        captor: &ActorRef,
+        old_owner: &rustora_engine::player::PlayerRef,
+        new_owner: &rustora_engine::player::PlayerRef,
+        types: BitSet<crate::capture::CaptureType>,
+    );
 }
 
 pub trait INotifyEnteredCargo {

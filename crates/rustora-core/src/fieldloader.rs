@@ -150,7 +150,9 @@ impl<T: FieldValue + ArrayAware> FieldValue for Option<T> {
     const TYPE_NAME: &'static str = T::TYPE_NAME;
     fn parse(field: &str, value: Option<&str>, yaml: Option<&MiniYaml>) -> Result<Self, LoadError> {
         match value {
-            None | Some("") if T::TYPE_NAME == "Dictionary" && yaml.is_some_and(|y| !y.nodes.is_empty()) => Ok(Some(T::parse(field, value, yaml)?)),
+            None | Some("") if T::TYPE_NAME == "Dictionary" && yaml.is_some_and(|y| !y.nodes.is_empty()) => {
+                Ok(Some(T::parse(field, value, yaml)?))
+            }
             None | Some("") => Ok(None),
             Some(v) => Ok(Some(T::parse(field, Some(v), yaml)?)),
         }

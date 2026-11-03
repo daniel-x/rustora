@@ -106,8 +106,17 @@ impl MobileInfo {
     }
 
     /// `MobileInfo.CanEnterCell` (for use without a Mobile instance).
-    pub fn can_enter_cell(&self, w: &World, self_: Option<&ActorRef>, cell: CPos, sub: u8, ignore_actor: Option<&ActorRef>, check: BlockedByActor) -> bool {
-        locomotor_by_name(w, &self.locomotor).movement_cost_to_enter_cell(self_, cell, check, ignore_actor, false, sub) != MOVEMENT_COST_FOR_UNREACHABLE_CELL
+    pub fn can_enter_cell(
+        &self,
+        w: &World,
+        self_: Option<&ActorRef>,
+        cell: CPos,
+        sub: u8,
+        ignore_actor: Option<&ActorRef>,
+        check: BlockedByActor,
+    ) -> bool {
+        locomotor_by_name(w, &self.locomotor).movement_cost_to_enter_cell(self_, cell, check, ignore_actor, false, sub)
+            != MOVEMENT_COST_FOR_UNREACHABLE_CELL
     }
 }
 
@@ -237,7 +246,11 @@ impl ConditionalHooks for Mobile {
 
 impl ISync for Mobile {
     fn sync_hash(&self) -> i32 {
-        self.state.sync_hash() ^ self.facing().hash() ^ self.from_cell.get().hash() ^ self.to_cell.get().hash() ^ self.center_position.get().hash()
+        self.state.sync_hash()
+            ^ self.facing().hash()
+            ^ self.from_cell.get().hash()
+            ^ self.to_cell.get().hash()
+            ^ self.center_position.get().hash()
     }
 }
 
@@ -369,9 +382,13 @@ impl ICreationActivity for Mobile {
 
     fn get_creation_activity(&self) -> Option<ActivityRef> {
         if self.return_to_cell_on_creation || self.creation_rallypoint.is_some() || self.creation_activity_delay > 0 {
-            let rc = self
-                .return_to_cell_on_creation
-                .then(|| ReturnToCellActivity::new(self.me(), self.creation_activity_delay, self.return_to_cell_on_creation_recalculate_subcell));
+            let rc = self.return_to_cell_on_creation.then(|| {
+                ReturnToCellActivity::new(
+                    self.me(),
+                    self.creation_activity_delay,
+                    self.return_to_cell_on_creation_recalculate_subcell,
+                )
+            });
             return Some(Rc::new(LeaveProductionActivity {
                 base: ActivityBase::default(),
                 mobile: self.me(),
@@ -429,7 +446,10 @@ impl IResolveOrder for Mobile {
                 if !self.locomotor_info.move_into_shroud && !self_.owner().shroud().is_explored(cell) {
                     return;
                 }
-                self_.queue_activity_queued(order.queued, self.wrap_move(Move::new_near(self_, cell, WDist::from_cells(8), None, true)));
+                self_.queue_activity_queued(
+                    order.queued,
+                    self.wrap_move(Move::new_near(self_, cell, WDist::from_cells(8), None, true)),
+                );
             }
             "Stop" => self_.cancel_activity(),
             "Scatter" => self_.queue_activity_queued(order.queued, Nudge::new(self_)),
@@ -462,7 +482,8 @@ impl IPositionable for Mobile {
     }
 
     fn get_available_subcell(&self, a: CPos, preferred: u8, ignore_actor: Option<&ActorRef>, check: BlockedByActor) -> u8 {
-        self.locomotor().get_available_subcell(&self.self_, a, check, preferred, ignore_actor)
+        self.locomotor()
+            .get_available_subcell(&self.self_, a, check, preferred, ignore_actor)
     }
 
     fn set_position_cell(&self, self_: &ActorRef, cell: CPos, sub: u8) {
@@ -481,7 +502,10 @@ impl IPositionable for Mobile {
         let cell = w.map().cell_containing(pos);
         let sub = self.from_subcell.get();
         self.set_location(cell, sub, cell, sub);
-        self.set_center_position(self_, w.map().center_of_subcell(cell, sub) + WVec::new(0, 0, w.map().distance_above_terrain(pos).length));
+        self.set_center_position(
+            self_,
+            w.map().center_of_subcell(cell, sub) + WVec::new(0, 0, w.map().distance_above_terrain(pos).length),
+        );
         self.finished_moving(self_);
     }
 
@@ -575,7 +599,8 @@ impl IMove for Mobile {
             }
         }
         let w = self_.world();
-        self_.location() == w.map().cell_containing(target.center_position()) || util::adjacent_cells(&w, target).contains(&self_.location())
+        self_.location() == w.map().cell_containing(target.center_position())
+            || util::adjacent_cells(&w, target).contains(&self_.location())
     }
 
     fn as_mobile(&self) -> Option<&Mobile> {
@@ -710,7 +735,11 @@ impl Mobile {
     }
 
     pub fn set_location(&self, from: CPos, from_sub: u8, to: CPos, to_sub: u8) {
-        if self.from_cell.get() == from && self.to_cell.get() == to && self.from_subcell.get() == from_sub && self.to_subcell.get() == to_sub {
+        if self.from_cell.get() == from
+            && self.to_cell.get() == to
+            && self.from_subcell.get() == from_sub
+            && self.to_subcell.get() == to_sub
+        {
             return;
         }
         self.remove_influence();
@@ -783,8 +812,13 @@ impl Mobile {
 
     pub fn movement_speed_for_cell(&self, cell: CPos) -> i32 {
         let terrain = self.locomotor().movement_speed_for_cell(cell);
-        let mods = self.speed_modifiers.get_or_init(|| self.self_.traits_implementing::<dyn ISpeedModifier>());
-        util::apply_percentage_modifiers(self.info.speed, mods.iter().map(|m| m.get_speed_modifier()).chain(std::iter::once(terrain)))
+        let mods = self
+            .speed_modifiers
+            .get_or_init(|| self.self_.traits_implementing::<dyn ISpeedModifier>());
+        util::apply_percentage_modifiers(
+            self.info.speed,
+            mods.iter().map(|m| m.get_speed_modifier()).chain(std::iter::once(terrain)),
+        )
     }
 
     pub fn nearest_moveable_cell_range(&self, target: CPos, min_range: i32, max_range: i32) -> CPos {
@@ -824,7 +858,11 @@ impl Mobile {
         let speed = self.movement_speed_for_cell(cell);
         let length = if speed > 0 { (to - from).length() / speed } else { 0 };
         let delta = to - from;
-        let facing = if delta.horizontal_length_squared() != 0 { delta.yaw() } else { self.facing() };
+        let facing = if delta.horizontal_length_squared() != 0 {
+            delta.yaw()
+        } else {
+            self.facing()
+        };
         Drag::new(self_, from, to, length, Some(facing))
     }
 }
@@ -894,7 +932,8 @@ impl Activity for ReturnToCellActivity {
         if self.delay > 0 {
             self.base.queue_child(Wait::new(self.delay));
         }
-        self.base.queue_child(m.local_move_inner_wrapped(self_, pos, w.map().center_of_subcell(cell, sub)));
+        self.base
+            .queue_child(m.local_move_inner_wrapped(self_, pos, w.map().center_of_subcell(cell, sub)));
         true
     }
 }
@@ -926,8 +965,11 @@ impl Activity for LeaveProductionActivity {
         if let Some(rp) = &self.rally_point {
             for &cell in rp {
                 let m = self.mobile.clone();
-                self.base
-                    .queue_child(crate::attack_move::AttackMoveActivity::new(self_, Rc::new(move || m.move_to(cell, 1, None, true)), false));
+                self.base.queue_child(crate::attack_move::AttackMoveActivity::new(
+                    self_,
+                    Rc::new(move || m.move_to(cell, 1, None, true)),
+                    false,
+                ));
             }
         }
     }

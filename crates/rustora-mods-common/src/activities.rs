@@ -8,12 +8,12 @@ use std::rc::{Rc, Weak};
 
 use rustora_core::world_types::{CPos, CVec, Int2, WAngle, WDist, WPos, WRot, WVec};
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity_common;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::subcell::FULL_CELL;
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
-use rustora_engine::{activity_common};
 
 use crate::actor_map::WorldExt;
 use crate::interfaces::*;
@@ -65,7 +65,10 @@ pub struct CallFunc {
 
 impl CallFunc {
     pub fn new(f: Box<dyn FnOnce()>) -> ActivityRef {
-        Rc::new(CallFunc { base: ActivityBase::default(), f: RefCell::new(Some(f)) })
+        Rc::new(CallFunc {
+            base: ActivityBase::default(),
+            f: RefCell::new(Some(f)),
+        })
     }
 }
 
@@ -135,7 +138,11 @@ impl Activity for Turn {
         if self.desired_facing == self.facing.facing() {
             return true;
         }
-        self.facing.set_facing(util::tick_facing(self.facing.facing(), self.desired_facing, self.facing.turn_speed()));
+        self.facing.set_facing(util::tick_facing(
+            self.facing.facing(),
+            self.desired_facing,
+            self.facing.turn_speed(),
+        ));
         false
     }
 }
@@ -205,7 +212,12 @@ enum PathSource {
     Func(GetPathFn),
 }
 
-const PATH_SEARCH_ORDER: [BlockedByActor; 4] = [BlockedByActor::All, BlockedByActor::Stationary, BlockedByActor::Immovable, BlockedByActor::None];
+const PATH_SEARCH_ORDER: [BlockedByActor; 4] = [
+    BlockedByActor::All,
+    BlockedByActor::Stationary,
+    BlockedByActor::Immovable,
+    BlockedByActor::None,
+];
 
 pub struct Move {
     base: ActivityBase,
@@ -229,7 +241,14 @@ pub struct Move {
 }
 
 impl Move {
-    fn make(self_: &ActorRef, source: PathSource, destination: Option<CPos>, near_enough: WDist, ignore_actor: Option<ActorRef>, evaluate: bool) -> Rc<Move> {
+    fn make(
+        self_: &ActorRef,
+        source: PathSource,
+        destination: Option<CPos>,
+        near_enough: WDist,
+        ignore_actor: Option<ActorRef>,
+        evaluate: bool,
+    ) -> Rc<Move> {
         Rc::new_cyclic(|me| Move {
             base: ActivityBase::default(),
             me: me.clone(),
@@ -256,8 +275,21 @@ impl Move {
         Self::make(self_, PathSource::Script(destination), Some(destination), WDist::ZERO, None, false)
     }
 
-    pub fn new_near(self_: &ActorRef, destination: CPos, near_enough: WDist, ignore_actor: Option<ActorRef>, evaluate: bool) -> ActivityRef {
-        Self::make(self_, PathSource::Destination, Some(destination), near_enough, ignore_actor, evaluate)
+    pub fn new_near(
+        self_: &ActorRef,
+        destination: CPos,
+        near_enough: WDist,
+        ignore_actor: Option<ActorRef>,
+        evaluate: bool,
+    ) -> ActivityRef {
+        Self::make(
+            self_,
+            PathSource::Destination,
+            Some(destination),
+            near_enough,
+            ignore_actor,
+            evaluate,
+        )
     }
 
     pub fn new_func(self_: &ActorRef, get_path: GetPathFn) -> ActivityRef {
@@ -271,16 +303,23 @@ impl Move {
                 if m.to_cell() == *destination {
                     return (true, Vec::new());
                 }
-                (false, m.path_finder().find_path_to_target_cell(&self.self_, &[m.to_cell()], *destination, check, None, None, false))
+                (
+                    false,
+                    m.path_finder()
+                        .find_path_to_target_cell(&self.self_, &[m.to_cell()], *destination, check, None, None, false),
+                )
             }
             PathSource::Destination => {
-                let Some(d) = self.destination.get() else { return (false, Vec::new()) };
+                let Some(d) = self.destination.get() else {
+                    return (false, Vec::new());
+                };
                 if m.to_cell() == d {
                     return (true, Vec::new());
                 }
                 (
                     false,
-                    m.path_finder().find_path_to_target_cell(&self.self_, &[m.to_cell()], d, check, None, self.ignore_actor.as_ref(), true),
+                    m.path_finder()
+                        .find_path_to_target_cell(&self.self_, &[m.to_cell()], d, check, None, self.ignore_actor.as_ref(), true),
                 )
             }
             PathSource::Func(f) => f(check),
@@ -334,10 +373,11 @@ impl Move {
                     return (None, false);
                 }
                 let blocker_dist_sq = (next_cell - dest).length_squared();
-                let nudge_or_repath = CVec::DIRECTIONS
-                    .iter()
-                    .map(|d| next_cell + *d)
-                    .any(|c| c != self_.location() && (c - dest).length_squared() <= blocker_dist_sq && m.can_enter_cell(c, ignore, BlockedByActor::All));
+                let nudge_or_repath = CVec::DIRECTIONS.iter().map(|d| next_cell + *d).any(|c| {
+                    c != self_.location()
+                        && (c - dest).length_squared() <= blocker_dist_sq
+                        && m.can_enter_cell(c, ignore, BlockedByActor::All)
+                });
                 if !nudge_or_repath {
                     self.path_clear();
                     return (None, false);
@@ -370,7 +410,10 @@ impl Move {
                 let new_cell = p.pop().unwrap();
                 *self.path.borrow_mut() = Some(p);
                 return (
-                    Some((new_cell, m.get_available_subcell(next_cell, m.from_subcell.get(), ignore, BlockedByActor::All))),
+                    Some((
+                        new_cell,
+                        m.get_available_subcell(next_cell, m.from_subcell.get(), ignore, BlockedByActor::All),
+                    )),
                     true,
                 );
             } else if m.is_blocking() {
@@ -379,7 +422,10 @@ impl Move {
                         self.path_add(m.to_cell());
                     }
                     return (
-                        Some((new_cell, m.get_available_subcell(new_cell, m.from_subcell.get(), ignore, BlockedByActor::All))),
+                        Some((
+                            new_cell,
+                            m.get_available_subcell(new_cell, m.from_subcell.get(), ignore, BlockedByActor::All),
+                        )),
                         true,
                     );
                 }
@@ -389,7 +435,10 @@ impl Move {
         self.has_waited.set(false);
         self.path.borrow_mut().as_mut().unwrap().pop();
         (
-            Some((next_cell, m.get_available_subcell(next_cell, m.from_subcell.get(), ignore, BlockedByActor::All))),
+            Some((
+                next_cell,
+                m.get_available_subcell(next_cell, m.from_subcell.get(), ignore, BlockedByActor::All),
+            )),
             true,
         )
     }
@@ -412,7 +461,11 @@ impl Activity for Move {
         if self.evaluate_nearest_movable_cell {
             if let Some(d) = self.destination.get() {
                 let movable = self.mobile.nearest_moveable_cell_range(d, 1, 10);
-                self.destination.set(self.mobile.can_enter_cell(movable, None, BlockedByActor::Immovable).then_some(movable));
+                self.destination.set(
+                    self.mobile
+                        .can_enter_cell(movable, None, BlockedByActor::Immovable)
+                        .then_some(movable),
+                );
             }
         }
         for check in PATH_SEARCH_ORDER {
@@ -481,7 +534,8 @@ impl Activity for Move {
         }
         m.set_location(m.from_cell(), m.from_subcell.get(), next_cell, next_sub);
         let from = map.center_of_cell(m.from_cell()) + map.offset_of_subcell(m.from_subcell.get());
-        let to = util::between_cells(&w, m.from_cell(), m.to_cell()) + (map.offset_of_subcell(m.from_subcell.get()) + map.offset_of_subcell(m.to_subcell.get())) / 2;
+        let to = util::between_cells(&w, m.from_cell(), m.to_cell())
+            + (map.offset_of_subcell(m.from_subcell.get()) + map.offset_of_subcell(m.to_subcell.get())) / 2;
         self.base.queue_child(MovePart::new(
             self.me.upgrade().expect("move alive"),
             true,
@@ -563,7 +617,16 @@ struct MovePart {
 
 impl MovePart {
     #[allow(clippy::too_many_arguments)]
-    fn new(mv: Rc<Move>, first_half: bool, from: WPos, to: WPos, from_facing: WAngle, to_facing: WAngle, carryover: i32, should_arc: bool) -> ActivityRef {
+    fn new(
+        mv: Rc<Move>,
+        first_half: bool,
+        from: WPos,
+        to: WPos,
+        from_facing: WAngle,
+        to_facing: WAngle,
+        carryover: i32,
+        should_arc: bool,
+    ) -> ActivityRef {
         let base = ActivityBase::default();
         base.is_interruptible.set(false);
         let turns_while_moving = mv.mobile.info.turns_while_moving;
@@ -590,7 +653,8 @@ impl MovePart {
             let v = WVec::new(1024, 0, 0).rotate(&WRot::from_yaw(to_facing));
             if v.x.wrapping_mul(u.y) != v.y.wrapping_mul(u.x) {
                 let w = from - to;
-                let s = (v.y.wrapping_mul(w.x).wrapping_sub(v.x.wrapping_mul(w.y))).wrapping_mul(1024) / (v.x.wrapping_mul(u.y).wrapping_sub(v.y.wrapping_mul(u.x)));
+                let s = (v.y.wrapping_mul(w.x).wrapping_sub(v.x.wrapping_mul(w.y))).wrapping_mul(1024)
+                    / (v.x.wrapping_mul(u.y).wrapping_sub(v.y.wrapping_mul(u.x)));
                 let x = from.x + s.wrapping_mul(u.x) / 1024;
                 let y = from.y + s.wrapping_mul(u.y) / 1024;
                 part.arc_center = WPos::new(x, y, 0);
@@ -749,7 +813,10 @@ impl MoveCooldownHelper {
                 return Some(true);
             }
             let result = self.mobile.as_ref().map(|m| m.move_result.get());
-            if matches!(result, None | Some(MoveResult::CompleteCanceled) | Some(MoveResult::CompleteDestinationReached)) {
+            if matches!(
+                result,
+                None | Some(MoveResult::CompleteCanceled) | Some(MoveResult::CompleteDestinationReached)
+            ) {
                 self.was_moving.set(false);
                 return None;
             }
@@ -786,7 +853,10 @@ pub struct Follow {
 
 pub fn initial_last_visible(self_: &ActorRef, target: &Target, initial: Option<WPos>) -> Target {
     let tt = target.target_type();
-    if (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner()))) || tt == TargetType::FrozenActor || tt == TargetType::Terrain {
+    if (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner())))
+        || tt == TargetType::FrozenActor
+        || tt == TargetType::Terrain
+    {
         Target::from_pos(target.center_position())
     } else if let Some(p) = initial {
         Target::from_pos(p)
@@ -838,7 +908,10 @@ impl Activity for Follow {
             return self.use_last_visible_target.get();
         }
         self.helper.notify_move_queued();
-        self.base.queue_child(self.mv.move_within_range(&t, self.min_range, self.max_range, Some(check.center_position())));
+        self.base.queue_child(
+            self.mv
+                .move_within_range(&t, self.min_range, self.max_range, Some(check.center_position())),
+        );
         false
     }
 }
@@ -867,7 +940,8 @@ impl Activity for LocalMoveIntoTarget {
     activity_common!("LocalMoveIntoTarget");
 
     fn on_first_run(&self, self_: &ActorRef) {
-        self.target_start_pos.set(util::closest_position(&self.target.positions(), self_.center_position()).unwrap_or(WPos::ZERO));
+        self.target_start_pos
+            .set(util::closest_position(&self.target.positions(), self_.center_position()).unwrap_or(WPos::ZERO));
     }
 
     fn tick(&self, self_: &ActorRef) -> bool {
@@ -884,7 +958,11 @@ impl Activity for LocalMoveIntoTarget {
             return true;
         }
         let delta = target_pos - current;
-        let facing = if delta.horizontal_length_squared() != 0 { delta.yaw() } else { m.facing() };
+        let facing = if delta.horizontal_length_squared() != 0 {
+            delta.yaw()
+        } else {
+            m.facing()
+        };
         if facing != m.facing() {
             m.set_facing(util::tick_facing(m.facing(), facing, m.turn_speed()));
             return false;
@@ -905,8 +983,17 @@ impl Activity for LocalMoveIntoTarget {
 
 enum AdjacentMode {
     Adjacent,
-    Onto { offset: WVec, desired_facing: Option<WAngle>, turn: bool },
-    WithinRange { min_range: WDist, max_range: WDist, min_cells: i32, max_cells: i32 },
+    Onto {
+        offset: WVec,
+        desired_facing: Option<WAngle>,
+        turn: bool,
+    },
+    WithinRange {
+        min_range: WDist,
+        max_range: WDist,
+        min_cells: i32,
+        max_cells: i32,
+    },
 }
 
 /// `MoveAdjacentTo` and its subclasses `MoveOnto`, `MoveOntoAndTurn` and `MoveWithinRange`.
@@ -943,7 +1030,10 @@ impl MoveAdjacentTo {
             mode,
         });
         let tt = target.target_type();
-        if (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner()))) || tt == TargetType::FrozenActor || tt == TargetType::Terrain {
+        if (tt == TargetType::Actor && target.actor().unwrap().can_be_viewed_by_player(Some(&self_.owner())))
+            || tt == TargetType::FrozenActor
+            || tt == TargetType::Terrain
+        {
             *m.last_visible_target.borrow_mut() = Target::from_pos(target.center_position());
             m.set_visible_target_location(&w, target);
         } else if let Some(p) = initial {
@@ -1014,7 +1104,9 @@ impl MoveAdjacentTo {
     }
 
     fn at_correct_range(&self, origin: WPos) -> bool {
-        let AdjacentMode::WithinRange { min_range, max_range, .. } = &self.mode else { return false };
+        let AdjacentMode::WithinRange { min_range, max_range, .. } = &self.mode else {
+            return false;
+        };
         let t = self.current_target();
         t.is_in_range(origin, *max_range) && !t.is_in_range(origin, *min_range)
     }
@@ -1024,7 +1116,9 @@ impl MoveAdjacentTo {
             AdjacentMode::Adjacent => false,
             AdjacentMode::Onto { .. } => self.current_target().target_type() == TargetType::Terrain,
             AdjacentMode::WithinRange { .. } => {
-                self.at_correct_range(self_.center_position()) && self.mobile.can_interact_with_ground_layer(self_) && self.mobile.can_stay_in_cell(self_.location())
+                self.at_correct_range(self_.center_position())
+                    && self.mobile.can_interact_with_ground_layer(self_)
+                    && self.mobile.can_stay_in_cell(self_.location())
             }
         }
     }
@@ -1099,7 +1193,11 @@ impl MoveAdjacentTo {
         if sc.is_empty() {
             return (false, Vec::new());
         }
-        (false, m.path_finder().find_path_to_target_cells(self_, self_.location(), &sc, check, None, None, true))
+        (
+            false,
+            m.path_finder()
+                .find_path_to_target_cells(self_, self_.location(), &sc, check, None, None, true),
+        )
     }
 
     fn queue_move(&self) {
@@ -1215,7 +1313,8 @@ impl Activity for Nudge {
                 (d, f)
             };
             let offset = WVec::new(0, -d, 0).rotate(&WRot::from_facing(f));
-            self.base.queue_child(crate::aircraft::Fly::new(self_, Target::from_pos(self_.center_position() + offset)));
+            self.base
+                .queue_child(crate::aircraft::Fly::new(self_, Target::from_pos(self_.center_position() + offset)));
             a.un_reserve();
         }
     }

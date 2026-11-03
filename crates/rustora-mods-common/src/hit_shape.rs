@@ -134,7 +134,10 @@ fn dist2_from_segment(c: Int2, a: Int2, b: Int2, ab2: i32) -> i32 {
     }
     let ab = b - a;
     let ap2 = ac.x * ab.x + ac.y * ab.y;
-    let ap = Int2::new(((ab.x as i64 * ap2 as i64) / ab2 as i64) as i32, ((ab.y as i64 * ap2 as i64) / ab2 as i64) as i32);
+    let ap = Int2::new(
+        ((ab.x as i64 * ap2 as i64) / ab2 as i64) as i32,
+        ((ab.y as i64 * ap2 as i64) / ab2 as i64) as i32,
+    );
     (ac - ap).length_squared()
 }
 
@@ -143,7 +146,12 @@ impl HitShapeType {
         match self {
             HitShapeType::Circle(s) => s.radius,
             HitShapeType::Rectangle(s) => {
-                let corners = [s.top_left, s.bottom_right, Int2::new(s.bottom_right.x, s.top_left.y), Int2::new(s.top_left.x, s.bottom_right.y)];
+                let corners = [
+                    s.top_left,
+                    s.bottom_right,
+                    Int2::new(s.bottom_right.x, s.top_left.y),
+                    Int2::new(s.top_left.x, s.bottom_right.y),
+                ];
                 WDist::new(corners.iter().map(|c| c.length()).max().unwrap())
             }
             HitShapeType::Capsule(s) => s.radius + WDist::new(s.point_a.length().max(s.point_b.length())),
@@ -204,9 +212,17 @@ impl HitShapeType {
     pub fn distance_from_edge(&self, pos: WPos, origin: WPos, orientation: WRot) -> WDist {
         let (top, bottom, rot) = match self {
             HitShapeType::Circle(s) => (s.vertical_top_offset, s.vertical_bottom_offset, None),
-            HitShapeType::Rectangle(s) => (s.vertical_top_offset, s.vertical_bottom_offset, Some(orientation + WRot::from_yaw(s.local_yaw))),
+            HitShapeType::Rectangle(s) => (
+                s.vertical_top_offset,
+                s.vertical_bottom_offset,
+                Some(orientation + WRot::from_yaw(s.local_yaw)),
+            ),
             HitShapeType::Capsule(s) => (s.vertical_top_offset, s.vertical_bottom_offset, Some(orientation)),
-            HitShapeType::Polygon(s) => (s.vertical_top_offset, s.vertical_bottom_offset, Some(orientation + WRot::from_yaw(s.local_yaw))),
+            HitShapeType::Polygon(s) => (
+                s.vertical_top_offset,
+                s.vertical_bottom_offset,
+                Some(orientation + WRot::from_yaw(s.local_yaw)),
+            ),
         };
         let d = if pos.z > origin.z + top {
             pos - (origin + WVec::new(0, 0, top))
@@ -273,7 +289,13 @@ pub struct HitShape {
     cache: RefCell<Option<(CacheKey, Vec<WPos>)>>,
 }
 
-type CacheKey = (Option<Vec<(rustora_core::world_types::CPos, u8)>>, Option<WPos>, Option<WRot>, Option<WRot>, Option<WVec>);
+type CacheKey = (
+    Option<Vec<(rustora_core::world_types::CPos, u8)>>,
+    Option<WPos>,
+    Option<WRot>,
+    Option<WRot>,
+    Option<WVec>,
+);
 
 register_traits!(HitShape: ITargetablePositions, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(HitShapeInfo => |info, init| {
@@ -315,7 +337,9 @@ impl IDisabledTrait for HitShape {
 
 impl INotifyCreated for HitShape {
     fn created(&self, self_: &ActorRef) {
-        let _ = self.targetable_cells.set(self_.trait_or_default::<dyn crate::interfaces::ITargetableCells>());
+        let _ = self
+            .targetable_cells
+            .set(self_.trait_or_default::<dyn crate::interfaces::ITargetableCells>());
         let turret = self_
             .traits_implementing::<Turreted>()
             .into_iter()
@@ -338,7 +362,11 @@ impl ITargetablePositions for HitShape {
         let tc = self.targetable_cells.get().and_then(|t| t.as_ref());
         let turret = self.turret.get().and_then(|t| t.as_ref());
         let key: CacheKey = (
-            if self.info.use_targetable_cells_offsets { tc.map(|t| t.targetable_cells()) } else { None },
+            if self.info.use_targetable_cells_offsets {
+                tc.map(|t| t.targetable_cells())
+            } else {
+                None
+            },
             has_offsets.then(|| self_.center_position()),
             has_offsets.then(|| self_.orientation()),
             if has_offsets { turret.map(|t| t.local_orientation()) } else { None },
