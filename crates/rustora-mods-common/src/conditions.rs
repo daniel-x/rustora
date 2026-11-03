@@ -27,6 +27,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Hovers", |n| load_info!(HoversInfo, n));
     r.register("Huntable", |n| load_info!(HuntableInfo, n));
     r.register("ScaredyCat", |n| load_info!(ScaredyCatInfo, n));
+    r.register("Wanders", |n| load_info!(WandersInfo, n));
     r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
     r.register("WithSpriteTurret", |n| load_info!(WithSpriteTurretInfo, n));
 }
@@ -512,5 +513,101 @@ impl IRenderInfantrySequenceModifier for ScaredyCat {
 
     fn sequence_prefix(&self) -> String {
         self.info.panic_sequence_prefix.clone()
+    }
+}
+
+/// `Traits/Wanders.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WandersInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub wander_move_radius: i32,
+    pub reduce_move_radius_delay: i32,
+    pub min_move_delay: i32,
+    pub max_move_delay: i32,
+    pub avoid_terrain_types: Vec<String>,
+}
+
+impl Default for WandersInfo {
+    fn default() -> Self {
+        WandersInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            wander_move_radius: 1,
+            reduce_move_radius_delay: 5,
+            min_move_delay: 0,
+            max_move_delay: 0,
+            avoid_terrain_types: Vec::new(),
+        }
+    }
+}
+
+pub struct Wanders {
+    info: Rc<WandersInfo>,
+    state: ConditionalState,
+    mv: Rc<dyn IMove>,
+    countdown: Cell<i32>,
+    ticks_idle: Cell<i32>,
+    effective_move_radius: Cell<i32>,
+}
+
+register_traits!(Wanders: INotifyIdle, INotifyBecomingIdle, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WandersInfo => |info, init| {
+    let state = ConditionalState::new(&info.base);
+    let countdown = init.world().shared_random.borrow_mut().next_range(info.min_move_delay, info.max_move_delay);
+    Some(Rc::new(Wanders {
+        mv: init.self_.trait_::<dyn IMove>(),
+        effective_move_radius: Cell::new(info.wander_move_radius),
+        countdown: Cell::new(countdown),
+        ticks_idle: Cell::new(0),
+        info,
+        state,
+    }))
+});
+
+rustora_engine::conditional_simple!(Wanders);
+
+impl INotifyBecomingIdle for Wanders {
+    fn on_becoming_idle(&self, self_: &ActorRef) {
+        self.countdown.set(self_.world().shared_random.borrow_mut().next_range(self.info.min_move_delay, self.info.max_move_delay));
+    }
+}
+
+impl INotifyIdle for Wanders {
+    fn tick_idle(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        self.countdown.set(self.countdown.get() - 1);
+        if self.countdown.get() > 0 {
+            return;
+        }
+        if let Some(cell) = self.pick_target_location(self_) {
+            self_.queue_activity(self.mv.move_to(cell, 0, None, false));
+        }
+    }
+}
+
+impl Wanders {
+    fn pick_target_location(&self, self_: &ActorRef) -> Option<rustora_core::world_types::CPos> {
+        let w = self_.world();
+        let facing = w.shared_random.borrow_mut().next_max(255);
+        let target = self_.center_position() + WVec::new(0, -1024 * self.effective_move_radius.get(), 0).rotate(&rustora_core::world_types::WRot::from_facing(facing));
+        let cell = w.map().cell_containing(target);
+        if !w.map().contains(cell) {
+            self.ticks_idle.set(self.ticks_idle.get() + 1);
+            if self.ticks_idle.get() % self.info.reduce_move_radius_delay == 0 {
+                self.effective_move_radius.set(self.effective_move_radius.get() - 1);
+            }
+            return None;
+        }
+        if !self.info.avoid_terrain_types.is_empty() && self.info.avoid_terrain_types.contains(&w.map().terrain_type_info(cell).ty) {
+            return None;
+        }
+        self.ticks_idle.set(0);
+        self.effective_move_radius.set(self.info.wander_move_radius);
+        Some(cell)
     }
 }

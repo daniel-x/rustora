@@ -95,6 +95,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("GivesExperience", |n| load_info!(GivesExperienceInfo, n));
     r.register("ChangesHealth", |n| load_info!(ChangesHealthInfo, n));
     r.register("GrantCondition", |n| load_info!(GrantConditionInfo, n));
+    r.register("GrantConditionOnTileSet", |n| load_info!(GrantConditionOnTileSetInfo, n));
     r.register("GrantConditionOnDamageState", |n| load_info!(GrantConditionOnDamageStateInfo, n));
     r.register("ExternalCondition", |n| load_info!(ExternalConditionInfo, n));
 }
@@ -350,6 +351,32 @@ impl INotifyDamage for ChangesHealth {
     fn damaged(&self, _self_: &ActorRef, e: &AttackInfo) {
         if e.damage.value > 0 {
             self.damage_ticks.set(self.info.damage_cooldown);
+        }
+    }
+}
+
+/// `Traits/Conditions/GrantConditionOnTileSet.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct GrantConditionOnTileSetInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub condition: String,
+    #[field(require)]
+    pub tile_sets: Vec<String>,
+}
+
+pub struct GrantConditionOnTileSet {
+    info: Rc<GrantConditionOnTileSetInfo>,
+}
+
+register_traits!(GrantConditionOnTileSet: INotifyCreated);
+info_impl!(GrantConditionOnTileSetInfo => |info, _| Some(Rc::new(GrantConditionOnTileSet { info })));
+
+impl INotifyCreated for GrantConditionOnTileSet {
+    fn created(&self, self_: &ActorRef) {
+        if self.info.tile_sets.contains(&self_.world().map().tileset) {
+            self_.grant_condition(&self.info.condition);
         }
     }
 }
