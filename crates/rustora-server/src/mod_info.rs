@@ -1,0 +1,601 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
+
+//! What the server reads from the mod and its maps: game speeds, the map cache, and per map the players, spawn
+//! points, lobby options (`ILobbyOptions` implementers), bots, factions and player color rules.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use indexmap::IndexMap;
+use rustora_core::fieldloader::Color;
+use rustora_core::miniyaml::MiniYaml;
+use rustora_engine::actor_info::{TraitNode, parse_trait_nodes};
+use rustora_engine::terrain::TerrainInfo;
+use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
+use rustora_game::map::MapPackage;
+use rustora_game::moddata::ModData;
+use rustora_mods_common::world::{PlayerReference, map_players};
+use rustora_net::session::{LobbyOptionState, Session};
+
+use crate::color::ColorPicker;
+
+/// `Session.MapStatus.Playable`.
+pub const MAP_STATUS_PLAYABLE: i32 = 2;
+/// `Session.MapStatus.Incompatible`.
+pub const MAP_STATUS_INCOMPATIBLE: i32 = 4;
+/// `Session.MapStatus.UnsafeCustomRules`.
+pub const MAP_STATUS_UNSAFE_CUSTOM_RULES: i32 = 8;
+/// `MapPlayers.MaximumPlayerCount`.
+const MAXIMUM_PLAYER_COUNT: usize = 64;
+/// The traits that implement `ILobbyCustomRulesIgnore`.
+const CUSTOM_RULES_IGNORED: [&str; 8] = [
+    "TerrainLightSource",
+    "TintPostProcessEffect",
+    "ElevatedBridgeLayer",
+    "WeatherOverlay",
+    "TerrainTunnel",
+    "TerrainLighting",
+    "ElevatedBridgePlaceholder",
+    "TerrainTunnelLayer",
+];
+
+#[derive(Clone, Debug)]
+pub struct GameSpeed {
+    pub timestep: i32,
+    pub order_latency: i32,
+}
+
+/// `Traits.LobbyOption`; `name` and `values` hold the text shown to players.
+#[derive(Clone, Debug)]
+pub struct LobbyOption {
+    pub id: String,
+    pub name: String,
+    pub values: IndexMap<String, String>,
+    pub default_value: String,
+    pub is_locked: bool,
+    is_boolean: bool,
+}
+
+impl LobbyOption {
+    /// `LobbyOption.Label`.
+    pub fn label(&self, value: &str) -> String {
+        let text = self.values.get(value).map_or(value, String::as_str);
+        if self.is_boolean { text.to_lowercase() } else { text.to_string() }
+    }
+}
+
+/// `IBotInfo`.
+#[derive(Clone, Debug)]
+pub struct BotInfo {
+    pub bot_type: String,
+    pub name: String,
+}
+
+/// The `MapPreview` of the server with the rules it needs.
+pub struct MapInfo {
+    pub uid: String,
+    pub title: String,
+    pub players: IndexMap<String, PlayerReference>,
+    pub spawn_points: usize,
+    pub status: i32,
+    pub options: Vec<LobbyOption>,
+    pub bots: Vec<BotInfo>,
+    pub selectable_factions: Vec<String>,
+    pub color_picker: ColorPicker,
+    pub restricted_colors: Vec<Color>,
+    pub briefing: Option<String>,
+}
+
+impl MapInfo {
+    /// `LobbyCommands.LoadMapSettings`: sets every option of this map in `lobby`, keeping preferred values.
+    pub fn load_map_settings(&self, lobby: &mut Session) {
+        for o in &self.options {
+            let state = lobby.global_settings.lobby_options.entry(o.id.clone()).or_default();
+            let mut value = o.default_value.clone();
+            let mut preferred = o.default_value.clone();
+            if let (Some(p), Some(v)) = (&state.preferred_value, &state.value) {
+                if !o.is_locked {
+                    if o.values.contains_key(p) {
+                        value = p.clone();
+                    } else if o.values.contains_key(v) {
+                        value = v.clone();
+                    }
+                }
+                preferred = p.clone();
+            }
+            *state = LobbyOptionState {
+                value: Some(value),
+                preferred_value: Some(preferred),
+                is_locked: o.is_locked,
+            };
+        }
+    }
+
+    /// `LobbyUtils.InsufficientEnabledSpawnPoints`.
+    pub fn insufficient_enabled_spawn_points(&self, lobby: &Session) -> bool {
+        if self.spawn_points == 0 {
+            return false;
+        }
+        let available = (1..=self.spawn_points as i32)
+            .filter(|s| !lobby.disabled_spawn_points.contains(s))
+            .count();
+        available < lobby.clients.iter().filter(|c| !c.is_observer()).count()
+    }
+}
+
+struct MapEntry {
+    package: Arc<dyn Package>,
+    map: MapPackage,
+}
+
+/// The loaded mod, like `ModData` with its `MapCache`.
+pub struct ServerMod {
+    pub data: ModData,
+    pub default_speed: String,
+    pub speeds: IndexMap<String, GameSpeed>,
+    speed_names: IndexMap<String, String>,
+    fluent: HashMap<String, String>,
+    restricted_colors: HashMap<String, Vec<Color>>,
+    maps: IndexMap<String, MapEntry>,
+    infos: HashMap<String, Rc<MapInfo>>,
+}
+
+fn field<'a>(t: &'a TraitNode, key: &str) -> Option<&'a str> {
+    t.yaml.nodes.iter().find(|n| n.key == key).map(|n| n.value.value_str())
+}
+
+fn field_bool(t: &TraitNode, key: &str, default: bool) -> bool {
+    field(t, key).map_or(default, |v| v.trim().eq_ignore_ascii_case("true"))
+}
+
+/// `Exts.TryParseInt32Invariant` based lists like `TimeLimitOptions: 0, 10`.
+fn field_ints(t: &TraitNode, key: &str, default: &[i32]) -> Vec<i32> {
+    field(t, key).map_or_else(
+        || default.to_vec(),
+        |v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
+    )
+}
+
+fn parse_fluent(text: &str, out: &mut HashMap<String, String>) {
+    let mut current = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        if let Some(attribute) = key.strip_prefix('.') {
+            out.insert(format!("{current}.{attribute}"), value.to_string());
+        } else if !line.starts_with(char::is_whitespace) {
+            current = key.to_string();
+            if !value.is_empty() {
+                out.insert(current.clone(), value.to_string());
+            }
+        }
+    }
+}
+
+fn open_package(path: &Path) -> Option<Arc<dyn Package>> {
+    if path.is_dir() {
+        Some(Arc::new(Folder::new(path)))
+    } else {
+        Some(Arc::new(ZipPackage::open_file(path)?))
+    }
+}
+
+impl ServerMod {
+    /// Loads the mod `mod_id` and the map list of its `maps` folder.
+    pub fn load(engine: &Path, support: &str, mod_id: &str) -> Result<ServerMod, String> {
+        let data = ModData::load(Platform::new(engine, support), mod_id).map_err(|e| e.to_string())?;
+        let game_speeds = data.manifest.yaml.get("GameSpeeds").ok_or("mod has no GameSpeeds")?;
+        let default_speed = game_speeds
+            .node_with_key("DefaultSpeed")
+            .map_err(|e| e.to_string())?
+            .value
+            .value_str()
+            .to_string();
+        let mut speeds = IndexMap::new();
+        let mut speed_names = IndexMap::new();
+        for n in &game_speeds.node_with_key("Speeds").map_err(|e| e.to_string())?.value.nodes {
+            let get = |k: &str| n.value.nodes.iter().find(|c| c.key == k).map(|c| c.value.value_str().to_string());
+            let int = |k: &str| get(k).and_then(|v| v.trim().parse().ok());
+            speeds.insert(
+                n.key.clone(),
+                GameSpeed {
+                    timestep: int("Timestep").unwrap_or(40),
+                    order_latency: int("OrderLatency").unwrap_or(3),
+                },
+            );
+            speed_names.insert(n.key.clone(), get("Name").unwrap_or_default());
+        }
+
+        let mut fluent = HashMap::new();
+        for f in &data.manifest.fluent_messages {
+            if let Some(bytes) = data.file_system.try_open(f) {
+                parse_fluent(&String::from_utf8_lossy(&bytes), &mut fluent);
+            }
+        }
+
+        let mut restricted_colors = HashMap::new();
+        for f in &data.manifest.tile_sets {
+            let y = ModData::load_yaml(&data.file_system, std::slice::from_ref(f), None).map_err(|e| e.to_string())?;
+            let info = TerrainInfo::load(&y)?;
+            let colors = info
+                .terrain_types
+                .iter()
+                .filter(|t| t.restrict_player_color)
+                .map(|t| t.color)
+                .collect();
+            restricted_colors.insert(info.id, colors);
+        }
+
+        let mut maps = IndexMap::new();
+        let dir = engine.join("mods").join(mod_id).join("maps");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        paths.sort();
+        for p in paths {
+            if let Some(package) = open_package(&p)
+                && let Ok(map) = MapPackage::load(package.clone())
+            {
+                maps.insert(map.uid.clone(), MapEntry { package, map });
+            }
+        }
+
+        Ok(ServerMod {
+            data,
+            default_speed,
+            speeds,
+            speed_names,
+            fluent,
+            restricted_colors,
+            maps,
+            infos: HashMap::new(),
+        })
+    }
+
+    /// The text of a fluent message or attribute without arguments, or the key if unknown.
+    pub fn message(&self, key: &str) -> String {
+        self.fluent.get(key).cloned().unwrap_or_else(|| key.to_string())
+    }
+
+    /// The uids of the maps offered in the lobby, the map pool of a server without a map repository.
+    pub fn lobby_maps(&self) -> Vec<String> {
+        self.maps
+            .iter()
+            .filter(|(_, e)| {
+                e.map
+                    .section("Visibility")
+                    .is_none_or(|v| v.value_str().split(',').any(|s| s.trim() == "Lobby"))
+            })
+            .map(|(uid, _)| uid.clone())
+            .collect()
+    }
+
+    /// The uid of a map given by uid or file name.
+    pub fn resolve_map(&self, name: &str) -> Option<String> {
+        if self.maps.contains_key(name) {
+            return Some(name.to_string());
+        }
+        self.maps
+            .iter()
+            .find(|(_, e)| Path::new(e.package.name()).file_name().is_some_and(|f| f == name))
+            .map(|(uid, _)| uid.clone())
+    }
+
+    pub fn map_exists(&self, uid: &str) -> bool {
+        self.maps.contains_key(uid)
+    }
+
+    /// The rules of the map `uid`, loaded on first use.
+    pub fn map_info(&mut self, uid: &str) -> Result<Rc<MapInfo>, String> {
+        if let Some(i) = self.infos.get(uid) {
+            return Ok(i.clone());
+        }
+        let info = Rc::new(self.load_map_info(uid)?);
+        self.infos.insert(uid.to_string(), info.clone());
+        Ok(info)
+    }
+
+    fn load_map_info(&self, uid: &str) -> Result<MapInfo, String> {
+        let entry = self.maps.get(uid).ok_or_else(|| format!("unknown map {uid}"))?;
+        let map = &entry.map;
+        let fs = MapFs {
+            package: entry.package.as_ref(),
+            fs: &self.data.file_system,
+        };
+        let rules = ModData::load_yaml(&fs, &self.data.manifest.rules, map.section("Rules")).map_err(|e| e.to_string())?;
+        let actor = |name: &str| -> Result<Vec<TraitNode>, String> {
+            let n = rules
+                .iter()
+                .find(|n| n.key.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("rules lack {name}"))?;
+            parse_trait_nodes(name, &n.value.nodes).map_err(|e| e.to_string())
+        };
+        let (player, world) = (actor("Player")?, actor("World")?);
+        let players = map_players(map.section_nodes("Players"));
+        let spawn_points = map
+            .section_nodes("Actors")
+            .iter()
+            .filter(|n| n.value.value_str() == "mpspawn")
+            .count();
+        let tileset = map.section("Tileset").map_or("", MiniYaml::value_str);
+
+        let mut status = MAP_STATUS_PLAYABLE;
+        if self.defines_unsafe_custom_rules(entry) {
+            status |= MAP_STATUS_UNSAFE_CUSTOM_RULES;
+        }
+        if players.len() > MAXIMUM_PLAYER_COUNT {
+            status = MAP_STATUS_INCOMPATIBLE;
+        }
+
+        let picker = world.iter().find(|t| t.name == "ColorPickerManager");
+        let mut color_picker = ColorPicker::default();
+        if let Some(t) = picker {
+            let floats = |k: &str, d: [f32; 2]| -> [f32; 2] {
+                let v: Vec<f32> = field(t, k).map_or_else(Vec::new, |v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+                if v.len() == 2 { [v[0], v[1]] } else { d }
+            };
+            color_picker.saturation_range = floats("HsvSaturationRange", color_picker.saturation_range);
+            color_picker.value_range = floats("HsvValueRange", color_picker.value_range);
+            if let Some(v) = field(t, "SimilarityThreshold").and_then(|v| v.trim().parse().ok()) {
+                color_picker.similarity_threshold = v;
+            }
+            color_picker.preset_colors =
+                field(t, "PresetColors").map_or_else(Vec::new, |v| v.split(',').filter_map(Color::parse).collect());
+        }
+
+        Ok(MapInfo {
+            uid: uid.to_string(),
+            title: map.section("Title").map_or("", MiniYaml::value_str).to_string(),
+            spawn_points,
+            status,
+            options: self.lobby_options(&player, &world),
+            bots: player
+                .iter()
+                .filter(|t| t.name == "ModularBot")
+                .filter_map(|t| {
+                    Some(BotInfo {
+                        bot_type: field(t, "Type")?.to_string(),
+                        name: field(t, "Name").unwrap_or_default().to_string(),
+                    })
+                })
+                .collect(),
+            selectable_factions: world
+                .iter()
+                .filter(|t| t.name == "Faction" && field_bool(t, "Selectable", true))
+                .filter_map(|t| field(t, "InternalName").map(str::to_string))
+                .collect(),
+            color_picker,
+            restricted_colors: self.restricted_colors.get(tileset).cloned().unwrap_or_default(),
+            briefing: world
+                .iter()
+                .find(|t| t.name == "MissionData")
+                .and_then(|t| field(t, "Briefing"))
+                .filter(|b| !b.is_empty())
+                .map(|b| b.replace("\\n", "\n")),
+            players,
+        })
+    }
+
+    /// `Ruleset.DefinesUnsafeCustomRules` of a map.
+    fn defines_unsafe_custom_rules(&self, entry: &MapEntry) -> bool {
+        let map = &entry.map;
+        let custom = |k: &str| map.section(k).is_some_and(|y| !y.value_str().is_empty() || !y.nodes.is_empty());
+        if ["Weapons", "Voices", "Notifications", "Sequences"].iter().any(|k| custom(k)) {
+            return true;
+        }
+        let flagged = |actors: &[rustora_core::miniyaml::MiniYamlNode]| {
+            actors.iter().any(|a| {
+                a.value.nodes.iter().any(|t| {
+                    let name = t.key.split('@').next().unwrap_or("");
+                    !name.starts_with('-') && name != "Inherits" && !CUSTOM_RULES_IGNORED.contains(&name)
+                })
+            })
+        };
+        let Some(rules) = map.section("Rules") else {
+            return false;
+        };
+        if flagged(&rules.nodes) {
+            return true;
+        }
+        rules.value_str().split(',').map(str::trim).filter(|f| !f.is_empty()).any(|f| {
+            let fs = MapFs {
+                package: entry.package.as_ref(),
+                fs: &self.data.file_system,
+            };
+            rustora_fs::ReadFs::try_open(&fs, f)
+                .and_then(|d| MiniYaml::from_bytes(&d, f, true).ok())
+                .is_some_and(|nodes| flagged(&nodes))
+        })
+    }
+
+    fn boolean_option(&self, t: &TraitNode, id: &str, label: &str, prefix: &str, enabled: bool) -> LobbyOption {
+        let name = field(t, &format!("{prefix}Label")).unwrap_or(label);
+        let default_value = if field_bool(t, &format!("{prefix}Enabled"), enabled) {
+            "True"
+        } else {
+            "False"
+        };
+        LobbyOption {
+            id: id.to_string(),
+            name: self.message(name),
+            values: IndexMap::from([
+                ("True".to_string(), "Enabled".to_string()),
+                ("False".to_string(), "Disabled".to_string()),
+            ]),
+            default_value: default_value.to_string(),
+            is_locked: field_bool(t, &format!("{prefix}Locked"), false),
+            is_boolean: true,
+        }
+    }
+
+    fn dropdown_option(
+        &self,
+        id: &str,
+        name: &str,
+        values: IndexMap<String, String>,
+        default_value: String,
+        is_locked: bool,
+    ) -> LobbyOption {
+        LobbyOption {
+            id: id.to_string(),
+            name: self.message(name),
+            values,
+            default_value,
+            is_locked,
+            is_boolean: false,
+        }
+    }
+
+    /// The `ILobbyOptions.LobbyOptions` of all traits of the player and world actors, the player traits first.
+    fn lobby_options(&self, player: &[TraitNode], world: &[TraitNode]) -> Vec<LobbyOption> {
+        let mut out = Vec::new();
+        for t in player.iter().chain(world) {
+            match t.name.as_str() {
+                "LobbyPrerequisiteCheckbox" => {
+                    let id = field(t, "ID").unwrap_or_default();
+                    out.push(self.boolean_option(t, id, "", "", false));
+                    if let Some(o) = out.last_mut() {
+                        o.name = self.message(field(t, "Label").unwrap_or_default());
+                    }
+                }
+                "PlayerResources" => {
+                    let values: IndexMap<String, String> = field_ints(t, "SelectableCash", &[2500, 5000, 10000, 20000])
+                        .into_iter()
+                        .map(|c| (c.to_string(), format!("${c}")))
+                        .collect();
+                    if !values.is_empty() {
+                        out.push(self.dropdown_option(
+                            "startingcash",
+                            field(t, "DefaultCashDropdownLabel").unwrap_or("Starting Cash"),
+                            values,
+                            field(t, "DefaultCash").unwrap_or("5000").trim().to_string(),
+                            field_bool(t, "DefaultCashDropdownLocked", false),
+                        ));
+                    }
+                }
+                "DeveloperMode" => out.push(self.boolean_option(t, "cheats", "checkbox-debug-menu.label", "Checkbox", false)),
+                "Shroud" => {
+                    out.push(self.boolean_option(t, "explored", "checkbox-explored-map.label", "ExploredMapCheckbox", false));
+                    out.push(self.boolean_option(t, "fog", "checkbox-fog-of-war.label", "FogCheckbox", true));
+                }
+                "MapOptions" => {
+                    out.push(self.boolean_option(t, "shortgame", "checkbox-short-game.label", "ShortGameCheckbox", true));
+                    let tech: IndexMap<String, String> = player
+                        .iter()
+                        .filter(|p| p.name == "ProvidesTechPrerequisite")
+                        .filter_map(|p| Some((field(p, "Id")?.to_string(), self.message(field(p, "Name")?))))
+                        .collect();
+                    if !tech.is_empty() {
+                        out.push(self.dropdown_option(
+                            "techlevel",
+                            field(t, "TechLevelDropdownLabel").unwrap_or("dropdown-tech-level.label"),
+                            tech,
+                            field(t, "TechLevel").unwrap_or("unrestricted").to_string(),
+                            field_bool(t, "TechLevelDropdownLocked", false),
+                        ));
+                    }
+                    let speeds = self.speed_names.iter().map(|(k, n)| (k.clone(), self.message(n))).collect();
+                    out.push(self.dropdown_option(
+                        "gamespeed",
+                        field(t, "GameSpeedDropdownLabel").unwrap_or("dropdown-game-speed.label"),
+                        speeds,
+                        field(t, "GameSpeed").unwrap_or(&self.default_speed).to_string(),
+                        field_bool(t, "GameSpeedDropdownLocked", false),
+                    ));
+                }
+                "MapBuildRadius" => {
+                    out.push(self.boolean_option(t, "allybuild", "checkbox-ally-build-radius.label", "AllyBuildRadiusCheckbox", true));
+                    out.push(self.boolean_option(t, "buildradius", "checkbox-build-radius.label", "BuildRadiusCheckbox", true));
+                }
+                "CrateSpawner" => out.push(self.boolean_option(t, "crates", "checkbox-crates.label", "Checkbox", true)),
+                "MapCreeps" => out.push(self.boolean_option(t, "creeps", "dropdown-map-creeps.label", "Checkbox", true)),
+                "MapStartingLocations" => out.push(self.boolean_option(
+                    t,
+                    "separateteamspawns",
+                    "checkbox-separate-team-spawns.label",
+                    "SeparateTeamSpawnsCheckbox",
+                    true,
+                )),
+                "SpawnStartingUnits" => {
+                    let units: IndexMap<String, String> = world
+                        .iter()
+                        .filter(|w| w.name == "StartingUnits")
+                        .filter_map(|w| {
+                            Some((
+                                field(w, "Class")?.to_string(),
+                                self.message(field(w, "ClassName").unwrap_or_default()),
+                            ))
+                        })
+                        .collect();
+                    if !units.is_empty() {
+                        out.push(self.dropdown_option(
+                            "startingunits",
+                            field(t, "DropdownLabel").unwrap_or("dropdown-starting-units.label"),
+                            units,
+                            field(t, "StartingUnitsClass").unwrap_or("none").to_string(),
+                            field_bool(t, "DropdownLocked", false),
+                        ));
+                    }
+                }
+                "TimeLimitManager" => {
+                    let values = field_ints(t, "TimeLimitOptions", &[0, 10, 20, 30, 40, 60, 90])
+                        .into_iter()
+                        .map(|m| (m.to_string(), if m == 0 { "No limit".to_string() } else { format!("{m} minutes") }))
+                        .collect();
+                    out.push(self.dropdown_option(
+                        "timelimit",
+                        field(t, "TimeLimitLabel").unwrap_or("dropdown-time-limit.label"),
+                        values,
+                        field(t, "TimeLimitDefault").unwrap_or("0").trim().to_string(),
+                        field_bool(t, "TimeLimitLocked", false),
+                    ));
+                }
+                "ScriptLobbyDropdown" => {
+                    let values = t.yaml.nodes.iter().find(|n| n.key == "Values").map_or_else(IndexMap::new, |v| {
+                        v.value
+                            .nodes
+                            .iter()
+                            .map(|n| (n.key.clone(), self.message(n.value.value_str())))
+                            .collect()
+                    });
+                    out.push(self.dropdown_option(
+                        field(t, "ID").unwrap_or_default(),
+                        field(t, "Label").unwrap_or_default(),
+                        values,
+                        field(t, "Default").unwrap_or_default().to_string(),
+                        field_bool(t, "Locked", false),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fluent_messages_and_attributes() {
+        let mut m = HashMap::new();
+        parse_fluent(
+            "# comment\ncheckbox-short-game =\n    .label = Short Game\n    .description = Bases\n\nplain = Text here\n",
+            &mut m,
+        );
+        assert_eq!(m["checkbox-short-game.label"], "Short Game");
+        assert_eq!(m["plain"], "Text here");
+    }
+}

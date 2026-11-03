@@ -4,6 +4,7 @@
 //! OpenRA network protocol: order packets, replays and the lobby session.
 
 pub mod binary;
+pub mod handshake;
 pub mod order;
 pub mod replay;
 pub mod session;

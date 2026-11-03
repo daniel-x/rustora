@@ -6,9 +6,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64 = "0.23"
 indexmap = "2"
 rustora-core = { path = "../rustora-core" }
+rustora-engine = { path = "../rustora-engine" }
+rustora-fs = { path = "../rustora-fs" }
+rustora-game = { path = "../rustora-game" }
+rustora-mods-common = { path = "../rustora-mods-common" }
 rustora-net = { path = "../rustora-net" }
+socket2 = "0.5"
 
 [lints]
 workspace = true

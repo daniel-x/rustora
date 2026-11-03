@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use rustora_engine::order_manager::{Connection, Incoming, OrderManager};
 use rustora_engine::world::World;
 use rustora_game::map::MapPackage;
-use rustora_mods_common::world::{PlayerReference, map_players};
+use rustora_mods_common::world::{PlayerReference, make_slot, map_players, sync_client_to_player_reference};
 use rustora_net::order::{OrderPacket, RawOrder};
 use rustora_net::session::{Client, ClientState, Global, Session, Slot};
 
@@ -45,38 +45,6 @@ pub fn parse_bots(s: &str) -> Result<Vec<BotSpec>, String> {
             })
         })
         .collect()
-}
-
-/// `LobbyCommands.MakeSlotFromPlayerReference`.
-fn make_slot(pr: &PlayerReference) -> Option<Slot> {
-    pr.playable.then(|| Slot {
-        player_reference: pr.name.clone(),
-        closed: false,
-        allow_bots: pr.allow_bots,
-        lock_faction: pr.lock_faction,
-        lock_color: pr.lock_color,
-        lock_team: pr.lock_team,
-        lock_handicap: pr.lock_handicap,
-        lock_spawn: pr.lock_spawn,
-        required: pr.required,
-    })
-}
-
-/// `Server.SyncClientToPlayerReference`.
-fn sync_client_to_player_reference(c: &mut Client, pr: &PlayerReference) {
-    if pr.lock_faction {
-        c.faction = Some(pr.faction.clone());
-    }
-    if pr.lock_spawn {
-        c.spawn_point = pr.spawn;
-    }
-    if pr.lock_team {
-        c.team = pr.team;
-    }
-    if pr.lock_handicap {
-        c.handicap = pr.handicap;
-    }
-    c.color = if pr.lock_color { pr.color } else { c.preferred_color };
 }
 
 /// The lobby at game start of a local server with a spectating host (client 0) and `bots`.

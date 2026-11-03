@@ -94,6 +94,15 @@ impl RawOrder {
         }
     }
 
+    /// `Order.FromTargetString`.
+    pub fn from_target_string(order_string: &str, target_string: &str, is_immediate: bool) -> Self {
+        RawOrder {
+            target_string: Some(target_string.to_string()),
+            is_immediate,
+            ..RawOrder::new(order_string)
+        }
+    }
+
     pub fn handshake(name: &str, data: &str) -> Self {
         RawOrder {
             ty: order_type::HANDSHAKE,

@@ -165,6 +165,38 @@ impl Default for PlayerReference {
     }
 }
 
+/// `LobbyCommands.MakeSlotFromPlayerReference`.
+pub fn make_slot(pr: &PlayerReference) -> Option<rustora_net::session::Slot> {
+    pr.playable.then(|| rustora_net::session::Slot {
+        player_reference: pr.name.clone(),
+        closed: false,
+        allow_bots: pr.allow_bots,
+        lock_faction: pr.lock_faction,
+        lock_color: pr.lock_color,
+        lock_team: pr.lock_team,
+        lock_handicap: pr.lock_handicap,
+        lock_spawn: pr.lock_spawn,
+        required: pr.required,
+    })
+}
+
+/// `Server.SyncClientToPlayerReference`.
+pub fn sync_client_to_player_reference(c: &mut rustora_net::session::Client, pr: &PlayerReference) {
+    if pr.lock_faction {
+        c.faction = Some(pr.faction.clone());
+    }
+    if pr.lock_spawn {
+        c.spawn_point = pr.spawn;
+    }
+    if pr.lock_team {
+        c.team = pr.team;
+    }
+    if pr.lock_handicap {
+        c.handicap = pr.handicap;
+    }
+    c.color = if pr.lock_color { pr.color } else { c.preferred_color };
+}
+
 /// `MapPlayers`: player references keyed by name, in definition order.
 pub fn map_players(defs: &[MiniYamlNode]) -> IndexMap<String, PlayerReference> {
     let mut out = IndexMap::new();

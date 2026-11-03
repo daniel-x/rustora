@@ -1,0 +1,16 @@
+[package]
+name = "rustora-dedicated"
+description = "Dedicated OpenRA compatible game server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rustora-server"
+path = "src/main.rs"
+
+[dependencies]
+rustora-server = { path = "../../crates/rustora-server" }
+
+[lints]
+workspace = true

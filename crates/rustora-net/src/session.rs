@@ -181,6 +181,28 @@ impl Session {
     pub fn client_in_slot(&self, slot: &str) -> Option<&Client> {
         self.clients.iter().find(|c| c.slot.as_deref() == Some(slot))
     }
+
+    pub fn client_with_index_mut(&mut self, index: i32) -> Option<&mut Client> {
+        self.clients.iter_mut().find(|c| c.index == index)
+    }
+
+    /// The first open slot without a client.
+    pub fn first_empty_slot(&self) -> Option<String> {
+        self.slots
+            .iter()
+            .find(|(k, s)| !s.closed && self.client_in_slot(k).is_none())
+            .map(|(k, _)| k.clone())
+    }
+
+    /// Clients that are not bots.
+    pub fn non_bot_clients(&self) -> impl Iterator<Item = &Client> {
+        self.clients.iter().filter(|c| !c.is_bot())
+    }
+
+    /// Clients that are neither bots nor spectators.
+    pub fn non_bot_players(&self) -> impl Iterator<Item = &Client> {
+        self.clients.iter().filter(|c| !c.is_bot() && !c.is_observer())
+    }
 }
 
 /// `FieldSaver.FormatValue` of the session field types.
@@ -316,6 +338,21 @@ impl Global {
 }
 
 impl Session {
+    /// The payload of the `SyncLobbyClients` server order.
+    pub fn serialize_clients(&self) -> String {
+        nodes_to_string(&self.clients.iter().map(Client::serialize).collect::<Vec<_>>())
+    }
+
+    /// The payload of the `SyncLobbySlots` server order.
+    pub fn serialize_slots(&self) -> String {
+        nodes_to_string(&self.slots.values().map(Slot::serialize).collect::<Vec<_>>())
+    }
+
+    /// The payload of the `SyncLobbyGlobalSettings` server order.
+    pub fn serialize_global_settings(&self) -> String {
+        nodes_to_string(&[self.global_settings.serialize()])
+    }
+
     /// `Session.Serialize`, the payload of the `SyncInfo` server order.
     pub fn serialize(&self) -> String {
         let spawns: Vec<String> = self.disabled_spawn_points.iter().map(i32::to_string).collect();
