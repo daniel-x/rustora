@@ -11,7 +11,7 @@ use crate::terrain::TargetableType;
 
 /// `Actor.GetTargetablePositions`: falls back to the center position.
 pub fn targetable_positions(a: &ActorRef) -> Vec<WPos> {
-    let providers = a.traits_implementing::<dyn ITargetablePositions>();
+    let providers = a.cache_opt().map_or_else(|| a.traits_implementing::<dyn ITargetablePositions>(), |c| c.targetable_positions.clone());
     let mut out = Vec::new();
     let mut any = false;
     for p in &providers {
@@ -31,7 +31,7 @@ pub trait ITargetablePositions {
 /// `Actor.GetEnabledTargetTypes`.
 pub fn enabled_target_types(a: &ActorRef) -> BitSet<TargetableType> {
     let mut t = BitSet::default();
-    for tg in a.traits_implementing::<dyn ITargetable>() {
+    for tg in targetables(a) {
         if tg.is_trait_enabled() {
             t = t.union(&tg.target_types());
         }
@@ -42,7 +42,7 @@ pub fn enabled_target_types(a: &ActorRef) -> BitSet<TargetableType> {
 /// `Actor.GetAllTargetTypes`.
 pub fn all_target_types(a: &ActorRef) -> BitSet<TargetableType> {
     let mut t = BitSet::default();
-    for tg in a.traits_implementing::<dyn ITargetable>() {
+    for tg in targetables(a) {
         t = t.union(&tg.target_types());
     }
     t
@@ -50,7 +50,7 @@ pub fn all_target_types(a: &ActorRef) -> BitSet<TargetableType> {
 
 /// `Actor.IsTargetableBy`.
 pub fn is_targetable_by(a: &ActorRef, by: &ActorRef) -> bool {
-    a.traits_implementing::<dyn ITargetable>().iter().any(|t| t.targetable_by(a, by))
+    targetables(a).iter().any(|t| t.targetable_by(a, by))
 }
 
 pub trait ITargetable {
@@ -58,4 +58,9 @@ pub trait ITargetable {
     fn targetable_by(&self, self_: &ActorRef, by_actor: &ActorRef) -> bool;
     fn requires_force_fire(&self) -> bool;
     fn is_trait_enabled(&self) -> bool;
+}
+
+/// `Actor.Targetables`, cached at creation like the C# array.
+fn targetables(a: &ActorRef) -> Vec<std::rc::Rc<dyn ITargetable>> {
+    a.cache_opt().map_or_else(|| a.traits_implementing::<dyn ITargetable>(), |c| c.targetables.clone())
 }

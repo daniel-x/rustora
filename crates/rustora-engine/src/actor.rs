@@ -59,6 +59,8 @@ pub struct ActorCache {
     pub tick_idles: Vec<Rc<dyn INotifyIdle>>,
     pub crushables: Vec<Rc<dyn ICrushable>>,
     pub sync_hashes: Vec<Rc<dyn ISync>>,
+    pub targetables: Vec<Rc<dyn crate::actor_ext::ITargetable>>,
+    pub targetable_positions: Vec<Rc<dyn crate::actor_ext::ITargetablePositions>>,
     /// C# class names of the sync traits, for diagnostics.
     pub sync_names: Vec<&'static str>,
 }
@@ -156,6 +158,8 @@ impl Actor {
             tick_idles: dict.with_interface::<dyn INotifyIdle>(&actor),
             crushables: dict.with_interface::<dyn ICrushable>(&actor),
             sync_hashes: dict.with_interface::<dyn ISync>(&actor),
+            targetables: dict.with_interface::<dyn crate::actor_ext::ITargetable>(&actor),
+            targetable_positions: dict.with_interface::<dyn crate::actor_ext::ITargetablePositions>(&actor),
             sync_names,
         };
         let _ = actor.cache.set(cache);
