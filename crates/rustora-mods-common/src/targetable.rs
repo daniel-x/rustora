@@ -92,7 +92,7 @@ impl ITargetable for Targetable {
         if cloaks.is_empty() || (!viewer.is_dead() && viewer.info.has_trait_info_named("IgnoresCloak")) {
             return true;
         }
-        cloaks.iter().all(|c| c.is_trait_disabled() || c.is_visible_to(self_, &viewer.owner()))
+        cloaks.iter().all(|c| c.is_trait_disabled() || c.is_visible_to(self_, Some(&viewer.owner())))
     }
 
     fn requires_force_fire(&self) -> bool {

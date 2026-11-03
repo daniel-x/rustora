@@ -59,6 +59,7 @@ pub fn register(r: &mut TraitRegistry) {
     cargo::register(r);
     crates::register(r);
     death::register(r);
+    cloak::register(r);
     resupply::register(r);
     base::register(r);
     building::register(r);
