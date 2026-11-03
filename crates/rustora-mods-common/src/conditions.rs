@@ -7,7 +7,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use rustora_core::world_types::{MersenneTwister, WAngle, WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -28,6 +28,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Huntable", |n| load_info!(HuntableInfo, n));
     r.register("ScaredyCat", |n| load_info!(ScaredyCatInfo, n));
     r.register("Wanders", |n| load_info!(WandersInfo, n));
+    r.register("RejectsOrders", |n| load_info!(RejectsOrdersInfo, n));
+    r.register("ValidateOrder", |n| load_info!(ValidateOrderInfo, n));
     r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
     r.register("WithSpriteTurret", |n| load_info!(WithSpriteTurretInfo, n));
 }
@@ -609,5 +611,89 @@ impl Wanders {
         self.ticks_idle.set(0);
         self.effective_move_radius.set(self.info.wander_move_radius);
         Some(cell)
+    }
+}
+
+/// `Traits/RejectsOrders.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct RejectsOrdersInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub reject: IndexSet<String>,
+    pub except: IndexSet<String>,
+    pub remove_orders: bool,
+}
+
+pub struct RejectsOrders {
+    info: Rc<RejectsOrdersInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(RejectsOrders: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(RejectsOrdersInfo => |info, _| {
+    let state = ConditionalState::new(&info.base);
+    Some(Rc::new(RejectsOrders { info, state }))
+});
+
+impl ConditionalHooks for RejectsOrders {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        if self.info.remove_orders {
+            self_.cancel_activity();
+        }
+    }
+}
+rustora_engine::conditional_plumbing!(RejectsOrders);
+
+impl INotifyCreated for RejectsOrders {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+/// `RejectsOrdersExts.AcceptsOrder`.
+pub fn accepts_order(a: &ActorRef, order_string: &str) -> bool {
+    let traits: Vec<Rc<RejectsOrders>> = a.traits_implementing::<RejectsOrders>().into_iter().filter(|t| !t.state.is_trait_disabled()).collect();
+    if traits.is_empty() || traits.iter().any(|t| t.info.except.contains(order_string)) {
+        return true;
+    }
+    let mut any_rejects = false;
+    for t in &traits {
+        any_rejects = any_rejects || !t.info.reject.is_empty();
+        if t.info.reject.contains(order_string) {
+            return false;
+        }
+    }
+    any_rejects
+}
+
+/// `Traits/World/ValidateOrder.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ValidateOrderInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+pub struct ValidateOrder;
+
+register_traits!(ValidateOrder: IValidateOrder);
+info_impl!(ValidateOrderInfo => |_, _| Some(Rc::new(ValidateOrder)));
+
+impl IValidateOrder for ValidateOrder {
+    fn order_validation(&self, world: &rustora_engine::world::World, client_id: i32, order: &rustora_engine::order::Order) -> bool {
+        let Some(subject) = &order.subject else { return true };
+        let Some(owner) = subject.owner_opt() else { return true };
+        let subject_client_id = owner.client_index;
+        let Some(client) = world.lobby_info.client_with_index(subject_client_id) else { return false };
+        let is_bot_order = client.bot.is_some() && client_id == client.bot_controller_client_index;
+        if subject_client_id != client_id && !is_bot_order {
+            return false;
+        }
+        accepts_order(subject, &order.order_string)
     }
 }
