@@ -236,10 +236,8 @@ impl IResolveOrder for DeveloperMode {
                     crate::health::kill_actor(&a, Some(&a), &DamageTypes::new(&names));
                 }
             }
-            "DevDispose" => {
-                if order.target.target_type() == TargetType::Actor {
-                    order.target.actor().unwrap().dispose();
-                }
+            "DevDispose" if order.target.target_type() == TargetType::Actor => {
+                order.target.actor().unwrap().dispose();
             }
             _ => {}
         }
@@ -1496,15 +1494,15 @@ impl ITick for RepairableBuilding {
         self.health.inflict_damage(
             self_,
             Some(self_),
-            &rustora_engine::damage::Damage::new(amount, self.info.repair_damage_types.clone()),
+            &rustora_engine::damage::Damage::new(amount, self.info.repair_damage_types),
             false,
         );
         if self.health.damage_state() == rustora_engine::damage::DamageState::UNDAMAGED {
             for r in &repairers {
-                if !Rc::ptr_eq(r, &owner) {
-                    if let Some(pe) = r.player_actor().trait_or_default::<PlayerExperience>() {
-                        pe.give_experience(self.info.player_experience);
-                    }
+                if !Rc::ptr_eq(r, &owner)
+                    && let Some(pe) = r.player_actor().trait_or_default::<PlayerExperience>()
+                {
+                    pe.give_experience(self.info.player_experience);
                 }
             }
             self.repairers.borrow_mut().clear();

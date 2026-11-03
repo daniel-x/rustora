@@ -276,12 +276,11 @@ impl ResourceClaimLayer {
             }
         }
         let last = self.claim_by_actor.borrow().get(&claimer.id).copied();
-        if let Some(last) = last {
-            if let Some(v) = by_cell.get_mut(&last) {
-                if let Some(i) = v.iter().position(|a| a.id == claimer.id) {
-                    v.remove(i);
-                }
-            }
+        if let Some(last) = last
+            && let Some(v) = by_cell.get_mut(&last)
+            && let Some(i) = v.iter().position(|a| a.id == claimer.id)
+        {
+            v.remove(i);
         }
         // C# never adds the claimer to the list, so a claim does not block other harvesters.
         by_cell.entry(cell).or_default();
@@ -300,12 +299,11 @@ impl ResourceClaimLayer {
 
     pub fn remove_claim(&self, claimer: &ActorRef) {
         let last = self.claim_by_actor.borrow_mut().remove(&claimer.id);
-        if let Some(last) = last {
-            if let Some(v) = self.claim_by_cell.borrow_mut().get_mut(&last) {
-                if let Some(i) = v.iter().position(|a| a.id == claimer.id) {
-                    v.remove(i);
-                }
-            }
+        if let Some(last) = last
+            && let Some(v) = self.claim_by_cell.borrow_mut().get_mut(&last)
+            && let Some(i) = v.iter().position(|a| a.id == claimer.id)
+        {
+            v.remove(i);
         }
     }
 }
@@ -886,11 +884,11 @@ impl INotifyCreated for DockHost {
 impl ITick for DockHost {
     fn tick(&self, self_: &ActorRef) {
         let a = self.docked_client_actor.borrow().clone();
-        if let Some(a) = a {
-            if a.is_dead() || !a.is_in_world() {
-                let c = self.docked_client.borrow().clone().expect("docked client");
-                self.on_dock_completed(self_, &a, &c);
-            }
+        if let Some(a) = a
+            && (a.is_dead() || !a.is_in_world())
+        {
+            let c = self.docked_client.borrow().clone().expect("docked client");
+            self.on_dock_completed(self_, &a, &c);
         }
     }
 }
@@ -1385,18 +1383,19 @@ impl FindAndDeliverResources {
                 if (loc - search_from).length_squared() > radius2 {
                     return PATH_COST_FOR_INVALID_PATH;
                 }
-                if let Some(d) = dock_pos {
-                    if penalty > 0 && h2.can_harvest_cell(loc) {
-                        let pos = w2.map().center_of_cell(loc);
-                        let b = pos - d;
-                        if b != WVec::ZERO {
-                            let c = pos - harv_pos;
-                            if c != WVec::ZERO {
-                                let a = harv_pos - d;
-                                let num = 512 * (b.length_squared() + c.length_squared() - a.length_squared());
-                                let cos_a = (num / b.length() as i64 / c.length() as i64) as i32;
-                                return (penalty / 2).abs() + penalty * cos_a / 2048;
-                            }
+                if let Some(d) = dock_pos
+                    && penalty > 0
+                    && h2.can_harvest_cell(loc)
+                {
+                    let pos = w2.map().center_of_cell(loc);
+                    let b = pos - d;
+                    if b != WVec::ZERO {
+                        let c = pos - harv_pos;
+                        if c != WVec::ZERO {
+                            let a = harv_pos - d;
+                            let num = 512 * (b.length_squared() + c.length_squared() - a.length_squared());
+                            let cos_a = (num / b.length() as i64 / c.length() as i64) as i32;
+                            return (penalty / 2).abs() + penalty * cos_a / 2048;
                         }
                     }
                 }

@@ -193,7 +193,7 @@ fn all_relationships() -> PlayerRelationship {
     PlayerRelationship(PlayerRelationship::ALLY.0 | PlayerRelationship::NEUTRAL.0 | PlayerRelationship::ENEMY.0)
 }
 
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, Default)]
 pub struct ArmorInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
@@ -201,16 +201,6 @@ pub struct ArmorInfo {
     pub base: ConditionalTraitInfo,
     #[field(name = "Type")]
     pub ty: Option<String>,
-}
-
-impl Default for ArmorInfo {
-    fn default() -> Self {
-        ArmorInfo {
-            instance_name: None,
-            base: ConditionalTraitInfo::default(),
-            ty: None,
-        }
-    }
 }
 
 pub struct Armor {
@@ -413,10 +403,10 @@ impl DamageWarhead {
         } else {
             util::apply_percentage_modifiers(self.damage, modifiers.iter().copied().chain([versus]))
         };
-        if !victim.disposed() {
-            if let Some(h) = &victim.cache().health {
-                h.inflict_damage(victim, Some(fired_by), &Damage::new(damage, self.damage_types), false);
-            }
+        if !victim.disposed()
+            && let Some(h) = &victim.cache().health
+        {
+            h.inflict_damage(victim, Some(fired_by), &Damage::new(damage, self.damage_types), false);
         }
     }
 
@@ -436,8 +426,8 @@ impl DamageWarhead {
 
     fn damage_falloff(&self, range: &[WDist], distance: i32) -> i32 {
         let mut inner = range[0].length;
-        for i in 1..range.len() {
-            let outer = range[i].length;
+        for (i, r) in range.iter().enumerate().skip(1) {
+            let outer = r.length;
             if outer > distance {
                 return Int2::lerp_i32(self.falloff[i - 1], self.falloff[i], distance - inner, outer - inner);
             }
@@ -944,13 +934,12 @@ struct Bullet {
 impl Bullet {
     fn should_explode(&self, w: &Rc<World>) -> bool {
         let info = &self.info;
-        if info.blockable {
-            if let Some(hit) =
+        if info.blockable
+            && let Some(hit) =
                 any_blocking_actors_between(w, &self.args.source_actor.owner(), self.last_pos.get(), self.pos.get(), info.width)
-            {
-                self.pos.set(hit);
-                return true;
-            }
+        {
+            self.pos.set(hit);
+            return true;
         }
         if info.trail_image.as_deref().is_some_and(|i| !i.is_empty()) {
             self.smoke_ticks.set(self.smoke_ticks.get() - 1);
@@ -1111,10 +1100,10 @@ impl Effect for InstantHit {
             *self.target.borrow_mut() = Target::from_pos(args.passive_target);
         }
         let center = self.target.borrow().center_position();
-        if self.info.blockable {
-            if let Some(hit) = any_blocking_actors_between(world, &args.source_actor.owner(), args.source, center, self.info.width) {
-                *self.target.borrow_mut() = Target::from_pos(hit);
-            }
+        if self.info.blockable
+            && let Some(hit) = any_blocking_actors_between(world, &args.source_actor.owner(), args.source, center, self.info.width)
+        {
+            *self.target.borrow_mut() = Target::from_pos(hit);
         }
         let target = self.target.borrow().clone();
         let center = target.center_position();
@@ -1781,11 +1770,11 @@ impl Effect for Missile {
             self.pos.set(last_pos + mv);
         }
         let mut should_explode = false;
-        if info.blockable {
-            if let Some(hit) = any_blocking_actors_between(world, &args.source_actor.owner(), last_pos, self.pos.get(), info.width) {
-                self.pos.set(hit);
-                should_explode = true;
-            }
+        if info.blockable
+            && let Some(hit) = any_blocking_actors_between(world, &args.source_actor.owner(), last_pos, self.pos.get(), info.width)
+        {
+            self.pos.set(hit);
+            should_explode = true;
         }
         if info.trail_image.as_deref().is_some_and(|i| !i.is_empty()) {
             self.ticks_to_next_smoke.set(self.ticks_to_next_smoke.get() - 1);

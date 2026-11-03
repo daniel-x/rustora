@@ -311,15 +311,15 @@ impl AutoTarget {
             .iter()
             .map(|a| Target::from_actor(Some(a)))
             .collect();
-        if allow_move || ab.info.target_frozen_actors {
-            if let Some(layer) = self_.owner().frozen_actor_layer() {
-                targets.extend(
-                    layer
-                        .frozen_actors_in_circle(&w, pos, scan_range, true)
-                        .into_iter()
-                        .map(Target::from_frozen_actor),
-                );
-            }
+        if (allow_move || ab.info.target_frozen_actors)
+            && let Some(layer) = self_.owner().frozen_actor_layer()
+        {
+            targets.extend(
+                layer
+                    .frozen_actors_in_circle(&w, pos, scan_range, true)
+                    .into_iter()
+                    .map(Target::from_frozen_actor),
+            );
         }
         let me = self_.owner();
         for target in targets {
@@ -435,10 +435,10 @@ impl INotifyDamage for AutoTarget {
         if overrides.iter().any(|o| o.try_get_auto_target_override(self_).is_some()) {
             return;
         }
-        if !attacker.is_in_world() {
-            if let Some(transport) = attacker.trait_or_default::<Passenger>().and_then(|p| p.transport.borrow().clone()) {
-                attacker = transport;
-            }
+        if !attacker.is_in_world()
+            && let Some(transport) = attacker.trait_or_default::<Passenger>().and_then(|p| p.transport.borrow().clone())
+        {
+            attacker = transport;
         }
         if !self.allow_move() && !attacker.can_be_viewed_by_player(Some(&self_.owner())) {
             return;

@@ -140,10 +140,10 @@ impl WeaponInfo {
         let mut f = WeaponFields::default();
         rustora_core::fieldloader::FieldLoad::load(&mut f, content).map_err(|e| e.to_string())?;
         let mut projectile = None;
-        if let Some(n) = content.nodes.iter().find(|n| n.key == "Projectile") {
-            if let Some(l) = n.value.value.as_deref().and_then(|v| registry.projectiles.get(v)) {
-                projectile = Some(l(&n.value)?);
-            }
+        if let Some(n) = content.nodes.iter().find(|n| n.key == "Projectile")
+            && let Some(l) = n.value.value.as_deref().and_then(|v| registry.projectiles.get(v))
+        {
+            projectile = Some(l(&n.value)?);
         }
         let mut warheads = Vec::new();
         for n in content.nodes.iter().filter(|n| n.key.starts_with("Warhead")) {

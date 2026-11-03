@@ -417,10 +417,10 @@ impl INotifyOwnerLost for OwnerLostAction {
         }
         match self.info.action {
             OwnerLostActionType::Kill => {
-                if !self_.disposed() {
-                    if let Some(h) = self_.cache().health.clone() {
-                        h.kill(self_, Some(self_), &self.info.death_types);
-                    }
+                if !self_.disposed()
+                    && let Some(h) = self_.cache().health.clone()
+                {
+                    h.kill(self_, Some(self_), &self.info.death_types);
                 }
             }
             OwnerLostActionType::Dispose => self_.dispose(),

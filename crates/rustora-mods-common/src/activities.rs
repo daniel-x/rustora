@@ -416,19 +416,19 @@ impl Move {
                     )),
                     true,
                 );
-            } else if m.is_blocking() {
-                if let Some(new_cell) = m.get_adjacent_cell(next_cell, None) {
-                    if (next_cell - new_cell).length_squared() > 2 {
-                        self.path_add(m.to_cell());
-                    }
-                    return (
-                        Some((
-                            new_cell,
-                            m.get_available_subcell(new_cell, m.from_subcell.get(), ignore, BlockedByActor::All),
-                        )),
-                        true,
-                    );
+            } else if m.is_blocking()
+                && let Some(new_cell) = m.get_adjacent_cell(next_cell, None)
+            {
+                if (next_cell - new_cell).length_squared() > 2 {
+                    self.path_add(m.to_cell());
                 }
+                return (
+                    Some((
+                        new_cell,
+                        m.get_available_subcell(new_cell, m.from_subcell.get(), ignore, BlockedByActor::All),
+                    )),
+                    true,
+                );
             }
             return (None, false);
         }
@@ -458,15 +458,15 @@ impl Activity for Move {
     fn on_first_run(&self, self_: &ActorRef) {
         self.start_ticks.set(self_.world().world_tick());
         self.mobile.move_result.set(MoveResult::InProgress);
-        if self.evaluate_nearest_movable_cell {
-            if let Some(d) = self.destination.get() {
-                let movable = self.mobile.nearest_moveable_cell_range(d, 1, 10);
-                self.destination.set(
-                    self.mobile
-                        .can_enter_cell(movable, None, BlockedByActor::Immovable)
-                        .then_some(movable),
-                );
-            }
+        if self.evaluate_nearest_movable_cell
+            && let Some(d) = self.destination.get()
+        {
+            let movable = self.mobile.nearest_moveable_cell_range(d, 1, 10);
+            self.destination.set(
+                self.mobile
+                    .can_enter_cell(movable, None, BlockedByActor::Immovable)
+                    .then_some(movable),
+            );
         }
         for check in PATH_SEARCH_ORDER {
             self.set_eval(check);
@@ -679,7 +679,7 @@ impl MovePart {
         let next_facing = map.facing_between(next_cell, m.to_cell(), m.facing());
         let current_facing = map.facing_between(m.to_cell(), m.from_cell(), m.facing());
         let delta = (next_facing - current_facing).angle;
-        delta != 0 && (delta < 384 || delta > 640)
+        delta != 0 && !(384..=640).contains(&delta)
     }
 
     fn on_complete(&self, self_: &ActorRef, m: &Mobile) -> Option<ActivityRef> {
@@ -1255,15 +1255,12 @@ impl Activity for MoveAdjacentTo {
             turn: true,
             ..
         } = &self.mode
+            && !self.base.is_canceling()
+            && let Some(f) = desired_facing
+            && *f != self.mobile.facing()
         {
-            if !self.base.is_canceling() {
-                if let Some(f) = desired_facing {
-                    if *f != self.mobile.facing() {
-                        self.base.queue_child(Turn::new(self_, *f));
-                        return false;
-                    }
-                }
-            }
+            self.base.queue_child(Turn::new(self_, *f));
+            return false;
         }
         true
     }

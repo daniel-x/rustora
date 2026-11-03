@@ -167,11 +167,11 @@ impl ConditionalHooks for Turreted {
     }
 
     fn trait_enabled(&self, _self_: &ActorRef) {
-        if let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) {
-            if ci.damage_triggers.is_empty() {
-                c.remaining_duration.set(ci.duration);
-                self.set_prone_state(true);
-            }
+        if let (Some(ci), Some(c)) = (self.cover_info(), &self.cover)
+            && ci.damage_triggers.is_empty()
+        {
+            c.remaining_duration.set(ci.duration);
+            self.set_prone_state(true);
         }
     }
 
@@ -181,10 +181,10 @@ impl ConditionalHooks for Turreted {
             self.set_prone_state(false);
             return;
         }
-        if let Some(a) = self.attack.get().and_then(|a| a.as_ref()) {
-            if a.is_aiming() {
-                a.on_stop_order(self_);
-            }
+        if let Some(a) = self.attack.get().and_then(|a| a.as_ref())
+            && a.is_aiming()
+        {
+            a.on_stop_order(self_);
         }
     }
 }
@@ -217,12 +217,12 @@ impl INotifyCreated for Turreted {
         let _ = self.attack.set(attack);
         let _ = self.facing.set(self_.trait_or_default::<dyn IFacing>());
         let _ = self.body.set(self_.trait_::<BodyOrientation>());
-        if let (Some(ci), Some(c)) = (self.cover_info(), &self.cover) {
-            if ci.damage_triggers.is_empty() {
-                c.remaining_duration.set(ci.duration);
-                if !self.is_trait_disabled() {
-                    self.set_prone_state(true);
-                }
+        if let (Some(ci), Some(c)) = (self.cover_info(), &self.cover)
+            && ci.damage_triggers.is_empty()
+        {
+            c.remaining_duration.set(ci.duration);
+            if !self.is_trait_disabled() {
+                self.set_prone_state(true);
             }
         }
     }

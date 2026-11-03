@@ -930,10 +930,10 @@ impl CrateAction {
             }
             let shuffled = util::shuffle(&cells, &mut w.shared_random.borrow_mut());
             let mut duplicates = (shuffled.len() as i32).min(info.max_amount);
-            if info.max_duplicate_value > 0 {
-                if let Some(v) = c.info.trait_info::<ValuedInfo>().filter(|v| v.cost > 0) {
-                    duplicates = duplicates.min(info.max_duplicate_value / v.cost);
-                }
+            if info.max_duplicate_value > 0
+                && let Some(v) = c.info.trait_info::<ValuedInfo>().filter(|v| v.cost > 0)
+            {
+                duplicates = duplicates.min(info.max_duplicate_value / v.cost);
             }
             for cell in shuffled.iter().take(duplicates.max(0) as usize) {
                 let actor = w.create_actor(

@@ -72,7 +72,7 @@ impl Consideration {
         if stance != self.against {
             return 0;
         }
-        if !rustora_engine::actor_ext::is_targetable_by(a, &fired_by.player_actor()) || !a.can_be_viewed_by_player(Some(fired_by)) {
+        if !rustora_engine::actor_ext::is_targetable_by(a, fired_by.player_actor()) || !a.can_be_viewed_by_player(Some(fired_by)) {
             return 0;
         }
         if !self.types.overlaps(&rustora_engine::actor_ext::enabled_target_types(a)) {

@@ -373,18 +373,18 @@ impl ITargetablePositions for HitShape {
             if has_offsets { turret.map(|t| t.offset()) } else { None },
         );
         let mut cache = self.cache.borrow_mut();
-        if let Some((k, v)) = cache.as_ref() {
-            if *k == key {
-                return v.clone();
-            }
+        if let Some((k, v)) = cache.as_ref()
+            && *k == key
+        {
+            return v.clone();
         }
         let mut out = Vec::new();
-        if self.info.use_targetable_cells_offsets {
-            if let Some(t) = tc {
-                let w = self_.world();
-                for (c, _) in t.targetable_cells() {
-                    out.push(w.map().center_of_cell(c));
-                }
+        if self.info.use_targetable_cells_offsets
+            && let Some(t) = tc
+        {
+            let w = self_.world();
+            for (c, _) in t.targetable_cells() {
+                out.push(w.map().center_of_cell(c));
             }
         }
         for o in &self.info.targetable_offsets {

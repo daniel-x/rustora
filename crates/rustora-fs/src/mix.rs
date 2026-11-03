@@ -30,7 +30,7 @@ pub fn hash_filename(name: &str, ty: HashType) -> u32 {
     match ty {
         HashType::Classic => {
             let mut result = 0u32;
-            for chunk in upper.chunks_exact(4) {
+            for chunk in upper.as_chunks::<4>().0 {
                 let next = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                 result = result.rotate_left(1).wrapping_add(next);
             }
@@ -106,7 +106,7 @@ fn decrypt_key(src: &[u8]) -> Vec<u8> {
     let mut pre_len = (55 / a + 1) * (a + 1);
     let mut dest = Vec::new();
     let mut src_offset = 0;
-    while a + 1 <= pre_len {
+    while a < pre_len {
         let block = BigUint::from_bytes_le(&src[src_offset..src_offset + a + 1]);
         let mut out = block.modpow(&exponent, &modulus).to_bytes_le();
         out.resize(a, 0);
@@ -120,7 +120,7 @@ fn decrypt_key(src: &[u8]) -> Vec<u8> {
 
 fn decrypt_blocks(data: &[u8], cipher: &blowfish::Blowfish) -> Vec<u8> {
     let mut out = data.to_vec();
-    for chunk in out.chunks_exact_mut(8) {
+    for chunk in out.as_chunks_mut::<8>().0 {
         let mut b = blowfish::cipher::Block::<blowfish::Blowfish>::default();
         b.copy_from_slice(chunk);
         cipher.decrypt_block(&mut b);

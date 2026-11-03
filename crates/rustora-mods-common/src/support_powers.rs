@@ -477,19 +477,20 @@ impl FlyOverTracker {
     }
 
     fn on_enter_range(&self, a: &ActorRef, _paratroopers: bool) {
-        if let Some(cam) = self.info.camera_actor.clone() {
-            if self.camera.borrow().is_none() && !self.any_in_range() {
-                let (me, owner, cell) = (self.me.clone(), self.owner_actor.owner(), self.camera_cell);
-                self.owner_actor.world().add_frame_end_task(Box::new(move |w| {
-                    let c = w.create_actor(
-                        &cam,
-                        ActorInits::new().with(LocationInit::new(cell)).with(OwnerInit::from_player(&owner)),
-                    );
-                    if let Some(t) = me.upgrade() {
-                        *t.camera.borrow_mut() = Some(c);
-                    }
-                }));
-            }
+        if let Some(cam) = self.info.camera_actor.clone()
+            && self.camera.borrow().is_none()
+            && !self.any_in_range()
+        {
+            let (me, owner, cell) = (self.me.clone(), self.owner_actor.owner(), self.camera_cell);
+            self.owner_actor.world().add_frame_end_task(Box::new(move |w| {
+                let c = w.create_actor(
+                    &cam,
+                    ActorInits::new().with(LocationInit::new(cell)).with(OwnerInit::from_player(&owner)),
+                );
+                if let Some(t) = me.upgrade() {
+                    *t.camera.borrow_mut() = Some(c);
+                }
+            }));
         }
         self.set(a, true);
     }

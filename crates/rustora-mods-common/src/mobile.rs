@@ -472,7 +472,7 @@ impl IPositionable for Mobile {
     fn get_valid_subcell(&self, preferred: u8) -> u8 {
         let preferred = if preferred == ANY { self.from_subcell.get() } else { preferred };
         if self.locomotor_info.shares_cell {
-            if preferred <= FULL_CELL {
+            if preferred == FULL_CELL {
                 return self.self_.world().map().default_subcell();
             }
         } else if preferred != FULL_CELL {
@@ -593,10 +593,11 @@ impl IMove for Mobile {
     }
 
     fn can_enter_target_now(&self, self_: &ActorRef, target: &Target) -> bool {
-        if let Some(f) = target.frozen_actor() {
-            if target.target_type() == TargetType::FrozenActor && !f.is_valid() {
-                return false;
-            }
+        if let Some(f) = target.frozen_actor()
+            && target.target_type() == TargetType::FrozenActor
+            && !f.is_valid()
+        {
+            return false;
         }
         let w = self_.world();
         self_.location() == w.map().cell_containing(target.center_position())

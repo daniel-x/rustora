@@ -278,7 +278,7 @@ impl TechTree {
         let owned = gather_owned_prerequisites(&self.owner, &self.world());
         prerequisites.iter().all(|p| {
             let t = p.replace('~', "");
-            !(t.starts_with('!') ^ !owned.contains_key(&p.replace('!', "").replace('~', "")))
+            !(t.starts_with('!') ^ !owned.contains_key(&p.replace(['!', '~'], "")))
         })
     }
 }
@@ -485,33 +485,34 @@ impl Production {
     ) {
         let mut exit = CPos::ZERO;
         let mut td = inits;
-        if let Some(e) = exit_info {
-            if self_.cache().occupies_space.is_some() && has_occupy_space_info(producee) {
-                let w = self_.world();
-                exit = self_.location() + e.exit_cell;
-                let spawn = self_.center_position() + e.spawn_offset;
-                let to = w.map().center_of_cell(exit);
-                let initial_facing = match e.facing {
-                    Some(f) => f,
-                    None => {
-                        let delta = to - spawn;
-                        if delta.horizontal_length_squared() == 0 {
-                            initial_facing_of(producee)
-                        } else {
-                            delta.yaw()
-                        }
+        if let Some(e) = exit_info
+            && self_.cache().occupies_space.is_some()
+            && has_occupy_space_info(producee)
+        {
+            let w = self_.world();
+            exit = self_.location() + e.exit_cell;
+            let spawn = self_.center_position() + e.spawn_offset;
+            let to = w.map().center_of_cell(exit);
+            let initial_facing = match e.facing {
+                Some(f) => f,
+                None => {
+                    let delta = to - spawn;
+                    if delta.horizontal_length_squared() == 0 {
+                        initial_facing_of(producee)
+                    } else {
+                        delta.yaw()
                     }
-                };
-                let exit_locations: Vec<CPos> = match self.rp.borrow().as_ref().filter(|r| !r.path.borrow().is_empty()) {
-                    Some(r) => r.path.borrow().clone(),
-                    None => vec![exit],
-                };
-                td.push(Rc::new(LocationInit::new(exit)));
-                td.push(Rc::new(CenterPositionInit::new(spawn)));
-                td.push(Rc::new(FacingInit::new(initial_facing)));
-                td.push(Rc::new(CreationActivityDelayInit::new(e.exit_delay)));
-                td.push(Rc::new(RallyPointInit::new(exit_locations)));
-            }
+                }
+            };
+            let exit_locations: Vec<CPos> = match self.rp.borrow().as_ref().filter(|r| !r.path.borrow().is_empty()) {
+                Some(r) => r.path.borrow().clone(),
+                None => vec![exit],
+            };
+            td.push(Rc::new(LocationInit::new(exit)));
+            td.push(Rc::new(CenterPositionInit::new(spawn)));
+            td.push(Rc::new(FacingInit::new(initial_facing)));
+            td.push(Rc::new(CreationActivityDelayInit::new(e.exit_delay)));
+            td.push(Rc::new(RallyPointInit::new(exit_locations)));
         }
         let (me, name, pt) = (self_.clone(), producee.name.clone(), production_type.to_string());
         self_.world().add_frame_end_task(Box::new(move |w: &Rc<World>| {
@@ -721,14 +722,14 @@ impl ProductionItem {
         if self.paused.get() {
             return;
         }
-        if let Some(pm) = &self.pm {
-            if pm.power_state() != PowerState::Normal {
-                self.slowdown.set(self.slowdown.get() - 100);
-                if self.slowdown.get() < 0 {
-                    self.slowdown.set(queue.info.low_power_modifier + self.slowdown.get());
-                } else {
-                    return;
-                }
+        if let Some(pm) = &self.pm
+            && pm.power_state() != PowerState::Normal
+        {
+            self.slowdown.set(self.slowdown.get() - 100);
+            if self.slowdown.get() < 0 {
+                self.slowdown.set(queue.info.low_power_modifier + self.slowdown.get());
+            } else {
+                return;
             }
         }
         if !queue.info.pay_up_front {
@@ -1058,10 +1059,8 @@ impl ProductionQueue {
     fn tick_inner(&self, all_paused: bool) {
         self.cancel_unbuildable_items();
         let first = self.queue.borrow().first().cloned();
-        if !all_paused {
-            if let Some(f) = first {
-                f.tick(&self.player_resources());
-            }
+        if !all_paused && let Some(f) = first {
+            f.tick(&self.player_resources());
         }
     }
 
@@ -1364,7 +1363,7 @@ impl IResolveOrder for ProductionQueue {
                 if !bi.queue.contains(&self.info.ty) {
                     return;
                 }
-                if !self.buildable_items().iter().any(|b| *b == name) {
+                if !self.buildable_items().contains(&name) {
                     return;
                 }
                 let mut from_limit = i32::MAX;
@@ -1988,9 +1987,9 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
         }
     }
     queue.end_production(&item);
-    if building_info.requires_base_provider {
-        if let Some(bp) = find_base_provider(&building_info, w, &self_.owner(), target_location) {
-            bp.begin_cooldown();
-        }
+    if building_info.requires_base_provider
+        && let Some(bp) = find_base_provider(&building_info, w, &self_.owner(), target_location)
+    {
+        bp.begin_cooldown();
     }
 }

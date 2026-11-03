@@ -212,13 +212,13 @@ pub fn tick_outer(this: &ActivityRef, self_: &ActorRef) -> Option<ActivityRef> {
         b.last_run.set(this.tick(self_));
     }
 
-    if let Some(ca) = b.child_activity() {
-        if ca.base().state.get() == ActivityState::Queued {
-            if b.child_has_priority.get() {
-                b.last_run.set(b.tick_child(self_) && b.finishing.get());
-            } else {
-                b.tick_child(self_);
-            }
+    if let Some(ca) = b.child_activity()
+        && ca.base().state.get() == ActivityState::Queued
+    {
+        if b.child_has_priority.get() {
+            b.last_run.set(b.tick_child(self_) && b.finishing.get());
+        } else {
+            b.tick_child(self_);
         }
     }
 
@@ -235,14 +235,12 @@ pub fn run_activity(self_: &ActorRef, act: Option<ActivityRef>) -> Option<Activi
     let mut act = act?;
     loop {
         let prev = act.clone();
-        match tick_outer(&act, self_) {
-            Some(next) => {
-                if Rc::ptr_eq(&next, &prev) {
-                    return Some(next);
-                }
-                act = next;
+        {
+            let next = tick_outer(&act, self_)?;
+            if Rc::ptr_eq(&next, &prev) {
+                return Some(next);
             }
-            None => return None,
+            act = next;
         }
     }
 }

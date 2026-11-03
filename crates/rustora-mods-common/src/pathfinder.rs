@@ -110,7 +110,7 @@ impl PriorityQueue {
             self.index = 0;
             self.level += 1;
             let count = 2 * (1usize << self.level);
-            if count - 1 >= self.items.len() {
+            if count > self.items.len() {
                 self.items.resize(count, EMPTY_CONN);
             }
         }

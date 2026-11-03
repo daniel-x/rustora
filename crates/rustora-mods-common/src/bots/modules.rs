@@ -152,13 +152,14 @@ impl IBotTick for McvManagerBotModule {
             self.scan_interval.set(self.info.scan_for_new_mcv_interval);
             self.deploy_mcvs(bot, true);
             let unit_builder = first_enabled_unit_production(self.request_unit_production.get().expect("created"));
-            if let Some(ub) = unit_builder {
-                if !self.info.mcv_types.is_empty() && self.should_build_mcv() {
-                    let types: Vec<String> = self.info.mcv_types.iter().cloned().collect();
-                    let mcv_type = random_or_default(&types, &self.self_.world().bot_random).expect("mcv type");
-                    if ub.requested_production_count(bot, &mcv_type) == 0 {
-                        ub.request_unit_production(bot, &mcv_type);
-                    }
+            if let Some(ub) = unit_builder
+                && !self.info.mcv_types.is_empty()
+                && self.should_build_mcv()
+            {
+                let types: Vec<String> = self.info.mcv_types.iter().cloned().collect();
+                let mcv_type = random_or_default(&types, &self.self_.world().bot_random).expect("mcv type");
+                if ub.requested_production_count(bot, &mcv_type) == 0 {
+                    ub.request_unit_production(bot, &mcv_type);
                 }
             }
         }
@@ -403,13 +404,14 @@ impl IBotTick for HarvesterBotModule {
         let all: Vec<Rc<HarvesterTraitWrapper>> = self.harvesters.borrow().values().cloned().collect();
         *self.harvesters_needing_orders.borrow_mut() = all;
         let unit_builder = first_enabled_unit_production(self.request_unit_production.get().expect("created"));
-        if let Some(ub) = unit_builder {
-            if !self.info.harvester_types.is_empty() && self.harvesters_index.count_alive() < self.refineries.count_alive() {
-                let types: Vec<String> = self.info.harvester_types.iter().cloned().collect();
-                let ty = random_or_default(&types, &w.bot_random).expect("harvester type");
-                if ub.requested_production_count(bot, &ty) == 0 {
-                    ub.request_unit_production(bot, &ty);
-                }
+        if let Some(ub) = unit_builder
+            && !self.info.harvester_types.is_empty()
+            && self.harvesters_index.count_alive() < self.refineries.count_alive()
+        {
+            let types: Vec<String> = self.info.harvester_types.iter().cloned().collect();
+            let ty = random_or_default(&types, &w.bot_random).expect("harvester type");
+            if ub.requested_production_count(bot, &ty) == 0 {
+                ub.request_unit_production(bot, &ty);
             }
         }
     }

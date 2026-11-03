@@ -9,7 +9,6 @@ use rustora_core::world_types::{CVec, WAngle};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef, for_each_activity};
 use rustora_engine::actor::ActorRef;
-use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::actor_init::{ActorInits, FacingInit, FactionInit, LocationInit, OwnerInit};
 use rustora_engine::conditional::*;
 use rustora_engine::order::Order;
@@ -60,7 +59,6 @@ pub struct Transforms {
     pub info: Rc<TransformsInfo>,
     state: ConditionalState,
     self_: ActorRef,
-    actor_info: Rc<ActorInfo>,
     building_info: Option<Rc<BuildingInfo>>,
     faction: String,
 }
@@ -72,7 +70,7 @@ info_impl!(TransformsInfo => |info, init| {
     let building_info = actor_info.trait_info::<BuildingInfo>();
     let faction = init.inits.get::<FactionInit>().map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
     let state = ConditionalState::new_pausable(&info.base);
-    Some(Rc::new(Transforms { info, state, self_: init.self_.clone(), actor_info, building_info, faction }))
+    Some(Rc::new(Transforms { info, state, self_: init.self_.clone(), building_info, faction }))
 });
 
 conditional_simple!(Transforms);
@@ -359,11 +357,11 @@ impl Sellable {
         for ns in self_.traits_implementing::<dyn INotifySold>() {
             ns.selling(self_);
         }
-        if !self.info.skip_make_animation {
-            if let Some(m) = self_.trait_or_default::<WithMakeAnimation>() {
-                m.reverse_then_activity(self_, Sell::new(self_), false);
-                return;
-            }
+        if !self.info.skip_make_animation
+            && let Some(m) = self_.trait_or_default::<WithMakeAnimation>()
+        {
+            m.reverse_then_activity(self_, Sell::new(self_), false);
+            return;
         }
         self_.queue_activity_queued(false, Sell::new(self_));
     }

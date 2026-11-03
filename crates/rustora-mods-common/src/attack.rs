@@ -397,10 +397,10 @@ impl Armament {
             self.burst.get(),
             Box::new(move |_burst| {
                 let args = make_args();
-                if let Some(p) = &args.weapon.projectile.clone() {
-                    if let Some(projectile) = p.create(args) {
-                        s.world().add_effect(projectile);
-                    }
+                if let Some(p) = &args.weapon.projectile.clone()
+                    && let Some(projectile) = p.create(args)
+                {
+                    s.world().add_effect(projectile);
                 }
                 m.recoil.set(m.info.recoil);
                 let notifies = m.notify_attacks.borrow().clone();
@@ -803,10 +803,8 @@ impl ITick for AttackBase {
                     self.charging_token.set(self_.revoke_condition(self.charging_token.get()));
                 }
             }
-            k if k.is_follow() => {
-                if self.tick_follow(self_) {
-                    return;
-                }
+            k if k.is_follow() && self.tick_follow(self_) => {
+                return;
             }
             _ => {}
         }
@@ -895,18 +893,19 @@ impl AttackBase {
                 self.is_aiming
                     .set(self.can_aim_at_target(self_, &opp, self.opportunity_force_attack.get()));
             }
-            if !self.is_aiming.get() && self.info.opportunity_fire {
-                if let Some(at) = self.auto_target.get().and_then(|a| a.as_ref()) {
-                    if !at.is_trait_disabled() && at.stance() >= UnitStance::Defend {
-                        let t = at.scan_for_target(self_, false, false, false);
-                        *self.opportunity_target.borrow_mut() = t.clone();
-                        self.opportunity_force_attack.set(false);
-                        self.opportunity_target_is_persistent.set(false);
-                        if t.is_valid_for(self_) {
-                            self.is_aiming
-                                .set(self.can_aim_at_target(self_, &t, self.opportunity_force_attack.get()));
-                        }
-                    }
+            if !self.is_aiming.get()
+                && self.info.opportunity_fire
+                && let Some(at) = self.auto_target.get().and_then(|a| a.as_ref())
+                && !at.is_trait_disabled()
+                && at.stance() >= UnitStance::Defend
+            {
+                let t = at.scan_for_target(self_, false, false, false);
+                *self.opportunity_target.borrow_mut() = t.clone();
+                self.opportunity_force_attack.set(false);
+                self.opportunity_target_is_persistent.set(false);
+                if t.is_valid_for(self_) {
+                    self.is_aiming
+                        .set(self.can_aim_at_target(self_, &t, self.opportunity_force_attack.get()));
                 }
             }
             if self.is_aiming.get() {
@@ -1477,10 +1476,11 @@ pub fn activity_stance_changed(a: &ActivityRef, self_: &ActorRef, auto_target: &
         if !(new > old || x.force_attack) && !x.last_visible.has_valid_priority(self_, auto_target) {
             *x.target.borrow_mut() = Target::Invalid;
         }
-    } else if let Some(x) = any.downcast_ref::<ChargeAttack>() {
-        if !(new > old || x.force_attack) && !has_valid_priority(&x.target, self_, auto_target) {
-            x.cancel(self_, true);
-        }
+    } else if let Some(x) = any.downcast_ref::<ChargeAttack>()
+        && !(new > old || x.force_attack)
+        && !has_valid_priority(&x.target, self_, auto_target)
+    {
+        x.cancel(self_, true);
     }
 }
 
@@ -1856,46 +1856,45 @@ impl Activity for AttackActivity {
             return true;
         }
         let w = self_.world();
-        if let Some(rearmable) = &self.rearmable {
-            if !use_last
-                && attack
-                    .armaments()
-                    .iter()
-                    .all(|x| x.is_trait_paused() || !x.weapon.is_valid_against(&target, &w, self_))
-            {
-                if self.source == AttackSource::AttackMove {
-                    return true;
-                }
-                if attack.info.abort_on_resupply {
-                    if let Some(n) = self.base.next_activity() {
-                        n.cancel(self_, false);
-                    }
-                }
-                if self.is_aircraft {
-                    self.base.queue_child(ReturnToBase::new(self_, None, false));
-                } else {
-                    let mut hosts: Vec<ActorRef> = w
-                        .actors_having_trait::<crate::aircraft::Reservable>()
-                        .into_iter()
-                        .filter(|a| {
-                            !a.is_dead()
-                                && a.is_in_world()
-                                && a.owner().is_allied_with(Some(&self_.owner()))
-                                && rearmable.info.rearm_actors.contains(&a.info.name)
-                        })
-                        .collect();
-                    hosts.sort_by_key(|a| {
-                        (
-                            if Rc::ptr_eq(&a.owner(), &self_.owner()) { 0 } else { 1 },
-                            (self_.location() - a.location()).length_squared(),
-                        )
-                    });
-                    if let Some(h) = hosts.first() {
-                        self.base.queue_child(Resupply::new(self_, h, WDist::new(512), false));
-                    }
-                }
-                return attack.info.abort_on_resupply;
+        if let Some(rearmable) = &self.rearmable
+            && !use_last
+            && attack
+                .armaments()
+                .iter()
+                .all(|x| x.is_trait_paused() || !x.weapon.is_valid_against(&target, &w, self_))
+        {
+            if self.source == AttackSource::AttackMove {
+                return true;
             }
+            if attack.info.abort_on_resupply
+                && let Some(n) = self.base.next_activity()
+            {
+                n.cancel(self_, false);
+            }
+            if self.is_aircraft {
+                self.base.queue_child(ReturnToBase::new(self_, None, false));
+            } else {
+                let mut hosts: Vec<ActorRef> = w
+                    .actors_having_trait::<crate::aircraft::Reservable>()
+                    .into_iter()
+                    .filter(|a| {
+                        !a.is_dead()
+                            && a.is_in_world()
+                            && a.owner().is_allied_with(Some(&self_.owner()))
+                            && rearmable.info.rearm_actors.contains(&a.info.name)
+                    })
+                    .collect();
+                hosts.sort_by_key(|a| {
+                    (
+                        if Rc::ptr_eq(&a.owner(), &self_.owner()) { 0 } else { 1 },
+                        (self_.location() - a.location()).length_squared(),
+                    )
+                });
+                if let Some(h) = hosts.first() {
+                    self.base.queue_child(Resupply::new(self_, h, WDist::new(512), false));
+                }
+            }
+            return attack.info.abort_on_resupply;
         }
         let pos = self_.center_position();
         let check = if use_last {
@@ -2074,10 +2073,10 @@ impl Activity for FlyAttack {
             if self.source == AttackSource::AttackMove {
                 return true;
             }
-            if attack.info.abort_on_resupply {
-                if let Some(n) = self.base.next_activity() {
-                    n.cancel(self_, false);
-                }
+            if attack.info.abort_on_resupply
+                && let Some(n) = self.base.next_activity()
+            {
+                n.cancel(self_, false);
             }
             self.base.queue_child(ReturnToBase::new(self_, None, false));
             return attack.info.abort_on_resupply;

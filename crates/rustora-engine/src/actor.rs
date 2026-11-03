@@ -135,10 +135,10 @@ impl Actor {
                 let before = dict.with_interface::<dyn ISync>(&actor).len();
                 let name = t.type_name();
                 t.register(dict, &actor);
-                if actor.occupies_early.get().is_none() {
-                    if let Some(o) = dict.get_or_default::<dyn IOccupySpace>(&actor) {
-                        let _ = actor.occupies_early.set(o);
-                    }
+                if actor.occupies_early.get().is_none()
+                    && let Some(o) = dict.get_or_default::<dyn IOccupySpace>(&actor)
+                {
+                    let _ = actor.occupies_early.set(o);
                 }
                 if dict.with_interface::<dyn ISync>(&actor).len() > before {
                     sync_names.push(name);

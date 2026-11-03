@@ -74,10 +74,10 @@ impl Default for RenderSpritesInfo {
 
 impl RenderSpritesInfo {
     pub fn get_image(&self, actor: &ActorInfo, faction: &str) -> String {
-        if !faction.is_empty() {
-            if let Some(i) = self.faction_images.get(faction) {
-                return i.to_lowercase();
-            }
+        if !faction.is_empty()
+            && let Some(i) = self.faction_images.get(faction)
+        {
+            return i.to_lowercase();
         }
         self.image.clone().unwrap_or_else(|| actor.name.clone()).to_lowercase()
     }

@@ -80,17 +80,16 @@ impl Package for ZipPackage {
         self.find(filename).is_some()
     }
 
-    fn open_package(self: &Self, filename: &str, fs: &FileSystem) -> Option<Arc<dyn Package>> {
+    fn open_package(&self, filename: &str, fs: &FileSystem) -> Option<Arc<dyn Package>> {
         let dir = format!("{filename}/");
-        if let Some(idx) = self.find(filename).or_else(|| self.find(&dir)) {
+        {
+            let idx = self.find(filename).or_else(|| self.find(&dir))?;
             if self.entries[idx].1 {
                 return Some(Arc::new(ZipFolder {
                     parent: self.snapshot(),
                     name: filename.trim_end_matches('/').to_string(),
                 }));
             }
-        } else {
-            return None;
         }
         let data = self.get(filename)?;
         fs.try_parse_package(data, filename)

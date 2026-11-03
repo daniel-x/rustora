@@ -76,10 +76,10 @@ pub struct MapFs<'a> {
 
 impl ReadFs for MapFs<'_> {
     fn try_open(&self, filename: &str) -> Option<Vec<u8>> {
-        if !filename.contains('|') {
-            if let Some(d) = self.package.get(filename) {
-                return Some(d);
-            }
+        if !filename.contains('|')
+            && let Some(d) = self.package.get(filename)
+        {
+            return Some(d);
         }
         self.fs.try_open(filename)
     }

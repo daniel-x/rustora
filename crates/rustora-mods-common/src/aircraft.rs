@@ -1810,10 +1810,10 @@ impl Activity for FlyOffMap {
         if !self_.world().map().contains(self_.location()) {
             let d = self.ending_delay.get() - 1;
             self.ending_delay.set(d);
-            if d < 0 {
-                if let Some(c) = self.base.child_activity() {
-                    c.cancel(self_, false);
-                }
+            if d < 0
+                && let Some(c) = self.base.child_activity()
+            {
+                c.cancel(self_, false);
             }
         }
         self.base.tick_child(self_)
@@ -2013,11 +2013,11 @@ impl Activity for Land {
                 self.base.queue_child(Fly::new(self_, Target::from_pos(target_position)));
                 return false;
             }
-            if let Some(f) = self.desired_facing {
-                if f != aircraft.facing() {
-                    self.base.queue_child(Turn::new(self_, f));
-                    return false;
-                }
+            if let Some(f) = self.desired_facing
+                && f != aircraft.facing()
+            {
+                self.base.queue_child(Turn::new(self_, f));
+                return false;
             }
         }
         if !aircraft.info.vtol && !self.finished_approach.get() {

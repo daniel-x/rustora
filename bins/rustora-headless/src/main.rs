@@ -86,11 +86,11 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
     run_replay(world, replay, i32::MAX, |w, _| {
         let t = w.world_tick();
         let count = w.bot_random.borrow().total_count;
-        if let Some(&c) = counts.get(&t) {
-            if c != count {
-                failure = Some(format!("bot random count at tick {t}: expected {c}, got {count}"));
-                return false;
-            }
+        if let Some(&c) = counts.get(&t)
+            && c != count
+        {
+            failure = Some(format!("bot random count at tick {t}: expected {c}, got {count}"));
+            return false;
         }
         if w.world_tick() > last_tick {
             return false;
@@ -158,14 +158,14 @@ fn skirmish(args: &[String]) {
                     use std::io::Write;
                     writeln!(o, "{line}").expect("write sync dump");
                 }
-                if let Some(e) = expected.as_ref().and_then(|e| e.get(&world.world_tick())) {
-                    if *e != line {
-                        mismatch = Some(format!(
-                            "first mismatch at tick {}\n  expected {e}\n  got      {line}",
-                            world.world_tick()
-                        ));
-                        break;
-                    }
+                if let Some(e) = expected.as_ref().and_then(|e| e.get(&world.world_tick()))
+                    && *e != line
+                {
+                    mismatch = Some(format!(
+                        "first mismatch at tick {}\n  expected {e}\n  got      {line}",
+                        world.world_tick()
+                    ));
+                    break;
                 }
             }
             Step::Waiting => {}
@@ -276,11 +276,11 @@ fn main() {
             let start = std::time::Instant::now();
             let om = run_replay(&world, replay, i32::MAX, |w, hash| {
                 let t = w.world_tick();
-                if let Some((_, h)) = dump.iter().find(|(k, _)| *k == t).or(dump.get((t - 1) as usize)) {
-                    if *h != hash {
-                        mismatch = Some(t);
-                        return false;
-                    }
+                if let Some((_, h)) = dump.iter().find(|(k, _)| *k == t).or(dump.get((t - 1) as usize))
+                    && *h != hash
+                {
+                    mismatch = Some(t);
+                    return false;
                 }
                 true
             });

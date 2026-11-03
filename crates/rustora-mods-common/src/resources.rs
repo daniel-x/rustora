@@ -375,10 +375,10 @@ impl ISeedableResource for SeedsResource {
                 break;
             }
         }
-        if let Some(c) = cell {
-            if self.resource_layer.can_add_resource(ty, c, 1) {
-                self.resource_layer.add_resource(ty, c, 1);
-            }
+        if let Some(c) = cell
+            && self.resource_layer.can_add_resource(ty, c, 1)
+        {
+            self.resource_layer.add_resource(ty, c, 1);
         }
     }
 }

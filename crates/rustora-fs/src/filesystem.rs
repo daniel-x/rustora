@@ -147,10 +147,10 @@ impl FileSystem {
 
     /// Port of `TryGetPackageContaining`: the package and the file name inside it.
     pub fn package_containing(&self, path: &str) -> Option<(Arc<dyn Package>, String)> {
-        if let Some(split) = path.find('|').filter(|&s| s > 0) {
-            if let Some(p) = self.explicit(&path[..split]) {
-                return Some((p.clone(), path[split + 1..].to_string()));
-            }
+        if let Some(split) = path.find('|').filter(|&s| s > 0)
+            && let Some(p) = self.explicit(&path[..split])
+        {
+            return Some((p.clone(), path[split + 1..].to_string()));
         }
         let p = self.file_index.get(path)?.iter().rev().find(|p| p.contains(path))?;
         Some((p.clone(), path.to_string()))
@@ -158,12 +158,11 @@ impl FileSystem {
 
     pub fn try_open(&self, filename: &str) -> Option<Vec<u8>> {
         let split = filename.find('|').filter(|&s| s > 0);
-        if let Some(split) = split {
-            if let Some(p) = self.explicit(&filename[..split]) {
-                if let Some(d) = p.get(&filename[split + 1..]) {
-                    return Some(d);
-                }
-            }
+        if let Some(split) = split
+            && let Some(p) = self.explicit(&filename[..split])
+            && let Some(d) = p.get(&filename[split + 1..])
+        {
+            return Some(d);
         }
         if let Some(p) = self
             .file_index
@@ -184,13 +183,12 @@ impl FileSystem {
     }
 
     pub fn exists(&self, filename: &str) -> bool {
-        if let Some(split) = filename.find('|').filter(|&s| s > 0) {
-            if self
+        if let Some(split) = filename.find('|').filter(|&s| s > 0)
+            && self
                 .explicit(&filename[..split])
                 .is_some_and(|p| p.contains(&filename[split + 1..]))
-            {
-                return true;
-            }
+        {
+            return true;
         }
         self.file_index.contains_key(filename)
     }

@@ -262,18 +262,18 @@ impl Cargo {
         }
         let w = self.self_.world();
         let loc = self.self_.location();
-        if self.check_terrain_type {
-            if !w.map().contains(loc) || !self.info.unload_terrain_types.contains(&w.map().terrain_type_info(loc).ty) {
-                return false;
-            }
+        if self.check_terrain_type
+            && (!w.map().contains(loc) || !self.info.unload_terrain_types.contains(&w.map().terrain_type_info(loc).ty))
+        {
+            return false;
         }
         if self.is_empty() {
             return false;
         }
-        if let Some(a) = self.aircraft.get().and_then(|a| a.as_ref()) {
-            if !a.can_land(loc, None, false) {
-                return false;
-            }
+        if let Some(a) = self.aircraft.get().and_then(|a| a.as_ref())
+            && !a.can_land(loc, None, false)
+        {
+            return false;
         }
         let passengers = self.cargo.borrow().clone();
         self.current_adjacent_cells().iter().any(|c| {
@@ -332,11 +332,11 @@ impl Cargo {
         self.locked.set(true);
         let self_ = &self.self_;
         self_.cancel_activity();
-        if let Some(air) = self_.trait_or_default::<Aircraft>() {
-            if !air.at_land_altitude() {
-                self.take_off_after_load.set(true);
-                self_.queue_activity(Land::new(self_));
-            }
+        if let Some(air) = self_.trait_or_default::<Aircraft>()
+            && !air.at_land_altitude()
+        {
+            self.take_off_after_load.set(true);
+            self_.queue_activity(Land::new(self_));
         }
         let locked = self.locked.clone();
         self_.queue_activity(WaitFor::new(Box::new(move || !locked.get()), false));
@@ -639,17 +639,16 @@ impl INotifyEnteredCargo for Passenger {
             self.any_cargo_token
                 .set(self_.grant_condition(self.info.cargo_condition.as_deref().unwrap_or("")));
         }
-        if self.specific_cargo_token.get() == INVALID_CONDITION_TOKEN {
-            if let Some(c) = self.info.cargo_conditions.get(&cargo.info.name) {
-                self.specific_cargo_token.set(self_.grant_condition(c));
-            }
+        if self.specific_cargo_token.get() == INVALID_CONDITION_TOKEN
+            && let Some(c) = self.info.cargo_conditions.get(&cargo.info.name)
+        {
+            self.specific_cargo_token.set(self_.grant_condition(c));
         }
-        if self_.is_idle() {
-            if let Some(mv) = self_.trait_or_default::<dyn IMove>() {
-                if let Some(a) = mv.return_to_cell(self_) {
-                    self_.queue_activity(a);
-                }
-            }
+        if self_.is_idle()
+            && let Some(mv) = self_.trait_or_default::<dyn IMove>()
+            && let Some(a) = mv.return_to_cell(self_)
+        {
+            self_.queue_activity(a);
         }
     }
 }

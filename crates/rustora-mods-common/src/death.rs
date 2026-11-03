@@ -253,7 +253,7 @@ impl INotifyDamage for FireWarheadsOnDeath {
         }
         let source = self.source(self_, e);
         if (self.health.hp() as i64) * 100 < self.info.damage_threshold as i64 * self.health.max_hp() as i64 {
-            let (a, types) = (self_.clone(), e.damage.damage_types.clone());
+            let (a, types) = (self_.clone(), e.damage.damage_types);
             self_.world().add_frame_end_task(Box::new(move |_| {
                 if let Some(h) = a.trait_or_default::<dyn IHealth>() {
                     h.kill(&a, source.as_ref(), &types);
@@ -650,9 +650,9 @@ impl Activity for DragAndCrush {
                 continue;
             }
             for c in a.cache().crushables.clone() {
-                if c.crushable_by_actor(&a, self_, info.crushes.clone()) && util::is_at_ground_level(&a) {
+                if c.crushable_by_actor(&a, self_, info.crushes) && util::is_at_ground_level(&a) {
                     for n in a.traits_implementing::<dyn INotifyCrushed>() {
-                        n.on_crush(&a, self_, info.crushes.clone());
+                        n.on_crush(&a, self_, info.crushes);
                     }
                 }
             }

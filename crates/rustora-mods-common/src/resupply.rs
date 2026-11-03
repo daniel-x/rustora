@@ -548,20 +548,19 @@ impl Resupply {
             if next_is_none {
                 if !rally_path.is_empty() {
                     queue_rally(true);
-                } else if self.repairable_near.is_none() {
-                    if let Some(a) = self.mv.move_to_target(self_, &self.host, None) {
-                        self.base.queue_child(a);
-                    }
+                } else if self.repairable_near.is_none()
+                    && let Some(a) = self.mv.move_to_target(self_, &self.host, None)
+                {
+                    self.base.queue_child(a);
                 }
             } else if self.repairable_near.is_none()
                 && self_
                     .current_activity()
                     .and_then(|c| c.base().next_activity())
                     .is_some_and(|n| n.type_name() != "Move")
+                && let Some(a) = self.mv.move_to_target(self_, &self.host, None)
             {
-                if let Some(a) = self.mv.move_to_target(self_, &self.host, None) {
-                    self.base.queue_child(a);
-                }
+                self.base.queue_child(a);
             }
         }
         if !is_host_invalid {
@@ -589,10 +588,10 @@ impl Resupply {
         let health = self.health.as_ref().expect("repair without health");
         if health.damage_state() == DamageState::UNDAMAGED {
             let host = self.host_actor();
-            if !Rc::ptr_eq(&host.owner(), &self_.owner()) {
-                if let Some(xp) = host.owner().player_actor().trait_or_default::<PlayerExperience>() {
-                    xp.give_experience(repairs_units.info.player_experience);
-                }
+            if !Rc::ptr_eq(&host.owner(), &self_.owner())
+                && let Some(xp) = host.owner().player_actor().trait_or_default::<PlayerExperience>()
+            {
+                xp.give_experience(repairs_units.info.player_experience);
             }
             self.active_resupply_types.set(self.active_resupply_types.get() & !RESUPPLY_REPAIR);
             return;

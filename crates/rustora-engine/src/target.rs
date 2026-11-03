@@ -134,12 +134,12 @@ impl Target {
     /// `TargetExtensions.Recalculate`: returns the updated target and `targetIsHiddenActor`.
     pub fn recalculate(&self, viewer: &crate::player::PlayerRef) -> (Target, bool) {
         let mut t = self.clone();
-        if t.target_type() == TargetType::Invalid {
-            if let Some(a) = t.actor() {
-                let replaced = a.replaced_by_actor.borrow().clone();
-                if let Some(r) = replaced {
-                    t = Target::from_actor(Some(&r));
-                }
+        if t.target_type() == TargetType::Invalid
+            && let Some(a) = t.actor()
+        {
+            let replaced = a.replaced_by_actor.borrow().clone();
+            if let Some(r) = replaced {
+                t = Target::from_actor(Some(&r));
             }
         }
         if viewer.is_bot {
@@ -162,10 +162,10 @@ impl Target {
         } else if t.target_type() == TargetType::FrozenActor {
             let f = t.frozen_actor().unwrap();
             if !f.visible() || !f.is_valid() {
-                if let Some(a) = f.actor() {
-                    if a.can_be_viewed_by_player(Some(viewer)) {
-                        return (Target::from_actor(Some(&a)), false);
-                    }
+                if let Some(a) = f.actor()
+                    && a.can_be_viewed_by_player(Some(viewer))
+                {
+                    return (Target::from_actor(Some(&a)), false);
                 }
                 return (Target::Invalid, false);
             }

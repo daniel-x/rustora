@@ -224,10 +224,10 @@ impl LayMines {
             return false;
         }
         let loc = self_.location();
-        if let Some(m) = self.minefield.borrow_mut().as_mut() {
-            if let Some(i) = m.iter().position(|&c| c == loc) {
-                m.remove(i);
-            }
+        if let Some(m) = self.minefield.borrow_mut().as_mut()
+            && let Some(i) = m.iter().position(|&c| c == loc)
+        {
+            m.remove(i);
         }
         let (a, mine) = (self_.clone(), self.minelayer.info.mine.clone());
         self_.world().add_frame_end_task(Box::new(move |w| {
@@ -297,27 +297,27 @@ impl Activity for LayMines {
         let loc = self_.location();
         let in_field = self.minefield.borrow().as_ref().is_none_or(|m| m.contains(&loc));
         if in_field && Self::can_lay_mine(self_, loc) {
-            if let Some(ri) = &self.rearmable_info {
-                if self.ammo_pools.iter().any(|p| p.info.name == info.ammo_pool_name && !p.has_ammo()) {
-                    let owner = self_.owner();
-                    let candidates = w.actors().into_iter().filter(|a| {
-                        owner.relationship_with(Some(&a.owner())) == PlayerRelationship::ALLY && ri.rearm_actors.contains(&a.info.name)
-                    });
-                    let Some(rearm_target) = util::closest_to_with_path_from(candidates, self_) else {
-                        return true;
-                    };
-                    self.helper.notify_move_queued();
-                    let t = Target::from_actor(Some(&rearm_target));
-                    self.base.queue_child(MoveAdjacentTo::new_adjacent(self_, &t, None));
-                    self.base.queue_child(self.movement.move_to(
-                        w.map().cell_containing(rearm_target.center_position()),
-                        0,
-                        Some(rearm_target.clone()),
-                        false,
-                    ));
-                    self.base.queue_child(Resupply::new(self_, &rearm_target, WDist::new(512), false));
-                    return false;
-                }
+            if let Some(ri) = &self.rearmable_info
+                && self.ammo_pools.iter().any(|p| p.info.name == info.ammo_pool_name && !p.has_ammo())
+            {
+                let owner = self_.owner();
+                let candidates = w.actors().into_iter().filter(|a| {
+                    owner.relationship_with(Some(&a.owner())) == PlayerRelationship::ALLY && ri.rearm_actors.contains(&a.info.name)
+                });
+                let Some(rearm_target) = util::closest_to_with_path_from(candidates, self_) else {
+                    return true;
+                };
+                self.helper.notify_move_queued();
+                let t = Target::from_actor(Some(&rearm_target));
+                self.base.queue_child(MoveAdjacentTo::new_adjacent(self_, &t, None));
+                self.base.queue_child(self.movement.move_to(
+                    w.map().cell_containing(rearm_target.center_position()),
+                    0,
+                    Some(rearm_target.clone()),
+                    false,
+                ));
+                self.base.queue_child(Resupply::new(self_, &rearm_target, WDist::new(512), false));
+                return false;
             }
             if !self.start_laying_mine() {
                 return false;
@@ -387,12 +387,12 @@ impl INotifyCrushed for Mine {
             return;
         }
         let mobile = crusher.trait_or_default::<Mobile>();
-        if let Some(m) = &mobile {
-            if !self.info.detonate_classes.overlaps(&m.locomotor_info().crushes) {
-                return;
-            }
+        if let Some(m) = &mobile
+            && !self.info.detonate_classes.overlaps(&m.locomotor_info().crushes)
+        {
+            return;
         }
-        let types = mobile.map(|m| m.locomotor_info().crush_damage_types.clone()).unwrap_or_default();
+        let types = mobile.map(|m| m.locomotor_info().crush_damage_types).unwrap_or_default();
         if let Some(h) = self_.cache().health.clone() {
             h.kill(self_, Some(crusher), &types);
         }

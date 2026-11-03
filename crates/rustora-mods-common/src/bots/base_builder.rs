@@ -716,36 +716,37 @@ impl BaseBuilderBotModule {
         let info = &self.info;
         let buildables: Vec<Rc<ActorInfo>> = queue.buildable_items().iter().filter_map(|n| w.rules().actor(n)).collect();
         let power = self.producible_building(b, &info.power_types, &buildables, true);
-        if let (Some(pp), Some(p)) = (self.player_power(), &power) {
-            if pp.excess_power() < b.minimum_excess_power.get() && power_amount(p) > 0 {
-                return power;
-            }
+        if let (Some(pp), Some(p)) = (self.player_power(), &power)
+            && pp.excess_power() < b.minimum_excess_power.get()
+            && power_amount(p) > 0
+        {
+            return power;
         }
-        if !self.has_adequate_refinery_count() {
-            if let Some(r) = self.priority(b, &info.refinery_types, &buildables, &power) {
-                return Some(r);
-            }
+        if !self.has_adequate_refinery_count()
+            && let Some(r) = self.priority(b, &info.refinery_types, &buildables, &power)
+        {
+            return Some(r);
         }
         let cash = self.player_resources().get_cash_and_resources();
-        if info.new_production_cash_threshold > 0 && cash > info.new_production_cash_threshold {
-            if let Some(r) = self.priority(b, &info.production_types, &buildables, &power) {
-                return Some(r);
-            }
+        if info.new_production_cash_threshold > 0
+            && cash > info.new_production_cash_threshold
+            && let Some(r) = self.priority(b, &info.production_types, &buildables, &power)
+        {
+            return Some(r);
         }
         if b.water_state.get() == WaterCheck::EnoughWater
             && info.new_production_cash_threshold > 0
             && cash > info.new_production_cash_threshold
             && self.is_area_available::<GivesBuildableArea>(info.check_for_water_radius)
+            && let Some(r) = self.priority(b, &info.naval_production_types, &buildables, &power)
         {
-            if let Some(r) = self.priority(b, &info.naval_production_types, &buildables, &power) {
-                return Some(r);
-            }
+            return Some(r);
         }
         let pr = self.player_resources();
-        if pr.resources.get() as f64 > 0.8 * pr.resource_capacity.get() as f64 {
-            if let Some(r) = self.priority(b, &info.silo_types, &buildables, &power) {
-                return Some(r);
-            }
+        if pr.resources.get() as f64 > 0.8 * pr.resource_capacity.get() as f64
+            && let Some(r) = self.priority(b, &info.silo_types, &buildables, &power)
+        {
+            return Some(r);
         }
         let fractions: Vec<(String, i32)> = info.building_fractions.iter().map(|(k, v)| (k.clone(), *v)).collect();
         let pb = b.player_buildings.borrow().clone();
@@ -771,12 +772,11 @@ impl BaseBuilderBotModule {
                 continue;
             }
             let actor = w.rules().actor(&name).expect("building");
-            if let Some(pp) = self.player_power() {
-                if (pp.excess_power() < b.minimum_excess_power.get() || !self.has_sufficient_power_for_actor(&actor))
-                    && power.as_ref().is_some_and(|p| power_amount(p) > 0)
-                {
-                    return power;
-                }
+            if let Some(pp) = self.player_power()
+                && (pp.excess_power() < b.minimum_excess_power.get() || !self.has_sufficient_power_for_actor(&actor))
+                && power.as_ref().is_some_and(|p| power_amount(p) > 0)
+            {
+                return power;
             }
             return Some(actor);
         }

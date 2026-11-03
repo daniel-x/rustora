@@ -1046,6 +1046,8 @@ impl MersenneTwister {
         }
     }
 
+    /// `MersenneTwister.Next()`; named like the C# method, it is not an iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> i32 {
         if self.index == 0 {
             self.generate();

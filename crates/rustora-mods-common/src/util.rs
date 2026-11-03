@@ -183,10 +183,11 @@ pub fn appears_friendly_to(a: &ActorRef, to: &ActorRef) -> bool {
     if stance == PlayerRelationship::ALLY {
         return true;
     }
-    if let Some(eo) = &a.cache().effective_owner {
-        if eo.disguised() && !to.info.has_trait_info_named("IgnoresDisguise") {
-            return to.owner().relationship_with(eo.owner().as_deref()) == PlayerRelationship::ALLY;
-        }
+    if let Some(eo) = &a.cache().effective_owner
+        && eo.disguised()
+        && !to.info.has_trait_info_named("IgnoresDisguise")
+    {
+        return to.owner().relationship_with(eo.owner().as_deref()) == PlayerRelationship::ALLY;
     }
     false
 }
@@ -196,10 +197,11 @@ pub fn appears_hostile_to(a: &ActorRef, to: &ActorRef) -> bool {
     if stance == PlayerRelationship::ALLY {
         return false;
     }
-    if let Some(eo) = &a.cache().effective_owner {
-        if eo.disguised() && !to.info.has_trait_info_named("IgnoresDisguise") {
-            return to.owner().relationship_with(eo.owner().as_deref()) == PlayerRelationship::ENEMY;
-        }
+    if let Some(eo) = &a.cache().effective_owner
+        && eo.disguised()
+        && !to.info.has_trait_info_named("IgnoresDisguise")
+    {
+        return to.owner().relationship_with(eo.owner().as_deref()) == PlayerRelationship::ENEMY;
     }
     stance == PlayerRelationship::ENEMY
 }

@@ -609,12 +609,12 @@ impl ExternalCondition {
             if info.source_cap > 0 {
                 let timed_count = timed.iter().filter(|t| t.source == source).count() as i32;
                 let permanent = self.permanent_tokens.borrow().get(&source).map_or(0, |t| t.len() as i32);
-                if permanent + timed_count >= info.source_cap {
-                    if let Some(i) = timed.iter().position(|t| t.source == source) {
-                        let expire = timed.remove(i).token;
-                        if self_.token_valid(expire) {
-                            self_.revoke_condition(expire);
-                        }
+                if permanent + timed_count >= info.source_cap
+                    && let Some(i) = timed.iter().position(|t| t.source == source)
+                {
+                    let expire = timed.remove(i).token;
+                    if self_.token_valid(expire) {
+                        self_.revoke_condition(expire);
                     }
                 }
             }

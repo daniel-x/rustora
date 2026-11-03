@@ -344,12 +344,11 @@ impl Locomotor {
         if check <= BlockedByActor::Stationary && flag & HAS_MOVING_ACTOR != 0 && other_is_moving {
             return false;
         }
-        if flag & HAS_TRANSIT_ONLY_ACTOR != 0 {
-            if let Some(b) = building_of(other) {
-                if b.transit_only.contains(&cell) {
-                    return false;
-                }
-            }
+        if flag & HAS_TRANSIT_ONLY_ACTOR != 0
+            && let Some(b) = building_of(other)
+            && b.transit_only.contains(&cell)
+        {
+            return false;
         }
         if flag & HAS_CRUSHABLE_ACTOR == 0 || self.info.crushes.is_empty() {
             return true;

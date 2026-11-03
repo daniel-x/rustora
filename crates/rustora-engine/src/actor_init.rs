@@ -48,10 +48,10 @@ impl ActorInits {
 
     /// `GetOrDefault<T>(info)`: inits with the trait's instance name win, then unnamed ones.
     pub fn get_for<T: ActorInit + 'static>(&self, instance_name: Option<&str>) -> Option<&T> {
-        if let Some(n) = instance_name.filter(|n| !n.is_empty()) {
-            if let Some(i) = self.of_type::<T>().filter(|i| i.instance_name() == Some(n)).last() {
-                return Some(i);
-            }
+        if let Some(n) = instance_name.filter(|n| !n.is_empty())
+            && let Some(i) = self.of_type::<T>().filter(|i| i.instance_name() == Some(n)).last()
+        {
+            return Some(i);
         }
         self.of_type::<T>().filter(|i| i.instance_name().is_none_or(str::is_empty)).last()
     }

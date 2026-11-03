@@ -8,6 +8,15 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 rust-version = "1.85"
 
+[workspace.lints.clippy]
+# Ported signatures mirror the C# ones.
+type_complexity = "allow"
+too_many_arguments = "allow"
+# Activity and effect constructors return their shared trait object, like C# `new` used as `Activity`.
+new_ret_no_self = "allow"
+# `is_multiple_of` needs Rust 1.87, newer than the declared rust-version.
+manual_is_multiple_of = "allow"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

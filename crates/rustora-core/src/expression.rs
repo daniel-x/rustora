@@ -454,10 +454,8 @@ fn build(expression: &str, result: Ty) -> Result<Parsed, String> {
             }
         };
         let ti = info(token.ty);
-        if ti.closes {
-            if openers.pop().is_none() {
-                return Err(format!("Unmatched closing parenthesis at index {}", token.index));
-            }
+        if ti.closes && openers.pop().is_none() {
+            return Err(format!("Unmatched closing parenthesis at index {}", token.index));
         }
         if ti.opens {
             openers.push(token.index);

@@ -110,7 +110,6 @@ pub struct HierarchicalPathFinder {
     cells_with_blocking_actor: Option<RefCell<HashSet<CPos>>>,
     map_bottom_right: CPos,
     grid_xs: i32,
-    grid_ys: i32,
     grid_infos: RefCell<Vec<GridInfo>>,
     abstract_graph: RefCell<AbstractGraph>,
     abstract_domains: RefCell<HashMap<CPos, u32>>,
@@ -141,7 +140,6 @@ impl HierarchicalPathFinder {
             cells_with_blocking_actor: blocking,
             map_bottom_right: CPos::new(mw, mh),
             grid_xs,
-            grid_ys,
             grid_infos: RefCell::new(vec![GridInfo::default(); (grid_xs * grid_ys) as usize]),
             abstract_graph: RefCell::new(HashMap::new()),
             abstract_domains: RefCell::new(HashMap::new()),
@@ -174,10 +172,10 @@ impl HierarchicalPathFinder {
         hpf.rebuild_domains();
         let weak = hpf.me.clone();
         locomotor.on_cell_cost_changed(Rc::new(move |c, old, new| {
-            if let Some(h) = weak.upgrade() {
-                if (old == MOVEMENT_COST_FOR_UNREACHABLE_CELL) != (new == MOVEMENT_COST_FOR_UNREACHABLE_CELL) {
-                    h.dirty_grid_indexes.borrow_mut().insert(h.grid_index(c));
-                }
+            if let Some(h) = weak.upgrade()
+                && (old == MOVEMENT_COST_FOR_UNREACHABLE_CELL) != (new == MOVEMENT_COST_FOR_UNREACHABLE_CELL)
+            {
+                h.dirty_grid_indexes.borrow_mut().insert(h.grid_index(c));
             }
         }));
         hpf

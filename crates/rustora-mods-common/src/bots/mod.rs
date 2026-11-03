@@ -207,10 +207,10 @@ impl ActorIndex {
         let actors = Rc::new(RefCell::new(set));
         let (add, f) = (Rc::downgrade(&actors), filter.clone());
         world.on_actor_added(Rc::new(move |a: &ActorRef| {
-            if let Some(s) = add.upgrade() {
-                if f(a) {
-                    s.borrow_mut().insert(a.id, a.clone());
-                }
+            if let Some(s) = add.upgrade()
+                && f(a)
+            {
+                s.borrow_mut().insert(a.id, a.clone());
             }
         }));
         let remove = Rc::downgrade(&actors);

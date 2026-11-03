@@ -128,18 +128,18 @@ pub fn conditional_observers<T: ConditionalHooks>(t: &Rc<T>) -> Vec<VariableObse
             variables: rc.variables().iter().cloned().collect(),
         });
     }
-    if s.pausable {
-        if let Some(pc) = &s.pause_on_condition {
-            let w: Weak<T> = Rc::downgrade(t);
-            out.push(VariableObserver {
-                notifier: Rc::new(move |self_: &ActorRef, c: &ConditionCache| {
-                    if let Some(t) = w.upgrade() {
-                        pause_conditions_changed(&*t, self_, c);
-                    }
-                }),
-                variables: pc.variables().iter().cloned().collect(),
-            });
-        }
+    if s.pausable
+        && let Some(pc) = &s.pause_on_condition
+    {
+        let w: Weak<T> = Rc::downgrade(t);
+        out.push(VariableObserver {
+            notifier: Rc::new(move |self_: &ActorRef, c: &ConditionCache| {
+                if let Some(t) = w.upgrade() {
+                    pause_conditions_changed(&*t, self_, c);
+                }
+            }),
+            variables: pc.variables().iter().cloned().collect(),
+        });
     }
     out
 }
