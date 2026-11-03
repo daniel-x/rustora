@@ -131,11 +131,23 @@ fn main() {
             let tick: i32 = args.get(5).map_or(0, |t| t.parse().expect("tick"));
             if tick > 0 {
                 let trace: Option<u32> = std::env::var("TRACE_ACTOR").ok().and_then(|v| v.parse().ok());
+                let trace_frozen: Option<(usize, u32)> = std::env::var("TRACE_FROZEN").ok().and_then(|v| {
+                    let (a, b) = v.split_once(':')?;
+                    Some((a.parse().ok()?, b.parse().ok()?))
+                });
                 run_replay(&world, replay, tick, |w, _| {
                     if let Some(a) = trace.and_then(|id| w.get_actor_by_id(id)) {
                         let facing = a.trait_or_default::<dyn rustora_engine::traits::IFacing>().map(|f| f.facing().angle);
                         let prone = (a.trait_or_default::<rustora_mods_common::turreted::Turreted>().map(|t| t.is_prone()), a.trait_or_default::<rustora_mods_common::mobile::Mobile>().map(|m| m.movement_speed_for_cell(a.location())));
                         eprintln!("trace {} pos={:?} facing={:?} prone={:?} activity={:?}", w.world_tick(), a.center_position(), facing, prone, a.current_activity().map(|x| x.type_name()));
+                    }
+                    if let Some((pi, fid)) = trace_frozen {
+                        let p = w.players().into_iter().find(|p| p.player_actor().id as usize == pi).expect("player");
+                        if let Some(fa) = p.frozen_actor_layer().and_then(|l| l.from_id(fid)) {
+                            let sh = p.shroud();
+                            let vis: Vec<u8> = fa.footprint.iter().map(|&c| sh.get_visibility(c)).collect();
+                            eprintln!("frozen {} {} visible={} actor_alive={} footprint={:?} cell_visibility={:?}", w.world_tick(), fa.info().name, fa.visible(), fa.actor().is_some(), fa.footprint, vis);
+                        }
                     }
                     true
                 });

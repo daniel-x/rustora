@@ -20,6 +20,7 @@ pub mod conditions;
 pub mod crates;
 pub mod death;
 pub mod experience;
+pub mod gps;
 pub mod harvester;
 pub mod health;
 pub mod hit_shape;
@@ -64,6 +65,7 @@ pub fn register(r: &mut TraitRegistry) {
     cloak::register(r);
     minelayer::register(r);
     support_powers::register(r);
+    gps::register(r);
     resupply::register(r);
     base::register(r);
     building::register(r);

@@ -28,6 +28,7 @@ use crate::aircraft::{AircraftInfo, Fly, RemoveSelf};
 use crate::attack::AttackBase;
 use crate::base::DeveloperMode;
 use crate::cargo::{Cargo, ParaDrop};
+use crate::gps::{GpsWatcher, ProvidesRadar, SatelliteLaunch};
 use crate::interfaces::*;
 use crate::production::TechTree;
 
@@ -35,6 +36,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("SupportPowerManager", |n| load_info!(SupportPowerManagerInfo, n));
     r.register("AirstrikePower", |n| load_power(n, PowerKind::Airstrike));
     r.register("ParatroopersPower", |n| load_power(n, PowerKind::Paratroopers));
+    r.register("GpsPower", |n| load_power(n, PowerKind::Gps));
 }
 
 pub trait INotifySupportPower {
@@ -47,6 +49,7 @@ pub enum PowerKind {
     #[default]
     Airstrike,
     Paratroopers,
+    Gps,
 }
 
 impl PowerKind {
@@ -54,6 +57,7 @@ impl PowerKind {
         match self {
             PowerKind::Airstrike => "AirstrikePower",
             PowerKind::Paratroopers => "ParatroopersPower",
+            PowerKind::Gps => "GpsPower",
         }
     }
 }
@@ -69,6 +73,7 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
             info.unit_type = "badr".into();
             info.camera_remove_delay = 85;
         }
+        PowerKind::Gps => {}
     }
     info.order_name = format!("{}InfoOrder", kind.class_name());
     rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(|e| format!("Trait name {}: {}", node.display_name(), e))?;
@@ -105,6 +110,11 @@ pub struct SupportPowerInfo {
     // ParatroopersPower
     pub drop_items: Vec<String>,
     pub allow_impassable_cells: bool,
+    // GpsPower
+    pub reveal_delay: i32,
+    pub door_image: String,
+    pub door_sequence: String,
+    pub requires_active_radar: bool,
 }
 
 impl Default for SupportPowerInfo {
@@ -129,6 +139,10 @@ impl Default for SupportPowerInfo {
             camera_remove_delay: 0,
             drop_items: Vec::new(),
             allow_impassable_cells: false,
+            reveal_delay: 0,
+            door_image: "atek".into(),
+            door_sequence: "active".into(),
+            requires_active_radar: true,
         }
     }
 }
@@ -137,6 +151,8 @@ pub struct SupportPower {
     pub info: Rc<SupportPowerInfo>,
     state: ConditionalState,
     pub self_: ActorRef,
+    gps_owner: RefCell<Option<Rc<GpsWatcher>>>,
+    gps_was_paused: Cell<bool>,
 }
 
 impl rustora_engine::traits::TraitObject for SupportPower {
@@ -145,6 +161,12 @@ impl rustora_engine::traits::TraitObject for SupportPower {
         dict.add::<dyn INotifyCreated>(actor, self.clone());
         dict.add::<dyn IObservesVariables>(actor, self.clone());
         dict.add::<dyn IDisabledTrait>(actor, self.clone());
+        if self.info.kind == PowerKind::Gps {
+            dict.add::<dyn INotifyKilled>(actor, self.clone());
+            dict.add::<dyn INotifySold>(actor, self.clone());
+            dict.add::<dyn INotifyOwnerChanged>(actor, self.clone());
+            dict.add::<dyn ITick>(actor, self.clone());
+        }
         dict.add::<dyn ISync>(actor, self);
     }
 
@@ -159,7 +181,11 @@ impl rustora_engine::traits::TraitObject for SupportPower {
 
 info_impl!(SupportPowerInfo => |info, init| {
     let state = ConditionalState::new_pausable(&info.base);
-    Some(Rc::new(SupportPower { info, state, self_: init.self_.clone() }))
+    let gps_owner = (info.kind == PowerKind::Gps).then(|| init.self_.owner().player_actor().trait_::<GpsWatcher>());
+    if let Some(g) = &gps_owner {
+        g.gps_add(&init.self_);
+    }
+    Some(Rc::new(SupportPower { info, state, self_: init.self_.clone(), gps_owner: RefCell::new(gps_owner), gps_was_paused: Cell::new(false) }))
 });
 
 rustora_engine::conditional_simple!(SupportPower);
@@ -177,7 +203,13 @@ impl SupportPower {
         if self.info.allow_multiple { format!("{}_{}", self.info.order_name, self.self_.id) } else { self.info.order_name.clone() }
     }
 
-    fn charged(&self, self_: &ActorRef) {
+    fn charged(&self, self_: &ActorRef, key: &str) {
+        if self.info.kind == PowerKind::Gps {
+            let spm = self_.owner().player_actor().trait_::<SupportPowerManager>();
+            let p = spm.powers.borrow().get(&key.to_string()).cloned().expect("power");
+            p.activate(&Order::new("", None, Target::Invalid, false));
+            return;
+        }
         for n in self_.traits_implementing::<dyn INotifySupportPower>() {
             n.charged(self_);
         }
@@ -195,6 +227,12 @@ impl SupportPower {
             PowerKind::Paratroopers => {
                 let facing = self.directional_facing(order);
                 self.send_paratroopers(self_, order.target.center_position(), facing);
+            }
+            PowerKind::Gps => {
+                let (a, info) = (self_.clone(), self.info.clone());
+                self_.world().add_frame_end_task(Box::new(move |w| {
+                    w.add_effect(SatelliteLaunch::new(w, &a, &info.door_image, &info.door_sequence, info.reveal_delay));
+                }));
             }
         }
     }
@@ -455,7 +493,7 @@ impl SupportPowerInstance {
             self.notified_charging.set(true);
         }
         if self.remaining_ticks() == 0 && !self.notified_ready.get() {
-            power.charged(&power.self_);
+            power.charged(&power.self_, &self.key);
             self.notified_ready.set(true);
         }
     }
@@ -612,4 +650,55 @@ impl ITechTreeElement for SupportPowerManager {
     fn prerequisites_item_hidden(&self, _key: &str) {}
 
     fn prerequisites_item_visible(&self, _key: &str) {}
+}
+
+impl SupportPower {
+    fn remove_gps(&self, self_: &ActorRef) {
+        let g = self.gps_owner.borrow().clone();
+        if let Some(g) = g {
+            g.gps_remove(self_);
+        }
+    }
+
+    fn no_active_radar(&self, self_: &ActorRef) -> bool {
+        let owner = self_.owner();
+        !self_.world().actors_with_trait::<ProvidesRadar>().iter().any(|(a, r)| !r.is_trait_disabled() && Rc::ptr_eq(&a.owner(), &owner))
+    }
+}
+
+impl INotifyKilled for SupportPower {
+    fn killed(&self, self_: &ActorRef, _e: &rustora_engine::damage::AttackInfo) {
+        self.remove_gps(self_);
+    }
+}
+
+impl INotifySold for SupportPower {
+    fn selling(&self, _self_: &ActorRef) {}
+
+    fn sold(&self, self_: &ActorRef) {
+        self.remove_gps(self_);
+    }
+}
+
+impl INotifyOwnerChanged for SupportPower {
+    fn on_owner_changed(&self, self_: &ActorRef, _old: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef) {
+        self.remove_gps(self_);
+        let g = new_owner.player_actor().trait_::<GpsWatcher>();
+        *self.gps_owner.borrow_mut() = Some(g.clone());
+        g.gps_add(self_);
+    }
+}
+
+impl ITick for SupportPower {
+    fn tick(&self, self_: &ActorRef) {
+        let blocked = self.is_trait_paused() || (self.info.requires_active_radar && self.no_active_radar(self_));
+        if !self.gps_was_paused.get() && blocked {
+            self.gps_was_paused.set(true);
+            self.remove_gps(self_);
+        } else if self.gps_was_paused.get() && !self.is_trait_paused() && !(self.info.requires_active_radar && self.no_active_radar(self_)) {
+            self.gps_was_paused.set(false);
+            let g = self.gps_owner.borrow().clone().expect("gps watcher");
+            g.gps_add(self_);
+        }
+    }
 }
