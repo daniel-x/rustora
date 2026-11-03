@@ -95,6 +95,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("GivesExperience", |n| load_info!(GivesExperienceInfo, n));
     r.register("ChangesHealth", |n| load_info!(ChangesHealthInfo, n));
     r.register("GrantCondition", |n| load_info!(GrantConditionInfo, n));
+    r.register("ProducibleWithLevel", |n| load_info!(ProducibleWithLevelInfo, n));
     r.register("GrantConditionWhileAiming", |n| load_info!(GrantConditionWhileAimingInfo, n));
     r.register("GrantConditionOnAttack", |n| load_info!(GrantConditionOnAttackInfo, n));
     r.register("GrantConditionOnTileSet", |n| load_info!(GrantConditionOnTileSetInfo, n));
@@ -823,5 +824,40 @@ impl INotifyAiming for GrantConditionWhileAiming {
         if self.token.get() != INVALID_CONDITION_TOKEN {
             self.token.set(self_.revoke_condition(self.token.get()));
         }
+    }
+}
+
+/// `Traits/ProducibleWithLevel.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ProducibleWithLevelInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub prerequisites: Vec<String>,
+    pub initial_levels: i32,
+}
+
+impl Default for ProducibleWithLevelInfo {
+    fn default() -> Self {
+        ProducibleWithLevelInfo { instance_name: None, prerequisites: Vec::new(), initial_levels: 1 }
+    }
+}
+
+pub struct ProducibleWithLevel {
+    info: Rc<ProducibleWithLevelInfo>,
+}
+
+register_traits!(ProducibleWithLevel: INotifyCreated);
+info_impl!(ProducibleWithLevelInfo => |info, _| Some(Rc::new(ProducibleWithLevel { info })));
+
+impl INotifyCreated for ProducibleWithLevel {
+    fn created(&self, self_: &ActorRef) {
+        if !self_.owner().player_actor().trait_::<crate::production::TechTree>().has_prerequisites(&self.info.prerequisites) {
+            return;
+        }
+        let ge = self_.trait_::<GainsExperience>();
+        if !ge.can_gain_level() {
+            return;
+        }
+        ge.give_levels(self.info.initial_levels);
     }
 }
