@@ -37,6 +37,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("AirstrikePower", |n| load_power(n, PowerKind::Airstrike));
     r.register("ParatroopersPower", |n| load_power(n, PowerKind::Paratroopers));
     r.register("GpsPower", |n| load_power(n, PowerKind::Gps));
+    r.register("NukePower", |n| load_power(n, PowerKind::Nuke));
 }
 
 pub trait INotifySupportPower {
@@ -50,6 +51,7 @@ pub enum PowerKind {
     Airstrike,
     Paratroopers,
     Gps,
+    Nuke,
 }
 
 impl PowerKind {
@@ -58,6 +60,7 @@ impl PowerKind {
             PowerKind::Airstrike => "AirstrikePower",
             PowerKind::Paratroopers => "ParatroopersPower",
             PowerKind::Gps => "GpsPower",
+            PowerKind::Nuke => "NukePower",
         }
     }
 }
@@ -74,6 +77,7 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
             info.camera_remove_delay = 85;
         }
         PowerKind::Gps => {}
+        PowerKind::Nuke => info.camera_remove_delay = 25,
     }
     info.order_name = format!("{}InfoOrder", kind.class_name());
     rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(|e| format!("Trait name {}: {}", node.display_name(), e))?;
@@ -115,6 +119,23 @@ pub struct SupportPowerInfo {
     pub door_image: String,
     pub door_sequence: String,
     pub requires_active_radar: bool,
+    // NukePower
+    pub missile_weapon: String,
+    pub missile_delay: i32,
+    pub spawn_offset: WVec,
+    pub detonation_altitude: WDist,
+    pub remove_missile_on_detonation: bool,
+    pub flight_delay: i32,
+    pub flight_velocity: WDist,
+    pub skip_ascent: bool,
+    pub camera_range: WDist,
+    pub reveal_generated_shroud: bool,
+    pub camera_relationships: rustora_engine::player::PlayerRelationship,
+    pub camera_spawn_advance: i32,
+    pub trail_image: Option<String>,
+    pub trail_sequences: Vec<String>,
+    pub trail_interval: i32,
+    pub trail_delay: i32,
 }
 
 impl Default for SupportPowerInfo {
@@ -143,6 +164,22 @@ impl Default for SupportPowerInfo {
             door_image: "atek".into(),
             door_sequence: "active".into(),
             requires_active_radar: true,
+            missile_weapon: String::new(),
+            missile_delay: 0,
+            spawn_offset: WVec::ZERO,
+            detonation_altitude: WDist::ZERO,
+            remove_missile_on_detonation: true,
+            flight_delay: 400,
+            flight_velocity: WDist::new(512),
+            skip_ascent: false,
+            camera_range: WDist::ZERO,
+            reveal_generated_shroud: true,
+            camera_relationships: rustora_engine::player::PlayerRelationship::ALLY,
+            camera_spawn_advance: 25,
+            trail_image: None,
+            trail_sequences: Vec::new(),
+            trail_interval: 1,
+            trail_delay: 1,
         }
     }
 }
@@ -228,6 +265,7 @@ impl SupportPower {
                 let facing = self.directional_facing(order);
                 self.send_paratroopers(self_, order.target.center_position(), facing);
             }
+            PowerKind::Nuke => self.launch_nuke(self_, order.target.center_position()),
             PowerKind::Gps => {
                 let (a, info) = (self_.clone(), self.info.clone());
                 self_.world().add_frame_end_task(Box::new(move |w| {
@@ -700,5 +738,147 @@ impl ITick for SupportPower {
             let g = self.gps_owner.borrow().clone().expect("gps watcher");
             g.gps_add(self_);
         }
+    }
+}
+
+impl SupportPower {
+    /// `NukePower.Activate(Actor, WPos)`.
+    pub fn launch_nuke(&self, self_: &ActorRef, target_position: rustora_core::world_types::WPos) {
+        let info = &self.info;
+        let w = self_.world();
+        let weapon = w.rules().weapon(&info.missile_weapon.to_lowercase()).unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", info.missile_weapon.to_lowercase()));
+        let body = self_.trait_or_default::<crate::render::BodyOrientation>();
+        let skip_ascent = info.skip_ascent || body.is_none();
+        let launch_pos = match (&body, skip_ascent) {
+            (Some(b), false) => self_.center_position() + b.local_to_world(info.spawn_offset),
+            _ => rustora_core::world_types::WPos::ZERO,
+        };
+        let missile = NukeLaunch::new(self_.owner(), weapon, launch_pos, target_position, info, skip_ascent);
+        w.add_frame_end_task(Box::new(move |w| w.add_effect(missile)));
+        if info.camera_range != WDist::ZERO {
+            let ty = if info.reveal_generated_shroud { rustora_engine::shroud::SourceType::Visibility } else { rustora_engine::shroud::SourceType::PassiveVisibility };
+            let (owner, range, rel, delay, duration) =
+                (self_.owner(), info.camera_range, info.camera_relationships, info.flight_delay - info.camera_spawn_advance, info.camera_spawn_advance + info.camera_remove_delay);
+            w.add_frame_end_task(Box::new(move |w| w.add_effect(crate::death::RevealShroudEffect::new(target_position, range, ty, owner, rel, delay, duration))));
+        }
+    }
+}
+
+/// `Projectiles/NukeLaunch.cs`, without the missile animation.
+pub struct NukeLaunch {
+    me: Weak<NukeLaunch>,
+    fired_by: rustora_engine::player::PlayerRef,
+    weapon: Rc<rustora_engine::weapon::WeaponInfo>,
+    ascend_source: rustora_core::world_types::WPos,
+    ascend_target: rustora_core::world_types::WPos,
+    descend_source: rustora_core::world_types::WPos,
+    descend_target: rustora_core::world_types::WPos,
+    detonation_altitude: WDist,
+    remove_on_detonation: bool,
+    impact_delay: i32,
+    turn: i32,
+    trail_image: Option<String>,
+    trail_sequences: Vec<String>,
+    trail_interval: i32,
+    pos: Cell<rustora_core::world_types::WPos>,
+    ticks: Cell<i32>,
+    trail_ticks: Cell<i32>,
+    launch_delay: Cell<i32>,
+    detonated: Cell<bool>,
+}
+
+impl NukeLaunch {
+    fn new(
+        fired_by: rustora_engine::player::PlayerRef,
+        weapon: Rc<rustora_engine::weapon::WeaponInfo>,
+        launch_pos: rustora_core::world_types::WPos,
+        target_pos: rustora_core::world_types::WPos,
+        info: &SupportPowerInfo,
+        skip_ascent: bool,
+    ) -> rustora_engine::effect::EffectRef {
+        let impact_delay = info.flight_delay;
+        let turn = if skip_ascent { 0 } else { impact_delay / 2 };
+        let offset = WVec::new(0, 0, info.flight_velocity.length * (impact_delay - turn));
+        let descend_source = target_pos + offset;
+        Rc::new_cyclic(|me| NukeLaunch {
+            me: me.clone(),
+            fired_by,
+            weapon,
+            ascend_source: launch_pos,
+            ascend_target: launch_pos + offset,
+            descend_source,
+            descend_target: target_pos,
+            detonation_altitude: info.detonation_altitude,
+            remove_on_detonation: info.remove_missile_on_detonation,
+            impact_delay,
+            turn,
+            trail_image: info.trail_image.clone().filter(|t| !t.is_empty()),
+            trail_sequences: info.trail_sequences.clone(),
+            trail_interval: info.trail_interval,
+            pos: Cell::new(if skip_ascent { descend_source } else { launch_pos }),
+            ticks: Cell::new(0),
+            trail_ticks: Cell::new(info.trail_delay),
+            launch_delay: Cell::new(info.missile_delay),
+            detonated: Cell::new(false),
+        })
+    }
+
+    fn explode(&self, world: &Rc<World>, remove: bool) {
+        if remove {
+            let me: rustora_engine::effect::EffectRef = self.me.upgrade().expect("effect");
+            world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+        }
+        if self.detonated.get() {
+            return;
+        }
+        let target = Target::from_pos(self.pos.get());
+        let args = rustora_engine::weapon::WarheadArgs {
+            weapon: self.weapon.clone(),
+            damage_modifiers: Vec::new(),
+            source: Some(target.center_position()),
+            impact_orientation: WRot::NONE,
+            impact_position: rustora_core::world_types::WPos::ZERO,
+            source_actor: self.fired_by.player_actor().clone(),
+            weapon_target: target.clone(),
+        };
+        rustora_engine::weapon::weapon_impact_args(&self.weapon, &target, &args);
+        self.detonated.set(true);
+    }
+}
+
+impl rustora_engine::effect::Effect for NukeLaunch {
+    fn tick(&self, world: &Rc<World>) {
+        let d = self.launch_delay.get();
+        self.launch_delay.set(d - 1);
+        if d > 0 {
+            return;
+        }
+        let ticks = self.ticks.get();
+        let descending = ticks >= self.turn;
+        let lerp = rustora_core::world_types::WPos::lerp_quadratic;
+        let pos = if !descending {
+            lerp(self.ascend_source, self.ascend_target, WAngle::ZERO, ticks, self.turn)
+        } else {
+            lerp(self.descend_source, self.descend_target, WAngle::ZERO, ticks - self.turn, self.impact_delay - self.turn)
+        };
+        self.pos.set(pos);
+        if self.trail_image.is_some() {
+            self.trail_ticks.set(self.trail_ticks.get() - 1);
+            if self.trail_ticks.get() < 0 {
+                if !self.trail_sequences.is_empty() {
+                    world.shared_random.borrow_mut().next_max(self.trail_sequences.len() as i32);
+                }
+                self.trail_ticks.set(self.trail_interval);
+            }
+        }
+        let dat = world.map().distance_above_terrain(pos);
+        if ticks == self.impact_delay || (descending && dat <= self.detonation_altitude) {
+            self.explode(world, ticks == self.impact_delay || self.remove_on_detonation);
+        }
+        self.ticks.set(ticks + 1);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
