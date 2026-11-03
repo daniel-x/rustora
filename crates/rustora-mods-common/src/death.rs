@@ -42,6 +42,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("HarvesterHuskModifier", |n| load_info!(HarvesterHuskModifierInfo, n));
     r.register("FallsToEarth", |n| load_info!(FallsToEarthInfo, n));
     r.register("EjectOnDeath", |n| load_info!(EjectOnDeathInfo, n));
+    r.register("RevealOnDeath", |n| load_info!(RevealOnDeathInfo, n));
 }
 
 /// `IHuskModifier`.
@@ -820,5 +821,134 @@ impl INotifyKilled for EjectOnDeath {
                 pilot.queue_activity_queued(false, crate::activities::Nudge::new(&pilot));
             }
         }));
+    }
+}
+
+/// `Traits/RevealOnDeath.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct RevealOnDeathInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub reveal_for_relationships: rustora_engine::player::PlayerRelationship,
+    pub duration: i32,
+    pub radius: rustora_core::world_types::WDist,
+    pub reveal_generated_shroud: bool,
+    pub death_types: DamageTypes,
+}
+
+impl Default for RevealOnDeathInfo {
+    fn default() -> Self {
+        RevealOnDeathInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            reveal_for_relationships: rustora_engine::player::PlayerRelationship::ALLY,
+            duration: 25,
+            radius: rustora_core::world_types::WDist::new(1536),
+            reveal_generated_shroud: true,
+            death_types: DamageTypes::default(),
+        }
+    }
+}
+
+pub struct RevealOnDeath {
+    info: Rc<RevealOnDeathInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(RevealOnDeath: INotifyKilled, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(RevealOnDeathInfo => |info, _| {
+    let state = ConditionalState::new(&info.base);
+    Some(Rc::new(RevealOnDeath { info, state }))
+});
+
+rustora_engine::conditional_simple!(RevealOnDeath);
+
+impl INotifyKilled for RevealOnDeath {
+    fn killed(&self, self_: &ActorRef, e: &AttackInfo) {
+        if self.state.is_trait_disabled() || !self_.is_in_world() {
+            return;
+        }
+        if !self.info.death_types.is_empty() && !e.damage.damage_types.overlaps(&self.info.death_types) {
+            return;
+        }
+        let Some(owner) = self_.owner_opt() else { return };
+        if owner.win_state.get() != WinState::Undefined {
+            return;
+        }
+        let (a, info) = (self_.clone(), self.info.clone());
+        self_.world().add_frame_end_task(Box::new(move |w| {
+            if a.disposed() {
+                return;
+            }
+            let ty = if info.reveal_generated_shroud { rustora_engine::shroud::SourceType::Visibility } else { rustora_engine::shroud::SourceType::PassiveVisibility };
+            w.add_effect(RevealShroudEffect::new(a.center_position(), info.radius, ty, owner, info.reveal_for_relationships, 0, info.duration));
+        }));
+    }
+}
+
+/// `Effects/RevealShroudEffect.cs`.
+pub struct RevealShroudEffect {
+    me: std::rc::Weak<RevealShroudEffect>,
+    pos: WPos,
+    player: PlayerRef,
+    source_type: rustora_engine::shroud::SourceType,
+    reveal_radius: rustora_core::world_types::WDist,
+    valid_stances: rustora_engine::player::PlayerRelationship,
+    duration: i32,
+    ticks: Cell<i32>,
+}
+
+impl RevealShroudEffect {
+    pub fn new(
+        pos: WPos,
+        radius: rustora_core::world_types::WDist,
+        ty: rustora_engine::shroud::SourceType,
+        player: PlayerRef,
+        stances: rustora_engine::player::PlayerRelationship,
+        delay: i32,
+        duration: i32,
+    ) -> rustora_engine::effect::EffectRef {
+        Rc::new_cyclic(|me| RevealShroudEffect { me: me.clone(), pos, player, source_type: ty, reveal_radius: radius, valid_stances: stances, duration, ticks: Cell::new(-delay) })
+    }
+
+    fn key(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    fn applies_to(&self, p: &PlayerRef) -> bool {
+        self.valid_stances.has_relationship(self.player.relationship_with(Some(p)))
+    }
+}
+
+impl rustora_engine::effect::Effect for RevealShroudEffect {
+    fn tick(&self, world: &Rc<rustora_engine::world::World>) {
+        if self.ticks.get() == 0 {
+            let cells: Rc<[rustora_core::world_types::PPos]> = if self.reveal_radius == rustora_core::world_types::WDist::ZERO {
+                Rc::from(Vec::new())
+            } else {
+                Rc::from(rustora_engine::shroud::Shroud::projected_cells_in_range(world.map(), self.pos, rustora_core::world_types::WDist::ZERO, self.reveal_radius, -1))
+            };
+            for p in world.players() {
+                if self.applies_to(&p) {
+                    p.shroud().add_source(self.key(), self.source_type, cells.clone());
+                }
+            }
+        }
+        if self.ticks.get() == self.duration {
+            for p in world.players() {
+                if self.applies_to(&p) {
+                    p.shroud().remove_source(self.key());
+                }
+            }
+            let me: rustora_engine::effect::EffectRef = self.me.upgrade().expect("effect");
+            world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+        }
+        self.ticks.set(self.ticks.get() + 1);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
