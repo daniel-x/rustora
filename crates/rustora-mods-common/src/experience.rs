@@ -95,6 +95,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("GivesExperience", |n| load_info!(GivesExperienceInfo, n));
     r.register("ChangesHealth", |n| load_info!(ChangesHealthInfo, n));
     r.register("GrantCondition", |n| load_info!(GrantConditionInfo, n));
+    r.register("GrantConditionWhileAiming", |n| load_info!(GrantConditionWhileAimingInfo, n));
+    r.register("GrantConditionOnAttack", |n| load_info!(GrantConditionOnAttackInfo, n));
     r.register("GrantConditionOnTileSet", |n| load_info!(GrantConditionOnTileSetInfo, n));
     r.register("GrantConditionOnDamageState", |n| load_info!(GrantConditionOnDamageStateInfo, n));
     r.register("ExternalCondition", |n| load_info!(ExternalConditionInfo, n));
@@ -633,5 +635,193 @@ pub fn grant_external_condition(a: &ActorRef, condition: &str, levels: i32, dura
         }
         let Some(e) = &external else { break };
         e.grant_condition(a, key, duration, 0);
+    }
+}
+
+/// `Traits/Conditions/GrantConditionOnAttack.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct GrantConditionOnAttackInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: PausableConditionalTraitInfo,
+    #[field(require)]
+    pub condition: String,
+    pub armament_names: IndexSet<String>,
+    pub required_shots_per_instance: Vec<i32>,
+    pub maximum_instances: i32,
+    pub is_cyclic: bool,
+    pub revoke_delay: i32,
+    pub revoke_on_new_target: bool,
+    pub revoke_all: bool,
+}
+
+impl Default for GrantConditionOnAttackInfo {
+    fn default() -> Self {
+        GrantConditionOnAttackInfo {
+            instance_name: None,
+            base: PausableConditionalTraitInfo::default(),
+            condition: String::new(),
+            armament_names: ["primary".to_string()].into_iter().collect(),
+            required_shots_per_instance: vec![1],
+            maximum_instances: 1,
+            is_cyclic: false,
+            revoke_delay: 15,
+            revoke_on_new_target: false,
+            revoke_all: false,
+        }
+    }
+}
+
+pub struct GrantConditionOnAttack {
+    info: Rc<GrantConditionOnAttackInfo>,
+    state: ConditionalState,
+    tokens: RefCell<Vec<i32>>,
+    cooldown: Cell<i32>,
+    shots_fired: Cell<i32>,
+    last_target: RefCell<rustora_engine::target::Target>,
+}
+
+register_traits!(GrantConditionOnAttack: INotifyCreated, ITick, INotifyAttack, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(GrantConditionOnAttackInfo => |info, _| {
+    let state = ConditionalState::new_pausable(&info.base);
+    Some(Rc::new(GrantConditionOnAttack {
+        info,
+        state,
+        tokens: RefCell::new(Vec::new()),
+        cooldown: Cell::new(0),
+        shots_fired: Cell::new(0),
+        last_target: RefCell::new(rustora_engine::target::Target::Invalid),
+    }))
+});
+
+impl ConditionalHooks for GrantConditionOnAttack {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        self.revoke_instance(self_, true);
+    }
+}
+rustora_engine::conditional_plumbing!(GrantConditionOnAttack);
+
+impl INotifyCreated for GrantConditionOnAttack {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl GrantConditionOnAttack {
+    fn revoke_instance(&self, self_: &ActorRef, revoke_all: bool) {
+        self.shots_fired.set(0);
+        loop {
+            let Some(t) = self.tokens.borrow_mut().pop() else { return };
+            self_.revoke_condition(t);
+            if !revoke_all {
+                return;
+            }
+        }
+    }
+
+    fn target_changed(last: &rustora_engine::target::Target, target: &rustora_engine::target::Target) -> bool {
+        use rustora_engine::target::TargetType as T;
+        let (lt, tt) = (last.target_type(), target.target_type());
+        let same_actor = |a: Option<ActorRef>, b: Option<&ActorRef>| match (a, b) {
+            (Some(a), Some(b)) => a.id == b.id,
+            (None, None) => true,
+            _ => false,
+        };
+        if lt == T::FrozenActor && tt == T::Actor && same_actor(last.frozen_actor().unwrap().actor(), target.actor()) {
+            return false;
+        }
+        if lt == T::Actor && tt == T::FrozenActor && same_actor(target.frozen_actor().unwrap().actor(), last.actor()) {
+            return false;
+        }
+        if lt != tt {
+            return true;
+        }
+        match lt {
+            T::Actor => last.actor().unwrap().id != target.actor().unwrap().id,
+            T::FrozenActor => !Rc::ptr_eq(last.frozen_actor().unwrap(), target.frozen_actor().unwrap()),
+            T::Terrain => last.center_position() != target.center_position(),
+            T::Invalid => false,
+        }
+    }
+}
+
+impl ITick for GrantConditionOnAttack {
+    fn tick(&self, self_: &ActorRef) {
+        if !self.tokens.borrow().is_empty() {
+            self.cooldown.set(self.cooldown.get() - 1);
+            if self.cooldown.get() == 0 {
+                self.cooldown.set(self.info.revoke_delay);
+                self.revoke_instance(self_, self.info.revoke_all);
+            }
+        }
+    }
+}
+
+impl INotifyAttack for GrantConditionOnAttack {
+    fn attacking(&self, self_: &ActorRef, target: &rustora_engine::target::Target, a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {
+        if self.state.is_trait_disabled() || self.state.is_trait_paused() || !self.info.armament_names.contains(&a.info.name) {
+            return;
+        }
+        if self.info.revoke_on_new_target {
+            if Self::target_changed(&self.last_target.borrow(), target) {
+                self.revoke_instance(self_, self.info.revoke_all);
+            }
+            *self.last_target.borrow_mut() = target.clone();
+        }
+        self.cooldown.set(self.info.revoke_delay);
+        let count = self.tokens.borrow().len();
+        if !self.info.is_cyclic && count as i32 >= self.info.maximum_instances {
+            return;
+        }
+        self.shots_fired.set(self.shots_fired.get() + 1);
+        let shots = &self.info.required_shots_per_instance;
+        let required = if count < shots.len() { shots[count] } else { *shots.last().unwrap() };
+        if self.shots_fired.get() >= required {
+            if self.info.is_cyclic && count as i32 == self.info.maximum_instances {
+                self.revoke_instance(self_, true);
+            } else if !self.info.condition.is_empty() {
+                let t = self_.grant_condition(&self.info.condition);
+                self.tokens.borrow_mut().push(t);
+            }
+            self.shots_fired.set(0);
+        }
+    }
+
+    fn preparing_attack(&self, _self_: &ActorRef, _target: &rustora_engine::target::Target, _a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {}
+}
+
+/// `Traits/Conditions/GrantConditionWhileAiming.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct GrantConditionWhileAimingInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub condition: String,
+}
+
+pub struct GrantConditionWhileAiming {
+    info: Rc<GrantConditionWhileAimingInfo>,
+    token: Cell<i32>,
+}
+
+register_traits!(GrantConditionWhileAiming: INotifyAiming);
+info_impl!(GrantConditionWhileAimingInfo => |info, _| Some(Rc::new(GrantConditionWhileAiming { info, token: Cell::new(INVALID_CONDITION_TOKEN) })));
+
+impl INotifyAiming for GrantConditionWhileAiming {
+    fn started_aiming(&self, self_: &ActorRef, _attack: &crate::attack::AttackBase) {
+        if self.token.get() == INVALID_CONDITION_TOKEN {
+            self.token.set(self_.grant_condition(&self.info.condition));
+        }
+    }
+
+    fn stopped_aiming(&self, self_: &ActorRef, _attack: &crate::attack::AttackBase) {
+        if self.token.get() != INVALID_CONDITION_TOKEN {
+            self.token.set(self_.revoke_condition(self.token.get()));
+        }
     }
 }
