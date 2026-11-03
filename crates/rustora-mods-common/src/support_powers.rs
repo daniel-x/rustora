@@ -560,7 +560,7 @@ impl SupportPowerManager {
     }
 
     fn actor_removed(&self, a: &ActorRef) {
-        if !self.owns(a) || a.info.trait_info::<SupportPowerInfo>().is_none() {
+        if !self.owns(a) || !a.info.has_trait_info::<SupportPowerInfo>() {
             return;
         }
         for t in a.traits_implementing::<SupportPower>() {
