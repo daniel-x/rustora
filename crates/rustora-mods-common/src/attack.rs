@@ -51,6 +51,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("AttackAircraft", |n| load_attack(n, AttackKind::Aircraft));
     r.register("AttackBomber", |n| load_attack(n, AttackKind::Bomber));
     r.register("AttackLeap", |n| load_attack(n, AttackKind::Leap));
+    r.register("EdibleByLeap", |n| load_info!(EdibleByLeapInfo, n));
     r.register("AttackTesla", |n| load_attack(n, AttackKind::Tesla));
 }
 
@@ -1058,7 +1059,7 @@ impl AttackBase {
             }
             AttackKind::Aircraft => FlyAttack::new(self_, me, source, target, force_attack),
             AttackKind::Bomber => panic!("AttackBomber requires a scripted target"),
-            AttackKind::Leap => panic!("LeapAttack port pending"),
+            AttackKind::Leap => LeapAttack::new(self_, target, allow_move, force_attack, me),
             AttackKind::Tesla => Rc::new(ChargeAttack { base: ActivityBase::default(), attack: me, target: target.clone(), force_attack }),
         }
     }
@@ -1337,6 +1338,10 @@ pub fn activity_stance_changed(a: &ActivityRef, self_: &ActorRef, auto_target: &
             if !has_valid_priority(&t, self_, auto_target) {
                 *x.target.borrow_mut() = Target::Invalid;
             }
+        }
+    } else if let Some(x) = any.downcast_ref::<LeapAttack>() {
+        if !(new > old || x.force_attack) && !x.last_visible.has_valid_priority(self_, auto_target) {
+            *x.target.borrow_mut() = Target::Invalid;
         }
     } else if let Some(x) = any.downcast_ref::<ChargeAttack>() {
         if !(new > old || x.force_attack) && !has_valid_priority(&x.target, self_, auto_target) {
@@ -2011,4 +2016,245 @@ pub type TurnActivity = Turn;
 /// `Cargo` passengers armed through `AttackGarrisoned`.
 pub fn garrison_cargo(self_: &ActorRef) -> Option<Rc<Cargo>> {
     self_.trait_or_default::<Cargo>()
+}
+
+/// `Mods.Cnc/Traits/EdibleByLeap.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct EdibleByLeapInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+#[derive(Default)]
+pub struct EdibleByLeap {
+    leaper: RefCell<Option<ActorRef>>,
+}
+
+rustora_engine::register_traits!(EdibleByLeap);
+info_impl!(EdibleByLeapInfo => |_, _| Some(Rc::new(EdibleByLeap::default())));
+
+impl EdibleByLeap {
+    pub fn can_leap(&self, targeter: &ActorRef) -> bool {
+        self.leaper.borrow().as_ref().is_none_or(|l| l.is_dead() || l.id == targeter.id)
+    }
+
+    pub fn get_leap_at_by(&self, targeter: &ActorRef) -> bool {
+        if self.leaper.borrow().as_ref().is_some_and(|l| !l.is_dead() && l.id != targeter.id) {
+            return false;
+        }
+        *self.leaper.borrow_mut() = Some(targeter.clone());
+        true
+    }
+}
+
+/// `Mods.Cnc/Activities/LeapAttack.cs`.
+pub struct LeapAttack {
+    base: ActivityBase,
+    attack: Rc<AttackBase>,
+    mobile: Rc<Mobile>,
+    allow_movement: bool,
+    force_attack: bool,
+    helper: MoveCooldownHelper,
+    target: RefCell<Target>,
+    last_visible: LastVisible,
+    last_visible_min_range: Cell<WDist>,
+    use_last_visible_target: Cell<bool>,
+}
+
+impl LeapAttack {
+    pub fn new(self_: &ActorRef, target: &Target, allow_movement: bool, force_attack: bool, attack: Rc<AttackBase>) -> ActivityRef {
+        let mobile = self_.trait_::<Mobile>();
+        let a = LeapAttack {
+            base: ActivityBase::default(),
+            helper: MoveCooldownHelper::new(Some(mobile.clone())),
+            mobile,
+            allow_movement,
+            force_attack,
+            target: RefCell::new(target.clone()),
+            last_visible: LastVisible::new(),
+            last_visible_min_range: Cell::new(WDist::ZERO),
+            use_last_visible_target: Cell::new(false),
+            attack,
+        };
+        if LastVisible::visible_on_creation(self_, target) {
+            *a.last_visible.target.borrow_mut() = Target::from_pos(target.center_position());
+            a.update_ranges(target);
+            a.last_visible.set_owner_types(target);
+        }
+        Rc::new(a)
+    }
+
+    fn update_ranges(&self, target: &Target) {
+        self.last_visible_min_range.set(self.attack.get_minimum_range_versus_target(target));
+        self.last_visible.maximum_range.set(self.attack.get_maximum_range_versus_target(target));
+    }
+}
+
+impl Activity for LeapAttack {
+    activity_common!("LeapAttack");
+
+    fn on_first_run(&self, _self_: &ActorRef) {
+        self.attack.set_is_aiming(true);
+    }
+
+    fn tick(&self, self_: &ActorRef) -> bool {
+        if self.base.is_canceling() {
+            return true;
+        }
+        let (target, hidden) = self.target.borrow().recalculate(&self_.owner());
+        *self.target.borrow_mut() = target.clone();
+        if !hidden && target.target_type() == TargetType::Actor {
+            *self.last_visible.target.borrow_mut() = Target::from_target_positions(&target);
+            self.update_ranges(&target);
+            self.last_visible.set_owner_types(&target);
+        }
+        self.use_last_visible_target.set(hidden || !target.is_valid_for(self_));
+        let w = self_.world();
+        if let Some(r) = self.helper.tick(&w, hidden) {
+            return r;
+        }
+        let last_visible = self.last_visible.target.borrow().clone();
+        if self.use_last_visible_target.get() && !last_visible.is_valid_for(self_) {
+            return true;
+        }
+        let pos = self_.center_position();
+        let check = if self.use_last_visible_target.get() { last_visible } else { target.clone() };
+        let (min_range, max_range) = (self.last_visible_min_range.get(), self.last_visible.maximum_range.get());
+        if !check.is_in_range(pos, max_range) || check.is_in_range(pos, min_range) {
+            if !self.allow_movement || max_range == WDist::ZERO || max_range < min_range {
+                return true;
+            }
+            self.helper.notify_move_queued();
+            self.base.queue_child(self.mobile.move_within_range(&target, min_range, max_range, Some(check.center_position())));
+            return false;
+        }
+        if hidden || target.target_type() != TargetType::Actor {
+            return true;
+        }
+        if !target.is_valid_for(self_) || !self.attack.has_any_valid_weapons(&target, false, false) {
+            return true;
+        }
+        let victim = target.actor().unwrap().clone();
+        let Some(edible) = victim.trait_or_default::<EdibleByLeap>().filter(|e| e.can_leap(self_)) else { return true };
+        if self.attack.armaments().iter().all(|a| a.is_reloading()) {
+            return false;
+        }
+        let target_mobile = victim.trait_or_default::<Mobile>();
+        let target_subcell = target_mobile.as_ref().map_or(rustora_engine::traits::subcell::ANY, |m| m.to_subcell.get());
+        let destination = w.map().center_of_subcell(victim.location(), target_subcell);
+        let origin = w.map().center_of_subcell(self_.location(), self.mobile.from_subcell.get());
+        let desired_facing = (destination - origin).yaw();
+        if self.mobile.facing() != desired_facing {
+            self.base.queue_child(Turn::new(self_, desired_facing));
+            return false;
+        }
+        self.base.queue_child(Leap::new(&target, self.mobile.clone(), target_mobile, self.attack.info.speed.length, self.attack.clone(), edible));
+        false
+    }
+
+    fn on_last_run(&self, _self_: &ActorRef) {
+        self.attack.set_is_aiming(false);
+    }
+}
+
+/// `Mods.Cnc/Activities/Leap.cs`.
+pub struct Leap {
+    base: ActivityBase,
+    mobile: Rc<Mobile>,
+    target_mobile: Option<Rc<Mobile>>,
+    speed: i32,
+    attack: Rc<AttackBase>,
+    edible: Rc<EdibleByLeap>,
+    target: Target,
+    destination_cell: Cell<rustora_core::world_types::CPos>,
+    destination_subcell: Cell<u8>,
+    origin: Cell<WPos>,
+    destination: Cell<WPos>,
+    length: Cell<i32>,
+    canceled: Cell<bool>,
+    jump_complete: Cell<bool>,
+    ticks: Cell<i32>,
+    target_position: Cell<WPos>,
+}
+
+impl Leap {
+    pub fn new(target: &Target, mobile: Rc<Mobile>, target_mobile: Option<Rc<Mobile>>, speed: i32, attack: Rc<AttackBase>, edible: Rc<EdibleByLeap>) -> ActivityRef {
+        Rc::new(Leap {
+            base: ActivityBase::default(),
+            mobile,
+            target_mobile,
+            speed,
+            attack,
+            edible,
+            target: target.clone(),
+            destination_cell: Cell::new(rustora_core::world_types::CPos::ZERO),
+            destination_subcell: Cell::new(rustora_engine::traits::subcell::ANY),
+            origin: Cell::new(WPos::ZERO),
+            destination: Cell::new(WPos::ZERO),
+            length: Cell::new(0),
+            canceled: Cell::new(false),
+            jump_complete: Cell::new(false),
+            ticks: Cell::new(0),
+            target_position: Cell::new(WPos::ZERO),
+        })
+    }
+}
+
+impl Activity for Leap {
+    activity_common!("Leap");
+
+    fn on_first_run(&self, self_: &ActorRef) {
+        self.destination_cell.set(self.target.actor().expect("leap target").location());
+        if let Some(m) = &self.target_mobile {
+            self.destination_subcell.set(m.to_subcell.get());
+        }
+        let w = self_.world();
+        self.origin.set(self_.center_position());
+        self.destination.set(w.map().center_of_subcell(self.destination_cell.get(), self.destination_subcell.get()));
+        self.length.set(((self.origin.get() - self.destination.get()).length() / self.speed).max(1));
+        self.canceled.set(!self.edible.get_leap_at_by(self_) || self.target.target_type() != TargetType::Actor);
+        self.base.is_interruptible.set(false);
+        if self.canceled.get() {
+            return;
+        }
+        self.target_position.set(self.target.center_position());
+        self.attack.grant_leap_condition(self_);
+    }
+
+    fn tick(&self, self_: &ActorRef) -> bool {
+        if self.canceled.get() || self.jump_complete.get() {
+            return true;
+        }
+        if self.target.target_type() != TargetType::Invalid {
+            self.target_position.set(self.target.center_position());
+        }
+        let length = self.length.get();
+        let position = if length > 1 { WPos::lerp(self.origin.get(), self.target_position.get(), self.ticks.get(), length - 1) } else { self.target_position.get() };
+        self.mobile.set_center_position(self_, position);
+        self.ticks.set(self.ticks.get() + 1);
+        if self.ticks.get() >= length {
+            self.attack.set_is_aiming(false);
+            let (cell, sub) = (self.destination_cell.get(), self.destination_subcell.get());
+            self.mobile.set_location(cell, sub, cell, sub);
+            self.mobile.update_movement();
+            self.attack.revoke_leap_condition(self_);
+            self.attack.do_attack(self_, &self.target);
+            self.jump_complete.set(true);
+            let to = self_.world().map().center_of_subcell(cell, sub);
+            self.base.queue_child(self.mobile.local_move(self_, position, to));
+        }
+        false
+    }
+
+    fn on_last_run(&self, self_: &ActorRef) {
+        self.attack.revoke_leap_condition(self_);
+    }
+
+    fn on_actor_dispose(&self, self_: &ActorRef) {
+        self.attack.revoke_leap_condition(self_);
+    }
+
+    fn get_targets(&self, _self_: &ActorRef) -> Vec<Target> {
+        vec![Target::from_pos(if self.ticks.get() < self.length.get() / 2 { self.origin.get() } else { self.destination.get() })]
+    }
 }
