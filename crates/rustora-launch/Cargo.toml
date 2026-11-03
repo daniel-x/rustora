@@ -1,0 +1,17 @@
+[package]
+name = "rustora-launch"
+description = "Game setup shared by the rustora binaries: mod, map and rules loading and replay stepping"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-engine = { path = "../rustora-engine" }
+rustora-fs = { path = "../rustora-fs" }
+rustora-game = { path = "../rustora-game" }
+rustora-mods-common = { path = "../rustora-mods-common" }
+rustora-net = { path = "../rustora-net" }
+
+[lints]
+workspace = true

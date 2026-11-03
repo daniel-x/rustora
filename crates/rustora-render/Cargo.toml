@@ -1,0 +1,15 @@
+[package]
+name = "rustora-render"
+description = "wgpu renderer of rustora: indexed sprite sheets drawn through palette textures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-formats = { path = "../rustora-formats" }
+wgpu = "30"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "1"
+
+[lints]
+workspace = true

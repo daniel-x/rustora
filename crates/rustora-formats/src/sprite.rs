@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Sprite file formats. `frame_count` is enough for the simulation; decoding is added for the renderer.
+//! Sprite file formats: `frame_count` for the simulation, `decode` for the renderer. Port of `ShpTDLoader.cs` and `TmpRALoader.cs`.
 
 fn u16_at(d: &[u8], o: usize) -> Option<u16> {
     Some(u16::from_le_bytes([*d.get(o)?, *d.get(o + 1)?]))
@@ -37,7 +37,194 @@ pub fn frame_count(d: &[u8]) -> Option<usize> {
     if is_tmp_ra(d) {
         let index_end = u32_at(d, 28)? as usize;
         let index_start = u32_at(d, 36)? as usize;
-        return Some(index_end.checked_sub(index_start)?);
+        return index_end.checked_sub(index_start);
     }
     None
+}
+
+/// An 8-bit indexed sprite frame. `offset` is the center of `data` relative to the center of the untrimmed frame.
+#[derive(Clone, Debug, Default)]
+pub struct SpriteFrame {
+    pub width: usize,
+    pub height: usize,
+    pub frame_width: usize,
+    pub frame_height: usize,
+    pub offset: (f32, f32),
+    pub data: Vec<u8>,
+}
+
+/// Decodes all frames of a sprite file, trying the loaders in the order of `SpriteFormats`.
+pub fn decode(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    if is_shp_td(d) {
+        return decode_shp_td(d);
+    }
+    if is_tmp_ra(d) {
+        return decode_tmp_ra(d);
+    }
+    None
+}
+
+/// `ShpTDSprite`: LCW key frames and XOR delta frames, trimmed like `TrimmedFrame`.
+fn decode_shp_td(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    let count = u16_at(d, 0)? as usize;
+    let (w, h) = (u16_at(d, 6)? as usize, u16_at(d, 8)? as usize);
+    let headers: Vec<(usize, u8, usize)> = (0..count)
+        .map(|i| {
+            let o = 14 + 8 * i;
+            let v = u32_at(d, o)?;
+            Some(((v & 0xff_ffff) as usize, (v >> 24) as u8, u16_at(d, o + 4)? as usize))
+        })
+        .collect::<Option<_>>()?;
+    let mut images: Vec<Option<Vec<u8>>> = vec![None; count];
+    for i in 0..count {
+        decode_shp_frame(d, &headers, &mut images, i, w * h, 0)?;
+    }
+    Some(images.into_iter().map(|img| trim(img.unwrap_or_default(), w, h)).collect())
+}
+
+fn decode_shp_frame(
+    d: &[u8],
+    headers: &[(usize, u8, usize)],
+    images: &mut [Option<Vec<u8>>],
+    i: usize,
+    size: usize,
+    depth: usize,
+) -> Option<()> {
+    if images[i].is_some() || size == 0 {
+        return Some(());
+    }
+    if depth > headers.len() {
+        return None;
+    }
+    let (offset, format, ref_offset) = headers[i];
+    let img = match format {
+        0x20 | 0x40 => {
+            let r = if format == 0x20 {
+                i.checked_sub(1)?
+            } else {
+                headers.iter().position(|h| h.0 == ref_offset)?
+            };
+            decode_shp_frame(d, headers, images, r, size, depth + 1)?;
+            let mut img = images[r].clone()?;
+            crate::lcw::xor_delta_decode_into(d, &mut img, offset)?;
+            img
+        }
+        0x80 => {
+            let mut img = vec![0u8; size];
+            crate::lcw::lcw_decode_into(d, &mut img, offset)?;
+            img
+        }
+        _ => return None,
+    };
+    images[i] = Some(img);
+    Some(())
+}
+
+/// `ShpTDSprite.TrimmedFrame`.
+fn trim(data: Vec<u8>, w: usize, h: usize) -> SpriteFrame {
+    let full = SpriteFrame {
+        width: w,
+        height: h,
+        frame_width: w,
+        frame_height: h,
+        offset: (0.0, 0.0),
+        data: data.clone(),
+    };
+    if data.len() < w * h || w == 0 || h == 0 {
+        return SpriteFrame {
+            width: 0,
+            height: 0,
+            frame_width: w,
+            frame_height: h,
+            offset: (0.0, 0.0),
+            data: Vec::new(),
+        };
+    }
+    let (mut top, mut bottom, mut left, mut right) = (h as i64 - 1, 0i64, w as i64 - 1, 0i64);
+    for y in 0..h {
+        for x in 0..w {
+            if data[y * w + x] != 0 {
+                top = top.min(y as i64);
+                bottom = bottom.max(y as i64);
+                left = left.min(x as i64);
+                right = right.max(x as i64);
+            }
+        }
+    }
+    if left > 0 {
+        left -= 1;
+    }
+    if top > 0 {
+        top -= 1;
+    }
+    if right < w as i64 - 1 {
+        right += 1;
+    }
+    if bottom < h as i64 - 1 {
+        bottom += 1;
+    }
+    let (tw, th) = (right - left + 1, bottom - top + 1);
+    if tw == w as i64 && th == h as i64 {
+        return full;
+    }
+    if tw <= 0 || th <= 0 {
+        return SpriteFrame {
+            width: 0,
+            height: 0,
+            frame_width: w,
+            frame_height: h,
+            offset: (0.0, 0.0),
+            data: Vec::new(),
+        };
+    }
+    let (wf, hf) = (tw % 2, th % 2);
+    let (dw, dh) = ((tw + wf) as usize, (th + hf) as usize);
+    let mut out = vec![0u8; dw * dh];
+    for y in 0..th as usize {
+        let s = (y + top as usize) * w + left as usize;
+        out[y * dw..y * dw + tw as usize].copy_from_slice(&data[s..s + tw as usize]);
+    }
+    SpriteFrame {
+        width: dw,
+        height: dh,
+        frame_width: w,
+        frame_height: h,
+        offset: (
+            0.5 * (left + right + wf - w as i64 + 1) as f32,
+            0.5 * (top + bottom + hf - h as i64 + 1) as f32,
+        ),
+        data: out,
+    }
+}
+
+/// `TmpRALoader.ParseFrames`. Missing tiles become empty frames.
+fn decode_tmp_ra(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    let (w, h) = (u16_at(d, 0)? as usize, u16_at(d, 2)? as usize);
+    let img_start = u32_at(d, 16)? as usize;
+    let index_end = u32_at(d, 28)? as usize;
+    let index_start = u32_at(d, 36)? as usize;
+    d.get(index_start..index_end)?
+        .iter()
+        .map(|&b| {
+            if b == 255 {
+                return Some(SpriteFrame {
+                    width: 0,
+                    height: 0,
+                    frame_width: w,
+                    frame_height: h,
+                    offset: (0.0, 0.0),
+                    data: Vec::new(),
+                });
+            }
+            let s = img_start + b as usize * w * h;
+            Some(SpriteFrame {
+                width: w,
+                height: h,
+                frame_width: w,
+                frame_height: h,
+                offset: (0.0, 0.0),
+                data: d.get(s..s + w * h)?.to_vec(),
+            })
+        })
+        .collect()
 }

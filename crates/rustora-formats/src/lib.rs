@@ -3,4 +3,6 @@
 
 //! Asset file formats.
 
+pub mod lcw;
+pub mod palette;
 pub mod sprite;

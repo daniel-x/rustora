@@ -368,7 +368,8 @@ impl INotifyIdle for WithInfantryBody {
     }
 }
 
-/// `Traits/Render/WithSpriteTurret.cs`: restricts turret facings to the sprite, which is part of the sync state.
+/// `Traits/Render/WithSpriteTurret.cs`. The quantized turret facings come from the sprite and are part of the sync
+/// state; the animation only matters to the renderer.
 #[derive(Clone, Debug, FieldLoad)]
 pub struct WithSpriteTurretInfo {
     #[field(ignore)]
@@ -376,29 +377,80 @@ pub struct WithSpriteTurretInfo {
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
     pub sequence: String,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
     pub turret: String,
+    pub recoils: bool,
 }
 
 impl Default for WithSpriteTurretInfo {
     fn default() -> Self {
-        WithSpriteTurretInfo { instance_name: None, base: ConditionalTraitInfo::default(), sequence: "turret".into(), turret: "primary".into() }
+        WithSpriteTurretInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sequence: "turret".into(),
+            palette: None,
+            is_player_palette: false,
+            turret: "primary".into(),
+            recoils: true,
+        }
     }
 }
 
 pub struct WithSpriteTurret {
     state: ConditionalState,
+    pub default_animation: Rc<Animation>,
 }
 
-register_traits!(WithSpriteTurret: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(WithSpriteTurret: INotifyCreated, IObservesVariables, IDisabledTrait, ISync, crate::interfaces::INotifyDamageStateChanged);
 info_impl!(WithSpriteTurretInfo => |info, init| {
-    let self_ = &init.self_;
-    let image = self_.trait_::<RenderSprites>().get_image(self_);
+    let self_ = init.self_.clone();
+    let rs = self_.trait_::<RenderSprites>();
+    let image = rs.get_image(&self_);
     let turret = self_.traits_implementing::<crate::turreted::Turreted>().into_iter().find(|t| t.name() == info.turret).expect("turret");
-    let facings = init.world().map().sequences().get_sequence(&image, &info.sequence).facings;
-    turret.quantized_facings.set(facings);
-    Some(Rc::new(WithSpriteTurret { state: ConditionalState::new(&info.base) }))
+    let t2 = turret.clone();
+    let anim = Animation::new(init.world().map().sequences().clone(), &image, Some(Rc::new(move || t2.world_orientation().yaw)), None);
+    anim.play_repeating(&crate::render::normalize_sequence(&anim, crate::render::get_damage_state(&self_), &info.sequence));
+    turret.quantized_facings.set(anim.current_sequence().expect("turret sequence").facings);
+    let t = Rc::new_cyclic(|me: &Weak<WithSpriteTurret>| {
+        let (a, tur, recoils, name) = (self_.clone(), turret.clone(), info.recoils, info.turret.clone());
+        let disabled = me.clone();
+        let center = self_.clone();
+        rs.add(
+            AnimationWithOffset {
+                animation: anim.clone(),
+                offset_func: Some(Rc::new(move || {
+                    let position = tur.position(&a);
+                    if !recoils {
+                        return position;
+                    }
+                    let recoil: i32 = a.traits_implementing::<Armament>().iter().filter(|arm| arm.info.turret == name).map(|arm| arm.recoil.get().length).sum();
+                    let body = a.trait_::<crate::render::BodyOrientation>();
+                    position + body.local_to_world(WVec::new(-recoil, 0, 0).rotate(&tur.world_orientation()))
+                })),
+                disable_func: Some(Rc::new(move || disabled.upgrade().is_some_and(|t| t.state.is_trait_disabled()))),
+                zoffset_func: Some(Rc::new(move |p| {
+                    let d = center.center_position() - p;
+                    d.y + d.z + 1
+                })),
+            },
+            info.palette.clone(),
+            info.is_player_palette,
+        );
+        WithSpriteTurret { state: ConditionalState::new(&info.base), default_animation: anim }
+    });
+    Some(t)
 });
 rustora_engine::conditional_simple!(WithSpriteTurret);
+
+impl crate::interfaces::INotifyDamageStateChanged for WithSpriteTurret {
+    fn damage_state_changed(&self, self_: &ActorRef, _e: &rustora_engine::damage::AttackInfo) {
+        if let Some(s) = self.default_animation.current_sequence() {
+            let ds = crate::render::get_damage_state(self_);
+            self.default_animation.replace_anim(&crate::render::normalize_sequence(&self.default_animation, ds, &s.name));
+        }
+    }
+}
 
 /// `Traits/Infantry/ScaredyCat.cs`.
 #[derive(Clone, Debug, FieldLoad)]

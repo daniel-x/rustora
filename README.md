@@ -13,6 +13,15 @@ installer, like in OpenRA.
 cargo build --release
 ```
 
+## Running
+
+`rustora <engine-dir> <support-dir> <replay>` plays back a replay in a window. Arrow keys or WASD
+scroll, the mouse wheel zooms, space pauses, `+` and `-` change the speed, Tab cycles the shroud of
+each player, Escape quits. `--screenshot <out.webp> --tick <n>` renders one frame offscreen instead.
+
+`rustora-headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a game
+without graphics and compares the sync hashes.
+
 ## License
 
 GPL-3.0-or-later, the same terms as OpenRA, of which this is a derived work.

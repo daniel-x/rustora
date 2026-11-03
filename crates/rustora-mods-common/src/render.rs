@@ -39,6 +39,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("WithDockingAnimation", |n| load_info!(WithDockingAnimationInfo, n));
     r.register("WithHarvestAnimation", |n| load_info!(WithHarvestAnimationInfo, n));
     r.register("WithIdleOverlay", |n| load_info!(WithIdleOverlayInfo, n));
+    r.register("WithProductionDoorOverlay", |n| load_info!(WithProductionDoorOverlayInfo, n));
     r.register("BodyOrientation", |n| load_info!(BodyOrientationInfo, n));
     r.register("ClassicFacingBodyOrientation", |n| {
         let mut info = BodyOrientationInfo::default();
@@ -1093,4 +1094,92 @@ pub fn classic_quantize_facing(facing: WAngle, steps: i32) -> WAngle {
         return WAngle::new(SPRITE_FACINGS[classic_index_facing(facing, steps) as usize]);
     }
     crate::util::quantize_facing(facing, steps)
+}
+
+/// `Traits/Render/WithProductionDoorOverlay.cs`: a door that opens while a produced unit leaves the exit cell.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithProductionDoorOverlayInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub sequence: String,
+}
+
+impl Default for WithProductionDoorOverlayInfo {
+    fn default() -> Self {
+        WithProductionDoorOverlayInfo { instance_name: None, base: ConditionalTraitInfo::default(), sequence: "build-door".into() }
+    }
+}
+
+pub struct WithProductionDoorOverlay {
+    state: ConditionalState,
+    door: Rc<Animation>,
+    desired_frame: Rc<Cell<i32>>,
+    open_exit: Cell<rustora_core::world_types::CPos>,
+    exiting_actor: RefCell<Option<ActorRef>>,
+}
+
+register_traits!(WithProductionDoorOverlay: ITick, crate::interfaces::INotifyProduction, INotifyDamageStateChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithProductionDoorOverlayInfo => |info, init| {
+    let self_ = &init.self_;
+    let rs = self_.trait_::<RenderSprites>();
+    let door = Animation::new(init.world().map().sequences().clone(), &rs.get_image(self_), None, None);
+    let desired_frame = Rc::new(Cell::new(0));
+    let (d, f) = (door.clone(), desired_frame.clone());
+    door.play_fetch_direction(&normalize_sequence(&door, get_damage_state(self_), &info.sequence), Rc::new(move || f.get() - d.current_frame()));
+    let offset = self_.info.trait_info::<crate::building::BuildingInfo>().expect("Building").center_offset(&init.world()).y + 512;
+    Some(Rc::new_cyclic(|me: &std::rc::Weak<WithProductionDoorOverlay>| {
+        let disabled = me.clone();
+        rs.add(
+            AnimationWithOffset {
+                animation: door.clone(),
+                offset_func: None,
+                disable_func: Some(Rc::new(move || disabled.upgrade().is_some_and(|t| t.state.is_trait_disabled()))),
+                zoffset_func: Some(Rc::new(move |_| offset)),
+            },
+            None,
+            false,
+        );
+        WithProductionDoorOverlay {
+            state: ConditionalState::new(&info.base),
+            door,
+            desired_frame,
+            open_exit: Cell::new(Default::default()),
+            exiting_actor: RefCell::new(None),
+        }
+    }))
+});
+conditional_simple!(WithProductionDoorOverlay);
+
+/// `Activity.ActivitiesImplementing<Mobile.ReturnToCellActivity>().Any()` over the children and next activities.
+fn has_return_to_cell(a: Option<ActivityRef>) -> bool {
+    let Some(a) = a else { return false };
+    a.type_name() == "ReturnToCellActivity" || has_return_to_cell(a.base().child_activity()) || has_return_to_cell(a.base().next_activity())
+}
+
+impl ITick for WithProductionDoorOverlay {
+    fn tick(&self, _self_: &ActorRef) {
+        let Some(e) = self.exiting_actor.borrow().clone() else { return };
+        if !e.is_in_world() || e.location() != self.open_exit.get() || !has_return_to_cell(e.current_activity()) {
+            self.desired_frame.set(0);
+            *self.exiting_actor.borrow_mut() = None;
+        }
+    }
+}
+
+impl INotifyDamageStateChanged for WithProductionDoorOverlay {
+    fn damage_state_changed(&self, _self_: &ActorRef, e: &AttackInfo) {
+        if let Some(s) = self.door.current_sequence() {
+            self.door.replace_anim(&normalize_sequence(&self.door, e.damage_state, &s.name));
+        }
+    }
+}
+
+impl crate::interfaces::INotifyProduction for WithProductionDoorOverlay {
+    fn unit_produced(&self, _self_: &ActorRef, other: &ActorRef, exit: rustora_core::world_types::CPos) {
+        self.open_exit.set(exit);
+        *self.exiting_actor.borrow_mut() = Some(other.clone());
+        self.desired_frame.set(self.door.current_sequence().map_or(1, |s| s.length()) - 1);
+    }
 }

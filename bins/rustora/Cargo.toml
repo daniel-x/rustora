@@ -1,0 +1,19 @@
+[package]
+name = "rustora"
+description = "rustora game client: renders a world and plays back replays"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../../crates/rustora-core" }
+rustora-engine = { path = "../../crates/rustora-engine" }
+rustora-formats = { path = "../../crates/rustora-formats" }
+rustora-launch = { path = "../../crates/rustora-launch" }
+rustora-mods-common = { path = "../../crates/rustora-mods-common" }
+rustora-render = { path = "../../crates/rustora-render" }
+winit = "0.30"
+image-webp = "0.2"
+
+[lints]
+workspace = true

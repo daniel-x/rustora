@@ -5,87 +5,13 @@
 //! `world <engine-dir> <support-dir> <replay> [tick]` prints the sync detail of a replay after world load (or after `tick`).
 //! `verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a recorded game and compares the sync hashes.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 
-use rustora_engine::map::{Map, MapGrid};
-use rustora_engine::order_manager::{OrderManager, ReplayConnection};
-use rustora_engine::rules::{Ruleset, TraitRegistry};
-use rustora_engine::terrain::TerrainInfo;
-use rustora_engine::world::{World, WorldType};
-use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
-use rustora_game::map::MapPackage;
-use rustora_game::moddata::ModData;
+use rustora_engine::order_manager::OrderManager;
+use rustora_engine::world::World;
+use rustora_launch::{LoadedGame, ReplayDriver, Step, load_game};
 use rustora_net::replay::Replay;
-
-fn find_map(engine: &Path, uid: &str) -> Option<Arc<dyn Package>> {
-    for e in std::fs::read_dir(engine.join("mods/ra/maps")).ok()?.flatten() {
-        let p = e.path();
-        let pkg: Arc<dyn Package> = if p.is_dir() {
-            Arc::new(Folder::new(&p))
-        } else {
-            Arc::new(ZipPackage::open_file(&p)?)
-        };
-        if rustora_game::map::compute_uid(pkg.as_ref(), 12).ok()? == uid || MapPackage::load(pkg.clone()).ok()?.uid == uid {
-            return Some(pkg);
-        }
-    }
-    None
-}
-
-fn load_terrain(md: &ModData, tileset: &str) -> TerrainInfo {
-    for f in &md.manifest.tile_sets {
-        let y = ModData::load_yaml(&md.file_system, std::slice::from_ref(f), None).expect("tileset");
-        let info = TerrainInfo::load(&y).expect("terrain");
-        if info.id == tileset {
-            return info;
-        }
-    }
-    panic!("unknown tileset {tileset}");
-}
-
-fn load_game(engine: &Path, support: &str, replay_path: &str) -> (Rc<World>, Replay) {
-    let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
-    let mut replay = Replay::parse(&std::fs::read(replay_path).expect("read replay")).expect("parse replay");
-    let lobby = replay.lobby_info.take().expect("lobby info");
-    let uid = lobby.global_settings.map.clone().expect("map uid");
-    let pkg = find_map(engine, &uid).expect("map not found");
-    let map_package = MapPackage::load(pkg.clone()).expect("load map");
-
-    let fs = MapFs {
-        package: pkg.as_ref(),
-        fs: &md.file_system,
-    };
-    let rules_yaml = ModData::load_yaml(&fs, &md.manifest.rules, map_package.section("Rules")).expect("rules");
-    let mut registry = TraitRegistry::default();
-    rustora_mods_common::register(&mut registry);
-    let weapons_yaml = ModData::load_yaml(&fs, &md.manifest.weapons, map_package.section("Weapons")).expect("weapons");
-    let mut weapon_registry = rustora_engine::weapon::WeaponRegistry::default();
-    rustora_mods_common::weapons::register_weapon_parts(&mut weapon_registry);
-    let rules = Rc::new(Ruleset::load(&registry, &weapon_registry, &rules_yaml, &weapons_yaml).expect("ruleset"));
-    let map_package_sequences = map_package.section("Sequences").cloned();
-    let tileset = map_package
-        .yaml
-        .nodes
-        .iter()
-        .find(|n| n.key == "Tileset")
-        .map(|n| n.value.value_str().to_string())
-        .expect("tileset");
-    let terrain = Rc::new(load_terrain(&md, &tileset));
-    let map = Rc::new(Map::load(map_package, MapGrid::default(), terrain).expect("map"));
-
-    let sequences = ModData::load_yaml(&fs, &md.manifest.sequences, map_package_sequences.as_ref()).expect("sequences");
-    let md = Rc::new(md);
-    let md2 = md.clone();
-    let pkg2 = pkg.clone();
-    let read_file: rustora_engine::sequence::ReadFile = Rc::new(move |name: &str| pkg2.get(name).or_else(|| md2.file_system.try_open(name)));
-    map.set_sequences(Rc::new(rustora_engine::sequence::SequenceSet::new(&sequences, &tileset, read_file)));
-    let world = World::new(map, rules, lobby, WorldType::Regular, 40, 3);
-    world.set_is_replay(true);
-    world.load_complete();
-    (world, replay)
-}
 
 /// Type names of an activity and its nested children, like `Fly > Turn`.
 fn activity_chain(a: Option<rustora_engine::activity::ActivityRef>) -> String {
@@ -107,26 +33,22 @@ fn print_detail(world: &World) {
 
 /// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick.
 fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
-    let mut om = OrderManager::new(world.clone(), Box::new(ReplayConnection::new(replay.chunks, 3)));
-    om.start_game();
-    let mut idle = 0;
+    let mut driver = ReplayDriver::new(world, replay);
     while world.world_tick() < max_ticks {
-        om.tick_immediate();
-        if om.try_tick() {
-            idle = 0;
-            world.tick();
-            if !on_tick(world, world.sync_hash()) {
-                break;
+        match driver.step() {
+            Step::Ticked => {
+                if !on_tick(world, world.sync_hash()) {
+                    break;
+                }
             }
-        } else {
-            idle += 1;
-            if idle > 10 {
+            Step::Waiting => {}
+            Step::Ended => {
                 println!("replay ended at tick {}", world.world_tick());
                 break;
             }
         }
     }
-    om
+    driver.orders
 }
 
 fn main() {
@@ -136,7 +58,7 @@ fn main() {
         std::process::exit(2);
     }
     let engine = PathBuf::from(&args[2]);
-    let (world, replay) = load_game(&engine, &args[3], &args[4]);
+    let LoadedGame { world, replay, .. } = load_game(&engine, &args[3], &args[4]);
     match args[1].as_str() {
         "world" => {
             let tick: i32 = args.get(5).map_or(0, |t| t.parse().expect("tick"));
