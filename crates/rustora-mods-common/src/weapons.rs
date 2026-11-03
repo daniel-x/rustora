@@ -462,6 +462,10 @@ impl DamageWarhead {
 }
 
 impl IWarhead for DamageWarhead {
+    fn damage_value(&self) -> Option<i32> {
+        Some(self.damage)
+    }
+
     fn delay(&self) -> i32 {
         self.base.delay
     }

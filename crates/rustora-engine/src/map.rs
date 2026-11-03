@@ -15,7 +15,7 @@ use crate::terrain::{TerrainInfo, TerrainTypeInfo};
 use crate::traits::subcell;
 
 const INVALID_TERRAIN_INDEX: i16 = -1;
-const MAXIMUM_TILE_SEARCH_RANGE: i32 = 50;
+pub const MAXIMUM_TILE_SEARCH_RANGE: i32 = 50;
 
 /// `MapGrid` mod data.
 #[derive(Clone, Debug)]

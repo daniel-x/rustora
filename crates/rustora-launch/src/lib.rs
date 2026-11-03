@@ -145,3 +145,39 @@ impl ReplayDriver {
         }
     }
 }
+
+fn format_actors(actors: &Option<Vec<Option<rustora_engine::actor::ActorRef>>>) -> String {
+    match actors {
+        None => "-".into(),
+        Some(v) => v.iter().map(|a| a.as_ref().map_or_else(|| "null".to_string(), |a| a.id.to_string())).collect::<Vec<_>>().join(","),
+    }
+}
+
+/// `RustoraHarness.FormatOrder`: one line of a bot order dump.
+pub fn format_order(tick: i32, o: &rustora_engine::order::Order) -> String {
+    use rustora_engine::target::TargetType;
+    let t = &o.target;
+    let target = match t.target_type() {
+        TargetType::Actor => format!("actor:{}", t.actor().expect("actor target").id),
+        TargetType::FrozenActor => format!("frozen:{}", t.frozen_actor().expect("frozen target").id()),
+        TargetType::Terrain => {
+            let p = t.center_position();
+            format!("terrain:{},{},{}", p.x, p.y, p.z)
+        }
+        TargetType::Invalid => "none".into(),
+    };
+    let cap = |b: bool| if b { "True" } else { "False" };
+    format!(
+        "{tick} {} {} {target} {} {},{} {} {} {} {} {}",
+        o.order_string,
+        o.subject.as_ref().map_or_else(|| "-".to_string(), |a| a.id.to_string()),
+        o.target_string.as_deref().unwrap_or("-"),
+        o.extra_location.x(),
+        o.extra_location.y(),
+        format_actors(&o.extra_actors),
+        o.extra_data,
+        cap(o.queued),
+        cap(o.is_immediate),
+        format_actors(&o.grouped_actors),
+    )
+}

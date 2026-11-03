@@ -51,6 +51,58 @@ fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: im
     driver.orders
 }
 
+/// Runs the bots of a replay next to the recorded orders and compares their orders and bot random counts
+/// with the C# harness dumps (`.orders`, and the third column of `.sync`).
+fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: Option<&String>) {
+    let expected: Vec<String> = std::fs::read_to_string(orders_path).expect("read order dump").lines().map(str::to_string).collect();
+    let counts: std::collections::HashMap<i32, i32> = sync_path.map_or_else(Default::default, |p| {
+        std::fs::read_to_string(p)
+            .expect("read sync dump")
+            .lines()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split(' ').collect();
+                Some((f.first()?.parse().ok()?, f.get(2)?.parse().ok()?))
+            })
+            .collect()
+    });
+    let last_tick = counts.keys().copied().max().unwrap_or(i32::MAX);
+    rustora_mods_common::bots::activate_bots(world);
+    let issued: Rc<std::cell::RefCell<Vec<String>>> = Rc::default();
+    let sink = issued.clone();
+    world.set_order_observer(Rc::new(move |w, o| sink.borrow_mut().push(rustora_launch::format_order(w.world_tick(), o))));
+    let mut next = 0;
+    let mut failure: Option<String> = None;
+    run_replay(world, replay, i32::MAX, |w, _| {
+        let t = w.world_tick();
+        let count = w.bot_random.borrow().total_count;
+        if let Some(&c) = counts.get(&t) {
+            if c != count {
+                failure = Some(format!("bot random count at tick {t}: expected {c}, got {count}"));
+                return false;
+            }
+        }
+        if w.world_tick() > last_tick {
+            return false;
+        }
+        w.take_issued_orders();
+        for got in issued.borrow_mut().drain(..) {
+            match expected.get(next) {
+                Some(e) if *e == got => next += 1,
+                e => {
+                    failure = Some(format!("order {next} differs\n  expected {}\n  got      {got}", e.map_or("<end>", |s| s.as_str())));
+                    return false;
+                }
+            }
+        }
+        true
+    });
+    println!("ticks {}, {next} of {} orders match", world.world_tick(), expected.len());
+    if let Some(f) = failure {
+        println!("{f}");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 5 {
@@ -123,6 +175,7 @@ fn main() {
                 None => println!("all compared ticks match"),
             }
         }
+        "verify-bots" => verify_bots(&world, replay, &args[5], args.get(6)),
         c => panic!("unknown command {c}"),
     }
 }

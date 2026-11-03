@@ -8,6 +8,7 @@ pub mod actor_map;
 pub mod actor_reference;
 pub mod aircraft;
 pub mod attack;
+pub mod bots;
 pub mod attack_move;
 pub mod auto_target;
 pub mod base;
@@ -66,6 +67,7 @@ pub fn register(r: &mut TraitRegistry) {
     minelayer::register(r);
     support_powers::register(r);
     gps::register(r);
+    bots::register(r);
     resupply::register(r);
     base::register(r);
     building::register(r);

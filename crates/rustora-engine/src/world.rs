@@ -37,6 +37,12 @@ pub struct World {
     next_aid: Cell<u32>,
     pub shared_random: RefCell<MersenneTwister>,
     pub local_random: RefCell<MersenneTwister>,
+    /// `World.BotRandom` of the reference harness: the random numbers of bot modules, seeded by [`bot_seed`].
+    pub bot_random: RefCell<MersenneTwister>,
+    /// Orders issued by this client (bots) with the world tick they were issued in, drained by the order manager.
+    issued_orders: RefCell<Vec<(i32, crate::order::Order)>>,
+    /// Called with every issued order at issue time, for order dumps.
+    order_observer: RefCell<Option<Rc<dyn Fn(&World, &crate::order::Order)>>>,
     players: RefCell<Vec<PlayerRef>>,
     player_bits: RefCell<Vec<String>>,
     world_actor: OnceCell<ActorRef>,
@@ -58,7 +64,30 @@ pub struct World {
     is_replay: Cell<bool>,
 }
 
+/// `RustoraHarness.BotSeed`: the seed of the bot random numbers, derived from the lobby random seed.
+pub fn bot_seed(random_seed: i32) -> i32 {
+    random_seed ^ 0x2545_F491
+}
+
 impl World {
+    /// `World.IssueOrder`: queues an order of the local client.
+    pub fn issue_order(&self, order: crate::order::Order) {
+        let observer = self.order_observer.borrow().clone();
+        if let Some(f) = observer {
+            f(self, &order);
+        }
+        self.issued_orders.borrow_mut().push((self.world_tick.get(), order));
+    }
+
+    pub fn set_order_observer(&self, f: Rc<dyn Fn(&World, &crate::order::Order)>) {
+        *self.order_observer.borrow_mut() = Some(f);
+    }
+
+    /// Takes the orders issued since the last call, with their world ticks.
+    pub fn take_issued_orders(&self) -> Vec<(i32, crate::order::Order)> {
+        std::mem::take(&mut *self.issued_orders.borrow_mut())
+    }
+
     /// Creates the world and the world actor, then runs `ICreatePlayers`.
     pub fn new(
         map: Rc<Map>,
@@ -78,6 +107,9 @@ impl World {
             next_aid: Cell::new(0),
             shared_random: RefCell::new(MersenneTwister::new(seed)),
             local_random: RefCell::new(MersenneTwister::new(0)),
+            bot_random: RefCell::new(MersenneTwister::new(bot_seed(seed))),
+            issued_orders: RefCell::new(Vec::new()),
+            order_observer: RefCell::new(None),
             players: RefCell::new(Vec::new()),
             player_bits: RefCell::new(Vec::new()),
             world_actor: OnceCell::new(),

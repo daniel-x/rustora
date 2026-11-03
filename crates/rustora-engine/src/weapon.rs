@@ -67,6 +67,10 @@ pub trait IProjectileInfo {
 pub trait IWarhead {
     fn delay(&self) -> i32;
     fn do_impact(&self, target: &Target, args: &WarheadArgs);
+    /// `Damage` if this is a `DamageWarhead`.
+    fn damage_value(&self) -> Option<i32> {
+        None
+    }
 }
 
 pub type ProjectileLoader = fn(&MiniYaml) -> Result<Rc<dyn IProjectileInfo>, String>;
