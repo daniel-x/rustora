@@ -2013,8 +2013,8 @@ impl Activity for ReturnToBase {
                         let random_position = WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2) * wait.length / 1024;
                         let target = Target::from_pos(nearest.center_position() + random_position);
                         self.base.queue_child(Fly::full(self_, target, FlyArgs { max_range: wait, ..Default::default() }));
-                        return false;
                     }
+                    return false;
                 } else {
                     self.base.queue_child(Fly::full(
                         self_,

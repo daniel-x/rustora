@@ -87,6 +87,17 @@ fn load_game(engine: &Path, support: &str, replay_path: &str) -> (Rc<World>, Rep
     (world, replay)
 }
 
+/// Type names of an activity and its nested children, like `Fly > Turn`.
+fn activity_chain(a: Option<rustora_engine::activity::ActivityRef>) -> String {
+    let mut out = Vec::new();
+    let mut cur = a;
+    while let Some(x) = cur {
+        out.push(x.type_name());
+        cur = x.base().child_activity();
+    }
+    out.join(" > ")
+}
+
 fn print_detail(world: &World) {
     println!("{} {}", world.world_tick(), world.sync_hash());
     for l in world.sync_detail() {
@@ -139,7 +150,7 @@ fn main() {
                     if let Some(a) = trace.and_then(|id| w.get_actor_by_id(id)) {
                         let facing = a.trait_or_default::<dyn rustora_engine::traits::IFacing>().map(|f| f.facing().angle);
                         let prone = (a.trait_or_default::<rustora_mods_common::turreted::Turreted>().map(|t| t.is_prone()), a.trait_or_default::<rustora_mods_common::mobile::Mobile>().map(|m| m.movement_speed_for_cell(a.location())));
-                        eprintln!("trace {} pos={:?} facing={:?} prone={:?} activity={:?}", w.world_tick(), a.center_position(), facing, prone, a.current_activity().map(|x| x.type_name()));
+                        eprintln!("trace {} pos={:?} facing={:?} prone={:?} activity={:?}", w.world_tick(), a.center_position(), facing, prone, activity_chain(a.current_activity()));
                     }
                     if let Some((pi, fid)) = trace_frozen {
                         let p = w.players().into_iter().find(|p| p.player_actor().id as usize == pi).expect("player");
