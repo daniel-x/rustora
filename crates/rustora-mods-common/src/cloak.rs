@@ -88,7 +88,6 @@ impl Default for CloakInfo {
 pub struct Cloak {
     pub info: Rc<CloakInfo>,
     state: ConditionalState,
-    self_: ActorRef,
     remaining_time: Cell<i32>,
     is_docking: Cell<bool>,
     other_cloaks: OnceCell<Option<Vec<Rc<Cloak>>>>,
@@ -112,13 +111,12 @@ register_traits!(
     IDisabledTrait,
     ISync
 );
-info_impl!(CloakInfo => |info, init| {
+info_impl!(CloakInfo => |info, _| {
     let state = ConditionalState::new_pausable(&info.base);
     Some(Rc::new(Cloak {
         remaining_time: Cell::new(info.initial_delay),
         info,
         state,
-        self_: init.self_.clone(),
         is_docking: Cell::new(false),
         other_cloaks: OnceCell::new(),
         last_pos: Cell::new(None),

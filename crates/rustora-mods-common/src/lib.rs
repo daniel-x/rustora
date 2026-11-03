@@ -26,6 +26,7 @@ pub mod hit_shape;
 pub mod hpf;
 pub mod interfaces;
 pub mod locomotor;
+pub mod minelayer;
 pub mod mobile;
 pub mod parachutable;
 pub mod path_finder_trait;
@@ -60,6 +61,7 @@ pub fn register(r: &mut TraitRegistry) {
     crates::register(r);
     death::register(r);
     cloak::register(r);
+    minelayer::register(r);
     resupply::register(r);
     base::register(r);
     building::register(r);
