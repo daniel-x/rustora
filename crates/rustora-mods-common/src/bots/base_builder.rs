@@ -8,6 +8,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::CPos;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -24,6 +25,7 @@ use rustora_engine::traits::*;
 use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
+use super::save_data::{format_cpos, node_value, parse_cpos};
 use super::*;
 use crate::base::{BaseProvider, GivesBuildableArea, PowerInfo, PowerManager};
 use crate::building::{Building, BuildingInfo};
@@ -185,7 +187,7 @@ pub struct BaseBuilderBotModule {
     barracks_buildings: ActorIndex,
 }
 
-register_traits!(BaseBuilderBotModule: IBotTick, IBotPositionsUpdated, IBotRespondToAttack, IBotRequestPauseUnitProduction, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(BaseBuilderBotModule: IGameSaveTraitData, IBotTick, IBotPositionsUpdated, IBotRespondToAttack, IBotRequestPauseUnitProduction, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(BaseBuilderBotModuleInfo => |info, init| {
     let (w, p) = (init.world(), init.self_.owner());
     Some(Rc::new(BaseBuilderBotModule {
@@ -258,6 +260,30 @@ impl INotifyCreated for BaseBuilderBotModule {
             })
             .collect();
         let _ = self.builders.set(builders);
+    }
+}
+
+impl IGameSaveTraitData for BaseBuilderBotModule {
+    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
+        if self.state.is_trait_disabled() {
+            return None;
+        }
+        Some(vec![
+            MiniYamlNode::with_value_str("InitialBaseCenter", format_cpos(self.initial_base_center.get())),
+            MiniYamlNode::with_value_str("DefenseCenter", format_cpos(self.defense_center.get())),
+        ])
+    }
+
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml) {
+        if self_.world().is_replay() {
+            return;
+        }
+        if let Some(c) = node_value(data, "InitialBaseCenter").and_then(parse_cpos) {
+            self.initial_base_center.set(c);
+        }
+        if let Some(c) = node_value(data, "DefenseCenter").and_then(parse_cpos) {
+            self.defense_center.set(c);
+        }
     }
 }
 

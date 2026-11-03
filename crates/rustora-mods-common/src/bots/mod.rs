@@ -7,6 +7,7 @@
 pub mod base_builder;
 pub mod fuzzy;
 pub mod modules;
+pub mod save_data;
 pub mod squads;
 pub mod support_power;
 pub mod unit_builder;
@@ -155,7 +156,7 @@ pub fn activate_bots(world: &World) {
 
 impl ITick for ModularBot {
     fn tick(&self, self_: &ActorRef) {
-        if !self.enabled.get() {
+        if !self.enabled.get() || self_.world().is_loading_game_save() {
             return;
         }
         let modules = self.tick_modules.borrow().clone();
@@ -177,7 +178,7 @@ impl ITick for ModularBot {
 
 impl INotifyDamage for ModularBot {
     fn damaged(&self, self_: &ActorRef, e: &AttackInfo) {
-        if !self.enabled.get() {
+        if !self.enabled.get() || self_.world().is_loading_game_save() {
             return;
         }
         let modules = self.attack_response_modules.borrow().clone();

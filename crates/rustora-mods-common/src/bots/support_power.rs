@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use rustora_core::fieldloader::{LoadError, load};
-use rustora_core::miniyaml::MiniYaml;
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{CPos, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -231,7 +231,7 @@ pub struct SupportPowerBotModule {
     power_decisions: RefCell<IndexMap<String, SupportPowerDecision>>,
 }
 
-register_traits!(SupportPowerBotModule: IBotTick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(SupportPowerBotModule: IGameSaveTraitData, IBotTick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(SupportPowerBotModuleInfo => |info, init| Some(Rc::new(SupportPowerBotModule {
     state: ConditionalState::new(&info.base),
     self_: init.self_.clone(),
@@ -257,6 +257,42 @@ impl ConditionalHooks for SupportPowerBotModule {
     }
 }
 rustora_engine::conditional_plumbing!(SupportPowerBotModule);
+
+impl IGameSaveTraitData for SupportPowerBotModule {
+    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
+        if self.state.is_trait_disabled() {
+            return None;
+        }
+        let powers = self
+            .waiting_powers
+            .borrow()
+            .iter()
+            .map(|(p, ticks)| MiniYamlNode::with_value_str(p.key.clone(), ticks.to_string()))
+            .collect();
+        Some(vec![MiniYamlNode::new("WaitingPowers", MiniYaml::new(Some(String::new()), powers))])
+    }
+
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml) {
+        if self_.world().is_replay() {
+            return;
+        }
+        let Ok(Some(node)) = data.node_with_key_or_default("WaitingPowers") else {
+            return;
+        };
+        let manager = self.self_.owner().player_actor().trait_::<SupportPowerManager>();
+        let powers = manager.powers.borrow();
+        let mut waiting = self.waiting_powers.borrow_mut();
+        for n in &node.value.nodes {
+            let (Some(instance), Ok(ticks)) = (powers.get(&n.key), n.value.value_str().parse()) else {
+                continue;
+            };
+            match waiting.iter_mut().find(|(p, _)| Rc::ptr_eq(p, instance)) {
+                Some(e) => e.1 = ticks,
+                None => waiting.push((instance.clone(), ticks)),
+            }
+        }
+    }
+}
 
 impl INotifyCreated for SupportPowerBotModule {
     fn created(&self, self_: &ActorRef) {

@@ -16,7 +16,7 @@ use rustora_net::handshake::{HandshakeRequest, HandshakeResponse, ORDERS_PROTOCO
 use rustora_net::order::{RawOrder, order_type};
 use rustora_net::session::{Client, ClientState, Session};
 use rustora_server::mod_info::ServerMod;
-use rustora_server::server::{Server, ServerSettings};
+use rustora_server::server::{Server, ServerSettings, ServerType};
 use sha1::{Digest, Sha1};
 
 const MAP: &str = "ore-lord.oramap";
@@ -167,7 +167,7 @@ impl TestClient {
             "SyncInfo" => self.lobby = Session::deserialize(&text, "test").unwrap(),
             "SyncLobbyClients" => self.lobby.clients = Session::deserialize(&text, "test").unwrap().clients,
             "SyncLobbySlots" => self.lobby.slots = Session::deserialize(&text, "test").unwrap().slots,
-            "StartGame" => self.messages.push("StartGame".to_string()),
+            "StartGame" => self.messages.push(format!("StartGame {text}")),
             _ => self.messages.push(text),
         }
     }
@@ -361,6 +361,73 @@ fn game_start_sends_empty_frames_and_acks_orders() {
     assert_eq!(disconnect.client, 0);
     assert_eq!(disconnect.data[1..5], a_index.to_le_bytes());
     assert_ne!(a_index, b_index);
+}
+
+fn sync_packet(hash: i32) -> Vec<u8> {
+    let mut p = vec![order_type::SYNC_HASH];
+    p.extend_from_slice(&hash.to_le_bytes());
+    p.extend_from_slice(&0u64.to_le_bytes());
+    p
+}
+
+fn local_server(engine: PathBuf, support: PathBuf) -> u16 {
+    start_server(engine, move |s| {
+        s.server_type = ServerType::Local;
+        s.support_dir = support;
+    })
+}
+
+#[test]
+fn local_server_saves_a_game_and_loads_it_again() {
+    let Some(engine) = engine_dir() else { return };
+    let support = std::env::temp_dir().join(format!("rustora-save-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&support);
+
+    let mut a = join(local_server(engine.clone(), support.clone()));
+    a.command("spectate");
+    a.command("slot_bot Multi0 0 normal");
+    assert!(a.pump(VERSION, |c| c.lobby.client_in_slot("Multi0").is_some()));
+    a.command("state Ready");
+    assert!(a.pump(VERSION, |c| c.got("StartGame") && !c.frames.is_empty()));
+    assert!(a.lobby.global_settings.enable_singleplayer);
+    a.send_packet(1, &[]);
+    a.send_packet(1, &sync_packet(1234));
+    a.send_packet(2, &[]);
+    assert!(a.pump(VERSION, |c| c.frames.iter().any(|f| f.frame == 3)));
+    let trait_data = RawOrder::from_target_string("GameSaveTraitData", "3:\n\tKey: value", true);
+    a.send_packet(0, &trait_data.serialize());
+    let create = RawOrder::from_target_string("CreateGameSave", "../test.orasav", true);
+    a.send_packet(0, &create.serialize());
+    assert!(a.pump(VERSION, |c| c.got("..test.orasav")));
+    let file = support.join("Saves/ra").join(VERSION).join("..test.orasav");
+    assert!(file.exists());
+    drop(a);
+
+    let mut b = join(local_server(engine.clone(), support.clone()));
+    let load = RawOrder::from_target_string("LoadGameSave", "..test.orasav", true);
+    b.send_packet(0, &load.serialize());
+    assert!(b.pump(VERSION, |c| {
+        c.lobby.client_in_slot("Multi0").is_some_and(|x| x.bot.as_deref() == Some("normal"))
+    }));
+    b.command("state Ready");
+    assert!(b.pump(VERSION, |c| c.got("SaveLastOrdersFrame") && c.frames.iter().any(|f| f.frame == 4)));
+    assert!(b.got("SaveSyncFrame: 1"));
+    assert!(b.got("Key: value"));
+    let frames: Vec<i32> = b.frames.iter().filter(|f| f.data.is_empty()).map(|f| f.frame).collect();
+    assert_eq!(frames, [1, 2, 3, 4]);
+    assert_eq!(
+        b.frames.iter().find(|f| f.frame == 1 && !f.data.is_empty()).unwrap().data,
+        sync_packet(1234)
+    );
+    drop(b);
+
+    let dedicated = start_server(engine, move |s| s.support_dir = support);
+    let mut c = join(dedicated);
+    c.send_packet(0, &load.serialize());
+    c.command("spectate");
+    let index = c.index;
+    assert!(c.pump(VERSION, |x| x.lobby.client_with_index(index).is_some_and(Client::is_observer)));
+    assert!(c.lobby.clients.iter().all(|x| !x.is_bot()));
 }
 
 #[test]

@@ -7,7 +7,10 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
+use indexmap::IndexMap;
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
+use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
 
 use crate::actor::{Actor, ActorRef};
@@ -63,6 +66,11 @@ pub struct World {
     /// Cache for the actor map trait of the mod crate.
     pub actor_map_slot: OnceCell<Rc<dyn std::any::Any>>,
     is_replay: Cell<bool>,
+    net_frame_number: Cell<i32>,
+    game_save_last_frame: Cell<i32>,
+    game_save_last_sync_frame: Cell<i32>,
+    was_loading_game_save: Cell<bool>,
+    game_save_trait_data: RefCell<IndexMap<i32, MiniYaml>>,
 }
 
 /// `RustoraHarness.BotSeed`: the seed of the bot random numbers, derived from the lobby random seed.
@@ -130,6 +138,11 @@ impl World {
             actor_removed: RefCell::new(Vec::new()),
             actor_map_slot: OnceCell::new(),
             is_replay: Cell::new(false),
+            net_frame_number: Cell::new(0),
+            game_save_last_frame: Cell::new(-1),
+            game_save_last_sync_frame: Cell::new(-1),
+            was_loading_game_save: Cell::new(false),
+            game_save_trait_data: RefCell::new(IndexMap::new()),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -191,6 +204,58 @@ impl World {
 
     pub fn order_validators(&self) -> Vec<Rc<dyn IValidateOrder>> {
         self.world_actor().traits_implementing::<dyn IValidateOrder>()
+    }
+
+    /// `IsLoadingGameSave`: true while the orders of a game save are replayed.
+    pub fn is_loading_game_save(&self) -> bool {
+        self.net_frame_number.get() <= self.game_save_last_frame.get()
+    }
+
+    pub fn set_net_frame_number(&self, frame: i32) {
+        self.net_frame_number.set(frame);
+    }
+
+    /// Marks the world as restoring a game save, from the `SaveLastOrdersFrame` and `SaveSyncFrame` of `StartGame`.
+    pub fn begin_loading_game_save(&self, last_frame: i32, last_sync_frame: i32) {
+        self.game_save_last_frame.set(last_frame);
+        self.game_save_last_sync_frame.set(last_sync_frame);
+        self.was_loading_game_save.set(self.is_loading_game_save());
+    }
+
+    pub fn game_save_last_frame(&self) -> i32 {
+        self.game_save_last_frame.get()
+    }
+
+    pub fn game_save_last_sync_frame(&self) -> i32 {
+        self.game_save_last_sync_frame.get()
+    }
+
+    /// `AddGameSaveTraitData`.
+    pub fn add_game_save_trait_data(&self, trait_index: i32, data: MiniYaml) {
+        self.game_save_trait_data.borrow_mut().insert(trait_index, data);
+    }
+
+    fn resolve_game_save_trait_data(self: &Rc<Self>) {
+        let traits = self.actors_with_trait::<dyn IGameSaveTraitData>();
+        for (index, data) in std::mem::take(&mut *self.game_save_trait_data.borrow_mut()) {
+            let Some((actor, t)) = usize::try_from(index).ok().and_then(|i| traits.get(i)) else {
+                break;
+            };
+            t.resolve_trait_data(actor, &data);
+        }
+    }
+
+    /// `RequestGameSave`: the orders that make the server write a game save.
+    pub fn request_game_save(&self, filename: &str) -> Vec<RawOrder> {
+        let mut orders = Vec::new();
+        for (i, (actor, t)) in self.actors_with_trait::<dyn IGameSaveTraitData>().iter().enumerate() {
+            if let Some(data) = t.issue_trait_data(actor) {
+                let node = MiniYamlNode::new(i.to_string(), MiniYaml::new(Some(String::new()), data));
+                orders.push(RawOrder::from_target_string("GameSaveTraitData", &nodes_to_string(&[node]), true));
+            }
+        }
+        orders.push(RawOrder::from_target_string("CreateGameSave", filename, true));
+        orders
     }
 
     pub fn is_replay(&self) -> bool {
@@ -392,6 +457,10 @@ impl World {
 
     /// `World.Tick`: actors, then `ITick` traits, then effects, then frame end tasks.
     pub fn tick(self: &Rc<Self>) {
+        if self.was_loading_game_save.get() && !self.is_loading_game_save() {
+            self.resolve_game_save_trait_data();
+            self.was_loading_game_save.set(false);
+        }
         if !self.paused.get() && (self.world_type != WorldType::Shellmap || self.world_tick.get() == 0) {
             self.world_tick.set(self.world_tick.get() + 1);
             for a in self.actors() {

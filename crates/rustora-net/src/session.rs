@@ -206,7 +206,7 @@ impl Session {
 }
 
 /// `FieldSaver.FormatValue` of the session field types.
-fn fmt_bool(b: bool) -> String {
+pub(crate) fn fmt_bool(b: bool) -> String {
     if b { "True" } else { "False" }.to_string()
 }
 
@@ -219,7 +219,7 @@ pub fn fmt_color(c: Color) -> String {
     }
 }
 
-fn fmt_opt(s: &Option<String>) -> String {
+pub(crate) fn fmt_opt(s: &Option<String>) -> String {
     s.clone().unwrap_or_default()
 }
 
@@ -230,7 +230,7 @@ pub fn fmt_map_status(status: i32) -> String {
     if set.is_empty() { "Unknown".to_string() } else { set.join(", ") }
 }
 
-fn yaml(fields: Vec<(&str, String)>) -> MiniYaml {
+pub(crate) fn yaml(fields: Vec<(&str, String)>) -> MiniYaml {
     MiniYaml::new(None, fields.into_iter().map(|(k, v)| MiniYamlNode::with_value_str(k, v)).collect())
 }
 

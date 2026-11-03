@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! The game server (`OpenRA.Game/Server/Server.cs`) of type `ServerType.Dedicated`, with the `PlayerPinger` trait.
-//! Not ported yet: replay recording and game saves, which C# dedicated servers do not enable by default.
+//! The game server (`OpenRA.Game/Server/Server.cs`) with the `PlayerPinger` trait.
+//! Not ported yet: replay recording, which C# dedicated servers do not enable by default.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
@@ -21,6 +21,7 @@ use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
 use rustora_mods_common::world::{make_slot, sync_client_to_player_reference};
 use rustora_net::binary::Reader;
+use rustora_net::game_save::{GameSave, sanitized_file_name, saves_dir};
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::order::{RawOrder, SYNC_HASH_ORDER_LENGTH, order_type};
 use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Session};
@@ -37,6 +38,7 @@ const PING_INTERVAL: u64 = 5000;
 const CONN_REPORT_INTERVAL: u64 = 20000;
 const CONN_TIMEOUT: u64 = 60000;
 const DEFAULT_PLAYER_NAME: &str = "Commander";
+const LOCAL_GAME_NAME: &str = "Skirmish Game";
 const DEFAULT_MOTD: &str = "Welcome, have fun and good luck!";
 pub const WHITE: Color = Color::from_argb(255, 255, 255, 255);
 
@@ -47,9 +49,18 @@ pub enum ServerState {
     ShuttingDown,
 }
 
-/// The `ServerSettings` the dedicated server uses.
+/// `ServerType`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServerType {
+    Local,
+    Multiplayer,
+    Dedicated,
+}
+
+/// The `ServerSettings` the server uses.
 #[derive(Clone, Debug)]
 pub struct ServerSettings {
+    pub server_type: ServerType,
     pub name: String,
     pub listen_port: u16,
     pub map: Option<String>,
@@ -81,6 +92,7 @@ pub struct ServerSettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         ServerSettings {
+            server_type: ServerType::Dedicated,
             name: String::new(),
             listen_port: 1234,
             map: None,
@@ -291,6 +303,7 @@ pub struct Server {
     last_ping: u64,
     is_initial_ping: bool,
     last_conn_report: u64,
+    game_save: Option<GameSave>,
 }
 
 impl Server {
@@ -300,7 +313,14 @@ impl Server {
         let accepting = Arc::new(AtomicBool::new(true));
         let mut listener_threads = Vec::new();
         let mut last_error = None;
-        for ip in [IpAddr::V6(Ipv6Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::UNSPECIFIED)] {
+        let dedicated = settings.server_type == ServerType::Dedicated;
+        let is_multiplayer = settings.server_type != ServerType::Local;
+        let addresses = if is_multiplayer {
+            [IpAddr::V6(Ipv6Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::UNSPECIFIED)]
+        } else {
+            [IpAddr::V6(Ipv6Addr::LOCALHOST), IpAddr::V4(Ipv4Addr::LOCALHOST)]
+        };
+        for ip in addresses {
             let address = SocketAddr::new(ip, settings.listen_port);
             match open_listener(address) {
                 Ok(l) => {
@@ -324,7 +344,9 @@ impl Server {
         let mut random = MersenneTwister::new(settings.seed.unwrap_or((clock >> 20) as i32));
 
         let clean_name = sanitized_name(&settings.name);
-        settings.name = if clean_name.trim().is_empty() {
+        settings.name = if clean_name.trim().is_empty() && !is_multiplayer {
+            LOCAL_GAME_NAME.to_string()
+        } else if clean_name.trim().is_empty() {
             format!("{DEFAULT_PLAYER_NAME}'s Game")
         } else {
             clean_name
@@ -339,7 +361,7 @@ impl Server {
             .map
             .as_deref()
             .and_then(|m| game_mod.resolve_map(m))
-            .filter(|uid| map_pool.contains(uid));
+            .filter(|uid| !dedicated || map_pool.contains(uid));
         let uid = known
             .or_else(|| {
                 let n = map_pool.len() as i32;
@@ -353,10 +375,10 @@ impl Server {
             global_settings: Global {
                 random_seed,
                 server_name: Some(settings.name.clone()),
-                enable_singleplayer: settings.enable_singleplayer,
+                enable_singleplayer: settings.enable_singleplayer || !dedicated,
                 enable_sync_reports: settings.enable_sync_reports,
                 game_uid: Some(random_guid(&mut random)),
-                dedicated: true,
+                dedicated,
                 map: Some(uid),
                 map_status: map.status,
                 ..Default::default()
@@ -370,8 +392,8 @@ impl Server {
             ..Default::default()
         };
         map.load_map_settings(&mut lobby);
-        let master_server = MasterServerPinger::start(&mut random);
-        let port_forward = if settings.discover_nat_devices {
+        let master_server = MasterServerPinger::start(&mut random, is_multiplayer);
+        let port_forward = if settings.discover_nat_devices && is_multiplayer {
             PortForward::try_forward(settings.listen_port, settings.nat_port_mapping_lifetime)
                 .inspect_err(|e| println!("Port forwarding failed: {e}"))
                 .ok()
@@ -412,6 +434,7 @@ impl Server {
             last_ping: 0,
             is_initial_ping: true,
             last_conn_report: 0,
+            game_save: None,
         })
     }
 
@@ -466,6 +489,15 @@ impl Server {
         }
     }
 
+    /// `IsMultiplayer`.
+    pub fn is_multiplayer(&self) -> bool {
+        self.settings.server_type != ServerType::Local
+    }
+
+    fn is_dedicated(&self) -> bool {
+        self.settings.server_type == ServerType::Dedicated
+    }
+
     pub fn conn(&self, player_index: i32) -> Option<&Connection> {
         self.conns.iter().find(|c| c.player_index == player_index)
     }
@@ -491,7 +523,14 @@ impl Server {
         let bytes: Vec<u8> = (0..256).map(|_| self.random.next() as u8).collect();
         let token = base64::engine::general_purpose::STANDARD.encode(bytes);
         let index = self.choose_free_player_index();
-        let conn = match Connection::new(index, token.clone(), socket, self.events_tx.clone(), self.start, true) {
+        let conn = match Connection::new(
+            index,
+            token.clone(),
+            socket,
+            self.events_tx.clone(),
+            self.start,
+            self.is_multiplayer(),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 println!("Handshake failed: {e}");
@@ -593,7 +632,15 @@ impl Server {
             handshake.fingerprint.unwrap_or_default(),
             handshake.auth_signature.unwrap_or_default(),
         );
-        if !fingerprint.is_empty() && !signature.is_empty() {
+        if !self.is_multiplayer() {
+            self.complete_connection(
+                player_index,
+                Client {
+                    fingerprint: (!fingerprint.is_empty()).then_some(fingerprint),
+                    ..client
+                },
+            );
+        } else if !fingerprint.is_empty() && !signature.is_empty() {
             self.start_authentication(player_index, client, fingerprint, signature);
         } else if self.authentication_required() {
             self.reject(
@@ -608,7 +655,7 @@ impl Server {
     }
 
     pub(crate) fn authentication_required(&self) -> bool {
-        self.settings.require_authentication || !self.settings.profile_id_whitelist.is_empty()
+        self.is_dedicated() && (self.settings.require_authentication || !self.settings.profile_id_whitelist.is_empty())
     }
 
     /// Looks up the player profile on a thread; [`Event::Authenticated`] continues on the server thread.
@@ -648,10 +695,12 @@ impl Server {
                 None
             }
         };
+        let dedicated = self.is_dedicated();
         let settings = &self.settings;
-        let blacklisted = profile_id.is_some_and(|id| settings.profile_id_blacklist.contains(&id));
-        let not_whitelisted =
-            !settings.profile_id_whitelist.is_empty() && profile_id.is_none_or(|id| !settings.profile_id_whitelist.contains(&id));
+        let blacklisted = dedicated && profile_id.is_some_and(|id| settings.profile_id_blacklist.contains(&id));
+        let not_whitelisted = dedicated
+            && !settings.profile_id_whitelist.is_empty()
+            && profile_id.is_none_or(|id| !settings.profile_id_whitelist.contains(&id));
         if profile_id.is_none() && self.authentication_required() {
             self.reject(
                 player_index,
@@ -699,14 +748,16 @@ impl Server {
         println!("{name} has joined the game.");
         self.send_fluent_message("notification-joined", &[("player", (&name).into())]);
 
-        let motd_file = self.settings.support_dir.join("motd.txt");
-        if !motd_file.exists() {
-            let _ = std::fs::create_dir_all(&self.settings.support_dir);
-            let _ = std::fs::write(&motd_file, DEFAULT_MOTD);
-        }
-        let motd = std::fs::read_to_string(&motd_file).unwrap_or_else(|_| DEFAULT_MOTD.to_string());
-        if !motd.is_empty() {
-            self.send_order_to(player_index, "Message", &motd);
+        if self.is_dedicated() {
+            let motd_file = self.settings.support_dir.join("motd.txt");
+            if !motd_file.exists() {
+                let _ = std::fs::create_dir_all(&self.settings.support_dir);
+                let _ = std::fs::write(&motd_file, DEFAULT_MOTD);
+            }
+            let motd = std::fs::read_to_string(&motd_file).unwrap_or_else(|_| DEFAULT_MOTD.to_string());
+            if !motd.is_empty() {
+                self.send_order_to(player_index, "Message", &motd);
+            }
         }
         if self.lobby.global_settings.map_status & MAP_STATUS_UNSAFE_CUSTOM_RULES != 0 {
             self.send_fluent_message_to(player_index, "notification-custom-rules", &[]);
@@ -889,21 +940,124 @@ impl Server {
         if self.conn(player_index).is_none() {
             return;
         }
-        if frame == 0 {
-            return self.interpret_server_orders(player_index, data);
-        }
         let mut frame = frame;
-        if data.first() != Some(&order_type::SYNC_HASH) {
-            frame += self.order_latency;
-            self.dispatch_frame_to_client(player_index, create_ack_frame(frame, 1));
-            if let Some(b) = &mut self.order_buffer {
-                b.add_order_timestamp(player_index);
+        if frame == 0 {
+            self.interpret_server_orders(player_index, data);
+        } else {
+            if data.first() != Some(&order_type::SYNC_HASH) {
+                frame += self.order_latency;
+                self.dispatch_frame_to_client(player_index, create_ack_frame(frame, 1));
+                if let Some(b) = &mut self.order_buffer {
+                    b.add_order_timestamp(player_index);
+                }
+                if let Some(c) = self.conn_mut(player_index) {
+                    c.last_orders_frame = frame;
+                }
             }
-            if let Some(c) = self.conn_mut(player_index) {
-                c.last_orders_frame = frame;
+            self.dispatch_orders_to_clients(player_index, frame, data);
+        }
+        if let Some(save) = &mut self.game_save {
+            save.dispatch_orders(player_index, frame, data);
+        }
+    }
+
+    /// The `GameSaveTraitData` server order.
+    fn add_game_save_trait_data(&mut self, text: &str, name: &str) {
+        let Some(save) = &mut self.game_save else {
+            return;
+        };
+        let parsed = MiniYaml::from_str(text, name, true).ok().and_then(|n| n.into_iter().next());
+        if let Some((index, node)) = parsed.and_then(|n| Some((n.key.parse().ok()?, n))) {
+            save.add_trait_data(index, node.value);
+        }
+    }
+
+    fn save_path(&self, name: &str) -> Option<PathBuf> {
+        let manifest = &self.game_mod.data.manifest;
+        let dir = saves_dir(&self.settings.support_dir, &manifest.id, &manifest.metadata.version);
+        Some(dir.join(sanitized_file_name(name)?))
+    }
+
+    /// The `CreateGameSave` server order.
+    fn create_game_save(&mut self, name: &str) {
+        let (Some(save), Some(path)) = (&self.game_save, self.save_path(name)) else {
+            return;
+        };
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .map_err(|e| e.to_string())
+            .and_then(|()| save.save(&path));
+        match written {
+            Ok(()) => {
+                let file_name = path.file_name().map_or(String::new(), |f| f.to_string_lossy().into_owned());
+                self.broadcast_order("GameSaved", &file_name);
+            }
+            Err(e) => println!("Failed to save the game: {e}"),
+        }
+    }
+
+    /// The `LoadGameSave` server order.
+    fn load_game_save(&mut self, name: &str) {
+        if self.is_dedicated() || self.state != ServerState::WaitingPlayers {
+            return;
+        }
+        let Some(path) = self.save_path(name) else {
+            return;
+        };
+        let save = match GameSave::read(&path) {
+            Ok(s) => s,
+            Err(e) => return println!("Failed to load the game save: {e}"),
+        };
+        if let Err(e) = self.apply_game_save(save) {
+            println!("Failed to load the game save: {e}");
+        }
+    }
+
+    /// Takes over the lobby state of a save and reassigns the clients: bot ordering is preserved, humans are
+    /// assigned first come first served and leftover humans become spectators.
+    fn apply_game_save(&mut self, save: GameSave) -> Result<(), String> {
+        let uid = save.global_settings.map.clone().ok_or("The save has no map")?;
+        let humans = save.slot_clients.values().filter(|c| c.bot.is_none()).count();
+        if humans > self.lobby.non_bot_clients().count() {
+            return Err(format!("The save needs {humans} human clients"));
+        }
+        let admin = self
+            .lobby
+            .clients
+            .iter()
+            .find(|c| c.is_admin)
+            .map(|c| c.index)
+            .ok_or("The lobby has no admin")?;
+        if self.map.uid != uid {
+            self.map = self.game_mod.map_info(&uid)?;
+            self.settings.map = Some(uid);
+        }
+        self.lobby.global_settings = save.global_settings.clone();
+        self.lobby.global_settings.map_status = self.map.status;
+        self.lobby.slots = save.slots.clone();
+        self.lobby.clients.retain(|c| !c.is_bot());
+        for c in &mut self.lobby.clients {
+            c.slot = None;
+        }
+        for slot_client in save.slot_clients.values() {
+            if slot_client.bot.is_some() {
+                let mut bot = Client {
+                    index: self.choose_free_player_index(),
+                    state: ClientState::NotReady,
+                    bot_controller_client_index: admin,
+                    ..Default::default()
+                };
+                slot_client.apply_to(&mut bot);
+                self.lobby.clients.push(bot);
+            } else if let Some(client) = self.lobby.clients.iter_mut().find(|c| c.slot.is_none() && !c.is_bot()) {
+                slot_client.apply_to(client);
             }
         }
-        self.dispatch_orders_to_clients(player_index, frame, data);
+        self.game_save = Some(save);
+        self.sync_lobby_info();
+        self.sync_lobby_clients();
+        Ok(())
     }
 
     fn interpret_server_orders(&mut self, player_index: i32, data: &[u8]) {
@@ -935,9 +1089,12 @@ impl Server {
                     self.send_fluent_message_to(player_index, "notification-unknown-server-command", &[("command", target.into())]);
                 }
             }
-            "Chat" if !self.is_player_at_flood_limit(player_index) => {
+            "Chat" if !self.is_multiplayer() || !self.is_player_at_flood_limit(player_index) => {
                 self.dispatch_orders_to_clients(player_index, 0, &o.serialize());
             }
+            "GameSaveTraitData" => self.add_game_save_trait_data(target, &o.order_string),
+            "CreateGameSave" => self.create_game_save(target),
+            "LoadGameSave" => self.load_game_save(target),
             _ => {}
         }
     }
@@ -951,13 +1108,17 @@ impl Server {
     /// `SendMessage`.
     pub fn send_message(&mut self, text: &str) {
         self.broadcast_order("Message", text);
-        println!("{text}");
+        if self.is_dedicated() {
+            println!("{text}");
+        }
     }
 
     /// `SendFluentMessage`.
     pub fn send_fluent_message(&mut self, key: &str, args: &[(&str, FluentArg)]) {
         self.broadcast_order("FluentMessage", &serialize_fluent_message(key, args));
-        println!("{} {args:?}", self.game_mod.message(key));
+        if self.is_dedicated() {
+            println!("{} {args:?}", self.game_mod.message(key));
+        }
     }
 
     /// `SendFluentMessageTo`.
@@ -1007,7 +1168,7 @@ impl Server {
         if let Some(client) = self.lobby.client_with_index(player_index).cloned() {
             self.announce_drop(&client);
             self.lobby.clients.retain(|c| c.index != player_index);
-            if client.is_admin && self.state == ServerState::WaitingPlayers {
+            if self.is_dedicated() && client.is_admin && self.state == ServerState::WaitingPlayers {
                 self.lobby
                     .clients
                     .retain(|c| !(c.is_bot() && c.bot_controller_client_index == player_index));
@@ -1021,10 +1182,16 @@ impl Server {
             let mut packet = vec![order_type::DISCONNECT];
             packet.extend_from_slice(&player_index.to_le_bytes());
             self.dispatch_server_orders_to_clients(last_orders_frame + 1, &packet);
-            if !self.conns.iter().any(|c| c.validated) {
+            let any_validated = self.conns.iter().any(|c| c.validated);
+            if !any_validated {
                 self.server_empty();
             }
-            self.sync_lobby_clients();
+            if any_validated || self.is_dedicated() {
+                self.sync_lobby_clients();
+            }
+            if !self.is_dedicated() && client.is_admin {
+                self.state = ServerState::ShuttingDown;
+            }
         }
         conn.dispose();
     }
@@ -1096,7 +1263,7 @@ impl Server {
             self.send_order_to(c, "ServerError", "notification-you-were-kicked");
             self.drop_client(c);
         }
-        self.lobby.global_settings.game_saves_enabled = false;
+        self.lobby.global_settings.game_saves_enabled = !self.is_dedicated() && self.lobby.non_bot_clients().count() == 1;
         self.create_world_players();
         self.sync_lobby_info();
 
@@ -1114,18 +1281,50 @@ impl Server {
         self.order_buffer = Some(OrderBuffer::start(speed.timestep, players.clone()));
         self.state = ServerState::GameStarted;
         self.accepting.store(false, Ordering::Relaxed);
-        self.order_latency = speed.order_latency;
-        self.broadcast_order("StartGame", "");
+        if self.is_multiplayer() {
+            self.order_latency = speed.order_latency;
+        }
+        if self.game_save.is_none() && self.lobby.global_settings.game_saves_enabled {
+            self.game_save = Some(GameSave::default());
+        }
+        let mut start_game_data = String::new();
+        let mut saved_packets = Vec::new();
+        let mut first_frame = 1;
+        if let Some(save) = &mut self.game_save {
+            let map = self.map.clone();
+            save.start_game(&self.lobby, |p| map.players.get(p).is_some_and(|r| r.playable));
+            if save.last_orders_frame >= 0 {
+                start_game_data = nodes_to_string(&[
+                    MiniYamlNode::with_value_str("SaveLastOrdersFrame", save.last_orders_frame.to_string()),
+                    MiniYamlNode::with_value_str("SaveSyncFrame", save.last_sync_frame.to_string()),
+                ]);
+                saved_packets = save.parse_orders(&self.lobby).unwrap_or_else(|e| {
+                    println!("Failed to replay the game save: {e}");
+                    Vec::new()
+                });
+                first_frame += save.last_orders_frame;
+            }
+        }
+        self.broadcast_order("StartGame", &start_game_data);
+        for (frame, client, data) in saved_packets {
+            let frame_data = create_frame(client, frame, &data);
+            for to in &players {
+                self.dispatch_frame_to_client(*to, frame_data.clone());
+            }
+        }
 
         for from in &players {
             for i in 0..self.order_latency {
-                let frame = 1 + i;
+                let frame = first_frame + i;
                 if let Some(c) = self.conn_mut(*from) {
                     c.last_orders_frame = frame;
                 }
                 let frame_data = create_frame(*from, frame, &[]);
                 for to in &players {
                     self.dispatch_frame_to_client(*to, frame_data.clone());
+                }
+                if let Some(save) = &mut self.game_save {
+                    save.dispatch_orders(*from, frame, &[]);
                 }
             }
         }

@@ -21,6 +21,7 @@ pub mod conditions;
 pub mod crates;
 pub mod death;
 pub mod experience;
+pub mod game_save;
 pub mod gps;
 pub mod harvester;
 pub mod health;
@@ -53,6 +54,7 @@ use rustora_engine::rules::TraitRegistry;
 /// Registers all ported traits of this crate.
 pub fn register(r: &mut TraitRegistry) {
     actor_map::register(r);
+    game_save::register(r);
     aircraft::register(r);
     attack::register(r);
     attack_move::register(r);

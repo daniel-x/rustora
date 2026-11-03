@@ -35,11 +35,15 @@ pub struct MasterServerPinger {
 
 impl MasterServerPinger {
     /// Starts the LAN beacon. Failure only means that LAN clients will not see the game.
-    pub fn start(random: &mut MersenneTwister) -> MasterServerPinger {
+    pub fn start(random: &mut MersenneTwister, is_multiplayer: bool) -> MasterServerPinger {
         let advertised_port = random.next_range(2048, 60000) as u16;
-        let beacon = Beacon::start(LAN_GAME_BEACON, DISCOVERY_PORT, advertised_port)
-            .inspect_err(|e| println!("LAN beacon failed: {e}"))
-            .ok();
+        let beacon = is_multiplayer
+            .then(|| {
+                Beacon::start(LAN_GAME_BEACON, DISCOVERY_PORT, advertised_port)
+                    .inspect_err(|e| println!("LAN beacon failed: {e}"))
+                    .ok()
+            })
+            .flatten();
         MasterServerPinger {
             beacon,
             session_guid: format!("{:08x}{:08x}", random.next(), random.next()),

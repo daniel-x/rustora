@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// The UDP port beacons listen on.
-pub const DISCOVERY_PORT: u16 = 35224;
+pub const DISCOVERY_PORT: u16 = 35891;
 /// The beacon type of OpenRA games.
 pub const LAN_GAME_BEACON: &str = "OpenRALANGame";
 

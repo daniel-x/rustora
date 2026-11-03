@@ -8,6 +8,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 use indexmap::IndexSet;
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{CPos, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -18,13 +19,14 @@ use rustora_engine::net_collections::NetMap;
 use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRelationship;
 use rustora_engine::rules::TraitRegistry;
-use rustora_engine::target::Target;
+use rustora_engine::target::{Target, TargetType};
 use rustora_engine::terrain::TargetableType;
 use rustora_engine::traits::subcell::FULL_CELL;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 use super::fuzzy::AttackOrFleeFuzzy;
+use super::save_data::{format_cpos, format_ids, format_wvec, node_value, parse_cpos, parse_ids, parse_wvec};
 use super::*;
 use crate::actor_map::WorldExt;
 use crate::aircraft::AircraftInfo;
@@ -186,7 +188,7 @@ pub struct SquadManagerBotModule {
     min_attack_force_delay_ticks: Cell<i32>,
 }
 
-register_traits!(SquadManagerBotModule: IBotEnabled, IBotTick, IBotRespondToAttack, IBotPositionsUpdated, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(SquadManagerBotModule: IGameSaveTraitData, IBotEnabled, IBotTick, IBotRespondToAttack, IBotPositionsUpdated, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(SquadManagerBotModuleInfo => |info, init| {
     Some(Rc::new(SquadManagerBotModule {
         state: ConditionalState::new(&info.base),
@@ -225,6 +227,70 @@ impl ConditionalHooks for SquadManagerBotModule {
     }
 }
 rustora_engine::conditional_plumbing!(SquadManagerBotModule);
+
+impl IGameSaveTraitData for SquadManagerBotModule {
+    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
+        if self.state.is_trait_disabled() {
+            return None;
+        }
+        let squads = self
+            .squads
+            .borrow()
+            .iter()
+            .map(|s| MiniYamlNode::new("Squad", s.serialize()))
+            .collect();
+        let orderable = |a: &&ActorRef| !self.unit_cannot_be_ordered(a);
+        let hanging_around = format_ids(self.units_hanging_around_the_base.borrow().iter().filter(orderable).map(|a| a.id));
+        let active = format_ids(self.active_units.borrow().values().filter(orderable).map(|a| a.id));
+        let int = |key: &str, value: i32| MiniYamlNode::with_value_str(key, value.to_string());
+        Some(vec![
+            MiniYamlNode::new("Squads", MiniYaml::new(Some(String::new()), squads)),
+            MiniYamlNode::with_value_str("InitialBaseCenter", format_cpos(self.initial_base_center.get())),
+            MiniYamlNode::with_value_str("UnitsHangingAroundTheBase", hanging_around),
+            MiniYamlNode::with_value_str("ActiveUnits", active),
+            int("RushTicks", self.rush_ticks.get()),
+            int("AssignRolesTicks", self.assign_roles_ticks.get()),
+            int("AttackForceTicks", self.attack_force_ticks.get()),
+            int("MinAttackForceDelayTicks", self.min_attack_force_delay_ticks.get()),
+        ])
+    }
+
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml) {
+        let world = self_.world();
+        if world.is_replay() {
+            return;
+        }
+        let actors = |key: &str| node_value(data, key).map(|v| parse_ids(v).filter_map(|id| world.get_actor_by_id(id)).collect::<Vec<_>>());
+        if let Some(c) = node_value(data, "InitialBaseCenter").and_then(parse_cpos) {
+            self.initial_base_center.set(c);
+        }
+        if let Some(units) = actors("UnitsHangingAroundTheBase") {
+            *self.units_hanging_around_the_base.borrow_mut() = units;
+        }
+        if let Some(units) = actors("ActiveUnits") {
+            let mut active = self.active_units.borrow_mut();
+            active.clear();
+            for a in units {
+                active.insert(a.id, a);
+            }
+        }
+        let set_int = |key: &str, cell: &Cell<i32>| {
+            if let Some(v) = node_value(data, key).and_then(|v| v.parse().ok()) {
+                cell.set(v);
+            }
+        };
+        set_int("RushTicks", &self.rush_ticks);
+        set_int("AssignRolesTicks", &self.assign_roles_ticks);
+        set_int("AttackForceTicks", &self.attack_force_ticks);
+        set_int("MinAttackForceDelayTicks", &self.min_attack_force_delay_ticks);
+        if let Ok(Some(squads)) = data.node_with_key_or_default("Squads") {
+            self.squads.borrow_mut().clear();
+            for n in &squads.value.nodes {
+                self.deserialize_squad(&world, &n.value);
+            }
+        }
+    }
+}
 
 impl INotifyCreated for SquadManagerBotModule {
     fn created(&self, self_: &ActorRef) {
@@ -460,6 +526,22 @@ impl SquadManagerBotModule {
         s.set_actor_to_target(target);
         self.squads.borrow_mut().push(s.clone());
         s
+    }
+
+    /// `Squad.Deserialize`.
+    fn deserialize_squad(&self, world: &World, yaml: &MiniYaml) {
+        let ty = node_value(yaml, "Type").and_then(SquadType::parse).unwrap_or(SquadType::Rush);
+        let actor = node_value(yaml, "ActorToTarget")
+            .and_then(|v| v.parse().ok())
+            .and_then(|id| world.get_actor_by_id(id));
+        let offset = node_value(yaml, "TargetOffset").and_then(parse_wvec);
+        let squad = self.register_new_squad(ty, actor.zip(offset));
+        if let Some(v) = node_value(yaml, "Units") {
+            let mut units = squad.units.borrow_mut();
+            for a in parse_ids(v).filter_map(|id| world.get_actor_by_id(id)) {
+                units.insert(a.id, a);
+            }
+        }
     }
 
     fn unregister_squad(&self, squad: &Squad) {
@@ -1112,7 +1194,37 @@ fn new_leader(sq: &Squad) -> ActorRef {
         .expect("squad unit")
 }
 
+impl SquadType {
+    fn parse(text: &str) -> Option<SquadType> {
+        match text {
+            "Assault" => Some(SquadType::Assault),
+            "Air" => Some(SquadType::Air),
+            "Rush" => Some(SquadType::Rush),
+            "Protection" => Some(SquadType::Protection),
+            "Naval" => Some(SquadType::Naval),
+            _ => None,
+        }
+    }
+}
+
 impl Squad {
+    /// `Squad.Serialize`.
+    fn serialize(&self) -> MiniYaml {
+        let mut nodes = vec![
+            MiniYamlNode::with_value_str("Type", format!("{:?}", self.ty)),
+            MiniYamlNode::with_value_str("Units", format_ids(self.units.borrow().values().map(|a| a.id))),
+        ];
+        let target = self.target.borrow();
+        if let (true, Some(actor)) = (target.target_type() != TargetType::Invalid, self.target_actor.borrow().as_ref()) {
+            nodes.push(MiniYamlNode::with_value_str("ActorToTarget", actor.id.to_string()));
+            nodes.push(MiniYamlNode::with_value_str(
+                "TargetOffset",
+                format_wvec(target.center_position() - actor.center_position()),
+            ));
+        }
+        MiniYaml::new(Some(String::new()), nodes)
+    }
+
     pub fn is_valid(&self) -> bool {
         !self.units.borrow().is_empty()
     }

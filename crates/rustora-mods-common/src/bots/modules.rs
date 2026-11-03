@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use indexmap::IndexSet;
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{CPos, WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -22,6 +23,7 @@ use rustora_engine::traits::subcell::FULL_CELL;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
 
+use super::save_data::{format_cpos, node_value, parse_cpos};
 use super::*;
 use crate::actor_map::WorldExt;
 use crate::building::BuildingInfo;
@@ -87,7 +89,7 @@ pub struct McvManagerBotModule {
     first_tick: Cell<bool>,
 }
 
-register_traits!(McvManagerBotModule: IBotTick, IBotPositionsUpdated, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(McvManagerBotModule: IGameSaveTraitData, IBotTick, IBotPositionsUpdated, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(McvManagerBotModuleInfo => |info, init| {
     let (w, p) = (init.world(), init.self_.owner());
     Some(Rc::new(McvManagerBotModule {
@@ -126,6 +128,27 @@ impl INotifyCreated for McvManagerBotModule {
         let _ = self
             .request_unit_production
             .set(pa.traits_implementing::<dyn IBotRequestUnitProduction>());
+    }
+}
+
+impl IGameSaveTraitData for McvManagerBotModule {
+    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
+        if self.state.is_trait_disabled() {
+            return None;
+        }
+        Some(vec![MiniYamlNode::with_value_str(
+            "InitialBaseCenter",
+            format_cpos(self.initial_base_center.get()),
+        )])
+    }
+
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml) {
+        if self_.world().is_replay() {
+            return;
+        }
+        if let Some(c) = node_value(data, "InitialBaseCenter").and_then(parse_cpos) {
+            self.initial_base_center.set(c);
+        }
     }
 }
 

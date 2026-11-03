@@ -5,6 +5,7 @@
 
 use std::rc::Rc;
 
+use rustora_core::miniyaml::MiniYaml;
 use rustora_net::order::{OrderPacket, Packet, RawOrder};
 use rustora_net::replay::Chunk;
 
@@ -161,6 +162,7 @@ impl OrderManager {
             }
         }
         self.net_frame_number = 1;
+        self.world.set_net_frame_number(1);
         self.local_frame_number = 0;
         self.connection.start_game();
     }
@@ -247,9 +249,14 @@ impl OrderManager {
                 defeat |= 1u64 << i;
             }
         }
-        let hash = self.world.sync_hash();
-        self.connection.send_sync(self.net_frame_number, hash, defeat);
+        if self.net_frame_number >= self.world.game_save_last_sync_frame() {
+            let hash = self.world.sync_hash();
+            self.connection.send_sync(self.net_frame_number, hash, defeat);
+        } else {
+            self.connection.send_sync(self.net_frame_number, 0, 0);
+        }
         self.net_frame_number += 1;
+        self.world.set_net_frame_number(self.net_frame_number);
     }
 
     /// `UnitOrders.ProcessOrder`: world orders and pause; other orders concern the client UI.
@@ -275,6 +282,7 @@ impl OrderManager {
             | "SyncMapPool"
             | "GameSaved"
             | "Kick" => {}
+            "SaveTraitData" => self.add_save_trait_data(raw),
             "PauseGame" => {
                 if self.world.lobby_info.client_with_index(client_id).is_some() {
                     let pause = raw.target_string.as_deref() == Some("Pause");
@@ -297,6 +305,17 @@ impl OrderManager {
         }
     }
 
+    /// `UnitOrders.ProcessOrder` of `SaveTraitData`.
+    fn add_save_trait_data(&self, raw: &RawOrder) {
+        let text = raw.target_string.as_deref().unwrap_or("");
+        let Ok(nodes) = MiniYaml::from_str(text, &raw.order_string, true) else {
+            return;
+        };
+        if let Some((index, node)) = nodes.first().and_then(|n| Some((n.key.parse().ok()?, n))) {
+            self.world.add_game_save_trait_data(index, node.value.clone());
+        }
+    }
+
     fn resolve_order(&self, client_id: i32, order: &Order) {
         let Some(subject) = &order.subject else { return };
         if subject.is_dead() {
@@ -315,7 +334,9 @@ impl OrderManager {
     pub fn tick_immediate(&mut self) {
         if !self.local_immediate_orders.is_empty() {
             let o = std::mem::take(&mut self.local_immediate_orders);
-            self.connection.send_immediate(o);
+            if self.world.game_save_last_frame() < self.net_frame_number {
+                self.connection.send_immediate(o);
+            }
         }
         self.receive_all_orders_and_check_sync();
     }
@@ -329,7 +350,11 @@ impl OrderManager {
         if self.is_net_frame() {
             let local = self.connection.local_client_id();
             should_tick = self.pending_orders.iter().all(|(k, q)| *k == local || !q.is_empty());
-            if should_tick && self.game_started() && self.sent_orders_frame < self.net_frame_number {
+            if should_tick
+                && self.game_started()
+                && self.world.game_save_last_frame() < self.net_frame_number
+                && self.sent_orders_frame < self.net_frame_number
+            {
                 let o = std::mem::take(&mut self.local_orders);
                 self.connection.send(self.net_frame_number, o);
                 self.sent_orders_frame = self.net_frame_number;

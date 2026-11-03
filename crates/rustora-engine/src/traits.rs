@@ -3,6 +3,7 @@
 
 //! Core trait plumbing and the engine level trait interfaces of `Traits/TraitsInterfaces.cs`.
 
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use std::any::Any;
 use std::rc::Rc;
 
@@ -78,6 +79,12 @@ macro_rules! info_impl {
             }
         }
     };
+}
+
+/// `IGameSaveTraitData`: state that is not part of the replayed orders.
+pub trait IGameSaveTraitData {
+    fn issue_trait_data(&self, self_: &ActorRef) -> Option<Vec<MiniYamlNode>>;
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml);
 }
 
 pub trait ITick {

@@ -15,6 +15,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 use rustora_core::fieldloader::Color;
+use rustora_core::miniyaml::MiniYaml;
 use rustora_engine::order_manager::{Connection, Incoming};
 use rustora_engine::world::World;
 use rustora_fs::Platform;
@@ -214,6 +215,8 @@ pub struct JoinOptions {
     pub bots: Vec<BotSpec>,
     /// With bots: the number of human clients to wait for before setting up the game.
     pub wait_clients: usize,
+    /// The name of a save the server should load instead of following the lobby script.
+    pub load_save: Option<String>,
 }
 
 impl Default for JoinOptions {
@@ -223,6 +226,7 @@ impl Default for JoinOptions {
             password: String::new(),
             bots: Vec::new(),
             wait_clients: 1,
+            load_save: None,
         }
     }
 }
@@ -315,6 +319,14 @@ fn handshake_response(md: &ModData, request: &str, options: &JoinOptions) -> Res
     })
 }
 
+/// The `SaveLastOrdersFrame` and `SaveSyncFrame` of a `StartGame` order, if it starts a game save.
+fn parse_game_save_frames(order: &RawOrder) -> Option<(i32, i32)> {
+    let text = order.target_string.as_deref().filter(|t| !t.is_empty())?;
+    let nodes = MiniYaml::from_str(text, &order.order_string, true).ok()?;
+    let frame = |key: &str| nodes.iter().find(|n| n.key == key)?.value.value_str().parse().ok();
+    Some((frame("SaveLastOrdersFrame")?, frame("SaveSyncFrame")?))
+}
+
 /// Applies a lobby order from the server. Returns true on `StartGame`, an error on a rejection.
 fn process_lobby_order(
     md: &ModData,
@@ -348,6 +360,7 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
         client_id: connection.local_client_id(),
         stage: 0,
     };
+    let mut load_requested = false;
     loop {
         let Some(incoming) = connection.next_incoming() else {
             if !connection.is_connected() {
@@ -365,12 +378,25 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
                 let package = crate::find_map(engine, &uid).ok_or_else(|| format!("map {uid} not found"))?;
                 let is_host = lobby.client_with_index(connection.local_client_id()).is_some_and(|c| c.is_admin);
                 let (world, _, _) = crate::load_world(engine, support, package, lobby, false);
+                if let Some((last_frame, last_sync_frame)) = parse_game_save_frames(order) {
+                    world.begin_loading_game_save(last_frame, last_sync_frame);
+                }
                 return Ok(JoinedGame {
                     world,
                     connection,
                     is_host,
                 });
             }
+        }
+        if let Some(save) = &options.load_save {
+            if !load_requested && lobby.client_with_index(connection.local_client_id()).is_some() {
+                load_requested = true;
+                connection.send_immediate(vec![
+                    RawOrder::from_target_string("LoadGameSave", save, true),
+                    RawOrder::command("state Ready"),
+                ]);
+            }
+            continue;
         }
         for command in script.commands(&lobby) {
             connection.send_immediate(vec![RawOrder::command(&command)]);

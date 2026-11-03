@@ -2,6 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Dedicated rustora server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory.
+//! `--local` makes it a loopback server for one client, like the server the C# game starts for a skirmish.
 //! Usage: `rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
 //! [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports]
 //! [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>]
@@ -10,7 +11,7 @@
 use std::path::PathBuf;
 
 use rustora_server::mod_info::ServerMod;
-use rustora_server::server::{Server, ServerSettings};
+use rustora_server::server::{Server, ServerSettings, ServerType};
 
 fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
@@ -47,6 +48,7 @@ fn main() {
             "--password" => settings.password = value(),
             "--seed" => settings.seed = Some(value().parse().unwrap_or_else(|_| usage("invalid seed"))),
             "--enable-singleplayer" => settings.enable_singleplayer = true,
+            "--local" => settings.server_type = ServerType::Local,
             "--enable-sync-reports" => settings.enable_sync_reports = true,
             "--advertise-online" => settings.advertise_online = true,
             "--discover-nat-devices" => settings.discover_nat_devices = true,

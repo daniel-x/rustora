@@ -7,6 +7,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_info::ActorInfo;
@@ -18,6 +19,7 @@ use rustora_engine::target::Target;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
 
+use super::save_data::{node_value, parse_list};
 use super::*;
 use crate::aircraft::AircraftInfo;
 use crate::building::Building;
@@ -77,7 +79,7 @@ pub struct UnitBuilderBotModule {
     ticks: Cell<i32>,
 }
 
-register_traits!(UnitBuilderBotModule: IBotTick, IBotNotifyIdleBaseUnits, IBotRequestUnitProduction, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(UnitBuilderBotModule: IGameSaveTraitData, IBotTick, IBotNotifyIdleBaseUnits, IBotRequestUnitProduction, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(UnitBuilderBotModuleInfo => |info, init| {
     let names: IndexSet<String> = info.units_to_build.keys().cloned().collect();
     Some(Rc::new(UnitBuilderBotModule {
@@ -100,6 +102,30 @@ impl ConditionalHooks for UnitBuilderBotModule {
     }
 }
 rustora_engine::conditional_plumbing!(UnitBuilderBotModule);
+
+impl IGameSaveTraitData for UnitBuilderBotModule {
+    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
+        if self.state.is_trait_disabled() {
+            return None;
+        }
+        Some(vec![
+            MiniYamlNode::with_value_str("QueuedBuildRequests", self.queued_build_requests.borrow().join(", ")),
+            MiniYamlNode::with_value_str("IdleUnitCount", self.idle_unit_count.get().to_string()),
+        ])
+    }
+
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml) {
+        if self_.world().is_replay() {
+            return;
+        }
+        if let Some(v) = node_value(data, "QueuedBuildRequests") {
+            *self.queued_build_requests.borrow_mut() = parse_list(v);
+        }
+        if let Some(v) = node_value(data, "IdleUnitCount").and_then(|v| v.parse().ok()) {
+            self.idle_unit_count.set(v);
+        }
+    }
+}
 
 impl INotifyCreated for UnitBuilderBotModule {
     fn created(&self, self_: &ActorRef) {

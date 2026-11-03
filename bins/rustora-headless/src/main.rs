@@ -10,6 +10,7 @@
 //! `map-uid <engine-dir> <map>` prints the uid of a map, given by uid or file name.
 //! `join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>]`
 //! joins a server. With bots it hosts them like the C# `Harness.Bots`, without them it spectates.
+//! `--save-at <tick>:<name>` requests a game save after that world tick, `--load-save <name>` loads a save.
 //! `lan-probe <seconds> [host:port]` lists the LAN games that answer, broadcasting unless a beacon address is given.
 //! `server-list <mod-version>` lists the RA games of the master server.
 
@@ -205,13 +206,14 @@ fn join(args: &[String]) {
     use rustora_launch::skirmish::{SkirmishDriver, parse_bots};
     let [engine, support, address, ticks] = &args[2..6] else {
         panic!(
-            "usage: rustora-headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>]"
+            "usage: rustora-headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>] [--save-at <tick>:<name>] [--load-save <name>]"
         )
     };
     let engine = PathBuf::from(engine);
     let ticks: i32 = ticks.parse().expect("ticks");
     let mut options = JoinOptions::default();
     let mut sync_out = None;
+    let mut save_at: Option<(i32, String)> = None;
     for pair in args[6..].chunks(2) {
         let value = pair.get(1).expect("option value");
         match pair[0].as_str() {
@@ -219,6 +221,11 @@ fn join(args: &[String]) {
             "--wait-clients" => options.wait_clients = value.parse().expect("wait clients"),
             "--sync-out" => sync_out = Some(std::io::BufWriter::new(std::fs::File::create(value).expect("create sync dump"))),
             "--name" => options.name = value.clone(),
+            "--load-save" => options.load_save = Some(value.clone()),
+            "--save-at" => {
+                let (tick, name) = value.split_once(':').expect("--save-at <tick>:<name>");
+                save_at = Some((tick.parse().expect("save tick"), name.to_string()));
+            }
             o => panic!("unknown option {o}"),
         }
     }
@@ -241,6 +248,11 @@ fn join(args: &[String]) {
                         world.bot_random.borrow().total_count
                     )
                     .expect("write sync dump");
+                }
+                if let Some((_, name)) = save_at.as_ref().filter(|(tick, _)| *tick == world.world_tick()) {
+                    for order in world.request_game_save(name) {
+                        driver.orders.issue_order(order);
+                    }
                 }
             }
             Step::Waiting => std::thread::sleep(std::time::Duration::from_micros(200)),

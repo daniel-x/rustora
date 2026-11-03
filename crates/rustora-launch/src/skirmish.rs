@@ -148,12 +148,13 @@ impl Connection for LocalConnection {
 }
 
 /// Runs a skirmish: activates the bots and feeds the orders they issue back through the local connection.
-/// Game over requests are served after their delay in world ticks. The C# client measures the delay on its clock,
-/// whose timestep the server scales by its real time order timing, so C# ends the game a few ticks earlier or later.
+/// Game over requests are served after their delay in client frames, which also pass while another client's game over
+/// has paused the world. The C# client measures the delay on its clock, whose timestep the server scales by its real
+/// time order timing, so C# ends the game a few ticks earlier or later.
 pub struct SkirmishDriver {
     pub orders: OrderManager,
     world: Rc<World>,
-    end_game_tick: Option<i32>,
+    end_game_frame: Option<i32>,
 }
 
 impl SkirmishDriver {
@@ -171,7 +172,7 @@ impl SkirmishDriver {
         SkirmishDriver {
             orders,
             world: world.clone(),
-            end_game_tick: None,
+            end_game_frame: None,
         }
     }
 
@@ -189,11 +190,13 @@ impl SkirmishDriver {
             };
         }
         self.world.tick();
+        let frame = self.orders.local_frame_number;
         for delay in self.world.take_end_game_requests() {
-            let due = self.world.world_tick() + (delay + self.world.timestep - 1) / self.world.timestep;
-            self.end_game_tick = Some(self.end_game_tick.map_or(due, |t| t.min(due)));
+            let due = frame + (delay + self.world.timestep - 1) / self.world.timestep;
+            self.end_game_frame = Some(self.end_game_frame.map_or(due, |t| t.min(due)));
         }
-        if self.end_game_tick.is_some_and(|t| self.world.world_tick() >= t) {
+        if self.end_game_frame.is_some_and(|t| frame >= t) {
+            self.orders.issue_order(RawOrder::from_target_string("PauseGame", "Pause", false));
             self.world.end_game();
         }
         for (_, o) in self.world.take_issued_orders() {
