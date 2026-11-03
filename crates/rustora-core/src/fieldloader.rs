@@ -144,11 +144,13 @@ impl FieldValue for String {
 }
 impl ArrayAware for String {}
 
-/// `Nullable<T>`, and nullable references such as `string`: empty means `None`.
+/// `Nullable<T>`, and nullable references such as `string`: an empty value means `None`, except for a
+/// `Dictionary` with child nodes, which it loads from.
 impl<T: FieldValue + ArrayAware> FieldValue for Option<T> {
     const TYPE_NAME: &'static str = T::TYPE_NAME;
     fn parse(field: &str, value: Option<&str>, yaml: Option<&MiniYaml>) -> Result<Self, LoadError> {
         match value {
+            None | Some("") if T::TYPE_NAME == "Dictionary" && yaml.is_some_and(|y| !y.nodes.is_empty()) => Ok(Some(T::parse(field, value, yaml)?)),
             None | Some("") => Ok(None),
             Some(v) => Ok(Some(T::parse(field, Some(v), yaml)?)),
         }
@@ -590,6 +592,15 @@ mod tests {
         let n = MiniYaml::from_str("D:\n\ta: 1\n\tb: 2\n", "t", true).unwrap();
         let d: IndexMap<String, i32> = get_value_yaml("D", &n[0].value, false).unwrap();
         assert_eq!(d.get("b"), Some(&2));
+    }
+
+    #[test]
+    fn optional_dictionary_from_nodes() {
+        let n = MiniYaml::from_str("D:\n\ta: 1\nE:\n", "t", true).unwrap();
+        let d: Option<IndexMap<String, i32>> = get_value_yaml("D", &n[0].value, false).unwrap();
+        assert_eq!(d.and_then(|d| d.get("a").copied()), Some(1));
+        let e: Option<IndexMap<String, i32>> = get_value_yaml("E", &n[1].value, false).unwrap();
+        assert!(e.is_none());
     }
 
     #[test]
