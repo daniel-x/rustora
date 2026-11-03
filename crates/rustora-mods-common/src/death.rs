@@ -40,6 +40,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("SpawnActorOnDeath", |n| load_info!(SpawnActorOnDeathInfo, n));
     r.register("Husk", |n| load_info!(HuskInfo, n));
     r.register("HarvesterHuskModifier", |n| load_info!(HarvesterHuskModifierInfo, n));
+    r.register("FallsToEarth", |n| load_info!(FallsToEarthInfo, n));
+    r.register("EjectOnDeath", |n| load_info!(EjectOnDeathInfo, n));
 }
 
 /// `IHuskModifier`.
@@ -633,5 +635,190 @@ info_impl!(HarvesterHuskModifierInfo => |info, _| Some(Rc::new(HarvesterHuskModi
 impl IHuskModifier for HarvesterHuskModifier {
     fn husk_actor(&self, self_: &ActorRef) -> Option<String> {
         if self_.trait_::<Harvester>().fullness() > self.info.fullness_threshold { self.info.full_husk_actor.clone() } else { None }
+    }
+}
+
+/// `Traits/Air/FallsToEarth.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct FallsToEarthInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub explosion: Option<String>,
+    pub maximum_spin_speed: Option<WAngle>,
+    pub moves: bool,
+    pub velocity: rustora_core::world_types::WDist,
+}
+
+impl Default for FallsToEarthInfo {
+    fn default() -> Self {
+        FallsToEarthInfo {
+            instance_name: None,
+            explosion: Some("UnitExplode".into()),
+            maximum_spin_speed: None,
+            moves: false,
+            velocity: rustora_core::world_types::WDist::new(43),
+        }
+    }
+}
+
+pub struct FallsToEarth {
+    info: Rc<FallsToEarthInfo>,
+    effective_owner: PlayerRef,
+}
+
+register_traits!(FallsToEarth: IEffectiveOwner, INotifyCreated);
+info_impl!(FallsToEarthInfo => |info, init| {
+    let effective_owner = init.inits.get::<EffectiveOwnerInit>().map_or_else(|| init.self_.owner(), |e| e.value.clone());
+    Some(Rc::new(FallsToEarth { info, effective_owner }))
+});
+
+impl IEffectiveOwner for FallsToEarth {
+    fn disguised(&self) -> bool {
+        true
+    }
+
+    fn owner(&self) -> Option<PlayerRef> {
+        Some(self.effective_owner.clone())
+    }
+}
+
+impl INotifyCreated for FallsToEarth {
+    fn created(&self, self_: &ActorRef) {
+        let weapon = self.info.explosion.as_deref().filter(|e| !e.is_empty()).map(|e| {
+            self_.world().rules().weapon(&e.to_lowercase()).unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", e.to_lowercase()))
+        });
+        self_.queue_activity_queued(false, FallToEarth::new(self_, self.info.clone(), weapon));
+    }
+}
+
+/// `Activities/Air/FallToEarth.cs`.
+pub struct FallToEarth {
+    base: ActivityBase,
+    aircraft: Rc<crate::aircraft::Aircraft>,
+    info: Rc<FallsToEarthInfo>,
+    weapon: Option<Rc<WeaponInfo>>,
+    acceleration: i32,
+    spin: Cell<i32>,
+}
+
+impl FallToEarth {
+    pub fn new(self_: &ActorRef, info: Rc<FallsToEarthInfo>, weapon: Option<Rc<WeaponInfo>>) -> ActivityRef {
+        let base = ActivityBase::default();
+        base.is_interruptible.set(false);
+        let acceleration = if info.maximum_spin_speed.is_none_or(|m| m != WAngle::ZERO) { self_.world().shared_random.borrow_mut().next_max(2) * 2 - 1 } else { 0 };
+        Rc::new(FallToEarth { base, aircraft: self_.trait_::<crate::aircraft::Aircraft>(), info, weapon, acceleration, spin: Cell::new(0) })
+    }
+}
+
+impl Activity for FallToEarth {
+    activity_common!("FallToEarth");
+
+    fn tick(&self, self_: &ActorRef) -> bool {
+        let w = self_.world();
+        if w.map().distance_above_terrain(self_.center_position()).length <= 0 {
+            if let Some(weapon) = &self.weapon {
+                weapon_impact(weapon, &Target::from_pos(self_.center_position()), self_);
+            }
+            if let Some(h) = self_.cache().health.clone() {
+                h.kill(self_, Some(self_), &DamageTypes::default());
+            }
+            self.cancel(self_, false);
+            return true;
+        }
+        if self.acceleration != 0 {
+            if self.info.maximum_spin_speed.is_none_or(|m| self.spin.get().abs() < m.angle) {
+                self.spin.set(self.spin.get() + 4 * self.acceleration);
+            }
+            self.aircraft.set_facing(WAngle::new(self.aircraft.facing().angle + self.spin.get()));
+        }
+        let mut mv = if self.info.moves { self.aircraft.fly_step(self.aircraft.facing()) } else { WVec::ZERO };
+        mv = mv - WVec::new(0, 0, self.info.velocity.length);
+        let pos = self.aircraft.center_position() + mv;
+        IPositionable::set_position(self.aircraft.as_ref(), self_, pos);
+        false
+    }
+}
+
+/// `Traits/EjectOnDeath.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct EjectOnDeathInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub pilot_actor: String,
+    pub success_rate: i32,
+    pub eject_in_air: bool,
+    pub eject_on_ground: bool,
+    pub allow_unsuitable_cell: bool,
+}
+
+impl Default for EjectOnDeathInfo {
+    fn default() -> Self {
+        EjectOnDeathInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            pilot_actor: "E1".into(),
+            success_rate: 50,
+            eject_in_air: false,
+            eject_on_ground: false,
+            allow_unsuitable_cell: false,
+        }
+    }
+}
+
+pub struct EjectOnDeath {
+    info: Rc<EjectOnDeathInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(EjectOnDeath: INotifyKilled, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(EjectOnDeathInfo => |info, _| {
+    let state = ConditionalState::new(&info.base);
+    Some(Rc::new(EjectOnDeath { info, state }))
+});
+
+rustora_engine::conditional_simple!(EjectOnDeath);
+
+impl INotifyKilled for EjectOnDeath {
+    fn killed(&self, self_: &ActorRef, _e: &AttackInfo) {
+        let w = self_.world();
+        if self.state.is_trait_disabled() || self_.owner().win_state.get() == WinState::Lost || !w.map().contains(self_.location()) {
+            return;
+        }
+        if w.shared_random.borrow_mut().next_max(100) >= self.info.success_rate {
+            return;
+        }
+        let cp = self_.center_position();
+        let in_air = !util::is_at_ground_level(self_);
+        if (in_air && !self.info.eject_in_air) || (!in_air && !self.info.eject_on_ground) {
+            return;
+        }
+        let (a, info) = (self_.clone(), self.info.clone());
+        w.add_frame_end_task(Box::new(move |w| {
+            let pilot_name = info.pilot_actor.to_lowercase();
+            let loc = a.location();
+            if !info.allow_unsuitable_cell {
+                let pilot_info = w.rules().actor(&pilot_name).expect("pilot actor");
+                let mobile = pilot_info.trait_info::<crate::mobile::MobileInfo>().expect("pilot needs Mobile");
+                if !mobile.can_enter_cell(w, None, loc, ANY, None, BlockedByActor::All) {
+                    return;
+                }
+            }
+            let mut td = ActorInits::new().with(OwnerInit::from_player(&a.owner())).with(LocationInit::new(loc));
+            let mut spawn_pos = cp;
+            if in_air {
+                let sub = w.actor_map().free_subcell(loc, ANY, true);
+                if sub != INVALID {
+                    td.push(Rc::new(rustora_engine::actor_init::SubCellInit::new(sub)));
+                    spawn_pos = w.map().center_of_subcell(loc, sub) + WVec::new(0, 0, spawn_pos.z);
+                }
+            }
+            td.push(Rc::new(CenterPositionInit::new(spawn_pos)));
+            let pilot = w.create_actor(&pilot_name, td);
+            if !in_air {
+                pilot.queue_activity_queued(false, crate::activities::Nudge::new(&pilot));
+            }
+        }));
     }
 }
