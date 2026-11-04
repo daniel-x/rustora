@@ -340,7 +340,11 @@ impl WidgetKind for ButtonWidget {
     }
 
     fn handle_key(&mut self, ui: &mut Ui, _id: WidgetId, e: &KeyInput) -> bool {
-        if e.event != KeyEvent::Down || self.key.as_deref() != Some(e.key.as_str()) {
+        let activated = self
+            .key
+            .as_deref()
+            .is_some_and(|key| ui.assets.borrow().hotkeys.is_activated(key, e));
+        if e.event != KeyEvent::Down || !activated {
             return false;
         }
         if !self.disabled_now()

@@ -258,6 +258,10 @@ pub struct Ui {
     pub clipboard: Rc<dyn Clipboard>,
     /// `Viewport.LastMousePos`.
     pub last_mouse: (i32, i32),
+    /// `Viewport.LastMousePos` before the current move event.
+    pub previous_mouse: (i32, i32),
+    /// `Renderer.WindowHasInputFocus`.
+    pub window_has_focus: bool,
     /// `Viewport.LastMoveRunTime`.
     pub last_move_time: i64,
     /// `Game.Settings.Game.UIScrollSpeed`.
@@ -302,6 +306,8 @@ impl Ui {
             services,
             clipboard: Rc::new(LocalClipboard::default()),
             last_mouse: (0, 0),
+            previous_mouse: (0, 0),
+            window_has_focus: true,
             last_move_time: 0,
             ui_scroll_speed: 50.0,
             start: Instant::now(),
@@ -786,6 +792,7 @@ impl Ui {
     pub fn handle_input(&mut self, mi: &MouseInput) -> bool {
         let was_over = self.mouse_over;
         if mi.event == MouseEvent::Move {
+            self.previous_mouse = self.last_mouse;
             self.last_mouse = (mi.x, mi.y);
             self.last_move_time = self.run_time();
             self.mouse_over = None;

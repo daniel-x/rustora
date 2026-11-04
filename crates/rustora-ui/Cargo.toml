@@ -12,6 +12,7 @@ rustora-fs = { path = "../rustora-fs" }
 rustora-net = { path = "../rustora-net" }
 rustora-game = { path = "../rustora-game" }
 rustora-render = { path = "../rustora-render" }
+rustora-engine = { path = "../rustora-engine" }
 indexmap = "2"
 png = "0.18"
 log = "0.4"

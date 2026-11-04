@@ -2507,6 +2507,7 @@ dependencies = [
  "log",
  "png",
  "rustora-core",
+ "rustora-engine",
  "rustora-formats",
  "rustora-fs",
  "rustora-game",

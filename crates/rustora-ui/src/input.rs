@@ -29,6 +29,14 @@ pub struct Modifiers {
     pub meta: bool,
 }
 
+impl Modifiers {
+    /// `Modifiers.HasModifier` with the bit values of the `Modifiers` enum: shift 1, alt 2, ctrl 4, meta 8.
+    pub fn has_flags(self, flags: u32) -> bool {
+        let bits = u32::from(self.shift) | u32::from(self.alt) << 1 | u32::from(self.ctrl) << 2 | u32::from(self.meta) << 3;
+        bits & flags == flags
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MouseInput {
     pub event: MouseEvent,

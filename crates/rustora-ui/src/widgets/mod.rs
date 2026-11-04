@@ -25,6 +25,7 @@ mod scroll_panel;
 mod slider;
 mod text_field;
 mod tooltip;
+mod viewport_controller;
 
 pub use background::BackgroundWidget;
 pub use button::{ButtonWidget, draw_background};
@@ -41,6 +42,7 @@ pub use scroll_panel::ScrollPanelWidget;
 pub use slider::SliderWidget;
 pub use text_field::{TextFieldType, TextFieldWidget};
 pub use tooltip::TooltipContainerWidget;
+pub use viewport_controller::ViewportControllerWidget;
 
 pub fn container() -> Rc<RefCell<dyn WidgetKind>> {
     cell(ContainerWidget::default())
@@ -62,6 +64,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "ScrollItem" => cell(ScrollItemWidget::new(assets)),
         "DropDownButton" => cell(DropDownButtonWidget::new(assets)),
         "Checkbox" => cell(CheckboxWidget::new(assets)),
+        "ViewportController" => cell(ViewportControllerWidget::default()),
         "Slider" => cell(SliderWidget::default()),
         "HueSlider" => cell(HueSliderWidget::default()),
         "ColorMixer" => cell(ColorMixerWidget::default()),

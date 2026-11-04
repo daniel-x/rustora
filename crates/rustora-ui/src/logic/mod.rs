@@ -21,6 +21,7 @@ use crate::widgets::LabelWidget;
 
 pub mod color_picker;
 pub mod connection;
+pub mod ingame;
 pub mod lobby;
 pub mod lobby_options;
 pub mod lobby_utils;
@@ -38,6 +39,8 @@ pub struct Services {
     pub lobby_rules: RefCell<Option<LobbyRulesLookup>>,
     /// Reads the color rules of the mod. The client binary sets it.
     pub color_rules: RefCell<Option<ColorRulesLookup>>,
+    /// The running game, from `Game.StartGame` on.
+    pub ingame: RefCell<Option<Rc<ingame::Ingame>>>,
 }
 
 /// The function behind `Services::lobby_rules`.
@@ -55,6 +58,7 @@ impl Default for Services {
             net: Rc::default(),
             lobby_rules: RefCell::new(None),
             color_rules: RefCell::new(None),
+            ingame: RefCell::new(None),
         }
     }
 }
@@ -238,6 +242,7 @@ pub fn create(
         "ButtonTooltipLogic" => button_tooltip(ui, id, args),
         "SimpleTooltipLogic" => simple_tooltip(ui, id, args),
         "MapChooserLogic" => map_chooser::create(ui, id, args),
+        "LoadIngamePlayerOrObserverUILogic" => ingame::load_player_or_observer_ui(ui, id),
         "ColorPickerLogic" => color_picker::create(ui, id, args, logic_args),
         "ConnectionLogic" => connection::create_connection(ui, id, args),
         "ConnectionFailedLogic" => connection::create_connection_failed(ui, id, args),

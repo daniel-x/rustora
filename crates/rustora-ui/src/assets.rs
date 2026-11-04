@@ -14,6 +14,7 @@ use rustora_render::ui::UiTexture;
 use crate::chrome::{Chrome, Metrics, Sprite};
 use crate::fluent::Messages;
 use crate::font::{GlyphSheet, SpriteFont};
+use crate::hotkeys::Hotkeys;
 
 pub struct Assets {
     pub fs: Rc<dyn ReadFs>,
@@ -27,6 +28,7 @@ pub struct Assets {
     pub hue_texture: Option<UiTexture>,
     /// The texture of `ColorMixerWidget` and the hue it shows.
     pub mixer_texture: Option<(UiTexture, f32)>,
+    pub hotkeys: Hotkeys,
 }
 
 impl Assets {
@@ -51,6 +53,7 @@ impl Assets {
                 fonts.insert(font.key.clone(), SpriteFont::new(data, size, ascender));
             }
         }
+        let hotkeys = Hotkeys::load(&ModData::load_yaml(&*fs, &manifest.hotkeys, None)?);
         let messages = Messages::new(&manifest.fluent_messages, &*fs);
         Ok(Assets {
             fs,
@@ -62,6 +65,7 @@ impl Assets {
             minimaps: HashMap::new(),
             hue_texture: None,
             mixer_texture: None,
+            hotkeys,
         })
     }
 
@@ -125,6 +129,7 @@ impl Assets {
             minimaps: HashMap::new(),
             hue_texture: None,
             mixer_texture: None,
+            hotkeys: Hotkeys::default(),
         }
     }
 }

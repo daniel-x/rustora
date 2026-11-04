@@ -430,6 +430,7 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
             WindowEvent::MouseWheel { delta, .. } => self.scroll(delta),
             WindowEvent::KeyboardInput { event, .. } => self.keyboard(&event),
+            WindowEvent::Focused(focused) => self.client.ui.window_has_focus = focused,
             WindowEvent::RedrawRequested => self.render(el),
             _ => {}
         }

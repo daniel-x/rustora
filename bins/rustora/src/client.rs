@@ -9,13 +9,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use rustora_engine::order_manager::Connection;
+use rustora_engine::player::PlayerRef;
 use rustora_engine::sequence::ReadFile;
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Package, Platform, ReadFs};
 use rustora_game::map::MapPackage;
 use rustora_game::map_cache::MapCache;
 use rustora_game::moddata::ModData;
-use rustora_game::settings::Settings;
+use rustora_game::settings::{Settings, WorldViewport};
 use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
 use rustora_launch::{Step, load_world, load_world_of_type, open_map, shellmaps};
@@ -24,15 +25,16 @@ use rustora_render::ui::UiList;
 use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::assets::Assets;
 use rustora_ui::cursor::{CursorState, Cursors};
-use rustora_ui::draw::DrawContext;
+use rustora_ui::draw::{DrawContext, Rect};
 use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
+use rustora_ui::logic::ingame::Ingame;
+use rustora_ui::viewport::Viewport;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
 
-use crate::app::map_center;
 use crate::net::{LazyServerMod, NetClient, color_rules_lookup, lobby_rules_lookup};
-use crate::scene::Scene;
+use crate::scene::{Scene, world_to_px};
 
 struct ModFs(Rc<ModData>);
 
@@ -53,30 +55,54 @@ struct ShellWorld {
     read_file: ReadFile,
     scene: Option<Scene>,
     quads: Vec<Quad>,
-    center: (f32, f32),
+    viewport: Rc<RefCell<Viewport>>,
+    viewer: Option<PlayerRef>,
     ended: bool,
+}
+
+/// The viewport of a world, centered on its map.
+fn world_viewport(world: &World, resolution: (i32, i32), distance: WorldViewport) -> Rc<RefCell<Viewport>> {
+    let map = world.map();
+    let (left, top) = world_to_px(map.projected_top_left());
+    let (right, bottom) = world_to_px(map.projected_bottom_right());
+    let bounds = Rect::new(left as i32, top as i32, (right - left) as i32, (bottom - top) as i32);
+    Rc::new(RefCell::new(Viewport::new(bounds, resolution, distance)))
 }
 
 impl ShellWorld {
     /// `Game.StartGame`: the world of a game that the server started.
-    fn start_game(engine: &Path, support: &str, package: Arc<dyn Package>, lobby: Session, connection: NetworkConnection) -> ShellWorld {
-        let is_host = lobby.client_with_index(connection.local_client_id()).is_some_and(|c| c.is_admin);
+    fn start_game(
+        engine: &Path,
+        support: &str,
+        package: Arc<dyn Package>,
+        lobby: Session,
+        connection: NetworkConnection,
+        view: (i32, i32),
+        distance: WorldViewport,
+    ) -> ShellWorld {
+        let local_client = connection.local_client_id();
+        let is_host = lobby.client_with_index(local_client).is_some_and(|c| c.is_admin);
         let (world, _, read_file) = load_world(engine, support, package, lobby, false);
         let driver = SkirmishDriver::with_connection(&world, Box::new(connection), is_host);
-        let center = map_center(&world);
+        let viewport = world_viewport(&world, view, distance);
+        let viewer = world
+            .players()
+            .into_iter()
+            .find(|p| p.client_index == local_client && p.playable && !p.non_combatant);
         ShellWorld {
             world,
             driver,
             read_file,
             scene: None,
             quads: Vec::new(),
-            center,
+            viewport,
+            viewer,
             ended: false,
         }
     }
 
     /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map.
-    fn load(engine: &Path, support: &str) -> Option<ShellWorld> {
+    fn load(engine: &Path, support: &str, view: (i32, i32), distance: WorldViewport) -> Option<ShellWorld> {
         let names = shellmaps(engine);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -87,14 +113,15 @@ impl ShellWorld {
         let lobby = skirmish_session(&map, &[], now.subsec_nanos() as i32).ok()?;
         let (world, _, read_file) = load_world_of_type(engine, support, package, lobby, false, WorldType::Shellmap);
         let driver = SkirmishDriver::new(&world);
-        let center = map_center(&world);
+        let viewport = world_viewport(&world, view, distance);
         Some(ShellWorld {
             world,
             driver,
             read_file,
             scene: None,
             quads: Vec::new(),
-            center,
+            viewport,
+            viewer: None,
             ended: false,
         })
     }
@@ -106,10 +133,12 @@ impl ShellWorld {
     }
 
     fn camera(&self, size: (u32, u32)) -> Camera {
+        let viewport = self.viewport.borrow();
+        let (x, y) = viewport.top_left();
         Camera {
-            x: self.center.0 - size.0 as f32 / 2.0,
-            y: self.center.1 - size.1 as f32 / 2.0,
-            zoom: 1.0,
+            x: x as f32,
+            y: y as f32,
+            zoom: viewport.zoom(),
             width: size.0,
             height: size.1,
         }
@@ -120,7 +149,7 @@ impl ShellWorld {
         let read_file = self.read_file.clone();
         let world = &self.world;
         let scene = self.scene.get_or_insert_with(|| Scene::new(renderer, world, read_file));
-        self.quads = scene.build(renderer, world, None, &cam);
+        self.quads = scene.build(renderer, world, self.viewer.as_ref(), &cam);
     }
 }
 
@@ -144,7 +173,8 @@ impl Client {
         let platform = Platform::new(engine.to_path_buf(), support);
         let mod_data = Rc::new(ModData::load(platform, "ra").expect("load mod"));
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
-        let assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
+        let mut assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
+        assets.hotkeys.apply_settings(&settings.keys);
         let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
         let server_mod = LazyServerMod::new(engine, support);
@@ -155,13 +185,15 @@ impl Client {
             net: Rc::default(),
             lobby_rules: RefCell::new(Some(lobby_rules_lookup(server_mod.clone()))),
             color_rules: RefCell::new(Some(color_rules_lookup(server_mod))),
+            ingame: RefCell::new(None),
         };
         let net = NetClient::new(engine, support, services.net.clone());
         let services = Rc::new(services);
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
+        let distance = services.settings.borrow().graphics.viewport_distance;
         let shell = if mod_data.content_available {
-            ShellWorld::load(engine, support)
+            ShellWorld::load(engine, support, resolution, distance)
         } else {
             None
         };
@@ -241,7 +273,26 @@ impl Client {
         };
         self.ui.reset_all();
         self.shell = None;
-        self.shell = Some(ShellWorld::start_game(&self.engine, &self.support, package, session, connection));
+        let distance = self.services.settings.borrow().graphics.viewport_distance;
+        let shell = ShellWorld::start_game(
+            &self.engine,
+            &self.support,
+            package,
+            session,
+            connection,
+            self.ui.resolution,
+            distance,
+        );
+        *self.services.ingame.borrow_mut() = Some(Rc::new(Ingame {
+            world: shell.world.clone(),
+            viewport: shell.viewport.clone(),
+            local_player: shell.viewer.clone(),
+        }));
+        self.shell = Some(shell);
+        self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
+        for (what, count) in self.ui.loader.missing.borrow().iter() {
+            log::info!("not ported: {what} ({count})");
+        }
     }
 
     /// Port of the cursor selection in `Game.RenderTick`.
