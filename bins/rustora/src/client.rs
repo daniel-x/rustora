@@ -11,7 +11,9 @@ use rustora_engine::sequence::ReadFile;
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Platform, ReadFs};
 use rustora_game::map::MapPackage;
+use rustora_game::map_cache::MapCache;
 use rustora_game::moddata::ModData;
+use rustora_game::settings::Settings;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
 use rustora_launch::{Step, load_world_of_type, open_map, shellmaps};
 use rustora_render::ui::UiList;
@@ -110,7 +112,8 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(engine: &Path, support: &str, resolution: (i32, i32)) -> Client {
+    pub fn new(engine: &Path, support: &str, resolution: (i32, i32), args: &[String]) -> Client {
+        let settings = Settings::load(Path::new(support).join("settings.yaml"), args);
         let platform = Platform::new(engine.to_path_buf(), support);
         let mod_data = Rc::new(ModData::load(platform, "ra").expect("load mod"));
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
@@ -119,14 +122,22 @@ impl Client {
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
         let services = Services {
             mod_version: mod_data.manifest.metadata.version.clone(),
+            maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
+            settings: Rc::new(RefCell::new(settings)),
         };
+        let pause_shellmap = services.settings.borrow().game.pause_shellmap;
+        let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
         let shell = if mod_data.content_available {
             ShellWorld::load(engine, support)
         } else {
             None
         };
+        if let Some(shell) = &shell {
+            shell.world.pause_shellmap.set(pause_shellmap);
+        }
         let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, Rc::new(services));
-        ui.open_window("MAINMENU", WidgetArgs::default());
+        ui.ui_scroll_speed = ui_scroll_speed;
+        ui.load_widget("MAINMENU", Some(ui.root), &WidgetArgs::default());
         Client {
             ui,
             cursors,
@@ -204,7 +215,7 @@ impl Client {
 pub fn screenshot(engine: &Path, support: &str, size: (u32, u32), clicks: &[(i32, i32)], out: &str) {
     let (device, queue) = rustora_render::headless_device().expect("no graphics adapter");
     let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
-    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32));
+    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), &[]);
     client.logic_tick();
     for &(x, y) in clicks {
         client.click(x, y);

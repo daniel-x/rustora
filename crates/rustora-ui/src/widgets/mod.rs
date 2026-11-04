@@ -17,6 +17,7 @@ mod container;
 mod dropdown;
 mod image;
 mod label;
+mod map_preview;
 mod scroll_item;
 mod scroll_panel;
 mod slider;
@@ -29,7 +30,8 @@ pub use checkbox::CheckboxWidget;
 pub use container::ContainerWidget;
 pub use dropdown::{DropDownButtonWidget, MaskWidget};
 pub use image::ImageWidget;
-pub use label::{LabelWidget, TextAlign, TextVAlign};
+pub use label::{LabelWidget, LabelWithTooltipWidget, TextAlign, TextVAlign};
+pub use map_preview::{MapPreviewWidget, SpawnOccupant};
 pub use scroll_item::ScrollItemWidget;
 pub use scroll_panel::ScrollPanelWidget;
 pub use slider::SliderWidget;
@@ -46,6 +48,8 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "Container" | "LogicKeyListener" | "LogicTicker" => container(),
         "Background" => cell(BackgroundWidget::default()),
         "Label" => cell(LabelWidget::new(assets)),
+        "LabelWithTooltip" => cell(LabelWithTooltipWidget::new(assets)),
+        "MapPreview" => cell(MapPreviewWidget::new(assets)),
         "Button" => cell(ButtonWidget::new(assets)),
         "Image" => cell(ImageWidget::default()),
         "ScrollPanel" => cell(ScrollPanelWidget::new(assets)),

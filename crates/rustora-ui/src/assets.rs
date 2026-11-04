@@ -10,7 +10,7 @@ use rustora_fs::ReadFs;
 use rustora_game::GameError;
 use rustora_game::moddata::ModData;
 
-use crate::chrome::{Chrome, Metrics};
+use crate::chrome::{Chrome, Metrics, Sprite};
 use crate::fluent::Messages;
 use crate::font::{GlyphSheet, SpriteFont};
 
@@ -21,6 +21,7 @@ pub struct Assets {
     pub messages: Messages,
     pub fonts: HashMap<String, SpriteFont>,
     pub glyphs: GlyphSheet,
+    pub minimaps: HashMap<String, Option<Sprite>>,
 }
 
 impl Assets {
@@ -53,12 +54,28 @@ impl Assets {
             messages,
             fonts,
             glyphs: GlyphSheet::default(),
+            minimaps: HashMap::new(),
         })
     }
 
     /// Port of `SpriteFont.Measure`.
     pub fn measure(&mut self, font: &str, text: &str) -> (i32, i32) {
         self.fonts.get_mut(font).map_or((0, 0), |f| f.measure(text))
+    }
+
+    /// Port of `WidgetUtils.TruncateText`.
+    pub fn truncate_text(&mut self, font: &str, text: &str, width: i32) -> String {
+        if self.measure(font, text).0 <= width {
+            return text.to_string();
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut length = chars.len();
+        let mut trimmed = text.to_string();
+        while self.measure(font, &trimmed).0 > width && length > 3 {
+            length -= 1;
+            trimmed = chars[..length - 3].iter().collect::<String>() + "...";
+        }
+        trimmed
     }
 
     /// Port of `WidgetUtils.WrapText`.
@@ -98,6 +115,7 @@ impl Assets {
             messages,
             fonts: HashMap::new(),
             glyphs: GlyphSheet::default(),
+            minimaps: HashMap::new(),
         }
     }
 }

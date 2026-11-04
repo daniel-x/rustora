@@ -6,7 +6,7 @@
 //! or renders one frame offscreen to a lossless WebP file:
 //! `rustora <engine-dir> <support-dir> <replay> --screenshot <out.webp> [--tick N] [--player I] [--at X,Y] [--size WxH] [--zoom Z]`.
 //!
-//! Opens the user interface in a window: `rustora --ui <engine-dir> <support-dir> [WxH]`.
+//! Opens the user interface in a window: `rustora --ui <engine-dir> <support-dir> [WxH] [Section.Field=value...]`.
 //!
 //! Window controls: arrow keys or WASD scroll, mouse wheel zooms, space pauses, `+`/`-` change the speed,
 //! Tab cycles the shroud of each player and the full view, Escape quits.
@@ -128,13 +128,14 @@ fn ui_screenshot(a: &[String]) {
     client::screenshot(std::path::Path::new(&a[0]), &a[1], size, &clicks, &a[2]);
 }
 
-/// `rustora --ui <engine-dir> <support-dir> [WxH]`
+/// `rustora --ui <engine-dir> <support-dir> [WxH] [Section.Field=value...]`
 fn ui_window(a: &[String]) {
-    let size = a.get(2).map_or((1280, 800), |s| {
+    let (settings, sizes): (Vec<String>, Vec<String>) = a[2..].iter().cloned().partition(|s| s.contains('='));
+    let size = sizes.first().map_or((1280, 800), |s| {
         let (w, h) = s.split_once('x').expect("WxH");
         (w.parse().expect("width"), h.parse().expect("height"))
     });
-    window::run(std::path::Path::new(&a[0]), &a[1], size);
+    window::run(std::path::Path::new(&a[0]), &a[1], size, &settings);
 }
 
 fn main() {

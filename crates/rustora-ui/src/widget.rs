@@ -65,6 +65,9 @@ pub struct ListState {
     pub current_offset: f32,
     pub last_smooth_scroll_time: i64,
     pub align_bottom: bool,
+    /// Present for `GridLayout`: the position of the next child.
+    pub grid_pos: Option<(i32, i32)>,
+    pub scrollbar_width: i32,
 }
 
 /// The per type part of a widget.
@@ -76,6 +79,11 @@ pub trait WidgetKind: Any {
 
     /// Returns the button part of this widget if it derives from `ButtonWidget` in C#.
     fn as_button(&mut self) -> Option<&mut crate::widgets::ButtonWidget> {
+        None
+    }
+
+    /// Returns the label part of this widget if it derives from `LabelWidget` in C#.
+    fn as_label(&mut self) -> Option<&mut crate::widgets::LabelWidget> {
         None
     }
 
@@ -169,6 +177,8 @@ pub struct Widget {
     pub parent: Option<WidgetId>,
     pub children: Vec<WidgetId>,
     pub is_visible: Option<Getter<bool>>,
+    /// The widget is hidden while its render bounds do not meet the render bounds of this widget.
+    pub cull_to: Option<WidgetId>,
     pub logic_objects: Vec<Rc<RefCell<dyn ChromeLogic>>>,
     /// The offset of the children relative to the origin of this widget, kept here so that children can read it
     /// while the kind of this widget is borrowed.
@@ -311,6 +321,7 @@ impl Ui {
             parent: None,
             children: Vec::new(),
             is_visible: None,
+            cull_to: None,
             logic_objects: Vec::new(),
             child_offset: (0, 0),
             list: None,
@@ -351,6 +362,11 @@ impl Ui {
         RefMut::map(cell.borrow_mut(), |k| {
             k.as_any().downcast_mut::<T>().expect("widget of the requested type")
         })
+    }
+
+    /// `Get<LabelWidget>`: also finds the types that derive from it in C#.
+    pub fn label(&self, id: WidgetId) -> RefMut<'_, crate::widgets::LabelWidget> {
+        RefMut::map(self.node(id).kind.borrow_mut(), |k| k.as_label().expect("a label widget"))
     }
 
     /// `Get<ButtonWidget>`: also finds the types that derive from it in C#.
@@ -397,6 +413,11 @@ impl Ui {
     /// Port of `SpriteFont.Measure` for code outside of drawing.
     pub fn measure(&self, font: &str, text: &str) -> (i32, i32) {
         self.assets.borrow_mut().measure(font, text)
+    }
+
+    /// Port of `WidgetUtils.TruncateText`.
+    pub fn truncate_text(&self, font: &str, text: &str, width: i32) -> String {
+        self.assets.borrow_mut().truncate_text(font, text, width)
     }
 
     /// Port of `Clone`: copies the widget and its children, without the logic objects.
@@ -467,6 +488,11 @@ impl Ui {
 
     pub fn is_visible(&self, id: WidgetId) -> bool {
         let node = self.node(id);
+        if let Some(limit) = node.cull_to
+            && !self.render_bounds(id).intersects(self.render_bounds(limit))
+        {
+            return false;
+        }
         match &node.is_visible {
             Some(f) => f(),
             None => node.visible,

@@ -90,6 +90,10 @@ impl Ui {
         if self.node(parent).list.is_none() {
             return;
         }
+        if self.list(parent).grid_pos.is_some() {
+            self.adjust_grid_child(parent, child);
+            return;
+        }
         let no_children = self.node(parent).children.is_empty();
         let visible = self.is_visible(child);
         let height = self.node(child).bounds.h;
@@ -104,9 +108,39 @@ impl Ui {
         self.node_mut(child).bounds.y = y;
     }
 
-    /// Port of `ListLayout.AdjustChildren`.
+    /// Port of `GridLayout.AdjustChild`.
+    fn adjust_grid_child(&mut self, parent: WidgetId, child: WidgetId) {
+        let no_children = self.node(parent).children.is_empty();
+        let width = self.node(parent).bounds.w;
+        let child_bounds = self.node(child).bounds;
+        let list = self.list(parent);
+        let (spacing, item_spacing) = (list.top_bottom_spacing, list.item_spacing);
+        if no_children {
+            list.content_height = 2 * spacing;
+            list.grid_pos = Some((item_spacing, spacing));
+        }
+        let mut pos = list.grid_pos.unwrap_or_default();
+        if pos.0 + child_bounds.w + item_spacing > width - list.scrollbar_width {
+            pos = (item_spacing, list.content_height - spacing + item_spacing);
+        }
+        list.content_height = list.content_height.max(pos.1 + child_bounds.h + spacing);
+        list.grid_pos = Some((pos.0 + child_bounds.w + item_spacing, pos.1));
+        let bounds = &mut self.node_mut(child).bounds;
+        bounds.x += pos.0;
+        bounds.y += pos.1;
+    }
+
+    /// `Layout = new GridLayout(panel)`.
+    pub fn set_grid_layout(&mut self, id: WidgetId) {
+        let scrollbar_width = self.get::<ScrollPanelWidget>(id).scrollbar_width;
+        let list = self.list(id);
+        list.grid_pos = Some((0, 0));
+        list.scrollbar_width = scrollbar_width;
+    }
+
+    /// Port of `ListLayout.AdjustChildren`. `GridLayout.AdjustChildren` does nothing.
     pub fn adjust_children(&mut self, id: WidgetId) {
-        if self.node(id).list.is_none() {
+        if self.node(id).list.is_none() || self.list(id).grid_pos.is_some() {
             return;
         }
         let list = self.list(id);

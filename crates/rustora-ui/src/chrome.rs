@@ -225,6 +225,12 @@ impl Metrics {
         self.data.get(key).is_some_and(|v| v.eq_ignore_ascii_case("true"))
     }
 
+    /// `ChromeMetrics.Get<int2>`.
+    pub fn int2(&self, key: &str) -> (i32, i32) {
+        let values = int_list(&self.string(key));
+        (values.first().copied().unwrap_or(0), values.get(1).copied().unwrap_or(0))
+    }
+
     pub fn color(&self, key: &str) -> Color {
         self.data
             .get(key)

@@ -5,7 +5,9 @@
 
 pub mod manifest;
 pub mod map;
+pub mod map_cache;
 pub mod moddata;
+pub mod settings;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GameError {

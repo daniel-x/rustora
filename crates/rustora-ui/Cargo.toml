@@ -13,6 +13,7 @@ rustora-game = { path = "../rustora-game" }
 rustora-render = { path = "../rustora-render" }
 indexmap = "2"
 png = "0.18"
+log = "0.4"
 swash = "0.2"
 fluent-bundle = "0.16"
 unic-langid = "0.9"

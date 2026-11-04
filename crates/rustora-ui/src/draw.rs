@@ -144,6 +144,36 @@ impl<'a> DrawContext<'a> {
         self.list.solid([r.x as f32, r.y as f32, r.w as f32, r.h as f32], premultiplied(c));
     }
 
+    /// Port of `RgbaColorRenderer.FillEllipse`.
+    pub fn fill_ellipse(&mut self, r: Rect, c: Color) {
+        let (a, b) = (r.w as f32 / 2.0, r.h as f32 / 2.0);
+        let (xc, yc) = (r.x as f32 + a, r.y as f32 + b);
+        let color = premultiplied(c);
+        for y in r.y..=r.bottom() {
+            let dy = y as f32 - yc;
+            let dx = a * (1.0 - dy * dy / b / b).max(0.0).sqrt();
+            self.list.solid([xc - dx, y as f32 - 0.5, 2.0 * dx, 1.0], color);
+        }
+    }
+
+    /// Returns the image of `MapPreview.GetMinimap`, loaded on first use.
+    pub fn minimap(&mut self, uid: &str, png: Option<&[u8]>) -> Option<Sprite> {
+        if let Some(sprite) = self.assets.minimaps.get(uid) {
+            return *sprite;
+        }
+        let sprite = png
+            .and_then(|data| crate::chrome::decode_png(data).ok())
+            .map(|(w, h, rgba)| Sprite {
+                texture: self.renderer.add_ui_texture(w, h, &rgba, false),
+                x: 0,
+                y: 0,
+                w: w as i32,
+                h: h as i32,
+            });
+        self.assets.minimaps.insert(uid.to_string(), sprite);
+        sprite
+    }
+
     /// Port of `DrawPanel`.
     pub fn draw_panel(&mut self, collection: &str, bounds: Rect) {
         let assets = &mut *self.assets;

@@ -73,8 +73,8 @@ impl Clipboard for SystemClipboard {
 }
 
 /// Opens a window with the user interface of the mod and runs until the window closes.
-pub fn run(engine: &Path, support: &str, size: (u32, u32)) {
-    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32));
+pub fn run(engine: &Path, support: &str, size: (u32, u32), args: &[String]) {
+    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), args);
     client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
     client.logic_tick();
     let now = Instant::now();

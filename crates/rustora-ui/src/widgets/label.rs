@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
+use std::rc::Rc;
+
 use rustora_core::fieldloader::Color;
 
-use super::{impl_as_any, parse_bool};
+use super::{TooltipContainerWidget, impl_as_any, parse_bool};
 use crate::assets::Assets;
 use crate::draw::{DrawContext, TextStyle};
-use crate::widget::{Getter, Ui, WidgetId, WidgetKind};
+use crate::widget::{Getter, Ui, WidgetArgs, WidgetId, WidgetKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TextAlign {
@@ -73,6 +75,10 @@ impl LabelWidget {
 
 impl WidgetKind for LabelWidget {
     impl_as_any!();
+
+    fn as_label(&mut self) -> Option<&mut LabelWidget> {
+        Some(self)
+    }
 
     fn set_field(&mut self, key: &str, value: &str) -> bool {
         match key {
@@ -150,5 +156,82 @@ impl WidgetKind for LabelWidget {
 
     fn cursor(&self, _default: &str) -> Option<String> {
         None
+    }
+}
+
+/// Port of `LabelWithTooltipWidget`.
+#[derive(Clone)]
+pub struct LabelWithTooltipWidget {
+    pub label: LabelWidget,
+    pub tooltip_template: String,
+    pub tooltip_container: Option<String>,
+    pub get_tooltip_text: Option<Getter<String>>,
+}
+
+impl LabelWithTooltipWidget {
+    pub fn new(assets: &Assets) -> LabelWithTooltipWidget {
+        LabelWithTooltipWidget {
+            label: LabelWidget::new(assets),
+            tooltip_template: String::new(),
+            tooltip_container: None,
+            get_tooltip_text: Some(Rc::new(String::new)),
+        }
+    }
+
+    /// Port of `WidgetUtils.TruncateLabelToTooltip`.
+    pub fn truncate_to_tooltip(ui: &mut Ui, id: WidgetId, text: &str) {
+        let width = ui.node(id).bounds.w;
+        let font = ui.label(id).font.clone();
+        let truncated = ui.truncate_text(&font, text, width);
+        let mut widget = ui.get::<LabelWithTooltipWidget>(id);
+        let tooltip = (truncated != text).then(|| text.to_string());
+        widget.label.get_text = Some(Rc::new(move || truncated.clone()));
+        widget.get_tooltip_text = tooltip.map(|t| -> Getter<String> { Rc::new(move || t.clone()) });
+    }
+}
+
+impl WidgetKind for LabelWithTooltipWidget {
+    impl_as_any!();
+
+    fn as_label(&mut self) -> Option<&mut LabelWidget> {
+        Some(&mut self.label)
+    }
+
+    fn set_field(&mut self, key: &str, value: &str) -> bool {
+        match key {
+            "TooltipTemplate" => self.tooltip_template = value.to_string(),
+            "TooltipContainer" => self.tooltip_container = Some(value.to_string()),
+            _ => return self.label.set_field(key, value),
+        }
+        true
+    }
+
+    fn draw(&mut self, ui: &mut Ui, id: WidgetId, dc: &mut DrawContext) {
+        self.label.draw(ui, id, dc);
+    }
+
+    fn ignores_mouse_over(&self) -> bool {
+        self.label.ignores_mouse_over()
+    }
+
+    fn cursor(&self, default: &str) -> Option<String> {
+        self.label.cursor(default)
+    }
+
+    fn mouse_entered(&mut self, ui: &mut Ui, _id: WidgetId) {
+        let Some(container) = self.tooltip_container.as_deref() else {
+            return;
+        };
+        if let Some(text) = &self.get_tooltip_text {
+            let container = ui.child(ui.root, container);
+            let args = WidgetArgs::default().with_value("getText", text.clone());
+            TooltipContainerWidget::set_tooltip(ui, container, &self.tooltip_template, args);
+        }
+    }
+
+    fn mouse_exited(&mut self, ui: &mut Ui, _id: WidgetId) {
+        if let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) {
+            TooltipContainerWidget::remove_tooltip(ui, container);
+        }
     }
 }
