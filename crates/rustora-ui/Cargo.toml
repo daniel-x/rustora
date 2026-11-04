@@ -1,0 +1,20 @@
+[package]
+name = "rustora-ui"
+description = "rustora user interface: chrome assets, fonts, messages and the widget tree loaded from chrome layouts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-fs = { path = "../rustora-fs" }
+rustora-game = { path = "../rustora-game" }
+rustora-render = { path = "../rustora-render" }
+indexmap = "2"
+png = "0.18"
+swash = "0.2"
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+
+[lints]
+workspace = true

@@ -10,6 +10,7 @@
 //! Tab cycles the shroud of each player and the full view, Escape quits.
 
 mod app;
+mod client;
 mod scene;
 mod sprites;
 
@@ -110,7 +111,26 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
     );
 }
 
+/// `rustora --ui-screenshot <engine-dir> <support-dir> <out.webp> <WxH> [X,Y clicks]`
+fn ui_screenshot(a: &[String]) {
+    let (w, h) = a[3].split_once('x').expect("WxH");
+    let size = (w.parse().expect("width"), h.parse().expect("height"));
+    let clicks: Vec<(i32, i32)> = a[4..]
+        .iter()
+        .map(|c| {
+            let (x, y) = c.split_once(',').expect("X,Y");
+            (x.parse().expect("x"), y.parse().expect("y"))
+        })
+        .collect();
+    client::screenshot(std::path::Path::new(&a[0]), &a[1], size, &clicks, &a[2]);
+}
+
 fn main() {
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some("--ui-screenshot") {
+        ui_screenshot(&raw[2..]);
+        return;
+    }
     let args = parse_args();
     let game = load_game(&args.engine, &args.support, &args.replay);
     match args.screenshot.clone() {

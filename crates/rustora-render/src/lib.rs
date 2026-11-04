@@ -9,6 +9,8 @@ use rustora_formats::palette::Palette;
 
 pub use wgpu;
 
+pub mod ui;
+
 const SHEET_SIZE: u32 = 2048;
 /// Number of palette rows of the palette texture.
 pub const MAX_PALETTES: u32 = 64;
@@ -103,6 +105,7 @@ struct Packer {
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    pub ui: ui::UiPass,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
@@ -213,7 +216,9 @@ impl Renderer {
         let palette_view = palette_texture.create_view(&Default::default());
         let vertex_capacity = 6 * 4096;
         let vertex_buffer = Self::create_vertex_buffer(&device, vertex_capacity);
+        let ui = ui::UiPass::new(&device, &queue, format);
         Renderer {
+            ui,
             device,
             queue,
             pipeline,
@@ -273,6 +278,21 @@ impl Renderer {
         });
         self.sheets.push(Sheet { texture, bind_group });
         self.packer = Packer { x: 0, y: 0, row_height: 0 };
+    }
+
+    /// Draws the user interface over the current content of `target`.
+    pub fn render_ui(&mut self, target: &wgpu::TextureView, size: (u32, u32), list: &ui::UiList) {
+        self.ui.render(&self.device, &self.queue, target, size, list);
+    }
+
+    /// Creates a user interface texture from premultiplied RGBA rows.
+    pub fn add_ui_texture(&mut self, width: u32, height: u32, rgba: &[u8], linear: bool) -> ui::UiTexture {
+        self.ui.add_texture(&self.device, &self.queue, width, height, rgba, linear)
+    }
+
+    /// Replaces a region of a user interface texture.
+    pub fn update_ui_texture(&mut self, texture: ui::UiTexture, x: u32, y: u32, width: u32, height: u32, rgba: &[u8]) {
+        self.ui.update_texture(&self.queue, texture, x, y, width, height, rgba);
     }
 
     /// Uploads an 8-bit indexed image of `w` x `h` pixels. A 1 px gap separates sprites.
@@ -444,7 +464,13 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
 
 /// Renders `quads` into an offscreen RGBA texture and reads it back as tightly packed RGBA rows.
 pub fn render_to_rgba(renderer: &mut Renderer, camera: Camera, quads: &[Quad]) -> Vec<u8> {
-    let (w, h) = (camera.width, camera.height);
+    render_offscreen(renderer, camera.width, camera.height, |renderer, view| {
+        renderer.render(view, camera, quads)
+    })
+}
+
+/// Runs `draw` on an offscreen RGBA texture of the given size and reads it back as tightly packed RGBA rows.
+pub fn render_offscreen(renderer: &mut Renderer, w: u32, h: u32, draw: impl FnOnce(&mut Renderer, &wgpu::TextureView)) -> Vec<u8> {
     let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("offscreen"),
         size: wgpu::Extent3d {
@@ -459,7 +485,7 @@ pub fn render_to_rgba(renderer: &mut Renderer, camera: Camera, quads: &[Quad]) -
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    renderer.render(&texture.create_view(&Default::default()), camera, quads);
+    draw(renderer, &texture.create_view(&Default::default()));
     let row = (4 * w).div_ceil(256) * 256;
     let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
