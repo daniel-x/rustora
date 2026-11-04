@@ -93,6 +93,10 @@ pub struct AircraftInfo {
     pub take_off_on_resupply: bool,
     pub take_off_on_creation: bool,
     pub can_force_land: bool,
+    pub cursor: String,
+    pub blocked_cursor: String,
+    pub enter_cursor: String,
+    pub enter_blocked_cursor: String,
     pub land_altitude: WDist,
     pub land_range: WDist,
     pub maximum_pitch: WAngle,
@@ -139,6 +143,10 @@ impl Default for AircraftInfo {
             take_off_on_resupply: false,
             take_off_on_creation: true,
             can_force_land: true,
+            cursor: "move".into(),
+            blocked_cursor: "move-blocked".into(),
+            enter_cursor: "enter".into(),
+            enter_blocked_cursor: "enter-blocked".into(),
             land_altitude: WDist::ZERO,
             land_range: WDist::from_cells(5),
             maximum_pitch: WAngle::from_degrees(10),
@@ -223,6 +231,7 @@ pub struct Aircraft {
 
 register_traits!(
     Aircraft: ITick,
+    crate::orders::IIssueOrder,
     ISync,
     IFacing,
     IOccupySpace,
@@ -545,6 +554,15 @@ impl Aircraft {
         r.dispose_reservation();
         *self.reserved_actor.borrow_mut() = None;
         self.may_yield_reservation.set(false);
+    }
+
+    /// `AircraftCanEnter`.
+    fn aircraft_can_enter(&self, self_: &ActorRef, a: &ActorRef) -> bool {
+        if util::appears_hostile_to(self_, a) {
+            return false;
+        }
+        self.rearmable().is_some_and(|r| r.info.rearm_actors.contains(&a.info.name))
+            || self.repairable().is_some_and(|r| r.info.repair_actors.contains(&a.info.name))
     }
 
     fn aircraft_can_resupply_at(&self, self_: &ActorRef, a: &ActorRef, allowed_to_force_enter: bool) -> bool {
@@ -2274,5 +2292,132 @@ impl Activity for ReturnToBase {
         }
         self.base.queue_child(Fly::new(self_, Target::from_actor(Some(&dest))));
         true
+    }
+}
+
+impl crate::orders::IIssueOrder for Aircraft {
+    fn orders(&self, self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        use crate::orders::{TargetModifiers, UnitOrderTargeter};
+        let info = &self.info;
+        let has_building = |t: &ActorRef| t.info.has_trait_info::<crate::building::BuildingInfo>();
+        let (a1, a2, a3, a4) = (self_.clone(), self_.clone(), self_.clone(), self_.clone());
+        let can_force_land = info.can_force_land;
+        let force_enter_allowed = !info.take_off_on_resupply;
+        let require_force_move = self.require_force_move();
+        vec![
+            Box::new(UnitOrderTargeter::enter_allied(
+                "ForceEnter",
+                6,
+                &info.enter_cursor,
+                &info.enter_blocked_cursor,
+                has_building,
+                Box::new(move |t, m| {
+                    can_force_land && m.has_modifier(TargetModifiers::FORCE_MOVE) && a1.trait_::<Aircraft>().aircraft_can_enter(&a1, t)
+                }),
+                Box::new(move |t| is_available_for(t, &a2) && a2.trait_::<Aircraft>().aircraft_can_resupply_at(&a2, t, true)),
+            )),
+            Box::new(UnitOrderTargeter::enter_allied(
+                "Enter",
+                5,
+                &info.enter_cursor,
+                &info.enter_blocked_cursor,
+                has_building,
+                Box::new(move |t, m| {
+                    (!require_force_move || m.has_modifier(TargetModifiers::FORCE_MOVE))
+                        && a3.trait_::<Aircraft>().aircraft_can_enter(&a3, t)
+                }),
+                Box::new(move |t| {
+                    is_available_for(t, &a4) && a4.trait_::<Aircraft>().aircraft_can_resupply_at(&a4, t, force_enter_allowed)
+                }),
+            )),
+            Box::new(AircraftMoveOrderTargeter {
+                aircraft: self_.trait_::<Aircraft>(),
+                land: Cell::new(false),
+                is_queued: Cell::new(false),
+            }),
+        ]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        let id = order.order_id();
+        (!self.is_trait_disabled() && matches!(id, "Enter" | "Move" | "Land" | "ForceEnter"))
+            .then(|| Order::new(id, Some(self_.clone()), target.clone(), queued))
+    }
+}
+
+/// `Aircraft.AircraftMoveOrderTargeter`.
+struct AircraftMoveOrderTargeter {
+    aircraft: Rc<Aircraft>,
+    land: Cell<bool>,
+    is_queued: Cell<bool>,
+}
+
+impl crate::orders::IOrderTargeter for AircraftMoveOrderTargeter {
+    fn order_id(&self) -> &str {
+        if self.land.get() { "Land" } else { "Move" }
+    }
+
+    fn order_priority(&self) -> i32 {
+        4
+    }
+
+    fn can_target(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        let aircraft = &self.aircraft;
+        let force_move = modifiers.has_modifier(TargetModifiers::FORCE_MOVE);
+        if target.target_type() != TargetType::Terrain || (aircraft.require_force_move() && !force_move) {
+            return false;
+        }
+        let world = self_.world();
+        let location = world.map().cell_containing(target.center_position());
+        if force_move && aircraft.info.can_force_land {
+            let building_at_location = world.actor_map().get_actors_at(location).iter().any(|a| {
+                a.trait_or_default::<crate::building::Building>().is_some()
+                    && a.trait_or_default::<crate::selection::Selectable>().is_some()
+            });
+            if !building_at_location || aircraft.can_land(location, None, false) {
+                self.land.set(true);
+            }
+        }
+        self.is_queued.set(modifiers.has_modifier(TargetModifiers::FORCE_QUEUE));
+        let explored = self_.owner().shroud().is_explored(location);
+        let ok = !aircraft.is_trait_paused() && (explored || aircraft.info.move_into_shroud) && world.map().contains(location);
+        *cursor = Some(if ok {
+            aircraft.info.cursor.clone()
+        } else {
+            aircraft.info.blocked_cursor.clone()
+        });
+        true
+    }
+
+    fn is_queued(&self) -> bool {
+        self.is_queued.get()
+    }
+
+    fn target_overrides_selection(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        _actors_at: &[ActorRef],
+        _xy: CPos,
+        modifiers: crate::orders::TargetModifiers,
+    ) -> bool {
+        if let Some(a) = target.actor().filter(|_| target.target_type() == TargetType::Actor) {
+            let selected = crate::selection::Selection::of(&self_.world()).is_some_and(|s| s.contains(a));
+            if !Rc::ptr_eq(&a.owner(), &self_.owner()) || selected {
+                return true;
+            }
+        }
+        modifiers.has_modifier(crate::orders::TargetModifiers::FORCE_MOVE)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

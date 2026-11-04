@@ -57,6 +57,8 @@ pub struct CargoInfo {
     pub loading_condition: Option<String>,
     pub loaded_condition: Option<String>,
     pub passenger_conditions: IndexMap<String, String>,
+    pub unload_cursor: String,
+    pub unload_blocked_cursor: String,
 }
 
 impl Default for CargoInfo {
@@ -78,6 +80,8 @@ impl Default for CargoInfo {
             loading_condition: None,
             loaded_condition: None,
             passenger_conditions: IndexMap::new(),
+            unload_cursor: "deploy".into(),
+            unload_blocked_cursor: "deploy-blocked".into(),
         }
     }
 }
@@ -138,6 +142,7 @@ pub struct Cargo {
 
 register_traits!(
     Cargo: IResolveOrder,
+    crate::orders::IIssueOrder,
     INotifyOwnerChanged,
     INotifySold,
     INotifyActorDisposing,
@@ -540,6 +545,8 @@ pub struct PassengerInfo {
     pub cargo_condition: Option<String>,
     pub cargo_conditions: IndexMap<String, String>,
     pub require_force_move_condition: Option<BooleanExpression>,
+    pub enter_cursor: String,
+    pub enter_blocked_cursor: String,
 }
 
 impl Default for PassengerInfo {
@@ -551,6 +558,8 @@ impl Default for PassengerInfo {
             cargo_condition: None,
             cargo_conditions: IndexMap::new(),
             require_force_move_condition: None,
+            enter_cursor: "enter".into(),
+            enter_blocked_cursor: "enter-blocked".into(),
         }
     }
 }
@@ -564,7 +573,7 @@ pub struct Passenger {
     reserved_cargo: RefCell<Option<Rc<Cargo>>>,
 }
 
-register_traits!(Passenger: IResolveOrder, INotifyRemovedFromWorld, INotifyEnteredCargo, INotifyExitedCargo, INotifyKilled, IObservesVariables);
+register_traits!(Passenger: IResolveOrder, crate::orders::IIssueOrder, INotifyRemovedFromWorld, INotifyEnteredCargo, INotifyExitedCargo, INotifyKilled, IObservesVariables);
 info_impl!(PassengerInfo => |info, _init| Some(Rc::new(Passenger {
     info,
     transport: RefCell::new(None),
@@ -1166,5 +1175,58 @@ impl Activity for UnloadCargo {
 
     fn get_targets(&self, _self_: &ActorRef) -> Vec<Target> {
         vec![self.destination.borrow().clone()]
+    }
+}
+
+impl crate::orders::IIssueOrder for Cargo {
+    /// The cursor is chosen when the targeter is made instead of when it targets; nothing changes in between.
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.is_trait_disabled() {
+            return Vec::new();
+        }
+        let cursor = if self.can_unload(BlockedByActor::None) {
+            &self.info.unload_cursor
+        } else {
+            &self.info.unload_blocked_cursor
+        }
+        .clone();
+        vec![Box::new(crate::orders::DeployOrderTargeter::new(
+            "Unload",
+            10,
+            Box::new(move || cursor.clone()),
+        ))]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, _target: &Target, queued: bool) -> Option<Order> {
+        (order.order_id() == "Unload").then(|| Order::new("Unload", Some(self_.clone()), Target::Invalid, queued))
+    }
+}
+
+impl crate::orders::IIssueOrder for Passenger {
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        let require_force_move = self.require_force_move.get();
+        let (cargo_type, weight) = (self.info.cargo_type.clone(), self.info.weight);
+        vec![Box::new(crate::orders::UnitOrderTargeter::enter_allied(
+            "EnterTransport",
+            5,
+            &self.info.enter_cursor,
+            &self.info.enter_blocked_cursor,
+            |t| t.info.has_trait_info::<CargoInfo>(),
+            Box::new(move |t, modifiers| {
+                if require_force_move && !modifiers.has_modifier(crate::orders::TargetModifiers::FORCE_MOVE) {
+                    return false;
+                }
+                let cargo = t.trait_::<Cargo>();
+                !cargo.is_trait_disabled() && cargo_type.as_ref().is_some_and(|c| cargo.info.types.contains(c))
+            }),
+            Box::new(move |t| {
+                t.trait_or_default::<Cargo>()
+                    .is_some_and(|c| !c.is_trait_disabled() && c.has_space(weight))
+            }),
+        ))]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        (order.order_id() == "EnterTransport").then(|| Order::new("EnterTransport", Some(self_.clone()), target.clone(), queued))
     }
 }

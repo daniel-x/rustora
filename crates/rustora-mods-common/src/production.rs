@@ -1726,7 +1726,7 @@ impl ITechTreeElement for GrantConditionOnPrerequisiteManager {
     fn prerequisites_item_visible(&self, _key: &str) {}
 }
 
-#[derive(Clone, Debug, Default, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad)]
 pub struct PrimaryBuildingInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
@@ -1734,6 +1734,19 @@ pub struct PrimaryBuildingInfo {
     pub base: ConditionalTraitInfo,
     pub primary_condition: Option<String>,
     pub production_queues: Vec<String>,
+    pub cursor: String,
+}
+
+impl Default for PrimaryBuildingInfo {
+    fn default() -> Self {
+        PrimaryBuildingInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            primary_condition: None,
+            production_queues: Vec::new(),
+            cursor: "deploy".into(),
+        }
+    }
 }
 
 pub struct PrimaryBuilding {
@@ -1743,7 +1756,25 @@ pub struct PrimaryBuilding {
     is_primary: Cell<bool>,
 }
 
-register_traits!(PrimaryBuilding: IResolveOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(PrimaryBuilding: IResolveOrder, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+
+impl crate::orders::IIssueOrder for PrimaryBuilding {
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.state.is_trait_disabled() {
+            return Vec::new();
+        }
+        let cursor = self.info.cursor.clone();
+        vec![Box::new(crate::orders::DeployOrderTargeter::new(
+            "PrimaryProducer",
+            1,
+            Box::new(move || cursor.clone()),
+        ))]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, _target: &Target, _queued: bool) -> Option<Order> {
+        (order.order_id() == "PrimaryProducer").then(|| Order::new("PrimaryProducer", Some(self_.clone()), Target::Invalid, false))
+    }
+}
 info_impl!(PrimaryBuildingInfo => |info, _| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new(PrimaryBuilding { info, state, token: Cell::new(INVALID_CONDITION_TOKEN), is_primary: Cell::new(false) }))

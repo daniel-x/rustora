@@ -172,6 +172,36 @@ impl UnitOrderTargeter {
     }
 }
 
+impl UnitOrderTargeter {
+    /// `EnterAlliedActorTargeter<T>`, where `has_info` checks for the `T` trait info on the target.
+    pub fn enter_allied(
+        order_id: &str,
+        order_priority: i32,
+        enter_cursor: &str,
+        enter_blocked_cursor: &str,
+        has_info: fn(&ActorRef) -> bool,
+        can_target: Box<dyn Fn(&ActorRef, TargetModifiers) -> bool>,
+        use_enter_cursor: Box<dyn Fn(&ActorRef) -> bool>,
+    ) -> UnitOrderTargeter {
+        let (enter, blocked) = (enter_cursor.to_string(), enter_blocked_cursor.to_string());
+        UnitOrderTargeter::new(
+            order_id,
+            order_priority,
+            enter_cursor,
+            false,
+            true,
+            Box::new(move |self_, target, modifiers, cursor| {
+                if !self_.owner().is_allied_with(Some(&target.owner())) || !has_info(target) || !can_target(target, modifiers) {
+                    return false;
+                }
+                *cursor = Some(if use_enter_cursor(target) { enter.clone() } else { blocked.clone() });
+                true
+            }),
+            Box::new(|_, _, _, _| false),
+        )
+    }
+}
+
 impl IOrderTargeter for UnitOrderTargeter {
     fn order_id(&self) -> &str {
         &self.order_id

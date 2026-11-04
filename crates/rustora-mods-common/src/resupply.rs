@@ -249,6 +249,8 @@ pub struct RepairableInfo {
     pub repair_actors: IndexSet<String>,
     pub hp_per_step: i32,
     pub require_force_move_condition: Option<BooleanExpression>,
+    pub enter_cursor: String,
+    pub enter_blocked_cursor: String,
 }
 
 impl Default for RepairableInfo {
@@ -258,6 +260,8 @@ impl Default for RepairableInfo {
             repair_actors: IndexSet::new(),
             hp_per_step: -1,
             require_force_move_condition: None,
+            enter_cursor: "enter".into(),
+            enter_blocked_cursor: "enter-blocked".into(),
         }
     }
 }
@@ -269,7 +273,7 @@ pub struct Repairable {
     is_aircraft: Cell<bool>,
 }
 
-register_traits!(Repairable: IResolveOrder, INotifyCreated, IObservesVariables);
+register_traits!(Repairable: IResolveOrder, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables);
 info_impl!(RepairableInfo => |info, _init| Some(Rc::new(Repairable {
     info,
     rearmable: OnceCell::new(),
@@ -287,6 +291,36 @@ impl INotifyCreated for Repairable {
 impl IObservesVariables for Repairable {
     fn get_variable_observers(self: Rc<Self>) -> Vec<VariableObserver> {
         force_move_observer(&self, &self.info.require_force_move_condition, |s| &s.require_force_move)
+    }
+}
+
+impl crate::orders::IIssueOrder for Repairable {
+    fn orders(&self, self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.is_aircraft.get() {
+            return Vec::new();
+        }
+        let require_force_move = self.require_force_move.get();
+        let repair_actors = self.info.repair_actors.clone();
+        let damaged = self_
+            .trait_or_default::<dyn IHealth>()
+            .is_some_and(|h| h.damage_state().0 > DamageState::UNDAMAGED.0);
+        let use_enter = damaged || self.can_rearm();
+        vec![Box::new(crate::orders::UnitOrderTargeter::enter_allied(
+            "Repair",
+            5,
+            &self.info.enter_cursor,
+            &self.info.enter_blocked_cursor,
+            |t| t.info.has_trait_info::<crate::building::BuildingInfo>(),
+            Box::new(move |t, modifiers| {
+                (!require_force_move || modifiers.has_modifier(crate::orders::TargetModifiers::FORCE_MOVE))
+                    && repair_actors.contains(&t.info.name)
+            }),
+            Box::new(move |_| use_enter),
+        ))]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        (order.order_id() == "Repair").then(|| Order::new("Repair", Some(self_.clone()), target.clone(), queued))
     }
 }
 
