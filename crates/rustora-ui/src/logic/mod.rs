@@ -28,6 +28,7 @@ pub mod lobby_utils;
 pub mod main_menu;
 pub mod map_chooser;
 pub mod map_preview;
+pub mod sidebar;
 
 /// The application state that logic classes read.
 pub struct Services {
@@ -234,6 +235,10 @@ pub fn create(
 ) -> Option<Rc<RefCell<dyn ChromeLogic>>> {
     Some(match name {
         "MainMenuLogic" => main_menu::create(ui, id, args),
+        "AddFactionSuffixLogic" => sidebar::add_faction_suffix(ui, id),
+        "ClassicProductionLogic" => sidebar::classic_production(ui, id),
+        "IngameCashCounterLogic" => sidebar::cash_counter(ui, id),
+        "IngamePowerCounterLogic" => sidebar::power_counter(ui, id),
         "VersionLabelLogic" => {
             let version = services(ui).mod_version.clone();
             ui.get::<LabelWidget>(id).get_text = Some(Rc::new(move || version.clone()));

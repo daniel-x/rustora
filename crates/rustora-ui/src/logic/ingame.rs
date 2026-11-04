@@ -17,6 +17,7 @@ use crate::orders::{OrderContext, OrderGenerator, UnitOrderGenerator};
 use crate::screen_map::ScreenMap;
 use crate::viewport::Viewport;
 use crate::widget::{ChromeLogic, Ui, WidgetArgs, WidgetId};
+use crate::world_sprites::WorldSprites;
 
 /// What in-game widgets read in place of the `World` and `WorldRenderer` arguments of C#.
 pub struct Ingame {
@@ -28,7 +29,9 @@ pub struct Ingame {
     pub render_player: Option<PlayerRef>,
     pub screen_map: RefCell<ScreenMap>,
     pub selection: Rc<Selection>,
+    pub world_sprites: Rc<dyn WorldSprites>,
     order_generator: RefCell<Rc<dyn OrderGenerator>>,
+    world_default_cursor: String,
     default_order_generator: Rc<dyn OrderGenerator>,
 }
 
@@ -39,13 +42,14 @@ impl Ingame {
         world: Rc<World>,
         viewport: Rc<RefCell<Viewport>>,
         local_player: Option<PlayerRef>,
+        world_sprites: Rc<dyn WorldSprites>,
         world_select_cursor: String,
         world_default_cursor: String,
     ) -> Ingame {
         let selection = Selection::of(&world).unwrap_or_default();
         let default_order_generator: Rc<dyn OrderGenerator> = Rc::new(UnitOrderGenerator {
             world_select_cursor,
-            world_default_cursor,
+            world_default_cursor: world_default_cursor.clone(),
         });
         Ingame {
             world,
@@ -54,7 +58,9 @@ impl Ingame {
             local_player,
             screen_map: RefCell::default(),
             selection,
+            world_sprites,
             order_generator: RefCell::new(default_order_generator.clone()),
+            world_default_cursor,
             default_order_generator,
         }
     }
@@ -78,6 +84,7 @@ impl Ingame {
     /// Runs `f` with the state that order generators read.
     pub fn with_order_context<R>(&self, settings: &Settings, f: impl FnOnce(&OrderContext) -> R) -> R {
         let screen_map = self.screen_map.borrow();
+        let cancel = || self.cancel_input_mode();
         let ctx = OrderContext {
             world: &self.world,
             screen_map: &screen_map,
@@ -86,6 +93,8 @@ impl Ingame {
             render_player: self.render_player.as_ref(),
             use_classic_mouse_style: settings.game.use_classic_mouse_style,
             selection_deadzone: settings.game.selection_deadzone,
+            world_default_cursor: self.world_default_cursor.clone(),
+            cancel_input_mode: &cancel,
         };
         f(&ctx)
     }

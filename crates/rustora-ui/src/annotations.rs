@@ -78,6 +78,11 @@ fn health_bar(dc: &mut DrawContext, health: &dyn IHealth, start: (f32, f32), end
 
 /// Draws the selection boxes and health bars of all actors in the screen map, in screen pixels.
 pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings) {
+    {
+        let viewport = ingame.viewport.borrow();
+        let generator = ingame.order_generator();
+        ingame.with_order_context(settings, |ctx| generator.draw(ctx, dc, &viewport));
+    }
     let screen_map = ingame.screen_map.borrow();
     let viewport = ingame.viewport.borrow();
     let sel = SelectionContext {

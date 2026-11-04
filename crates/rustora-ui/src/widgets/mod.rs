@@ -20,6 +20,7 @@ mod dropdown;
 mod image;
 mod label;
 mod map_preview;
+pub mod production;
 mod scroll_item;
 mod scroll_panel;
 mod slider;
@@ -52,7 +53,10 @@ pub fn container() -> Rc<RefCell<dyn WidgetKind>> {
 /// Port of `ObjectCreator.CreateObject<Widget>`.
 pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetKind>>> {
     Some(match type_name {
-        "Container" | "LogicKeyListener" | "LogicTicker" => container(),
+        "Container" | "LogicKeyListener" => container(),
+        "LogicTicker" => cell(production::LogicTickerWidget::default()),
+        "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
+        "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
         "Label" | "LabelForInput" => cell(LabelWidget::new(assets)),
         "ColorBlock" => cell(ColorBlockWidget::default()),

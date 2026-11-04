@@ -308,6 +308,7 @@ impl Client {
             shell.world.clone(),
             shell.viewport.clone(),
             shell.viewer.clone(),
+            Rc::new(crate::ui_sprites::UiSprites::new(&shell.world, shell.read_file.clone())),
             select_cursor,
             default_cursor,
         ));

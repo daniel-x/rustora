@@ -186,6 +186,8 @@ pub struct Widget {
     /// Present on a scroll panel.
     pub list: Option<ListState>,
     pub event_bounds: EventBounds,
+    /// Replaces the render bounds in `EventBoundsContains`, for widgets that override `EventBounds` in C#.
+    pub event_rect: Option<Rect>,
     kind: Rc<RefCell<dyn WidgetKind>>,
 }
 
@@ -348,6 +350,7 @@ impl Ui {
             child_offset: (0, 0),
             list: None,
             event_bounds,
+            event_rect: None,
             kind,
         };
         match self.free.pop() {
@@ -549,7 +552,7 @@ impl Ui {
         if mode == EventBounds::Never {
             return false;
         }
-        if self.render_bounds(id).contains(x, y) {
+        if self.node(id).event_rect.unwrap_or_else(|| self.render_bounds(id)).contains(x, y) {
             return true;
         }
         if mode == EventBounds::Own {

@@ -147,6 +147,17 @@ impl WidgetKind for WorldInteractionControllerWidget {
         self.ingame = services(ui).ingame.borrow().clone();
     }
 
+    /// Also ticks the order generator, which `World.Tick` does in C#.
+    fn tick(&mut self, ui: &mut Ui, _id: WidgetId) {
+        let Some(ingame) = self.ingame.clone() else {
+            return;
+        };
+        let settings = services(ui).settings.clone();
+        let settings = settings.borrow();
+        let generator = ingame.order_generator();
+        ingame.with_order_context(&settings, |ctx| generator.tick(ctx));
+    }
+
     fn draw(&mut self, ui: &mut Ui, _id: WidgetId, dc: &mut DrawContext) {
         let Some(ingame) = self.ingame.clone() else {
             return;

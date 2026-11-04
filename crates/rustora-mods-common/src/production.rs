@@ -682,6 +682,18 @@ pub struct ProductionItem {
 }
 
 impl ProductionItem {
+    /// `RemainingTimeActual`: the remaining time slowed down by low power.
+    pub fn remaining_time_actual(&self) -> i32 {
+        let remaining = self.remaining_time.get();
+        match &self.pm {
+            Some(pm) if pm.power_state() != crate::base::PowerState::Normal => {
+                let queue = self.queue.upgrade().expect("queue alive");
+                remaining * queue.info.low_power_modifier / 100
+            }
+            _ => remaining,
+        }
+    }
+
     fn new(queue: &ProductionQueue, item: &str, cost: i32, pm: Option<Rc<PowerManager>>, on_complete: Rc<dyn Fn()>) -> Rc<ProductionItem> {
         let ai = queue.actor.world().rules().actor(item).expect("item actor");
         let bi = ai.trait_info::<BuildableInfo>().expect("Buildable");
@@ -998,6 +1010,56 @@ impl ProductionQueue {
             );
             tt.add(name, bi.prerequisites.clone(), bi.build_limit, me.clone());
         }
+    }
+
+    /// `AnyItemsToBuild`.
+    pub fn any_items_to_build(&self) -> bool {
+        let traits = self.production_traits.borrow();
+        let producible = self.producible.borrow();
+        self.enabled.get()
+            && (traits.is_empty() || traits.iter().any(|p| !p.is_trait_disabled()))
+            && ((self.developer_mode().all_tech() && !producible.is_empty()) || producible.values().any(|s| s.buildable.get()))
+    }
+
+    /// `IsProducing`.
+    pub fn is_producing(&self, item: &Rc<ProductionItem>) -> bool {
+        self.queue.borrow().first().is_some_and(|f| Rc::ptr_eq(f, item))
+    }
+
+    /// `CanQueue` without the notifications.
+    pub fn can_queue(&self, actor: &ActorInfo) -> bool {
+        let Some(bi) = actor.trait_info::<BuildableInfo>() else {
+            return false;
+        };
+        if self.developer_mode().all_tech() {
+            return true;
+        }
+        let cost = actor.trait_info::<ValuedInfo>().map_or(0, |v| v.cost);
+        if self.info.pay_up_front && cost > self.player_resources().get_cash_and_resources() {
+            return false;
+        }
+        let queue = self.queue.borrow();
+        if self.info.queue_limit > 0 && queue.len() as i32 >= self.info.queue_limit {
+            return false;
+        }
+        let queue_count = queue.iter().filter(|i| i.item == actor.name).count() as i32;
+        if self.info.item_limit > 0 && queue_count >= self.info.item_limit {
+            return false;
+        }
+        if bi.build_limit > 0 {
+            let owner = self.actor.owner();
+            let owned = self
+                .actor
+                .world()
+                .actors_having_trait::<Buildable>()
+                .iter()
+                .filter(|a| a.info.name == actor.name && Rc::ptr_eq(&a.owner(), &owner))
+                .count() as i32;
+            if queue_count + owned >= bi.build_limit {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn is_in_queue(&self, actor: &str) -> bool {

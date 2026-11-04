@@ -16,6 +16,7 @@ mod client;
 mod net;
 mod scene;
 mod sprites;
+mod ui_sprites;
 mod window;
 
 use std::path::PathBuf;

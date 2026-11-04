@@ -28,9 +28,17 @@ pub struct OrderContext<'a> {
     pub render_player: Option<&'a PlayerRef>,
     pub use_classic_mouse_style: bool,
     pub selection_deadzone: i32,
+    /// `ChromeMetrics` `WorldDefaultCursor`.
+    pub world_default_cursor: String,
+    /// `World.CancelInputMode`.
+    pub cancel_input_mode: &'a dyn Fn(),
 }
 
 impl<'a> OrderContext<'a> {
+    pub fn cancel_input_mode(&self) {
+        (self.cancel_input_mode)();
+    }
+
     pub fn selection_context(&self) -> SelectionContext<'a> {
         SelectionContext {
             world: self.world,
@@ -61,6 +69,8 @@ pub trait OrderGenerator {
         false
     }
     fn selection_changed(&self, _ctx: &OrderContext) {}
+    /// `Render`, `RenderAboveShroud` and `RenderAnnotations`, drawn in screen pixels over the world.
+    fn draw(&self, _ctx: &OrderContext, _dc: &mut crate::draw::DrawContext, _viewport: &crate::viewport::Viewport) {}
     /// `this is UnitOrderGenerator`.
     fn as_unit_order_generator(&self) -> Option<&UnitOrderGenerator> {
         None

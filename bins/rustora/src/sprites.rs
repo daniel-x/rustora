@@ -18,6 +18,8 @@ use rustora_render::{Renderer, SpriteRect};
 pub struct Sprite {
     pub rect: SpriteRect,
     pub offset: [f32; 3],
+    /// The index of the file in [`SpriteCache::file_name`] and the frame in it.
+    pub source: (u32, u32),
 }
 
 /// Facing lookup of `ClassicSpriteSequence` for 32 facings (`Mods.Cnc/Util.cs` `SpriteRanges`).
@@ -151,6 +153,7 @@ pub struct SpriteCache {
     read_file: ReadFile,
     tileset: String,
     files: HashMap<String, Rc<Vec<Option<Sprite>>>>,
+    file_names: Vec<String>,
     sequences: HashMap<(String, String), Option<Rc<ResolvedSequence>>>,
 }
 
@@ -160,6 +163,7 @@ impl SpriteCache {
             read_file,
             tileset: tileset.to_string(),
             files: HashMap::new(),
+            file_names: Vec::new(),
             sequences: HashMap::new(),
         }
     }
@@ -175,18 +179,30 @@ impl SpriteCache {
                 eprintln!("cannot load sprite file {filename}");
                 Vec::new()
             });
+        let file_id = self.file_names.len() as u32;
+        self.file_names.push(filename.to_string());
         let sprites: Vec<Option<Sprite>> = frames
             .iter()
-            .map(|f| {
+            .enumerate()
+            .map(|(i, f)| {
                 (f.width > 0 && f.height > 0).then(|| Sprite {
                     rect: renderer.add_sprite(f.width as u32, f.height as u32, &f.data),
                     offset: [f.offset.0, f.offset.1, 0.0],
+                    source: (file_id, i as u32),
                 })
             })
             .collect();
         let sprites = Rc::new(sprites);
         self.files.insert(filename.to_string(), sprites.clone());
         sprites
+    }
+
+    pub fn file_name(&self, id: u32) -> &str {
+        &self.file_names[id as usize]
+    }
+
+    pub fn read_file(&self) -> &ReadFile {
+        &self.read_file
     }
 
     pub fn sequence(&mut self, renderer: &mut Renderer, seq: &Sequence) -> Option<Rc<ResolvedSequence>> {
@@ -270,6 +286,7 @@ impl SpriteCache {
                 s.map(|s| Sprite {
                     rect: s.rect,
                     offset: [s.offset[0] + r.offset[0], s.offset[1] + r.offset[1], s.offset[2] + r.offset[2]],
+                    source: s.source,
                 })
             };
             match &r.frames {
