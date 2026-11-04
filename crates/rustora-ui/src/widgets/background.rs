@@ -7,6 +7,7 @@ use crate::input::MouseInput;
 use crate::widget::{Ui, WidgetId, WidgetKind};
 
 /// Port of `BackgroundWidget`.
+#[derive(Clone)]
 pub struct BackgroundWidget {
     pub click_through: bool,
     pub background: String,

@@ -7,6 +7,7 @@ use crate::input::MouseInput;
 use crate::widget::{Getter, Ui, WidgetId, WidgetKind};
 
 /// Port of `ImageWidget`.
+#[derive(Clone)]
 pub struct ImageWidget {
     pub image_collection: String,
     pub image_name: String,

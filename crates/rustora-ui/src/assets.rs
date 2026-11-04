@@ -55,4 +55,49 @@ impl Assets {
             glyphs: GlyphSheet::default(),
         })
     }
+
+    /// Port of `SpriteFont.Measure`.
+    pub fn measure(&mut self, font: &str, text: &str) -> (i32, i32) {
+        self.fonts.get_mut(font).map_or((0, 0), |f| f.measure(text))
+    }
+
+    /// Port of `WidgetUtils.WrapText`.
+    pub fn wrap_text(&mut self, font: &str, text: &str, width: i32) -> String {
+        if self.measure(font, text).0 <= width {
+            return text.to_string();
+        }
+        let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].clone();
+            if self.measure(font, &line).0 > width {
+                let mut start = 0;
+                while let Some(space) = line[start..].find(' ').map(|p| p + start) {
+                    if self.measure(font, &line[..space]).0 > width {
+                        break;
+                    }
+                    start = space + 1;
+                }
+                if start > 0 {
+                    lines[i] = line[..start - 1].to_string();
+                    lines.insert(i + 1, line[start..].to_string());
+                }
+            }
+            i += 1;
+        }
+        lines.join("\n")
+    }
+
+    /// Assets without any chrome or font, for tests of widget behavior.
+    pub fn empty(fs: Rc<dyn ReadFs>) -> Assets {
+        let messages = Messages::new(&[], &*fs);
+        Assets {
+            fs,
+            chrome: Chrome::new(&[]),
+            metrics: Metrics::new(&[]),
+            messages,
+            fonts: HashMap::new(),
+            glyphs: GlyphSheet::default(),
+        }
+    }
 }

@@ -8,12 +8,13 @@ use std::any::Any;
 use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Instant;
 
 use rustora_core::expression::IntegerExpression;
 
 use crate::assets::Assets;
 use crate::draw::{DrawContext, Rect};
-use crate::input::{KeyInput, MouseEvent, MouseInput};
+use crate::input::{KeyInput, MouseButton, MouseEvent, MouseInput};
 use crate::loader::WidgetLoader;
 
 /// Index of a widget in the arena.
@@ -21,10 +22,78 @@ pub type WidgetId = usize;
 
 pub type Action = Rc<dyn Fn(&mut Ui)>;
 pub type Getter<T> = Rc<dyn Fn() -> T>;
+pub type KeyCallback = Rc<dyn Fn(&mut Ui, &KeyInput) -> bool>;
+
+/// Port of the overrides of `EventBoundsContains`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EventBounds {
+    WithChildren,
+    Own,
+    Never,
+}
+
+/// The access to the system clipboard.
+pub trait Clipboard {
+    fn get(&self) -> String;
+    fn set(&self, text: &str);
+}
+
+/// A clipboard inside the process, for tests and systems without a clipboard.
+#[derive(Default)]
+pub struct LocalClipboard(RefCell<String>);
+
+impl Clipboard for LocalClipboard {
+    fn get(&self) -> String {
+        self.0.borrow().clone()
+    }
+
+    fn set(&self, text: &str) {
+        *self.0.borrow_mut() = text.to_string();
+    }
+}
+
+/// The list layout and scroll position of a `ScrollPanelWidget`, kept in the tree so that adding a child and scrolling
+/// work while the kind of the panel is borrowed.
+#[derive(Clone, Default)]
+pub struct ListState {
+    pub content_height: i32,
+    pub top_bottom_spacing: i32,
+    pub item_spacing: i32,
+    pub collapse_hidden_children: bool,
+    pub origin_x: i32,
+    pub target_offset: f32,
+    pub current_offset: f32,
+    pub last_smooth_scroll_time: i64,
+    pub align_bottom: bool,
+}
 
 /// The per type part of a widget.
 pub trait WidgetKind: Any {
     fn as_any(&mut self) -> &mut dyn Any;
+
+    /// Port of `Clone`: copies the type specific part.
+    fn clone_kind(&self) -> Rc<RefCell<dyn WidgetKind>>;
+
+    /// Returns the button part of this widget if it derives from `ButtonWidget` in C#.
+    fn as_button(&mut self) -> Option<&mut crate::widgets::ButtonWidget> {
+        None
+    }
+
+    /// Returns the callback of the key, which runs before `handle_key` with the kind not borrowed.
+    fn key_callback(&mut self, _ui: &Ui, _id: WidgetId, _e: &KeyInput) -> Option<KeyCallback> {
+        None
+    }
+
+    /// Port of `Hidden`.
+    fn hidden(&mut self, _ui: &mut Ui, _id: WidgetId) {}
+
+    /// Port of `Removed`.
+    fn removed(&mut self, _ui: &mut Ui, _id: WidgetId) {}
+
+    /// Port of `EventBoundsContains`.
+    fn event_bounds(&self) -> EventBounds {
+        EventBounds::WithChildren
+    }
 
     /// Loads one YAML field, returns false if the type has no such field.
     fn set_field(&mut self, _key: &str, _value: &str) -> bool {
@@ -104,6 +173,9 @@ pub struct Widget {
     /// The offset of the children relative to the origin of this widget, kept here so that children can read it
     /// while the kind of this widget is borrowed.
     pub child_offset: (i32, i32),
+    /// Present on a scroll panel.
+    pub list: Option<ListState>,
+    pub event_bounds: EventBounds,
     kind: Rc<RefCell<dyn WidgetKind>>,
 }
 
@@ -160,17 +232,32 @@ pub struct Ui {
     pub mouse_over: Option<WidgetId>,
     pub requests: Vec<AppRequest>,
     pub services: Rc<dyn Any>,
+    pub clipboard: Rc<dyn Clipboard>,
+    /// `Viewport.LastMousePos`.
+    pub last_mouse: (i32, i32),
+    /// `Viewport.LastMoveRunTime`.
+    pub last_move_time: i64,
+    /// `Game.Settings.Game.UIScrollSpeed`.
+    pub ui_scroll_speed: f32,
+    start: Instant,
+    deferred: Vec<Action>,
+    reset_tooltips_pending: bool,
     window_list: Vec<WidgetId>,
     nodes: Vec<Option<Widget>>,
     free: Vec<WidgetId>,
     run_after_tick: Vec<Action>,
 }
 
+#[derive(Clone)]
 struct Container;
 
 impl WidgetKind for Container {
     fn as_any(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn clone_kind(&self) -> Rc<RefCell<dyn WidgetKind>> {
+        Rc::new(RefCell::new(self.clone()))
     }
 
     fn ignores_mouse_over(&self) -> bool {
@@ -190,6 +277,13 @@ impl Ui {
             mouse_over: None,
             requests: Vec::new(),
             services,
+            clipboard: Rc::new(LocalClipboard::default()),
+            last_mouse: (0, 0),
+            last_move_time: 0,
+            ui_scroll_speed: 50.0,
+            start: Instant::now(),
+            deferred: Vec::new(),
+            reset_tooltips_pending: false,
             window_list: Vec::new(),
             nodes: Vec::new(),
             free: Vec::new(),
@@ -202,6 +296,7 @@ impl Ui {
     }
 
     pub fn alloc(&mut self, kind: Rc<RefCell<dyn WidgetKind>>) -> WidgetId {
+        let event_bounds = kind.borrow().event_bounds();
         let widget = Widget {
             id: None,
             x: None,
@@ -218,6 +313,8 @@ impl Ui {
             is_visible: None,
             logic_objects: Vec::new(),
             child_offset: (0, 0),
+            list: None,
+            event_bounds,
             kind,
         };
         match self.free.pop() {
@@ -254,6 +351,99 @@ impl Ui {
         RefMut::map(cell.borrow_mut(), |k| {
             k.as_any().downcast_mut::<T>().expect("widget of the requested type")
         })
+    }
+
+    /// `Get<ButtonWidget>`: also finds the types that derive from it in C#.
+    pub fn button(&self, id: WidgetId) -> RefMut<'_, crate::widgets::ButtonWidget> {
+        RefMut::map(self.node(id).kind.borrow_mut(), |k| k.as_button().expect("a button widget"))
+    }
+
+    /// `Game.RunTime`, in milliseconds.
+    pub fn run_time(&self) -> i64 {
+        self.start.elapsed().as_millis() as i64
+    }
+
+    /// Queues an action until the current widget method returned, because the action may use that widget.
+    pub fn defer(&mut self, action: impl Fn(&mut Ui) + 'static) {
+        self.deferred.push(Rc::new(action));
+    }
+
+    fn run_deferred(&mut self) {
+        for action in std::mem::take(&mut self.deferred) {
+            action(self);
+        }
+    }
+
+    /// Port of `Ui.ResetTooltips`. The move event runs after the current widget method.
+    pub fn reset_tooltips(&mut self) {
+        self.reset_tooltips_pending = true;
+    }
+
+    fn run_pending_reset(&mut self) {
+        if std::mem::take(&mut self.reset_tooltips_pending) {
+            let (x, y) = self.last_mouse;
+            self.handle_input(&MouseInput {
+                event: MouseEvent::Move,
+                button: MouseButton::None,
+                x,
+                y,
+                scroll_delta: 0,
+                modifiers: Default::default(),
+                multi_tap: 0,
+            });
+        }
+    }
+
+    /// Port of `SpriteFont.Measure` for code outside of drawing.
+    pub fn measure(&self, font: &str, text: &str) -> (i32, i32) {
+        self.assets.borrow_mut().measure(font, text)
+    }
+
+    /// Port of `Clone`: copies the widget and its children, without the logic objects.
+    pub fn clone_widget(&mut self, id: WidgetId) -> WidgetId {
+        let kind = self.node(id).kind.borrow().clone_kind();
+        let copy = self.alloc(kind);
+        let source = self.node(id);
+        let fields = (
+            source.id.clone(),
+            source.x.clone(),
+            source.y.clone(),
+            source.width.clone(),
+            source.height.clone(),
+            source.logic.clone(),
+            source.is_visible.clone(),
+            source.list.clone(),
+        );
+        let (visible, ignore_over, ignore_child_over, bounds, offset) = (
+            source.visible,
+            source.ignore_mouse_over,
+            source.ignore_child_mouse_over,
+            source.bounds,
+            source.child_offset,
+        );
+        let children = source.children.clone();
+        let target = self.node_mut(copy);
+        (
+            target.id,
+            target.x,
+            target.y,
+            target.width,
+            target.height,
+            target.logic,
+            target.is_visible,
+            target.list,
+        ) = fields;
+        target.visible = visible;
+        target.ignore_mouse_over = ignore_over;
+        target.ignore_child_mouse_over = ignore_child_over;
+        target.bounds = bounds;
+        target.child_offset = offset;
+        for child in children {
+            let child_copy = self.clone_widget(child);
+            self.node_mut(child_copy).parent = Some(copy);
+            self.node_mut(copy).children.push(child_copy);
+        }
+        copy
     }
 
     /// Port of `GetOrNull`: searches the widget and its descendants.
@@ -307,8 +497,15 @@ impl Ui {
 
     /// Port of `EventBoundsContains`.
     pub fn event_bounds_contains(&self, id: WidgetId, x: i32, y: i32) -> bool {
+        let mode = self.node(id).event_bounds;
+        if mode == EventBounds::Never {
+            return false;
+        }
         if self.render_bounds(id).contains(x, y) {
             return true;
+        }
+        if mode == EventBounds::Own {
+            return false;
         }
         self.node(id)
             .children
@@ -355,6 +552,7 @@ impl Ui {
     }
 
     pub fn add_child(&mut self, parent: WidgetId, child: WidgetId) {
+        self.adjust_child(parent, child);
         self.node_mut(child).parent = Some(parent);
         self.node_mut(parent).children.push(child);
     }
@@ -363,12 +561,13 @@ impl Ui {
     pub fn remove_child(&mut self, parent: WidgetId, child: WidgetId) {
         self.node_mut(parent).children.retain(|&c| c != child);
         self.dispose(child);
+        self.list_changed(parent);
     }
 
     /// Port of `HideChild`: takes the child out of the tree and keeps it for a later `add_child`.
     pub fn hide_child(&mut self, parent: WidgetId, child: WidgetId) {
         self.node_mut(parent).children.retain(|&c| c != child);
-        self.force_yield(child);
+        self.hide(child);
     }
 
     pub fn remove_children(&mut self, id: WidgetId) {
@@ -376,9 +575,19 @@ impl Ui {
         for c in children {
             self.dispose(c);
         }
+        self.list_cleared(id);
     }
 
-    fn force_yield(&mut self, id: WidgetId) {
+    fn hide(&mut self, id: WidgetId) {
+        self.force_yield_own(id);
+        for c in self.node(id).children.clone().into_iter().rev() {
+            self.hide(c);
+        }
+        let kind = self.kind(id);
+        kind.borrow_mut().hidden(self, id);
+    }
+
+    fn force_yield_own(&mut self, id: WidgetId) {
         if self.keyboard_focus == Some(id) {
             self.keyboard_focus = None;
         }
@@ -388,21 +597,25 @@ impl Ui {
         if self.mouse_over == Some(id) {
             self.mouse_over = None;
         }
-        for c in self.node(id).children.clone() {
-            self.force_yield(c);
-        }
     }
 
     fn dispose(&mut self, id: WidgetId) {
-        self.force_yield(id);
-        for c in self.node(id).children.clone() {
+        self.force_yield_own(id);
+        for c in self.node(id).children.clone().into_iter().rev() {
             self.dispose(c);
         }
+        let kind = self.kind(id);
+        kind.borrow_mut().removed(self, id);
         for logic in self.node(id).logic_objects.clone() {
             logic.borrow_mut().disposed(self);
         }
         self.nodes[id] = None;
         self.free.push(id);
+    }
+
+    /// Disposes a widget that is not in the tree anymore.
+    pub fn dispose_detached(&mut self, id: WidgetId) {
+        self.dispose(id);
     }
 
     /// Port of `Ui.CloseWindow`.
@@ -450,10 +663,13 @@ impl Ui {
 
     /// Port of `Ui.Tick`, followed by the actions of `Game.RunAfterTick`.
     pub fn tick(&mut self) {
+        self.run_deferred();
         self.tick_outer(self.root);
+        self.run_deferred();
         for action in std::mem::take(&mut self.run_after_tick) {
             action(self);
         }
+        self.run_pending_reset();
     }
 
     fn tick_outer(&mut self, id: WidgetId) {
@@ -479,6 +695,12 @@ impl Ui {
         self.draw_outer(self.root, dc);
     }
 
+    /// Runs what the draw methods queued. The caller must have dropped the draw context.
+    pub fn after_draw(&mut self) {
+        self.run_deferred();
+        self.run_pending_reset();
+    }
+
     pub fn draw_outer(&mut self, id: WidgetId, dc: &mut DrawContext) {
         if self.is_visible(id) {
             let kind = self.kind(id);
@@ -499,6 +721,8 @@ impl Ui {
     pub fn handle_input(&mut self, mi: &MouseInput) -> bool {
         let was_over = self.mouse_over;
         if mi.event == MouseEvent::Move {
+            self.last_mouse = (mi.x, mi.y);
+            self.last_move_time = self.run_time();
             self.mouse_over = None;
         }
         let mut handled = false;
@@ -518,6 +742,8 @@ impl Ui {
                 kind.borrow_mut().mouse_entered(self, w);
             }
         }
+        self.run_deferred();
+        self.run_pending_reset();
         handled
     }
 
@@ -540,13 +766,17 @@ impl Ui {
         if mi.event == MouseEvent::Move && self.mouse_over.is_none() && !self.node(id).ignore_mouse_over {
             self.mouse_over = Some(id);
         }
-        self.kind(id).borrow_mut().handle_mouse(self, id, mi)
+        let handled = self.kind(id).borrow_mut().handle_mouse(self, id, mi);
+        self.run_deferred();
+        handled
     }
 
     /// Port of `Ui.HandleKeyPress`.
     pub fn handle_key(&mut self, e: &KeyInput) -> bool {
         let start = self.keyboard_focus.unwrap_or(self.root);
-        self.handle_key_outer(start, e)
+        let handled = self.handle_key_outer(start, e);
+        self.run_pending_reset();
+        handled
     }
 
     fn handle_key_outer(&mut self, id: WidgetId, e: &KeyInput) -> bool {
@@ -561,13 +791,27 @@ impl Ui {
         if !self.exists(id) {
             return true;
         }
-        self.kind(id).borrow_mut().handle_key(self, id, e)
+        let callback = self.kind(id).borrow_mut().key_callback(self, id, e);
+        if let Some(callback) = callback
+            && callback(self, e)
+        {
+            self.run_deferred();
+            return true;
+        }
+        if !self.exists(id) {
+            return true;
+        }
+        let handled = self.kind(id).borrow_mut().handle_key(self, id, e);
+        self.run_deferred();
+        handled
     }
 
     /// Port of `Ui.HandleTextInput`.
     pub fn handle_text(&mut self, text: &str) -> bool {
         let start = self.keyboard_focus.unwrap_or(self.root);
-        self.handle_text_outer(start, text)
+        let handled = self.handle_text_outer(start, text);
+        self.run_deferred();
+        handled
     }
 
     fn handle_text_outer(&mut self, id: WidgetId, text: &str) -> bool {

@@ -6,6 +6,7 @@ use crate::input::MouseInput;
 use crate::widget::{Ui, WidgetId, WidgetKind};
 
 /// Port of `ContainerWidget`.
+#[derive(Clone)]
 pub struct ContainerWidget {
     pub click_through: bool,
 }

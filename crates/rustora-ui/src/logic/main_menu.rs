@@ -9,7 +9,6 @@ use std::rc::Rc;
 use crate::loader::cell;
 use crate::logic::NoLogic;
 use crate::widget::{AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
-use crate::widgets::ButtonWidget;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MenuType {
@@ -21,7 +20,7 @@ enum MenuType {
 
 fn on_click(ui: &Ui, root: WidgetId, button: &str, action: impl Fn(&mut Ui) + 'static) {
     let id = ui.child(root, button);
-    ui.get::<ButtonWidget>(id).on_click = Some(Rc::new(action));
+    ui.button(id).on_click = Some(Rc::new(action));
 }
 
 /// The news and the version check are not ported, so these stay hidden as with `Game.FetchNews=False` in C#.

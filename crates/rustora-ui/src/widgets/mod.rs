@@ -12,15 +12,29 @@ use crate::widget::WidgetKind;
 
 mod background;
 mod button;
+mod checkbox;
 mod container;
+mod dropdown;
 mod image;
 mod label;
+mod scroll_item;
+mod scroll_panel;
+mod slider;
+mod text_field;
+mod tooltip;
 
 pub use background::BackgroundWidget;
-pub use button::ButtonWidget;
+pub use button::{ButtonWidget, draw_background};
+pub use checkbox::CheckboxWidget;
 pub use container::ContainerWidget;
+pub use dropdown::{DropDownButtonWidget, MaskWidget};
 pub use image::ImageWidget;
 pub use label::{LabelWidget, TextAlign, TextVAlign};
+pub use scroll_item::ScrollItemWidget;
+pub use scroll_panel::ScrollPanelWidget;
+pub use slider::SliderWidget;
+pub use text_field::{TextFieldType, TextFieldWidget};
+pub use tooltip::TooltipContainerWidget;
 
 pub fn container() -> Rc<RefCell<dyn WidgetKind>> {
     cell(ContainerWidget::default())
@@ -34,6 +48,14 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "Label" => cell(LabelWidget::new(assets)),
         "Button" => cell(ButtonWidget::new(assets)),
         "Image" => cell(ImageWidget::default()),
+        "ScrollPanel" => cell(ScrollPanelWidget::new(assets)),
+        "ScrollItem" => cell(ScrollItemWidget::new(assets)),
+        "DropDownButton" => cell(DropDownButtonWidget::new(assets)),
+        "Checkbox" => cell(CheckboxWidget::new(assets)),
+        "Slider" => cell(SliderWidget::default()),
+        "TextField" => cell(TextFieldWidget::new(assets, false)),
+        "PasswordField" => cell(TextFieldWidget::new(assets, true)),
+        "TooltipContainer" => cell(TooltipContainerWidget::default()),
         _ => return None,
     })
 }
@@ -47,6 +69,13 @@ macro_rules! impl_as_any {
         fn as_any(&mut self) -> &mut dyn std::any::Any {
             self
         }
+
+        fn clone_kind(&self) -> std::rc::Rc<std::cell::RefCell<dyn crate::widget::WidgetKind>> {
+            std::rc::Rc::new(std::cell::RefCell::new(self.clone()))
+        }
     };
 }
 pub(crate) use impl_as_any;
+
+#[cfg(test)]
+mod tests;

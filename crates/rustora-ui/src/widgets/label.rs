@@ -31,6 +31,7 @@ pub(crate) fn parse_align(value: &str) -> TextAlign {
 }
 
 /// Port of `LabelWidget`.
+#[derive(Clone)]
 pub struct LabelWidget {
     pub text: Option<String>,
     pub resolved: String,

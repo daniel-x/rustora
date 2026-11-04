@@ -78,6 +78,8 @@ impl Client {
         let assets = self.ui.assets.clone();
         let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
         self.ui.draw(&mut dc);
+        drop(dc);
+        self.ui.after_draw();
     }
 
     pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {

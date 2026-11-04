@@ -16,6 +16,7 @@ rustora-launch = { path = "../../crates/rustora-launch" }
 rustora-mods-common = { path = "../../crates/rustora-mods-common" }
 rustora-render = { path = "../../crates/rustora-render" }
 winit = "0.30"
+arboard = "3"
 image-webp = "0.2"
 
 [lints]

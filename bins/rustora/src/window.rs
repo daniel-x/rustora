@@ -3,14 +3,16 @@
 
 //! The client window: port of `Sdl2Input.PumpInput`, `Game.Loop` and the hardware cursors of `Sdl2PlatformWindow`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rustora_render::{Renderer, wgpu};
 use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
-use rustora_ui::widget::AppRequest;
+use rustora_ui::widget::{AppRequest, Clipboard};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -53,9 +55,27 @@ struct App {
     next_render: Instant,
 }
 
+/// The system clipboard. It is empty and ignores writes where the system offers none.
+struct SystemClipboard(RefCell<Option<arboard::Clipboard>>);
+
+impl Clipboard for SystemClipboard {
+    fn get(&self) -> String {
+        self.0.borrow_mut().as_mut().and_then(|c| c.get_text().ok()).unwrap_or_default()
+    }
+
+    fn set(&self, text: &str) {
+        if let Some(clipboard) = self.0.borrow_mut().as_mut()
+            && let Err(e) = clipboard.set_text(text)
+        {
+            eprintln!("cannot write the clipboard: {e}");
+        }
+    }
+}
+
 /// Opens a window with the user interface of the mod and runs until the window closes.
 pub fn run(engine: &Path, support: &str, size: (u32, u32)) {
     let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32));
+    client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
     client.logic_tick();
     let now = Instant::now();
     let mut app = App {

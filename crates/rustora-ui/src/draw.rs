@@ -39,6 +39,16 @@ impl Rect {
         x >= self.x && x < self.right() && y >= self.y && y < self.bottom()
     }
 
+    /// `Rectangle.IntersectsWith`.
+    pub fn intersects(&self, other: Rect) -> bool {
+        self.x < other.right() && self.right() > other.x && self.y < other.bottom() && self.bottom() > other.y
+    }
+
+    /// `Rectangle.InflateBy`.
+    pub fn inflate(&self, left: i32, top: i32, right: i32, bottom: i32) -> Rect {
+        Rect::new(self.x - left, self.y - top, self.w + left + right, self.h + top + bottom)
+    }
+
     pub fn intersect(&self, other: Rect) -> Rect {
         let x = self.x.max(other.x);
         let y = self.y.max(other.y);
@@ -196,11 +206,13 @@ impl<'a> DrawContext<'a> {
 
     /// Port of `SpriteFont.Measure`.
     pub fn measure(&mut self, font: &str, text: &str) -> (i32, i32) {
+        self.assets.measure(font, text)
+    }
+
+    /// Port of `TryGetPanelImages` returning a value.
+    pub fn has_panel(&mut self, collection: &str) -> bool {
         let assets = &mut *self.assets;
-        match assets.fonts.get_mut(font) {
-            Some(f) => f.measure(text, &mut assets.glyphs, self.renderer),
-            None => (0, 0),
-        }
+        assets.chrome.panel(collection, &*assets.fs, self.renderer).is_some()
     }
 
     pub fn font_top_offset(&self, font: &str) -> i32 {
@@ -209,29 +221,7 @@ impl<'a> DrawContext<'a> {
 
     /// Port of `WidgetUtils.WrapText`.
     pub fn wrap_text(&mut self, font: &str, text: &str, width: i32) -> String {
-        if self.measure(font, text).0 <= width {
-            return text.to_string();
-        }
-        let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
-        let mut i = 0;
-        while i < lines.len() {
-            let line = lines[i].clone();
-            if self.measure(font, &line).0 > width {
-                let mut start = 0;
-                while let Some(space) = line[start..].find(' ').map(|p| p + start) {
-                    if self.measure(font, &line[..space]).0 > width {
-                        break;
-                    }
-                    start = space + 1;
-                }
-                if start > 0 {
-                    lines[i] = line[..start - 1].to_string();
-                    lines.insert(i + 1, line[start..].to_string());
-                }
-            }
-            i += 1;
-        }
-        lines.join("\n")
+        self.assets.wrap_text(font, text, width)
     }
 
     /// Port of `DrawText`, `DrawTextWithContrast` and `DrawTextWithShadow`.
@@ -245,10 +235,9 @@ impl<'a> DrawContext<'a> {
         match style {
             TextStyle::Plain => {}
             TextStyle::Contrast { dark, light, radius } => {
-                let bg = contrast_color(color, dark, light);
-                let r = radius as f32;
-                for (dx, dy) in [(-r, 0.0), (r, 0.0), (0.0, -r), (0.0, r)] {
-                    f.draw_text(text, x + dx, y + dy, bg, glyphs, self.renderer, self.list);
+                if radius > 0 {
+                    let bg = contrast_color(color, dark, light);
+                    f.draw_contrast(text, x, y, bg, radius, glyphs, self.renderer, self.list);
                 }
             }
             TextStyle::Shadow { dark, light, offset } => {
