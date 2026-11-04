@@ -13,6 +13,7 @@
 
 mod app;
 mod client;
+mod net;
 mod scene;
 mod sprites;
 mod window;

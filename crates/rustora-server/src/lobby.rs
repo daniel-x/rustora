@@ -883,7 +883,7 @@ impl Server {
     }
 
     /// `SanitizePlayerColor`: reports problems to `echo`.
-    fn sanitize_player_color(&mut self, asked: Color, player_index: i32, echo: Option<i32>) -> Color {
+    pub(crate) fn sanitize_player_color(&mut self, asked: Color, player_index: i32, echo: Option<i32>) -> Color {
         let map = self.map.clone();
         let players = self.player_colors(Some(player_index));
         let (color, error) = map

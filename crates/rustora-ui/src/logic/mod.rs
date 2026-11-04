@@ -15,18 +15,31 @@ use rustora_game::settings::Settings;
 use crate::draw::Rect;
 use crate::fluent::MessageArg;
 use crate::loader::cell;
+use crate::net::{LobbyRules, Net};
 use crate::widget::{Action, ChromeLogic, Getter, Ui, WidgetArgs, WidgetId};
 use crate::widgets::LabelWidget;
 
+pub mod color_picker;
+pub mod connection;
+pub mod lobby;
+pub mod lobby_options;
+pub mod lobby_utils;
 pub mod main_menu;
 pub mod map_chooser;
+pub mod map_preview;
 
 /// The application state that logic classes read.
 pub struct Services {
     pub mod_version: String,
     pub settings: Rc<RefCell<Settings>>,
     pub maps: Rc<RefCell<MapCache>>,
+    pub net: Net,
+    /// Reads the lobby rules of a map. The client binary sets it.
+    pub lobby_rules: RefCell<Option<LobbyRulesLookup>>,
 }
+
+/// The function behind `Services::lobby_rules`.
+pub type LobbyRulesLookup = Rc<dyn Fn(&str) -> Option<Rc<LobbyRules>>>;
 
 impl Default for Services {
     fn default() -> Services {
@@ -34,6 +47,8 @@ impl Default for Services {
             mod_version: String::new(),
             settings: Rc::new(RefCell::new(Settings::load("", &[]))),
             maps: Rc::default(),
+            net: Rc::default(),
+            lobby_rules: RefCell::new(None),
         }
     }
 }
@@ -205,7 +220,7 @@ pub fn create(
     ui: &mut Ui,
     id: WidgetId,
     args: &WidgetArgs,
-    _logic_args: &[MiniYamlNode],
+    logic_args: &[MiniYamlNode],
 ) -> Option<Rc<RefCell<dyn ChromeLogic>>> {
     Some(match name {
         "MainMenuLogic" => main_menu::create(ui, id, args),
@@ -217,6 +232,15 @@ pub fn create(
         "ButtonTooltipLogic" => button_tooltip(ui, id, args),
         "SimpleTooltipLogic" => simple_tooltip(ui, id, args),
         "MapChooserLogic" => map_chooser::create(ui, id, args),
+        "ConnectionLogic" => connection::create_connection(ui, id, args),
+        "ConnectionFailedLogic" => connection::create_connection_failed(ui, id, args),
+        "LobbyLogic" => lobby::create(ui, id, args, logic_args),
+        "MapPreviewLogic" => map_preview::create(ui, id, args),
+        "LobbyOptionsLogic" => lobby_options::create(ui, id, args),
+        "LatencyTooltipLogic" => lobby_utils::latency_tooltip(ui, id, args),
+        "SpawnSelectorTooltipLogic" => lobby_utils::spawn_tooltip(ui, id, args),
+        "KickClientLogic" => lobby_utils::kick_client(ui, id, args),
+        "KickSpectatorsLogic" => lobby_utils::kick_spectators(ui, id, args),
         "PerfDebugLogic" => {
             for name in ["GRAPH_BG", "PERF_TEXT"] {
                 let widget = ui.child(id, name);

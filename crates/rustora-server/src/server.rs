@@ -55,6 +55,7 @@ pub enum ServerType {
     Local,
     Multiplayer,
     Dedicated,
+    Skirmish,
 }
 
 /// The `ServerSettings` the server uses.
@@ -314,7 +315,7 @@ impl Server {
         let mut listener_threads = Vec::new();
         let mut last_error = None;
         let dedicated = settings.server_type == ServerType::Dedicated;
-        let is_multiplayer = settings.server_type != ServerType::Local;
+        let is_multiplayer = matches!(settings.server_type, ServerType::Multiplayer | ServerType::Dedicated);
         let addresses = if is_multiplayer {
             [IpAddr::V6(Ipv6Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::UNSPECIFIED)]
         } else {
@@ -491,7 +492,7 @@ impl Server {
 
     /// `IsMultiplayer`.
     pub fn is_multiplayer(&self) -> bool {
-        self.settings.server_type != ServerType::Local
+        matches!(self.settings.server_type, ServerType::Multiplayer | ServerType::Dedicated)
     }
 
     fn is_dedicated(&self) -> bool {
@@ -744,6 +745,7 @@ impl Server {
             self.disable_chat_ui(player_index, join_cooldown);
         }
         self.client_joined(player_index);
+        self.skirmish_client_joined(player_index);
         self.sync_lobby_info();
         println!("{name} has joined the game.");
         self.send_fluent_message("notification-joined", &[("player", (&name).into())]);
@@ -1216,6 +1218,7 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncInfo", &self.lobby.serialize());
+            self.skirmish_lobby_info_synced();
         }
     }
 
@@ -1224,6 +1227,7 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbyClients", &self.lobby.serialize_clients());
+            self.skirmish_lobby_info_synced();
             self.ping_updated = Instant::now();
         }
     }
@@ -1233,6 +1237,7 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbySlots", &self.lobby.serialize_slots());
+            self.skirmish_lobby_info_synced();
         }
     }
 
@@ -1241,6 +1246,7 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbyGlobalSettings", &self.lobby.serialize_global_settings());
+            self.skirmish_lobby_info_synced();
         }
     }
 

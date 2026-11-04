@@ -229,6 +229,19 @@ impl WidgetArgs {
 /// Requests that the application carries out after the current frame.
 pub enum AppRequest {
     Quit,
+    /// `Game.CreateLocalServer` for a map. The connection follows with `JoinServer`, whose target `{local}` stands for
+    /// the local server.
+    CreateLocalServer {
+        map: String,
+        skirmish: bool,
+    },
+    /// `Game.JoinServer`.
+    JoinServer {
+        target: String,
+        password: String,
+    },
+    /// `Game.Disconnect`.
+    Disconnect,
 }
 
 /// Port of the static `Ui` class and the widget tree.
@@ -547,6 +560,22 @@ impl Ui {
         self.keyboard_focus == Some(id)
     }
 
+    /// Port of `YieldKeyboardFocus`.
+    pub fn yield_keyboard_focus(&mut self, id: WidgetId) -> bool {
+        let kind = self.kind(id);
+        let mut kind = kind.borrow_mut();
+        kind.yield_keyboard_focus(self, id)
+    }
+
+    /// The size of the `spawn-unclaimed` image of `lobby-bits`, known once a preview was drawn.
+    pub fn spawn_image_size(&self) -> (i32, i32) {
+        self.assets
+            .borrow()
+            .chrome
+            .region_size("lobby-bits", "spawn-unclaimed")
+            .unwrap_or((22, 22))
+    }
+
     /// Port of `TakeMouseFocus`.
     pub fn take_mouse_focus(&mut self, id: WidgetId, mi: &MouseInput) -> bool {
         if self.has_mouse_focus(id) {
@@ -587,6 +616,16 @@ impl Ui {
     pub fn remove_child(&mut self, parent: WidgetId, child: WidgetId) {
         self.node_mut(parent).children.retain(|&c| c != child);
         self.dispose(child);
+        self.list_changed(parent);
+    }
+
+    /// Port of `ReplaceChild`: disposes the old child and puts the new one in its place.
+    pub fn replace_child(&mut self, parent: WidgetId, old: WidgetId, new: WidgetId) {
+        if let Some(index) = self.node(parent).children.iter().position(|&c| c == old) {
+            self.node_mut(parent).children[index] = new;
+        }
+        self.node_mut(new).parent = Some(parent);
+        self.dispose(old);
         self.list_changed(parent);
     }
 

@@ -13,5 +13,6 @@ pub mod font;
 pub mod input;
 pub mod loader;
 pub mod logic;
+pub mod net;
 pub mod widget;
 pub mod widgets;

@@ -153,6 +153,12 @@ impl Session {
                 "Client" => s.clients.push(load(&n.value).map_err(err)?),
                 "GlobalSettings" => {
                     let mut g: Global = load(&n.value).map_err(err)?;
+                    g.map_status = n
+                        .value
+                        .nodes
+                        .iter()
+                        .find(|c| c.key == "MapStatus")
+                        .map_or(0, |c| parse_map_status(c.value.value_str()));
                     if let Some(o) = n.value.nodes.iter().find(|c| c.key == "Options") {
                         for opt in &o.value.nodes {
                             g.lobby_options.insert(opt.key.clone(), load(&opt.value).map_err(err)?);
@@ -224,6 +230,18 @@ pub(crate) fn fmt_opt(s: &Option<String>) -> String {
 }
 
 /// The `Session.MapStatus` flags as the C# enum converter writes them.
+pub fn parse_map_status(value: &str) -> i32 {
+    value.split(',').fold(0, |bits, part| {
+        bits | match part.trim() {
+            "Validating" => 1,
+            "Playable" => 2,
+            "Incompatible" => 4,
+            "UnsafeCustomRules" => 8,
+            _ => 0,
+        }
+    })
+}
+
 pub fn fmt_map_status(status: i32) -> String {
     const NAMES: [(i32, &str); 4] = [(1, "Validating"), (2, "Playable"), (4, "Incompatible"), (8, "UnsafeCustomRules")];
     let set: Vec<&str> = NAMES.iter().filter(|(b, _)| status & b != 0).map(|(_, n)| *n).collect();

@@ -76,7 +76,7 @@ impl ScrollPanelWidget {
 }
 
 impl Ui {
-    fn list(&mut self, id: WidgetId) -> &mut ListState {
+    pub(crate) fn list(&mut self, id: WidgetId) -> &mut ListState {
         self.node_mut(id).list.as_mut().expect("a scroll panel")
     }
 

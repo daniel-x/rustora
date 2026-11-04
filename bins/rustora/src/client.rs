@@ -6,16 +6,20 @@
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
+use rustora_engine::order_manager::Connection;
 use rustora_engine::sequence::ReadFile;
 use rustora_engine::world::{World, WorldType};
-use rustora_fs::{Platform, ReadFs};
+use rustora_fs::{Package, Platform, ReadFs};
 use rustora_game::map::MapPackage;
 use rustora_game::map_cache::MapCache;
 use rustora_game::moddata::ModData;
 use rustora_game::settings::Settings;
+use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
-use rustora_launch::{Step, load_world_of_type, open_map, shellmaps};
+use rustora_launch::{Step, load_world, load_world_of_type, open_map, shellmaps};
+use rustora_net::session::Session;
 use rustora_render::ui::UiList;
 use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::assets::Assets;
@@ -24,9 +28,10 @@ use rustora_ui::draw::DrawContext;
 use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
-use rustora_ui::widget::{Ui, WidgetArgs};
+use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
 
 use crate::app::map_center;
+use crate::net::{NetClient, lobby_rules_lookup};
 use crate::scene::Scene;
 
 struct ModFs(Rc<ModData>);
@@ -53,6 +58,23 @@ struct ShellWorld {
 }
 
 impl ShellWorld {
+    /// `Game.StartGame`: the world of a game that the server started.
+    fn start_game(engine: &Path, support: &str, package: Arc<dyn Package>, lobby: Session, connection: NetworkConnection) -> ShellWorld {
+        let is_host = lobby.client_with_index(connection.local_client_id()).is_some_and(|c| c.is_admin);
+        let (world, _, read_file) = load_world(engine, support, package, lobby, false);
+        let driver = SkirmishDriver::with_connection(&world, Box::new(connection), is_host);
+        let center = map_center(&world);
+        ShellWorld {
+            world,
+            driver,
+            read_file,
+            scene: None,
+            quads: Vec::new(),
+            center,
+            ended: false,
+        }
+    }
+
     /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map.
     fn load(engine: &Path, support: &str) -> Option<ShellWorld> {
         let names = shellmaps(engine);
@@ -109,6 +131,11 @@ pub struct Client {
     pub cursor: CursorState,
     list: UiList,
     shell: Option<ShellWorld>,
+    engine: std::path::PathBuf,
+    support: String,
+    mod_data: Rc<ModData>,
+    services: Rc<Services>,
+    net: NetClient,
 }
 
 impl Client {
@@ -124,7 +151,11 @@ impl Client {
             mod_version: mod_data.manifest.metadata.version.clone(),
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
             settings: Rc::new(RefCell::new(settings)),
+            net: Rc::default(),
+            lobby_rules: RefCell::new(Some(lobby_rules_lookup(engine, support))),
         };
+        let net = NetClient::new(engine, support, services.net.clone());
+        let services = Rc::new(services);
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
         let shell = if mod_data.content_available {
@@ -135,7 +166,7 @@ impl Client {
         if let Some(shell) = &shell {
             shell.world.pause_shellmap.set(pause_shellmap);
         }
-        let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, Rc::new(services));
+        let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, services.clone());
         ui.ui_scroll_speed = ui_scroll_speed;
         ui.load_widget("MAINMENU", Some(ui.root), &WidgetArgs::default());
         Client {
@@ -144,16 +175,67 @@ impl Client {
             cursor: CursorState::default(),
             list: UiList::default(),
             shell,
+            engine: engine.to_path_buf(),
+            support: support.to_string(),
+            mod_data,
+            services,
+            net,
         }
     }
 
     /// Port of the user interface part of `Game.InnerLogicTick`.
     pub fn logic_tick(&mut self) {
+        self.pump_network();
         if let Some(shell) = &mut self.shell {
             shell.tick();
         }
         self.cursor.tick(&self.cursors);
         self.ui.tick();
+    }
+
+    /// Carries out the network requests of the user interface, then receives and sends.
+    fn pump_network(&mut self) {
+        let requests = std::mem::take(&mut self.ui.requests);
+        for request in requests {
+            match request {
+                AppRequest::CreateLocalServer { map, skirmish } => self.net.create_local_server(map, skirmish),
+                AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
+                AppRequest::Disconnect => self.net.disconnect(),
+                AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
+            }
+        }
+        let (name, color) = {
+            let settings = self.services.settings.borrow();
+            (settings.player.name.clone(), settings.player.color)
+        };
+        let run_time = self.ui.run_time();
+        let assets = self.ui.assets.clone();
+        let started = self.net.pump(&self.mod_data, &assets.borrow().messages, run_time, &name, color);
+        if started {
+            self.start_game();
+        }
+    }
+
+    /// `Game.StartGame`. The in-game user interface follows with slice 6 of P8.
+    fn start_game(&mut self) {
+        let handler = self.services.net.borrow_mut().before_game_start.take();
+        if let Some(handler) = handler {
+            handler(&mut self.ui);
+        }
+        let session = self.services.net.borrow().session.clone();
+        let package = session
+            .global_settings
+            .map
+            .as_deref()
+            .and_then(|uid| self.services.maps.borrow().get(uid))
+            .and_then(|map| map.open_package(&self.mod_data.file_system));
+        let (Some(package), Some(connection)) = (package, self.net.take_connection()) else {
+            log::error!("The game cannot start without its map");
+            return;
+        };
+        self.ui.reset_all();
+        self.shell = None;
+        self.shell = Some(ShellWorld::start_game(&self.engine, &self.support, package, session, connection));
     }
 
     /// Port of the cursor selection in `Game.RenderTick`.

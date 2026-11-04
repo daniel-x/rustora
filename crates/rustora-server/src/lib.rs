@@ -12,4 +12,5 @@ pub mod mod_info;
 pub mod nat;
 pub mod order_buffer;
 pub mod server;
+mod skirmish_logic;
 pub mod vote_kick;

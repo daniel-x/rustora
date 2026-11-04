@@ -211,6 +211,7 @@ impl Connection for NetworkConnection {
 #[derive(Clone, Debug)]
 pub struct JoinOptions {
     pub name: String,
+    pub color: Color,
     pub password: String,
     pub bots: Vec<BotSpec>,
     /// With bots: the number of human clients to wait for before setting up the game.
@@ -223,6 +224,7 @@ impl Default for JoinOptions {
     fn default() -> Self {
         JoinOptions {
             name: "Commander".to_string(),
+            color: Color::from_argb(255, 0x7C, 0xD2, 0xF2),
             password: String::new(),
             bots: Vec::new(),
             wait_clients: 1,
@@ -295,9 +297,10 @@ impl LobbyScript<'_> {
     }
 }
 
-fn handshake_response(md: &ModData, request: &str, options: &JoinOptions) -> Result<RawOrder, String> {
+/// `UnitOrders.ProcessOrder` for `HandshakeRequest`.
+pub fn handshake_response(md: &ModData, request: &str, options: &JoinOptions) -> Result<RawOrder, String> {
     HandshakeRequest::deserialize(request, "HandshakeRequest").map_err(|e| e.to_string())?;
-    let color = Color::from_argb(255, 0x7C, 0xD2, 0xF2);
+    let color = options.color;
     let response = HandshakeResponse {
         mod_id: Some(md.manifest.id.clone()),
         version: Some(md.manifest.metadata.version.clone()),

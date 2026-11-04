@@ -13,6 +13,7 @@ use crate::widget::WidgetKind;
 mod background;
 mod button;
 mod checkbox;
+mod color_block;
 mod container;
 mod dropdown;
 mod image;
@@ -27,6 +28,7 @@ mod tooltip;
 pub use background::BackgroundWidget;
 pub use button::{ButtonWidget, draw_background};
 pub use checkbox::CheckboxWidget;
+pub use color_block::{ClientTooltipRegionWidget, ColorBlockWidget};
 pub use container::ContainerWidget;
 pub use dropdown::{DropDownButtonWidget, MaskWidget};
 pub use image::ImageWidget;
@@ -47,7 +49,9 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
     Some(match type_name {
         "Container" | "LogicKeyListener" | "LogicTicker" => container(),
         "Background" => cell(BackgroundWidget::default()),
-        "Label" => cell(LabelWidget::new(assets)),
+        "Label" | "LabelForInput" => cell(LabelWidget::new(assets)),
+        "ColorBlock" => cell(ColorBlockWidget::default()),
+        "ClientTooltipRegion" => cell(ClientTooltipRegionWidget::default()),
         "LabelWithTooltip" => cell(LabelWithTooltipWidget::new(assets)),
         "MapPreview" => cell(MapPreviewWidget::new(assets)),
         "Button" => cell(ButtonWidget::new(assets)),

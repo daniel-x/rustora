@@ -56,15 +56,41 @@ pub struct LobbyOption {
     pub values: IndexMap<String, String>,
     pub default_value: String,
     pub is_locked: bool,
-    is_boolean: bool,
+    pub is_boolean: bool,
+    pub description: Option<String>,
+    pub is_visible: bool,
+    pub display_order: i32,
 }
 
 impl LobbyOption {
+    /// Reads `{prefix}Description`, `{prefix}Visible` and `{prefix}DisplayOrder` of the trait. The default description
+    /// key has the label key with `.description` for `.label`.
+    fn decorated(mut self, game_mod: &ServerMod, t: &TraitNode, prefix: &str, label_key: &str) -> LobbyOption {
+        let default_key = label_key.strip_suffix(".label").map(|k| format!("{k}.description"));
+        let key = field(t, &format!("{prefix}Description")).map(str::to_string).or(default_key);
+        self.description = key.map(|k| game_mod.message(&k).replace("\\n", "\n"));
+        self.is_visible = field_bool(t, &format!("{prefix}Visible"), true);
+        self.display_order = field(t, &format!("{prefix}DisplayOrder"))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+        self
+    }
+
     /// `LobbyOption.Label`.
     pub fn label(&self, value: &str) -> String {
         let text = self.values.get(value).map_or(value, String::as_str);
         if self.is_boolean { text.to_lowercase() } else { text.to_string() }
     }
+}
+
+/// `FactionInfo` with message keys.
+#[derive(Clone, Debug)]
+pub struct FactionData {
+    pub internal_name: String,
+    pub name: String,
+    pub side: Option<String>,
+    pub description: Option<String>,
+    pub selectable: bool,
 }
 
 /// `IBotInfo`.
@@ -84,6 +110,7 @@ pub struct MapInfo {
     pub options: Vec<LobbyOption>,
     pub bots: Vec<BotInfo>,
     pub selectable_factions: Vec<String>,
+    pub factions: Vec<FactionData>,
     pub color_picker: ColorPicker,
     pub restricted_colors: Vec<Color>,
     pub briefing: Option<String>,
@@ -375,6 +402,19 @@ impl ServerMod {
                 .filter(|t| t.name == "Faction" && field_bool(t, "Selectable", true))
                 .filter_map(|t| field(t, "InternalName").map(str::to_string))
                 .collect(),
+            factions: world
+                .iter()
+                .filter(|t| t.name == "Faction")
+                .filter_map(|t| {
+                    Some(FactionData {
+                        internal_name: field(t, "InternalName")?.to_string(),
+                        name: field(t, "Name").unwrap_or_default().to_string(),
+                        side: field(t, "Side").map(str::to_string),
+                        description: field(t, "Description").map(str::to_string),
+                        selectable: field_bool(t, "Selectable", true),
+                    })
+                })
+                .collect(),
             color_picker,
             restricted_colors: self.restricted_colors.get(tileset).cloned().unwrap_or_default(),
             briefing: world
@@ -436,7 +476,11 @@ impl ServerMod {
             default_value: default_value.to_string(),
             is_locked: field_bool(t, &format!("{prefix}Locked"), false),
             is_boolean: true,
+            description: None,
+            is_visible: true,
+            display_order: 0,
         }
+        .decorated(self, t, prefix, name)
     }
 
     fn dropdown_option(
@@ -454,6 +498,9 @@ impl ServerMod {
             default_value,
             is_locked,
             is_boolean: false,
+            description: None,
+            is_visible: true,
+            display_order: 0,
         }
     }
 
@@ -464,10 +511,8 @@ impl ServerMod {
             match t.name.as_str() {
                 "LobbyPrerequisiteCheckbox" => {
                     let id = field(t, "ID").unwrap_or_default();
-                    out.push(self.boolean_option(t, id, "", "", false));
-                    if let Some(o) = out.last_mut() {
-                        o.name = self.message(field(t, "Label").unwrap_or_default());
-                    }
+                    let label = field(t, "Label").unwrap_or_default();
+                    out.push(self.boolean_option(t, id, label, "", false));
                 }
                 "PlayerResources" => {
                     let values: IndexMap<String, String> = field_ints(t, "SelectableCash", &[2500, 5000, 10000, 20000])
@@ -475,13 +520,17 @@ impl ServerMod {
                         .map(|c| (c.to_string(), format!("${c}")))
                         .collect();
                     if !values.is_empty() {
-                        out.push(self.dropdown_option(
-                            "startingcash",
-                            field(t, "DefaultCashDropdownLabel").unwrap_or("Starting Cash"),
-                            values,
-                            field(t, "DefaultCash").unwrap_or("5000").trim().to_string(),
-                            field_bool(t, "DefaultCashDropdownLocked", false),
-                        ));
+                        let label = field(t, "DefaultCashDropdownLabel").unwrap_or("dropdown-starting-cash.label");
+                        out.push(
+                            self.dropdown_option(
+                                "startingcash",
+                                label,
+                                values,
+                                field(t, "DefaultCash").unwrap_or("5000").trim().to_string(),
+                                field_bool(t, "DefaultCashDropdownLocked", false),
+                            )
+                            .decorated(self, t, "DefaultCashDropdown", label),
+                        );
                     }
                 }
                 "DeveloperMode" => out.push(self.boolean_option(t, "cheats", "checkbox-debug-menu.label", "Checkbox", false)),
@@ -497,22 +546,30 @@ impl ServerMod {
                         .filter_map(|p| Some((field(p, "Id")?.to_string(), self.message(field(p, "Name")?))))
                         .collect();
                     if !tech.is_empty() {
-                        out.push(self.dropdown_option(
-                            "techlevel",
-                            field(t, "TechLevelDropdownLabel").unwrap_or("dropdown-tech-level.label"),
-                            tech,
-                            field(t, "TechLevel").unwrap_or("unrestricted").to_string(),
-                            field_bool(t, "TechLevelDropdownLocked", false),
-                        ));
+                        let label = field(t, "TechLevelDropdownLabel").unwrap_or("dropdown-tech-level.label");
+                        out.push(
+                            self.dropdown_option(
+                                "techlevel",
+                                label,
+                                tech,
+                                field(t, "TechLevel").unwrap_or("unrestricted").to_string(),
+                                field_bool(t, "TechLevelDropdownLocked", false),
+                            )
+                            .decorated(self, t, "TechLevelDropdown", label),
+                        );
                     }
                     let speeds = self.speed_names.iter().map(|(k, n)| (k.clone(), self.message(n))).collect();
-                    out.push(self.dropdown_option(
-                        "gamespeed",
-                        field(t, "GameSpeedDropdownLabel").unwrap_or("dropdown-game-speed.label"),
-                        speeds,
-                        field(t, "GameSpeed").unwrap_or(&self.default_speed).to_string(),
-                        field_bool(t, "GameSpeedDropdownLocked", false),
-                    ));
+                    let label = field(t, "GameSpeedDropdownLabel").unwrap_or("dropdown-game-speed.label");
+                    out.push(
+                        self.dropdown_option(
+                            "gamespeed",
+                            label,
+                            speeds,
+                            field(t, "GameSpeed").unwrap_or(&self.default_speed).to_string(),
+                            field_bool(t, "GameSpeedDropdownLocked", false),
+                        )
+                        .decorated(self, t, "GameSpeedDropdown", label),
+                    );
                 }
                 "MapBuildRadius" => {
                     out.push(self.boolean_option(t, "allybuild", "checkbox-ally-build-radius.label", "AllyBuildRadiusCheckbox", true));
@@ -539,13 +596,17 @@ impl ServerMod {
                         })
                         .collect();
                     if !units.is_empty() {
-                        out.push(self.dropdown_option(
-                            "startingunits",
-                            field(t, "DropdownLabel").unwrap_or("dropdown-starting-units.label"),
-                            units,
-                            field(t, "StartingUnitsClass").unwrap_or("none").to_string(),
-                            field_bool(t, "DropdownLocked", false),
-                        ));
+                        let label = field(t, "DropdownLabel").unwrap_or("dropdown-starting-units.label");
+                        out.push(
+                            self.dropdown_option(
+                                "startingunits",
+                                label,
+                                units,
+                                field(t, "StartingUnitsClass").unwrap_or("none").to_string(),
+                                field_bool(t, "DropdownLocked", false),
+                            )
+                            .decorated(self, t, "Dropdown", label),
+                        );
                     }
                 }
                 "TimeLimitManager" => {
@@ -553,13 +614,18 @@ impl ServerMod {
                         .into_iter()
                         .map(|m| (m.to_string(), if m == 0 { "No limit".to_string() } else { format!("{m} minutes") }))
                         .collect();
-                    out.push(self.dropdown_option(
-                        "timelimit",
-                        field(t, "TimeLimitLabel").unwrap_or("dropdown-time-limit.label"),
-                        values,
-                        field(t, "TimeLimitDefault").unwrap_or("0").trim().to_string(),
-                        field_bool(t, "TimeLimitLocked", false),
-                    ));
+                    let label = field(t, "TimeLimitLabel").unwrap_or("dropdown-time-limit.label");
+                    let mut option = self
+                        .dropdown_option(
+                            "timelimit",
+                            label,
+                            values,
+                            field(t, "TimeLimitDefault").unwrap_or("0").trim().to_string(),
+                            field_bool(t, "TimeLimitLocked", false),
+                        )
+                        .decorated(self, t, "TimeLimit", label);
+                    option.is_visible = field_bool(t, "TimeLimitDropdownVisible", true);
+                    out.push(option);
                 }
                 "ScriptLobbyDropdown" => {
                     let values = t.yaml.nodes.iter().find(|n| n.key == "Values").map_or_else(IndexMap::new, |v| {
@@ -569,13 +635,17 @@ impl ServerMod {
                             .map(|n| (n.key.clone(), self.message(n.value.value_str())))
                             .collect()
                     });
-                    out.push(self.dropdown_option(
-                        field(t, "ID").unwrap_or_default(),
-                        field(t, "Label").unwrap_or_default(),
-                        values,
-                        field(t, "Default").unwrap_or_default().to_string(),
-                        field_bool(t, "Locked", false),
-                    ));
+                    let label = field(t, "Label").unwrap_or_default();
+                    out.push(
+                        self.dropdown_option(
+                            field(t, "ID").unwrap_or_default(),
+                            label,
+                            values,
+                            field(t, "Default").unwrap_or_default().to_string(),
+                            field_bool(t, "Locked", false),
+                        )
+                        .decorated(self, t, "", label),
+                    );
                 }
                 _ => {}
             }

@@ -87,6 +87,12 @@ pub struct Chrome {
 }
 
 impl Chrome {
+    /// The width and height of a region of a collection, without loading its image.
+    pub fn region_size(&self, collection: &str, image: &str) -> Option<(i32, i32)> {
+        let region = self.collections.get(collection)?.regions.get(image)?;
+        Some((region[2], region[3]))
+    }
+
     pub fn new(nodes: &[MiniYamlNode]) -> Chrome {
         let mut collections = HashMap::new();
         for node in nodes.iter().filter(|n| !n.key.starts_with('^')) {
