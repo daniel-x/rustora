@@ -540,9 +540,7 @@ impl Ui {
         if mi.event == MouseEvent::Move && self.mouse_over.is_none() && !self.node(id).ignore_mouse_over {
             self.mouse_over = Some(id);
         }
-        let kind = self.kind(id);
-        let handled = kind.borrow_mut().handle_mouse(self, id, mi);
-        handled
+        self.kind(id).borrow_mut().handle_mouse(self, id, mi)
     }
 
     /// Port of `Ui.HandleKeyPress`.
@@ -563,9 +561,7 @@ impl Ui {
         if !self.exists(id) {
             return true;
         }
-        let kind = self.kind(id);
-        let handled = kind.borrow_mut().handle_key(self, id, e);
-        handled
+        self.kind(id).borrow_mut().handle_key(self, id, e)
     }
 
     /// Port of `Ui.HandleTextInput`.
@@ -586,9 +582,7 @@ impl Ui {
         if !self.exists(id) {
             return true;
         }
-        let kind = self.kind(id);
-        let handled = kind.borrow_mut().handle_text(self, id, text);
-        handled
+        self.kind(id).borrow_mut().handle_text(self, id, text)
     }
 
     /// Port of `GetCursorOuter`.

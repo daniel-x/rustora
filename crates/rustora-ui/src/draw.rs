@@ -218,10 +218,7 @@ impl<'a> DrawContext<'a> {
             let line = lines[i].clone();
             if self.measure(font, &line).0 > width {
                 let mut start = 0;
-                loop {
-                    let Some(space) = line[start..].find(' ').map(|p| p + start) else {
-                        break;
-                    };
+                while let Some(space) = line[start..].find(' ').map(|p| p + start) {
                     if self.measure(font, &line[..space]).0 > width {
                         break;
                     }

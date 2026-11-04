@@ -149,10 +149,9 @@ impl SpriteFont {
     ) {
         let tint = [color.r() as f32 / 255.0, color.g() as f32 / 255.0, color.b() as f32 / 255.0, 1.0];
         let y = y + self.size as f32;
-        let mut row = 0;
-        for line in text.split('\n') {
+        for (row, line) in text.split('\n').enumerate() {
             let mut pen = (x + 0.5) as i32;
-            let base = (y + (row * self.size) as f32 + 0.5) as i32;
+            let base = (y + (row as i32 * self.size) as f32 + 0.5) as i32;
             for c in line.chars() {
                 let g = self.glyph(c, sheet, renderer);
                 if g.w > 0 {
@@ -165,7 +164,6 @@ impl SpriteFont {
                 }
                 pen += g.advance;
             }
-            row += 1;
         }
     }
 }
