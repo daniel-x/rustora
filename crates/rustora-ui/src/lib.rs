@@ -6,6 +6,7 @@
 
 pub mod assets;
 pub mod chrome;
+pub mod cursor;
 pub mod draw;
 pub mod fluent;
 pub mod font;

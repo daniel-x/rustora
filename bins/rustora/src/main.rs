@@ -6,6 +6,8 @@
 //! or renders one frame offscreen to a lossless WebP file:
 //! `rustora <engine-dir> <support-dir> <replay> --screenshot <out.webp> [--tick N] [--player I] [--at X,Y] [--size WxH] [--zoom Z]`.
 //!
+//! Opens the user interface in a window: `rustora --ui <engine-dir> <support-dir> [WxH]`.
+//!
 //! Window controls: arrow keys or WASD scroll, mouse wheel zooms, space pauses, `+`/`-` change the speed,
 //! Tab cycles the shroud of each player and the full view, Escape quits.
 
@@ -13,6 +15,7 @@ mod app;
 mod client;
 mod scene;
 mod sprites;
+mod window;
 
 use std::path::PathBuf;
 
@@ -125,8 +128,21 @@ fn ui_screenshot(a: &[String]) {
     client::screenshot(std::path::Path::new(&a[0]), &a[1], size, &clicks, &a[2]);
 }
 
+/// `rustora --ui <engine-dir> <support-dir> [WxH]`
+fn ui_window(a: &[String]) {
+    let size = a.get(2).map_or((1280, 800), |s| {
+        let (w, h) = s.split_once('x').expect("WxH");
+        (w.parse().expect("width"), h.parse().expect("height"))
+    });
+    window::run(std::path::Path::new(&a[0]), &a[1], size);
+}
+
 fn main() {
     let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some("--ui") {
+        ui_window(&raw[2..]);
+        return;
+    }
     if raw.get(1).map(String::as_str) == Some("--ui-screenshot") {
         ui_screenshot(&raw[2..]);
         return;

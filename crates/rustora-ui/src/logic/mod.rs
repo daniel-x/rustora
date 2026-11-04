@@ -43,6 +43,13 @@ pub fn create(
             ui.get::<LabelWidget>(id).get_text = Some(Rc::new(move || version.clone()));
             cell(NoLogic)
         }
+        "PerfDebugLogic" => {
+            for name in ["GRAPH_BG", "PERF_TEXT"] {
+                let widget = ui.child(id, name);
+                ui.set_visible_fn(widget, || false);
+            }
+            cell(NoLogic)
+        }
         _ => return None,
     })
 }

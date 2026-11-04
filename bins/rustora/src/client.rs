@@ -12,6 +12,7 @@ use rustora_game::moddata::ModData;
 use rustora_render::Renderer;
 use rustora_render::ui::UiList;
 use rustora_ui::assets::Assets;
+use rustora_ui::cursor::{CursorState, Cursors};
 use rustora_ui::draw::DrawContext;
 use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
@@ -33,6 +34,8 @@ impl ReadFs for ModFs {
 /// A loaded user interface with the shell root open.
 pub struct Client {
     pub ui: Ui,
+    pub cursors: Cursors,
+    pub cursor: CursorState,
     list: UiList,
 }
 
@@ -42,6 +45,7 @@ impl Client {
         let mod_data = Rc::new(ModData::load(platform, "ra").expect("load mod"));
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
         let assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
+        let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
         let services = Services {
             mod_version: mod_data.manifest.metadata.version.clone(),
@@ -50,8 +54,22 @@ impl Client {
         ui.open_window("MAINMENU", WidgetArgs::default());
         Client {
             ui,
+            cursors,
+            cursor: CursorState::default(),
             list: UiList::default(),
         }
+    }
+
+    /// Port of the user interface part of `Game.InnerLogicTick`.
+    pub fn logic_tick(&mut self) {
+        self.cursor.tick(&self.cursors);
+        self.ui.tick();
+    }
+
+    /// Port of the cursor selection in `Game.RenderTick`.
+    pub fn update_cursor(&mut self, mouse: (i32, i32)) {
+        let name = self.ui.cursor_at(self.ui.root, mouse.0, mouse.1);
+        self.cursor.set(&self.cursors, Some(name.as_deref().unwrap_or("default")));
     }
 
     /// Fills the draw list of the current frame.

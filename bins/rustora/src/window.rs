@@ -1,0 +1,475 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
+
+//! The client window: port of `Sdl2Input.PumpInput`, `Game.Loop` and the hardware cursors of `Sdl2PlatformWindow`.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use rustora_render::{Renderer, wgpu};
+use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
+use rustora_ui::widget::AppRequest;
+use winit::application::ApplicationHandler;
+use winit::event::{ElementState, KeyEvent, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+use winit::window::{CustomCursor, Window, WindowId};
+
+use crate::client::Client;
+
+/// `Ui.Timestep`.
+const LOGIC_INTERVAL: Duration = Duration::from_millis(40);
+/// `MaxLogicTicksBehind` of `Game.Loop`.
+const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
+/// The render interval of `Game.Loop` with the default settings: the swap chain waits for vertical sync.
+const RENDER_INTERVAL: Duration = Duration::from_millis(1);
+const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
+
+struct Gpu {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    renderer: Renderer,
+}
+
+struct App {
+    client: Client,
+    size: (u32, u32),
+    gpu: Option<Gpu>,
+    modifiers: Modifiers,
+    mouse: (i32, i32),
+    held: [bool; 3],
+    pending_motion: bool,
+    scroll_remainder: f64,
+    mouse_taps: HashMap<WinitButton, TapHistory>,
+    key_taps: HashMap<(String, [bool; 4]), TapHistory>,
+    hardware_cursors: HashMap<(String, usize), CustomCursor>,
+    shown_cursor: Option<(String, usize)>,
+    suspended: bool,
+    next_logic: Instant,
+    next_render: Instant,
+}
+
+/// Opens a window with the user interface of the mod and runs until the window closes.
+pub fn run(engine: &Path, support: &str, size: (u32, u32)) {
+    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32));
+    client.logic_tick();
+    let now = Instant::now();
+    let mut app = App {
+        client,
+        size,
+        gpu: None,
+        modifiers: Modifiers::default(),
+        mouse: (0, 0),
+        held: [false; 3],
+        pending_motion: false,
+        scroll_remainder: 0.0,
+        mouse_taps: HashMap::new(),
+        key_taps: HashMap::new(),
+        hardware_cursors: HashMap::new(),
+        shown_cursor: None,
+        suspended: false,
+        next_logic: now,
+        next_render: now,
+    };
+    let event_loop = EventLoop::new().expect("event loop");
+    event_loop.run_app(&mut app).expect("run event loop");
+}
+
+fn char_key_name(c: char) -> Option<&'static str> {
+    Some(match c {
+        ' ' => "SPACE",
+        '!' => "EXCLAIM",
+        '"' => "QUOTEDBL",
+        '#' => "HASH",
+        '%' => "PERCENT",
+        '$' => "DOLLAR",
+        '&' => "AMPERSAND",
+        '\'' => "QUOTE",
+        '(' => "LEFTPAREN",
+        ')' => "RIGHTPAREN",
+        '*' => "ASTERISK",
+        '+' => "PLUS",
+        ',' => "COMMA",
+        '-' => "MINUS",
+        '.' => "PERIOD",
+        '/' => "SLASH",
+        ':' => "COLON",
+        ';' => "SEMICOLON",
+        '<' => "LESS",
+        '=' => "EQUALS",
+        '>' => "GREATER",
+        '?' => "QUESTION",
+        '@' => "AT",
+        '[' => "LEFTBRACKET",
+        '\\' => "BACKSLASH",
+        ']' => "RIGHTBRACKET",
+        '^' => "CARET",
+        '_' => "UNDERSCORE",
+        '`' => "BACKQUOTE",
+        _ => return None,
+    })
+}
+
+fn named_key_name(key: NamedKey, location: KeyLocation) -> Option<&'static str> {
+    let right = location == KeyLocation::Right;
+    Some(match key {
+        NamedKey::Enter if location == KeyLocation::Numpad => "KP_ENTER",
+        NamedKey::Enter => "RETURN",
+        NamedKey::Escape => "ESCAPE",
+        NamedKey::Backspace => "BACKSPACE",
+        NamedKey::Tab => "TAB",
+        NamedKey::Space => "SPACE",
+        NamedKey::CapsLock => "CAPSLOCK",
+        NamedKey::PrintScreen => "PRINTSCREEN",
+        NamedKey::ScrollLock => "SCROLLLOCK",
+        NamedKey::Pause => "PAUSE",
+        NamedKey::Insert => "INSERT",
+        NamedKey::Home => "HOME",
+        NamedKey::PageUp => "PAGEUP",
+        NamedKey::Delete => "DELETE",
+        NamedKey::End => "END",
+        NamedKey::PageDown => "PAGEDOWN",
+        NamedKey::ArrowRight => "RIGHT",
+        NamedKey::ArrowLeft => "LEFT",
+        NamedKey::ArrowDown => "DOWN",
+        NamedKey::ArrowUp => "UP",
+        NamedKey::NumLock => "NUMLOCKCLEAR",
+        NamedKey::Control if right => "RCTRL",
+        NamedKey::Control => "LCTRL",
+        NamedKey::Shift if right => "RSHIFT",
+        NamedKey::Shift => "LSHIFT",
+        NamedKey::Alt if right => "RALT",
+        NamedKey::Alt => "LALT",
+        NamedKey::Super if right => "RGUI",
+        NamedKey::Super => "LGUI",
+        NamedKey::F1 => "F1",
+        NamedKey::F2 => "F2",
+        NamedKey::F3 => "F3",
+        NamedKey::F4 => "F4",
+        NamedKey::F5 => "F5",
+        NamedKey::F6 => "F6",
+        NamedKey::F7 => "F7",
+        NamedKey::F8 => "F8",
+        NamedKey::F9 => "F9",
+        NamedKey::F10 => "F10",
+        NamedKey::F11 => "F11",
+        NamedKey::F12 => "F12",
+        NamedKey::AudioVolumeMute => "MUTE",
+        NamedKey::AudioVolumeUp => "VOLUMEUP",
+        NamedKey::AudioVolumeDown => "VOLUMEDOWN",
+        NamedKey::MediaTrackNext => "AUDIONEXT",
+        NamedKey::MediaTrackPrevious => "AUDIOPREV",
+        NamedKey::MediaStop => "AUDIOSTOP",
+        NamedKey::MediaPlayPause => "AUDIOPLAY",
+        _ => return None,
+    })
+}
+
+fn numpad_char_name(c: char) -> Option<String> {
+    Some(match c {
+        '0'..='9' => format!("KP_{c}"),
+        '/' => "KP_DIVIDE".into(),
+        '*' => "KP_MULTIPLY".into(),
+        '-' => "KP_MINUS".into(),
+        '+' => "KP_PLUS".into(),
+        '.' => "KP_PERIOD".into(),
+        '=' => "KP_EQUALS".into(),
+        _ => return None,
+    })
+}
+
+/// Names a key as the `Keycode` enum does. A character without a name becomes its code point, which `Hotkey.TryParse`
+/// accepts too. Letters and digits ignore the shift state, as SDL key symbols do.
+fn key_name(key: &Key, location: KeyLocation) -> Option<String> {
+    match key {
+        Key::Named(named) => named_key_name(*named, location).map(str::to_string),
+        Key::Character(text) => {
+            let c = text.chars().next()?;
+            if location == KeyLocation::Numpad
+                && let Some(name) = numpad_char_name(c)
+            {
+                return Some(name);
+            }
+            Some(match c {
+                'a'..='z' | 'A'..='Z' => c.to_ascii_uppercase().to_string(),
+                '0'..='9' => format!("NUMBER_{c}"),
+                _ => char_key_name(c).map_or_else(|| (c as u32).to_string(), str::to_string),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn to_modifiers(state: ModifiersState) -> Modifiers {
+    Modifiers {
+        shift: state.shift_key(),
+        ctrl: state.control_key(),
+        alt: state.alt_key(),
+        meta: state.super_key(),
+    }
+}
+
+impl App {
+    fn mouse_input(&self, event: MouseEvent, button: MouseButton, scroll_delta: i32, multi_tap: i32) -> MouseInput {
+        MouseInput {
+            event,
+            button,
+            x: self.mouse.0,
+            y: self.mouse.1,
+            scroll_delta,
+            modifiers: self.modifiers,
+            multi_tap,
+        }
+    }
+
+    /// The button of a move event. C# passes all held buttons as flags, here the first held one is enough for `==` tests.
+    fn held_button(&self) -> MouseButton {
+        match self.held {
+            [true, _, _] => MouseButton::Left,
+            [_, true, _] => MouseButton::Right,
+            [_, _, true] => MouseButton::Middle,
+            _ => MouseButton::None,
+        }
+    }
+
+    fn flush_motion(&mut self) {
+        if std::mem::take(&mut self.pending_motion) {
+            let mi = self.mouse_input(MouseEvent::Move, self.held_button(), 0, 0);
+            self.client.ui.handle_input(&mi);
+        }
+    }
+
+    fn mouse_button(&mut self, state: ElementState, button: WinitButton) {
+        let (ui_button, index) = match button {
+            WinitButton::Left => (MouseButton::Left, 0),
+            WinitButton::Right => (MouseButton::Right, 1),
+            WinitButton::Middle => (MouseButton::Middle, 2),
+            WinitButton::Back => return self.key_press(state, "MOUSE4".into(), false),
+            WinitButton::Forward => return self.key_press(state, "MOUSE5".into(), false),
+            WinitButton::Other(_) => return,
+        };
+        self.flush_motion();
+        self.held[index] = state == ElementState::Pressed;
+        let taps = self.mouse_taps.entry(button).or_default();
+        let (event, count) = match state {
+            ElementState::Pressed => (MouseEvent::Down, taps.press(Instant::now(), self.mouse)),
+            ElementState::Released => (MouseEvent::Up, taps.count()),
+        };
+        let mi = self.mouse_input(event, ui_button, 0, count);
+        self.client.ui.handle_input(&mi);
+    }
+
+    fn scroll(&mut self, delta: MouseScrollDelta) {
+        let steps = match delta {
+            MouseScrollDelta::LineDelta(_, y) => y as f64,
+            MouseScrollDelta::PixelDelta(p) => p.y / PIXELS_PER_SCROLL_STEP,
+        };
+        self.scroll_remainder += steps;
+        let whole = self.scroll_remainder.trunc();
+        self.scroll_remainder -= whole;
+        if whole != 0.0 {
+            self.flush_motion();
+            let mi = self.mouse_input(MouseEvent::Scroll, MouseButton::None, whole as i32, 0);
+            self.client.ui.handle_input(&mi);
+        }
+    }
+
+    fn key_press(&mut self, state: ElementState, key: String, repeat: bool) {
+        let m = self.modifiers;
+        let taps = self.key_taps.entry((key.clone(), [m.shift, m.ctrl, m.alt, m.meta])).or_default();
+        let (event, multi_tap) = match state {
+            ElementState::Pressed => (UiKeyEvent::Down, taps.press(Instant::now(), (0, 0))),
+            ElementState::Released => (UiKeyEvent::Up, taps.count()),
+        };
+        self.client.ui.handle_key(&KeyInput {
+            event,
+            key,
+            modifiers: m,
+            multi_tap,
+            repeat,
+        });
+    }
+
+    fn keyboard(&mut self, event: &KeyEvent) {
+        self.flush_motion();
+        if let Some(name) = key_name(&event.key_without_modifiers(), event.location) {
+            self.key_press(event.state, name, event.repeat);
+        }
+        if event.state == ElementState::Pressed
+            && let Some(text) = event.text_with_all_modifiers().filter(|t| !t.chars().any(char::is_control))
+        {
+            self.client.ui.handle_text(text);
+        }
+    }
+
+    fn apply_cursor(&mut self, el: &ActiveEventLoop) {
+        let Some(gpu) = &self.gpu else { return };
+        self.client.update_cursor(self.mouse);
+        let wanted = self.client.cursor.current(&self.client.cursors).map(|(n, f)| (n.to_string(), f));
+        if wanted == self.shown_cursor {
+            return;
+        }
+        match &wanted {
+            None => gpu.window.set_cursor_visible(false),
+            Some(key) => {
+                if !self.hardware_cursors.contains_key(key) {
+                    let image = self.client.cursors.image(&key.0, key.1).expect("known cursor");
+                    let source = CustomCursor::from_rgba(image.rgba.clone(), image.width, image.height, image.hotspot.0, image.hotspot.1)
+                        .expect("valid cursor image");
+                    self.hardware_cursors.insert(key.clone(), el.create_custom_cursor(source));
+                }
+                gpu.window.set_cursor(self.hardware_cursors[key].clone());
+                gpu.window.set_cursor_visible(true);
+            }
+        }
+        self.shown_cursor = wanted;
+    }
+
+    fn render(&mut self, el: &ActiveEventLoop) {
+        self.apply_cursor(el);
+        let Some(gpu) = self.gpu.as_mut() else { return };
+        self.client.prepare(&mut gpu.renderer);
+        let frame = match gpu.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            _ => {
+                gpu.surface.configure(&gpu.renderer.device, &gpu.config);
+                return;
+            }
+        };
+        let view = frame.texture.create_view(&Default::default());
+        self.client.render(&mut gpu.renderer, &view, (gpu.config.width, gpu.config.height));
+        gpu.window.pre_present_notify();
+        gpu.renderer.queue.present(frame);
+    }
+
+    fn create_gpu(&self, el: &ActiveEventLoop) -> Gpu {
+        let window = Arc::new(
+            el.create_window(
+                Window::default_attributes()
+                    .with_title("rustora")
+                    .with_resizable(false)
+                    .with_inner_size(winit::dpi::PhysicalSize::new(self.size.0, self.size.1)),
+            )
+            .expect("create window"),
+        );
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
+            el.owned_display_handle(),
+        )));
+        let surface = instance.create_surface(window.clone()).expect("create surface");
+        let adapter = rustora_render::pollster_block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }))
+        .expect("graphics adapter");
+        let (device, queue) =
+            rustora_render::pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("graphics device");
+        let size = window.inner_size();
+        let mut config = surface
+            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .expect("surface config");
+        let caps = surface.get_capabilities(&adapter);
+        config.format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(config.format);
+        surface.configure(&device, &config);
+        let renderer = Renderer::new(device, queue, config.format);
+        Gpu {
+            window,
+            surface,
+            config,
+            renderer,
+        }
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, el: &ActiveEventLoop) {
+        if self.gpu.is_none() {
+            self.gpu = Some(self.create_gpu(el));
+        }
+    }
+
+    fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::Resized(size) => {
+                if let Some(gpu) = self.gpu.as_mut() {
+                    gpu.config.width = size.width.max(1);
+                    gpu.config.height = size.height.max(1);
+                    gpu.surface.configure(&gpu.renderer.device, &gpu.config);
+                }
+            }
+            WindowEvent::Occluded(occluded) => self.suspended = occluded,
+            WindowEvent::ModifiersChanged(state) => self.modifiers = to_modifiers(state.state()),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse = (position.x as i32, position.y as i32);
+                self.pending_motion = true;
+            }
+            WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
+            WindowEvent::MouseWheel { delta, .. } => self.scroll(delta),
+            WindowEvent::KeyboardInput { event, .. } => self.keyboard(&event),
+            WindowEvent::RedrawRequested => self.render(el),
+            _ => {}
+        }
+        if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
+            el.exit();
+        }
+    }
+
+    /// One pass of `Game.Loop`: at most one logic tick and one render.
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        self.flush_motion();
+        let now = Instant::now();
+        if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
+            self.next_logic = now;
+        }
+        if now >= self.next_logic {
+            self.next_logic += LOGIC_INTERVAL;
+            self.client.logic_tick();
+        }
+        if now >= self.next_render && !self.suspended {
+            self.next_render = now + RENDER_INTERVAL;
+            if let Some(gpu) = &self.gpu {
+                gpu.window.request_redraw();
+            }
+        }
+        if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
+            el.exit();
+        }
+        el.set_control_flow(ControlFlow::WaitUntil(self.next_logic.min(self.next_render)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use winit::keyboard::SmolStr;
+
+    use super::*;
+
+    fn character(text: &str, location: KeyLocation) -> Option<String> {
+        key_name(&Key::Character(SmolStr::new(text)), location)
+    }
+
+    #[test]
+    fn names_keys_as_the_keycode_enum() {
+        assert_eq!(character("a", KeyLocation::Standard).as_deref(), Some("A"));
+        assert_eq!(character("7", KeyLocation::Standard).as_deref(), Some("NUMBER_7"));
+        assert_eq!(character("7", KeyLocation::Numpad).as_deref(), Some("KP_7"));
+        assert_eq!(character("-", KeyLocation::Standard).as_deref(), Some("MINUS"));
+        assert_eq!(character("ä", KeyLocation::Standard).as_deref(), Some("228"));
+        assert_eq!(
+            key_name(&Key::Named(NamedKey::Enter), KeyLocation::Standard).as_deref(),
+            Some("RETURN")
+        );
+        assert_eq!(
+            key_name(&Key::Named(NamedKey::Enter), KeyLocation::Numpad).as_deref(),
+            Some("KP_ENTER")
+        );
+        assert_eq!(
+            key_name(&Key::Named(NamedKey::Shift), KeyLocation::Right).as_deref(),
+            Some("RSHIFT")
+        );
+    }
+}

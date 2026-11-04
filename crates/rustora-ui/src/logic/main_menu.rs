@@ -24,6 +24,15 @@ fn on_click(ui: &Ui, root: WidgetId, button: &str, action: impl Fn(&mut Ui) + 's
     ui.get::<ButtonWidget>(id).on_click = Some(Rc::new(action));
 }
 
+/// The news and the version check are not ported, so these stay hidden as with `Game.FetchNews=False` in C#.
+fn hide_unported_notices(ui: &mut Ui, widget: WidgetId) {
+    for name in ["NEWS_BG", "UPDATE_NOTICE"] {
+        if let Some(id) = ui.find(widget, name) {
+            ui.set_visible_fn(id, || false);
+        }
+    }
+}
+
 pub fn create(ui: &mut Ui, widget: WidgetId, _args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let menu = Rc::new(Cell::new(MenuType::Main));
     let switch = |target: MenuType| {
@@ -52,5 +61,6 @@ pub fn create(ui: &mut Ui, widget: WidgetId, _args: &WidgetArgs) -> Rc<RefCell<d
     let editor = panel(ui, "MAP_EDITOR_MENU", MenuType::MapEditor);
     on_click(ui, editor, "BACK_BUTTON", switch(MenuType::Extras));
 
+    hide_unported_notices(ui, widget);
     cell(NoLogic)
 }

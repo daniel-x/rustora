@@ -2382,6 +2382,7 @@ dependencies = [
  "indexmap",
  "png",
  "rustora-core",
+ "rustora-formats",
  "rustora-fs",
  "rustora-game",
  "rustora-render",

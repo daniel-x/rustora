@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Sprite file formats: `frame_count` for the simulation, `decode` for the renderer. Port of `ShpTDLoader.cs` and `TmpRALoader.cs`.
+//! Sprite file formats: `frame_count` for the simulation, `decode` for the renderer. Port of `ShpD2Loader.cs`, `ShpTDLoader.cs` and `TmpRALoader.cs`.
 
 fn u16_at(d: &[u8], o: usize) -> Option<u16> {
     Some(u16::from_le_bytes([*d.get(o)?, *d.get(o + 1)?]))
@@ -9,6 +9,113 @@ fn u16_at(d: &[u8], o: usize) -> Option<u16> {
 
 fn u32_at(d: &[u8], o: usize) -> Option<u32> {
     Some(u32::from_le_bytes([*d.get(o)?, *d.get(o + 1)?, *d.get(o + 2)?, *d.get(o + 3)?]))
+}
+
+/// `ShpD2Loader.IsShpD2`.
+pub fn is_shp_d2(d: &[u8]) -> bool {
+    let Some(image_count) = u16_at(d, 0).filter(|&c| c != 0) else {
+        return false;
+    };
+    let Some(test_offset) = u32_at(d, 2) else { return false };
+    let two_bytes = test_offset & 0xff0000 > 0;
+    let final_offset = 2 + if two_bytes { 2 } else { 4 } * image_count as usize;
+    if final_offset > d.len() {
+        return false;
+    }
+    let eof = if two_bytes {
+        u16_at(d, final_offset).map(u32::from)
+    } else {
+        u32_at(d, final_offset)
+    };
+    if eof.map(|e| e as usize + 2) != Some(d.len()) {
+        return false;
+    }
+    u16_at(d, final_offset + if two_bytes { 2 } else { 4 }).is_some_and(|b| b == 5 || b <= 3)
+}
+
+/// `RLEZerosCompression.DecodeInto`.
+fn rle_zeros_decode_into(src: &[u8], dest: &mut [u8]) -> Option<()> {
+    let (mut s, mut o) = (0, 0);
+    while s < src.len() {
+        let cmd = src[s];
+        s += 1;
+        if cmd == 0 {
+            let count = *src.get(s)? as usize;
+            s += 1;
+            dest.get_mut(o..o + count)?.fill(0);
+            o += count;
+        } else {
+            *dest.get_mut(o)? = cmd;
+            o += 1;
+        }
+    }
+    Some(())
+}
+
+/// `ShpD2Frame`.
+fn decode_shp_d2_frame(d: &[u8], start: usize) -> Option<SpriteFrame> {
+    const PALETTE_TABLE: u16 = 1;
+    const NOT_LCW_COMPRESSED: u16 = 2;
+    const VARIABLE_LENGTH_TABLE: u16 = 4;
+    let flags = u16_at(d, start)?;
+    let width = u16_at(d, start + 3)? as usize;
+    let height = *d.get(start + 5)? as usize;
+    let mut data_left = (u16_at(d, start + 6)? as usize).checked_sub(10)?;
+    let data_size = u16_at(d, start + 8)? as usize;
+    let mut position = start + 10;
+    let table: Vec<u8> = if flags & PALETTE_TABLE != 0 {
+        let n = if flags & VARIABLE_LENGTH_TABLE != 0 {
+            let n = *d.get(position)? as usize;
+            position += 1;
+            n
+        } else {
+            16
+        };
+        let table = d.get(position..position + n)?.to_vec();
+        position += n;
+        data_left = data_left.checked_sub(n)?;
+        table
+    } else {
+        let mut table: Vec<u8> = (0..=255).collect();
+        table[1..5].copy_from_slice(&[0x7f, 0x7e, 0x7d, 0x7c]);
+        table
+    };
+    let compressed = d.get(position..position + data_left)?;
+    let mut data = vec![0; width * height];
+    if flags & NOT_LCW_COMPRESSED == 0 {
+        let mut expanded = vec![0; data_size];
+        crate::lcw::lcw_decode_into(compressed, &mut expanded, 0)?;
+        rle_zeros_decode_into(&expanded, &mut data)?;
+    } else {
+        rle_zeros_decode_into(compressed, &mut data)?;
+    }
+    for v in &mut data {
+        *v = *table.get(*v as usize)?;
+    }
+    Some(SpriteFrame {
+        width,
+        height,
+        frame_width: width,
+        frame_height: height,
+        offset: (0.0, 0.0),
+        data,
+    })
+}
+
+/// `ShpD2Loader.ParseFrames`.
+fn decode_shp_d2(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    let count = u16_at(d, 0)? as usize;
+    let two_bytes = u32_at(d, 2)? & 0xff0000 > 0;
+    (0..count)
+        .map(|i| {
+            let offset = if two_bytes {
+                u16_at(d, 2 + 2 * i)? as usize
+            } else {
+                u32_at(d, 2 + 4 * i)? as usize
+            };
+            decode_shp_d2_frame(d, offset + 2)
+        })
+        .collect()
 }
 
 /// `ShpTDLoader.IsShpTD`.
@@ -31,7 +138,7 @@ pub fn is_tmp_ra(d: &[u8]) -> bool {
 
 /// Number of frames in a sprite file, trying the loaders in the order of `SpriteFormats`.
 pub fn frame_count(d: &[u8]) -> Option<usize> {
-    if is_shp_td(d) {
+    if is_shp_d2(d) || is_shp_td(d) {
         return u16_at(d, 0).map(|c| c as usize);
     }
     if is_tmp_ra(d) {
@@ -55,6 +162,9 @@ pub struct SpriteFrame {
 
 /// Decodes all frames of a sprite file, trying the loaders in the order of `SpriteFormats`.
 pub fn decode(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    if is_shp_d2(d) {
+        return decode_shp_d2(d);
+    }
     if is_shp_td(d) {
         return decode_shp_td(d);
     }
