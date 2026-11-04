@@ -170,7 +170,11 @@ impl Client {
         }
         let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, services.clone());
         ui.ui_scroll_speed = ui_scroll_speed;
-        ui.load_widget("MAINMENU", Some(ui.root), &WidgetArgs::default());
+        let mut menu_args = WidgetArgs::default();
+        if let Some(target) = args.iter().find_map(|a| a.strip_prefix("Launch.Connect=")) {
+            menu_args = menu_args.with_value("directConnect", target.to_string());
+        }
+        ui.load_widget("MAINMENU", Some(ui.root), &menu_args);
         Client {
             ui,
             cursors,

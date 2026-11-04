@@ -70,7 +70,20 @@ fn start_skirmish_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
     connection::connect(ui, LOCAL_SERVER_TARGET, "", on_connect, on_abort);
 }
 
-pub fn create(ui: &mut Ui, widget: WidgetId, _args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+/// Port of `OnRemoteDirectConnect`, without the server browser behind the lobby until that is ported.
+fn direct_connect(ui: &mut Ui, target: &str, menu: &Rc<Cell<MenuType>>) {
+    menu.set(MenuType::None);
+    let to_main = menu.clone();
+    let on_exit: Action = Rc::new(move |ui| {
+        ui.requests.push(AppRequest::Disconnect);
+        to_main.set(MenuType::Main);
+    });
+    let on_abort = on_exit.clone();
+    let on_connect: Action = Rc::new(move |ui| lobby::open_lobby(ui, on_exit.clone(), Rc::new(|_| {}), false));
+    connection::connect(ui, target, "", on_connect, on_abort);
+}
+
+pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let menu = Rc::new(Cell::new(MenuType::Main));
     let switch = |target: MenuType| {
         let menu = menu.clone();
@@ -118,5 +131,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, _args: &WidgetArgs) -> Rc<RefCell<d
     });
 
     hide_unported_notices(ui, widget);
+    if let Some(target) = args.value::<String>("directConnect") {
+        direct_connect(ui, &target, &menu);
+    }
     cell(NoLogic)
 }
