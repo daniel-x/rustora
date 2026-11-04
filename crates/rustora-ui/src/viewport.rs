@@ -121,6 +121,10 @@ impl Viewport {
         (self.center.0 - self.size.0 / 2, self.center.1 - self.size.1 / 2)
     }
 
+    pub fn bottom_right(&self) -> (i32, i32) {
+        (self.center.0 + self.size.0 / 2, self.center.1 + self.size.1 / 2)
+    }
+
     /// `AdjustZoom` without a center.
     pub fn adjust_zoom(&mut self, dz: f32) {
         self.set_zoom((self.zoom * dz.exp()).clamp(self.min_zoom, self.max_zoom));

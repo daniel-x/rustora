@@ -57,6 +57,7 @@ struct ShellWorld {
     quads: Vec<Quad>,
     viewport: Rc<RefCell<Viewport>>,
     viewer: Option<PlayerRef>,
+    ingame: Option<Rc<Ingame>>,
     ended: bool,
 }
 
@@ -89,6 +90,11 @@ impl ShellWorld {
             .players()
             .into_iter()
             .find(|p| p.client_index == local_client && p.playable && !p.non_combatant);
+        if let Some(p) = &viewer {
+            let home = p.home_location;
+            let center = rustora_core::world_types::WPos::new(1024 * home.x() + 512, 1024 * home.y() + 512, 0);
+            viewport.borrow_mut().center_on(crate::scene::screen_px_position(center));
+        }
         ShellWorld {
             world,
             driver,
@@ -97,6 +103,7 @@ impl ShellWorld {
             quads: Vec::new(),
             viewport,
             viewer,
+            ingame: None,
             ended: false,
         }
     }
@@ -122,6 +129,7 @@ impl ShellWorld {
             quads: Vec::new(),
             viewport,
             viewer: None,
+            ingame: None,
             ended: false,
         })
     }
@@ -129,6 +137,9 @@ impl ShellWorld {
     fn tick(&mut self) {
         if !self.ended && self.driver.step() == Step::Ended {
             self.ended = true;
+        }
+        if let Some(ingame) = &self.ingame {
+            ingame.selection.tick(ingame.render_player.as_ref());
         }
     }
 
@@ -150,6 +161,9 @@ impl ShellWorld {
         let world = &self.world;
         let scene = self.scene.get_or_insert_with(|| Scene::new(renderer, world, read_file));
         self.quads = scene.build(renderer, world, self.viewer.as_ref(), &cam);
+        if let Some(ingame) = &self.ingame {
+            ingame.screen_map.borrow_mut().set(scene.mouse_bounds(renderer, world));
+        }
     }
 }
 
@@ -274,7 +288,7 @@ impl Client {
         self.ui.reset_all();
         self.shell = None;
         let distance = self.services.settings.borrow().graphics.viewport_distance;
-        let shell = ShellWorld::start_game(
+        let mut shell = ShellWorld::start_game(
             &self.engine,
             &self.support,
             package,
@@ -283,11 +297,22 @@ impl Client {
             self.ui.resolution,
             distance,
         );
-        *self.services.ingame.borrow_mut() = Some(Rc::new(Ingame {
-            world: shell.world.clone(),
-            viewport: shell.viewport.clone(),
-            local_player: shell.viewer.clone(),
-        }));
+        let (select_cursor, default_cursor) = {
+            let assets = self.ui.assets.borrow();
+            (
+                assets.metrics.string("WorldSelectCursor"),
+                assets.metrics.string("WorldDefaultCursor"),
+            )
+        };
+        let ingame = Rc::new(Ingame::new(
+            shell.world.clone(),
+            shell.viewport.clone(),
+            shell.viewer.clone(),
+            select_cursor,
+            default_cursor,
+        ));
+        shell.ingame = Some(ingame.clone());
+        *self.services.ingame.borrow_mut() = Some(ingame);
         self.shell = Some(shell);
         self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
         for (what, count) in self.ui.loader.missing.borrow().iter() {
@@ -309,6 +334,9 @@ impl Client {
         self.list.clear();
         let assets = self.ui.assets.clone();
         let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
+        if let Some(ingame) = self.shell.as_ref().and_then(|s| s.ingame.as_ref()) {
+            rustora_ui::annotations::draw_selection_annotations(&mut dc, ingame, &self.services.settings.borrow());
+        }
         self.ui.draw(&mut dc);
         drop(dc);
         self.ui.after_draw();

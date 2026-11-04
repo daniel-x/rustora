@@ -262,6 +262,8 @@ pub struct Ui {
     pub previous_mouse: (i32, i32),
     /// `Renderer.WindowHasInputFocus`.
     pub window_has_focus: bool,
+    /// `Game.GetModifierKeys`.
+    pub modifiers: crate::input::Modifiers,
     /// `Viewport.LastMoveRunTime`.
     pub last_move_time: i64,
     /// `Game.Settings.Game.UIScrollSpeed`.
@@ -308,6 +310,7 @@ impl Ui {
             last_mouse: (0, 0),
             previous_mouse: (0, 0),
             window_has_focus: true,
+            modifiers: Default::default(),
             last_move_time: 0,
             ui_scroll_speed: 50.0,
             start: Instant::now(),

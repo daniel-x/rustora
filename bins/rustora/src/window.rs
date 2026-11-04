@@ -422,7 +422,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Occluded(occluded) => self.suspended = occluded,
-            WindowEvent::ModifiersChanged(state) => self.modifiers = to_modifiers(state.state()),
+            WindowEvent::ModifiersChanged(state) => {
+                self.modifiers = to_modifiers(state.state());
+                self.client.ui.modifiers = self.modifiers;
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse = (position.x as i32, position.y as i32);
                 self.pending_motion = true;

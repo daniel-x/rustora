@@ -41,6 +41,8 @@ pub struct TransformsInfo {
     pub into_actor: String,
     pub offset: CVec,
     pub facing: WAngle,
+    pub deploy_cursor: String,
+    pub deploy_blocked_cursor: String,
 }
 
 impl Default for TransformsInfo {
@@ -51,6 +53,8 @@ impl Default for TransformsInfo {
             into_actor: String::new(),
             offset: CVec::ZERO,
             facing: WAngle::new(384),
+            deploy_cursor: "deploy".into(),
+            deploy_blocked_cursor: "deploy-blocked".into(),
         }
     }
 }
@@ -63,7 +67,7 @@ pub struct Transforms {
     faction: String,
 }
 
-register_traits!(Transforms: IResolveOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(Transforms: IResolveOrder, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(TransformsInfo => |info, init| {
     let w = init.world();
     let actor_info = w.rules().actor(&info.into_actor.to_lowercase()).unwrap_or_else(|| panic!("unknown actor {}", info.into_actor));
@@ -113,6 +117,30 @@ impl Transforms {
             return;
         }
         self.self_.queue_activity_queued(queued, self.get_transform_activity());
+    }
+}
+
+impl crate::orders::IIssueOrder for Transforms {
+    /// The cursor is chosen when the targeter is made instead of when it targets; nothing changes in between.
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.is_trait_disabled() {
+            return Vec::new();
+        }
+        let cursor = if self.can_deploy() {
+            &self.info.deploy_cursor
+        } else {
+            &self.info.deploy_blocked_cursor
+        }
+        .clone();
+        vec![Box::new(crate::orders::DeployOrderTargeter::new(
+            "DeployTransform",
+            5,
+            Box::new(move || cursor.clone()),
+        ))]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, _target: &Target, queued: bool) -> Option<Order> {
+        (order.order_id() == "DeployTransform").then(|| Order::new("DeployTransform", Some(self_.clone()), Target::Invalid, queued))
     }
 }
 

@@ -80,6 +80,8 @@ pub struct ArmamentInfo {
     pub target_relationships: PlayerRelationship,
     pub force_target_relationships: PlayerRelationship,
     pub ammo_usage: i32,
+    pub cursor: String,
+    pub outside_range_cursor: String,
 }
 
 impl Default for ArmamentInfo {
@@ -101,6 +103,8 @@ impl Default for ArmamentInfo {
                 PlayerRelationship::ENEMY.0 | PlayerRelationship::NEUTRAL.0 | PlayerRelationship::ALLY.0,
             ),
             ammo_usage: 1,
+            cursor: "attack".into(),
+            outside_range_cursor: "attackoutsiderange".into(),
         }
     }
 }
@@ -567,6 +571,8 @@ pub struct AttackBaseInfo {
     pub reload_delay: i32,
     pub initial_charge_delay: i32,
     pub charge_delay: i32,
+    pub cursor: Option<String>,
+    pub outside_range_cursor: Option<String>,
 }
 
 impl Default for AttackBaseInfo {
@@ -602,6 +608,8 @@ impl Default for AttackBaseInfo {
             reload_delay: 120,
             initial_charge_delay: 22,
             charge_delay: 3,
+            cursor: None,
+            outside_range_cursor: None,
         }
     }
 }
@@ -653,6 +661,7 @@ impl TraitObject for AttackBase {
         dict.add::<AttackBase>(actor, self.clone());
         dict.add::<dyn ITick>(actor, self.clone());
         dict.add::<dyn IResolveOrder>(actor, self.clone());
+        dict.add::<dyn crate::orders::IIssueOrder>(actor, self.clone());
         dict.add::<dyn INotifyCreated>(actor, self.clone());
         dict.add::<dyn IObservesVariables>(actor, self.clone());
         dict.add::<dyn IDisabledTrait>(actor, self.clone());
@@ -2593,5 +2602,165 @@ impl Activity for Leap {
         } else {
             self.destination.get()
         })]
+    }
+}
+
+impl crate::orders::IIssueOrder for AttackBase {
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.is_trait_disabled() || self.armaments().is_empty() {
+            return Vec::new();
+        }
+        vec![Box::new(AttackOrderTargeter {
+            ab: self.me.upgrade().expect("attack base"),
+            force: Cell::new(false),
+            order_priority: 6,
+            is_queued: Cell::new(false),
+        })]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        order
+            .as_any()
+            .is::<AttackOrderTargeter>()
+            .then(|| Order::new(order.order_id(), Some(self_.clone()), target.clone(), queued))
+    }
+}
+
+/// `AttackBase.AttackOrderTargeter`. Its order id turns into `ForceAttack` once it targets with force attack.
+struct AttackOrderTargeter {
+    ab: Rc<AttackBase>,
+    force: Cell<bool>,
+    order_priority: i32,
+    is_queued: Cell<bool>,
+}
+
+impl AttackOrderTargeter {
+    /// The valid armament with the highest range out of those that have ammo, else the one with the highest range.
+    fn armament_for(&self, target: &Target, force_attack: bool) -> Option<Rc<Armament>> {
+        let mut armaments = self.ab.choose_armaments_for_target(target, force_attack);
+        armaments.sort_by_key(|a| (a.is_trait_paused(), std::cmp::Reverse(a.max_range().length)));
+        armaments.into_iter().next()
+    }
+
+    fn cursor_for(&self, a: &Armament, out_of_range: bool) -> String {
+        let info = &self.ab.info;
+        if out_of_range {
+            info.outside_range_cursor
+                .clone()
+                .unwrap_or_else(|| a.info.outside_range_cursor.clone())
+        } else {
+            info.cursor.clone().unwrap_or_else(|| a.info.cursor.clone())
+        }
+    }
+
+    fn can_target_actor(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        self.is_queued.set(modifiers.has_modifier(TargetModifiers::FORCE_QUEUE));
+        if modifiers.has_modifier(TargetModifiers::FORCE_MOVE) {
+            return false;
+        }
+        let info = &self.ab.info;
+        if info.force_fire_ignores_actors && modifiers.has_modifier(TargetModifiers::FORCE_ATTACK) {
+            return false;
+        }
+        if let Some(t) = target.actor().filter(|_| target.target_type() == TargetType::Actor) {
+            let disguised = t.trait_or_default::<dyn IEffectiveOwner>().is_some_and(|e| e.disguised());
+            if disguised && self_.owner().relationship_with(Some(&t.owner())) == PlayerRelationship::ENEMY {
+                *modifiers = modifiers.with(TargetModifiers::FORCE_ATTACK, true);
+            }
+        }
+        let force_attack = modifiers.has_modifier(TargetModifiers::FORCE_ATTACK);
+        let Some(a) = self.armament_for(target, force_attack) else {
+            return false;
+        };
+        let out_of_range = !target.is_in_range(self_.center_position(), a.max_range())
+            || (!force_attack && target.target_type() == TargetType::FrozenActor && !info.target_frozen_actors);
+        if out_of_range && info.outside_range_requires_force_fire && !force_attack {
+            return false;
+        }
+        *cursor = Some(self.cursor_for(&a, out_of_range));
+        if force_attack {
+            self.force.set(true);
+        }
+        true
+    }
+
+    fn can_target_location(
+        &self,
+        self_: &ActorRef,
+        location: rustora_core::world_types::CPos,
+        modifiers: crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        let world = self_.world();
+        if !world.map().contains(location) {
+            return false;
+        }
+        self.is_queued.set(modifiers.has_modifier(TargetModifiers::FORCE_QUEUE));
+        if modifiers.has_modifier(TargetModifiers::FORCE_MOVE)
+            || !(self.ab.info.target_terrain_without_force_fire || modifiers.has_modifier(TargetModifiers::FORCE_ATTACK))
+        {
+            return false;
+        }
+        let target = Target::from_cell(&world, location, rustora_engine::traits::subcell::FULL_CELL);
+        let Some(a) = self.armament_for(&target, true) else {
+            return false;
+        };
+        *cursor = Some(self.cursor_for(&a, !target.is_in_range(self_.center_position(), a.max_range())));
+        self.force.set(true);
+        true
+    }
+}
+
+impl crate::orders::IOrderTargeter for AttackOrderTargeter {
+    fn order_id(&self) -> &str {
+        if self.force.get() { "ForceAttack" } else { "Attack" }
+    }
+
+    fn order_priority(&self) -> i32 {
+        self.order_priority
+    }
+
+    fn can_target(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        match target.target_type() {
+            TargetType::Actor | TargetType::FrozenActor => self.can_target_actor(self_, target, modifiers, cursor),
+            TargetType::Terrain => {
+                let cell = self_.world().map().cell_containing(target.center_position());
+                self.can_target_location(self_, cell, *modifiers, cursor)
+            }
+            TargetType::Invalid => false,
+        }
+    }
+
+    fn is_queued(&self) -> bool {
+        self.is_queued.get()
+    }
+
+    fn target_overrides_selection(
+        &self,
+        _: &ActorRef,
+        _: &Target,
+        _: &[ActorRef],
+        _: rustora_core::world_types::CPos,
+        _: crate::orders::TargetModifiers,
+    ) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

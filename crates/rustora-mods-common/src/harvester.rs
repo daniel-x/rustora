@@ -485,6 +485,8 @@ pub struct DockClientManagerInfo {
     pub search_for_dock_delay: i32,
     pub occupancy_cost_modifier: i32,
     pub require_force_move_condition: Option<BooleanExpression>,
+    pub enter_cursor: String,
+    pub enter_blocked_cursor: String,
 }
 
 impl Default for DockClientManagerInfo {
@@ -495,6 +497,8 @@ impl Default for DockClientManagerInfo {
             search_for_dock_delay: 125,
             occupancy_cost_modifier: 12,
             require_force_move_condition: None,
+            enter_cursor: "enter".into(),
+            enter_blocked_cursor: "enter-blocked".into(),
         }
     }
 }
@@ -511,7 +515,7 @@ pub struct DockClientManager {
     last_reserved_dock_host: RefCell<Option<Rc<DockHost>>>,
 }
 
-register_traits!(DockClientManager: IResolveOrder, INotifyKilled, INotifyActorDisposing, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(DockClientManager: IResolveOrder, crate::orders::IIssueOrder, INotifyKilled, INotifyActorDisposing, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(DockClientManagerInfo => |info, init| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new_cyclic(|me| DockClientManager {
@@ -579,6 +583,83 @@ impl INotifyKilled for DockClientManager {
 impl INotifyActorDisposing for DockClientManager {
     fn disposing(&self, _self_: &ActorRef) {
         self.unreserve_host();
+    }
+}
+
+impl crate::orders::IIssueOrder for DockClientManager {
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        vec![Box::new(DockActorTargeter {
+            manager: self.me.upgrade().expect("dock client manager"),
+            order_priority: 6,
+            force: Cell::new(false),
+            is_queued: Cell::new(false),
+        })]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        matches!(order.order_id(), "Dock" | "ForceDock").then(|| Order::new(order.order_id(), Some(self_.clone()), target.clone(), queued))
+    }
+}
+
+/// `DockActorTargeter` as `DockClientManager` makes it. Frozen actors are not supported, as in C#.
+struct DockActorTargeter {
+    manager: Rc<DockClientManager>,
+    order_priority: i32,
+    force: Cell<bool>,
+    is_queued: Cell<bool>,
+}
+
+impl crate::orders::IOrderTargeter for DockActorTargeter {
+    fn order_id(&self) -> &str {
+        if self.force.get() { "ForceDock" } else { "Dock" }
+    }
+
+    fn order_priority(&self) -> i32 {
+        self.order_priority
+    }
+
+    fn can_target(
+        &self,
+        _self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        let Some(actor) = target.actor().filter(|_| target.target_type() == TargetType::Actor) else {
+            return false;
+        };
+        let info = &self.manager.info;
+        *cursor = Some(info.enter_cursor.clone());
+        let queued = modifiers.has_modifier(TargetModifiers::FORCE_QUEUE);
+        self.is_queued.set(queued);
+        let force_enter = modifiers.has_modifier(TargetModifiers::FORCE_MOVE);
+        self.force.set(force_enter);
+        if self.manager.require_force_move.get() && !force_enter {
+            return false;
+        }
+        if !self.manager.can_queue_dock_at(actor, force_enter, queued) {
+            return false;
+        }
+        let enter = queued || self.manager.can_dock_at_actor(actor, force_enter, true);
+        *cursor = Some(if enter {
+            info.enter_cursor.clone()
+        } else {
+            info.enter_blocked_cursor.clone()
+        });
+        true
+    }
+
+    fn is_queued(&self) -> bool {
+        self.is_queued.get()
+    }
+
+    fn target_overrides_selection(&self, _: &ActorRef, _: &Target, _: &[ActorRef], _: CPos, _: crate::orders::TargetModifiers) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -1054,6 +1135,7 @@ pub struct HarvesterInfo {
     pub bale_unload_amount: i32,
     pub harvest_facings: i32,
     pub resources: Vec<String>,
+    pub harvest_cursor: String,
     pub fully_loaded_speed: i32,
     pub search_on_creation: bool,
     pub search_from_proc_radius: i32,
@@ -1076,6 +1158,7 @@ impl Default for HarvesterInfo {
             bale_unload_amount: 1,
             harvest_facings: 0,
             resources: Vec::new(),
+            harvest_cursor: "harvest".into(),
             fully_loaded_speed: 85,
             search_on_creation: true,
             search_from_proc_radius: 24,
@@ -1102,7 +1185,7 @@ pub struct Harvester {
     accept_resources: RefCell<Option<Rc<dyn IAcceptResources>>>,
 }
 
-register_traits!(Harvester: IResolveOrder, ISpeedModifier, IDockClient, ISync, INotifyCreated, IObservesVariables, IDisabledTrait);
+register_traits!(Harvester: IResolveOrder, crate::orders::IIssueOrder, ISpeedModifier, IDockClient, ISync, INotifyCreated, IObservesVariables, IDisabledTrait);
 info_impl!(HarvesterInfo => |info, init| {
     let self_ = init.self_.clone();
     let w = init.world();
@@ -1273,6 +1356,77 @@ impl IDockClient for Harvester {
                 self_.queue_activity_queued(true, FindAndDeliverResources::new(self_, None));
             }
         }
+    }
+}
+
+impl crate::orders::IIssueOrder for Harvester {
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.is_trait_disabled() || self.mobile().is_none() {
+            return Vec::new();
+        }
+        vec![Box::new(HarvestOrderTargeter {
+            info: self.info.clone(),
+            resource_layer: self.resource_layer.clone(),
+            is_queued: Cell::new(false),
+        })]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        (order.order_id() == "Harvest").then(|| Order::new("Harvest", Some(self_.clone()), target.clone(), queued))
+    }
+}
+
+/// `Harvester.HarvestOrderTargeter`. The resource comes from the resource layer instead of the rendered resources,
+/// which differ only while a cell is under fog.
+struct HarvestOrderTargeter {
+    info: Rc<HarvesterInfo>,
+    resource_layer: Rc<ResourceLayer>,
+    is_queued: Cell<bool>,
+}
+
+impl crate::orders::IOrderTargeter for HarvestOrderTargeter {
+    fn order_id(&self) -> &str {
+        "Harvest"
+    }
+
+    fn order_priority(&self) -> i32 {
+        10
+    }
+
+    fn can_target(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        if target.target_type() != TargetType::Terrain || modifiers.has_modifier(TargetModifiers::FORCE_MOVE) {
+            return false;
+        }
+        let location = self_.world().map().cell_containing(target.center_position());
+        if !self_.owner().shroud().is_explored(location) {
+            return false;
+        }
+        let resource = self.resource_layer.get_resource(location).ty;
+        if !resource.is_some_and(|r| self.info.resources.iter().any(|x| **x == *r)) {
+            return false;
+        }
+        *cursor = Some(self.info.harvest_cursor.clone());
+        self.is_queued.set(modifiers.has_modifier(TargetModifiers::FORCE_QUEUE));
+        true
+    }
+
+    fn is_queued(&self) -> bool {
+        self.is_queued.get()
+    }
+
+    fn target_overrides_selection(&self, _: &ActorRef, _: &Target, _: &[ActorRef], _: CPos, _: crate::orders::TargetModifiers) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

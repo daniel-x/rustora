@@ -7,12 +7,15 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rustora_core::world_types::{CPos, WAngle, WPos};
+use rustora_core::world_types::{CPos, WAngle, WDist, WPos};
 use rustora_engine::player::PlayerRef;
 use rustora_engine::world::World;
-use rustora_mods_common::render::RenderSprites;
+use rustora_mods_common::render::{RenderSprites, WithSpriteBody};
 use rustora_mods_common::resources::ResourceLayer;
+use rustora_mods_common::selection::mouse_bounds_info;
 use rustora_render::{Camera, Quad, Renderer};
+use rustora_ui::draw::Rect;
+use rustora_ui::screen_map::ActorBounds;
 
 use crate::sprites::{Sprite, SpriteCache};
 
@@ -27,6 +30,24 @@ const PLAYER_REMAP: [usize; 16] = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 9
 
 pub fn world_to_px(p: WPos) -> (f32, f32) {
     (p.x as f32 * TILE_SIZE / 1024.0, (p.y - p.z) as f32 * TILE_SIZE / 1024.0)
+}
+
+/// `WorldRenderer.ScreenPxPosition`.
+pub fn screen_px_position(p: WPos) -> (i32, i32) {
+    let (x, y) = world_to_px(p);
+    (x.round_ties_even() as i32, y.round_ties_even() as i32)
+}
+
+/// The world pixel rectangle of `Interactable.Bounds` style bounds around `center`.
+pub fn bounds_rect(center: (i32, i32), bounds: &[WDist]) -> Rect {
+    let ts = TILE_SIZE as i32;
+    let (w, h) = (bounds[0].length * ts / 1024, bounds[1].length * ts / 1024);
+    let (mut ox, mut oy) = (-w / 2, -h / 2);
+    if bounds.len() > 3 {
+        ox += bounds[2].length * ts / 1024;
+        oy += bounds[3].length * ts / 1024;
+    }
+    Rect::new(center.0 + ox, center.1 + oy, w, h)
 }
 
 pub struct Scene {
@@ -199,6 +220,45 @@ impl Scene {
             }
         }
         quads
+    }
+
+    /// `Actor.MouseBounds` of all actors in the world with `Interactable` or `Selectable`, the input of `ScreenMap`.
+    /// Polygons are not supported, and auto bounds come from the default animation of `WithSpriteBody`.
+    pub fn mouse_bounds(&mut self, renderer: &mut Renderer, world: &World) -> Vec<ActorBounds> {
+        let mut out = Vec::new();
+        for a in world.actors() {
+            if !a.is_in_world() {
+                continue;
+            }
+            let Some(info) = mouse_bounds_info(&a.info) else {
+                continue;
+            };
+            let center = screen_px_position(a.center_position());
+            let auto = self.auto_bounds(renderer, &a, center);
+            let rect = |b: Option<&Vec<WDist>>| match b {
+                Some(b) if b.len() >= 2 => Some(bounds_rect(center, b)),
+                _ => auto,
+            };
+            let Some(bounds) = rect(info.bounds.as_ref()).filter(|b| b.w > 0 || b.h > 0) else {
+                continue;
+            };
+            let decoration = rect(info.decoration_bounds.as_ref().or(info.bounds.as_ref())).unwrap_or_default();
+            out.push(ActorBounds {
+                actor: a,
+                bounds,
+                decoration,
+            });
+        }
+        out
+    }
+
+    /// `WithSpriteBody.AutoMouseoverBounds`: the bounds of the default animation's current sequence.
+    fn auto_bounds(&mut self, renderer: &mut Renderer, a: &rustora_engine::actor::ActorRef, center: (i32, i32)) -> Option<Rect> {
+        let body = a.trait_or_default::<WithSpriteBody>()?;
+        let seq = body.default_animation.current_sequence()?;
+        let resolved = self.sprites.sequence(renderer, &seq)?;
+        let [l, t, r, b] = resolved.bounds;
+        Some(Rect::new(center.0 + l, center.1 + t, r - l, b - t))
     }
 
     /// `ResourceRenderer` of RA: the frame follows the density, the variant is a per-cell hash instead of

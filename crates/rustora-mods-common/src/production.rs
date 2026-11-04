@@ -19,6 +19,7 @@ use rustora_engine::damage::AttackInfo;
 use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
 use rustora_engine::{conditional_plumbing, conditional_simple, info_impl, load_info, register_traits};
@@ -1825,12 +1826,24 @@ pub fn is_primary_building(a: &ActorRef) -> bool {
     a.trait_or_default::<PrimaryBuilding>().is_some_and(|p| p.is_primary())
 }
 
-#[derive(Clone, Debug, Default, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad)]
 pub struct RallyPointInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
     pub path: Vec<CVec>,
     pub force_set_type: Option<String>,
+    pub cursor: String,
+}
+
+impl Default for RallyPointInfo {
+    fn default() -> Self {
+        RallyPointInfo {
+            instance_name: None,
+            path: Vec::new(),
+            force_set_type: None,
+            cursor: "ability".into(),
+        }
+    }
 }
 
 pub struct RallyPoint {
@@ -1838,7 +1851,7 @@ pub struct RallyPoint {
     pub path: RefCell<Vec<CPos>>,
 }
 
-register_traits!(RallyPoint: IResolveOrder, INotifyOwnerChanged);
+register_traits!(RallyPoint: IResolveOrder, crate::orders::IIssueOrder, INotifyOwnerChanged);
 info_impl!(RallyPointInfo => |info, init| {
     let loc = init.self_.location();
     let path = info.path.iter().map(|p| loc + *p).collect();
@@ -1848,6 +1861,93 @@ info_impl!(RallyPointInfo => |info, init| {
 impl RallyPoint {
     pub fn is_force_set(order: &Order) -> bool {
         order.order_string == "SetRallyPoint" && order.extra_data == 1
+    }
+}
+
+impl crate::orders::IIssueOrder for RallyPoint {
+    fn orders(&self, _self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        vec![Box::new(RallyPointOrderTargeter {
+            info: self.info.clone(),
+            force_set: Cell::new(false),
+            is_queued: Cell::new(false),
+        })]
+    }
+
+    /// Without the notification and the transient text line.
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        let rally = order.as_any().downcast_ref::<RallyPointOrderTargeter>()?;
+        let mut o = Order::new("SetRallyPoint", Some(self_.clone()), target.clone(), queued);
+        o.extra_data = if rally.force_set.get() { 1 } else { 0 };
+        Some(o)
+    }
+}
+
+/// `RallyPoint.RallyPointOrderTargeter`.
+struct RallyPointOrderTargeter {
+    info: Rc<RallyPointInfo>,
+    force_set: Cell<bool>,
+    is_queued: Cell<bool>,
+}
+
+impl crate::orders::IOrderTargeter for RallyPointOrderTargeter {
+    fn order_id(&self) -> &str {
+        "SetRallyPoint"
+    }
+
+    fn order_priority(&self) -> i32 {
+        0
+    }
+
+    fn can_target(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        if target.target_type() != TargetType::Terrain {
+            return false;
+        }
+        self.is_queued.set(modifiers.has_modifier(TargetModifiers::FORCE_QUEUE));
+        let world = self_.world();
+        let location = world.map().cell_containing(target.center_position());
+        if !world.map().contains(location) {
+            return false;
+        }
+        *cursor = Some(self.info.cursor.clone());
+        let force_type = self.info.force_set_type.as_deref().filter(|t| !t.is_empty());
+        if let (true, Some(force_type)) = (modifiers.has_modifier(TargetModifiers::FORCE_ATTACK), force_type) {
+            let pos = target.center_position();
+            let selection = crate::selection::Selection::of(&world).map(|s| s.actors()).unwrap_or_default();
+            let closest = selection
+                .into_iter()
+                .filter(|a| {
+                    !a.is_dead()
+                        && a.is_in_world()
+                        && a.trait_or_default::<RallyPoint>()
+                            .is_some_and(|r| r.info.force_set_type.as_deref() == Some(force_type))
+                })
+                .min_by_key(|a| {
+                    let c = a.center_position();
+                    let (dx, dy, dz) = ((c.x - pos.x) as i64, (c.y - pos.y) as i64, (c.z - pos.z) as i64);
+                    dx * dx + dy * dy + dz * dz
+                });
+            self.force_set.set(closest.is_some_and(|c| Rc::ptr_eq(&c, self_)));
+        }
+        true
+    }
+
+    fn is_queued(&self) -> bool {
+        self.is_queued.get()
+    }
+
+    fn target_overrides_selection(&self, _: &ActorRef, _: &Target, _: &[ActorRef], _: CPos, _: crate::orders::TargetModifiers) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

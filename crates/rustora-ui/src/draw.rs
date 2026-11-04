@@ -144,6 +144,18 @@ impl<'a> DrawContext<'a> {
         self.list.solid([r.x as f32, r.y as f32, r.w as f32, r.h as f32], premultiplied(c));
     }
 
+    /// Port of `RgbaColorRenderer.DrawRect` for an axis aligned rectangle: lines of `width` centered on the edges.
+    pub fn draw_rect(&mut self, a: (i32, i32), b: (i32, i32), width: f32, c: Color) {
+        let (l, t) = (a.0.min(b.0) as f32, a.1.min(b.1) as f32);
+        let (r, bt) = (a.0.max(b.0) as f32, a.1.max(b.1) as f32);
+        let h = width / 2.0;
+        let color = premultiplied(c);
+        self.list.solid([l - h, t - h, r - l + width, width], color);
+        self.list.solid([l - h, bt - h, r - l + width, width], color);
+        self.list.solid([l - h, t + h, width, bt - t - width], color);
+        self.list.solid([r - h, t + h, width, bt - t - width], color);
+    }
+
     /// Port of `RgbaColorRenderer.FillEllipse`.
     pub fn fill_ellipse(&mut self, r: Rect, c: Color) {
         let (a, b) = (r.w as f32 / 2.0, r.h as f32 / 2.0);

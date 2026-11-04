@@ -46,6 +46,8 @@ pub struct ResolvedSequence {
     pub facings: i32,
     classic_facings: bool,
     pub z_offset: i32,
+    /// `ISpriteSequence.Bounds`: the union of the frame rectangles around the frame centers (left, top, right, bottom).
+    pub bounds: [i32; 4],
 }
 
 impl ResolvedSequence {
@@ -59,6 +61,27 @@ impl ResolvedSequence {
         let i = f * self.length + frame.rem_euclid(self.length.max(1));
         self.sprites.get(i as usize).copied().flatten()
     }
+}
+
+/// `OffsetSpriteBounds` of all frames joined with `Rectangle.Union`; empty frames count as the empty rectangle at 0,0.
+fn union_bounds(sprites: &[Option<Sprite>]) -> [i32; 4] {
+    let mut out: Option<[i32; 4]> = None;
+    for s in sprites {
+        let r = match s.filter(|s| s.rect.w > 0 && s.rect.h > 0) {
+            None => [0; 4],
+            Some(s) => {
+                let (w, h) = (s.rect.w as i32, s.rect.h as i32);
+                let l = (s.offset[0] - w as f32 / 2.0) as i32;
+                let t = (s.offset[1] - h as f32 / 2.0) as i32;
+                [l, t, l + w, t + h]
+            }
+        };
+        out = Some(match out {
+            None => r,
+            Some(o) => [o[0].min(r[0]), o[1].min(r[1]), o[2].max(r[2]), o[3].max(r[3])],
+        });
+    }
+    out.unwrap_or_default()
 }
 
 fn node<'a>(data: &'a MiniYaml, key: &str) -> Option<&'a MiniYamlNode> {
@@ -278,8 +301,10 @@ impl SpriteCache {
         let z_offset = value(data, defaults, "ZOffset")
             .and_then(|v| get_value::<WDist>("ZOffset", Some(v)).ok())
             .map_or(0, |d| d.length);
+        let sprites: Vec<Option<Sprite>> = index.iter().map(|&i| all.get(i as usize).copied().flatten()).collect();
         Some(ResolvedSequence {
-            sprites: index.iter().map(|&i| all.get(i as usize).copied().flatten()).collect(),
+            bounds: union_bounds(&sprites),
+            sprites,
             length,
             facings: seq.facings,
             classic_facings: flag(data, defaults, "UseClassicFacings"),

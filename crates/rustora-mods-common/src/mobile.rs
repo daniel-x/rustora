@@ -63,6 +63,9 @@ pub struct MobileInfo {
     pub require_force_move_condition: Option<BooleanExpression>,
     pub immovable_condition: Option<BooleanExpression>,
     pub terrain_orientation_adjustment_margin: WDist,
+    pub cursor: String,
+    pub blocked_cursor: String,
+    pub terrain_cursors: indexmap::IndexMap<String, String>,
     #[field(ignore)]
     pub locomotor_info: OnceCell<Rc<LocomotorInfo>>,
 }
@@ -84,6 +87,9 @@ impl Default for MobileInfo {
             require_force_move_condition: None,
             immovable_condition: None,
             terrain_orientation_adjustment_margin: WDist::new(-1),
+            cursor: "move".into(),
+            blocked_cursor: "move-blocked".into(),
+            terrain_cursors: indexmap::IndexMap::new(),
             locomotor_info: OnceCell::new(),
         }
     }
@@ -155,6 +161,7 @@ pub struct Mobile {
 
 register_traits!(
     Mobile: IResolveOrder,
+    crate::orders::IIssueOrder,
     IOccupySpace,
     IPositionable,
     IMove,
@@ -428,6 +435,109 @@ impl IDeathActorInitModifier for Mobile {
         if self.can_enter_cell(self_.location(), Some(self_), BlockedByActor::Stationary) {
             init.push(Rc::new(HuskSpeedInit::new(self.movement_speed_for_cell(self_.location()))));
         }
+    }
+}
+
+impl crate::orders::IIssueOrder for Mobile {
+    fn orders(&self, self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        if self.is_trait_disabled() {
+            return Vec::new();
+        }
+        vec![Box::new(MoveOrderTargeter {
+            mobile: self.me(),
+            reject_move: !crate::conditions::accepts_order(self_, "Move"),
+            is_queued: Cell::new(false),
+        })]
+    }
+
+    /// Returns a valid order even if the unit can't move to the target.
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        order
+            .as_any()
+            .is::<MoveOrderTargeter>()
+            .then(|| Order::new("Move", Some(self_.clone()), target.clone(), queued))
+    }
+}
+
+/// `Mobile.MoveOrderTargeter`.
+struct MoveOrderTargeter {
+    mobile: Rc<Mobile>,
+    reject_move: bool,
+    is_queued: Cell<bool>,
+}
+
+impl crate::orders::IOrderTargeter for MoveOrderTargeter {
+    fn order_id(&self) -> &str {
+        "Move"
+    }
+
+    fn order_priority(&self) -> i32 {
+        4
+    }
+
+    fn can_target(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        modifiers: &mut crate::orders::TargetModifiers,
+        cursor: &mut Option<String>,
+    ) -> bool {
+        use crate::orders::TargetModifiers;
+        let mobile = &self.mobile;
+        if self.reject_move
+            || target.target_type() != TargetType::Terrain
+            || (mobile.require_force_move.get() && !modifiers.has_modifier(TargetModifiers::FORCE_MOVE))
+        {
+            return false;
+        }
+        let world = self_.world();
+        let map = world.map();
+        let location = map.cell_containing(target.center_position());
+        self.is_queued.set(modifiers.has_modifier(TargetModifiers::FORCE_QUEUE));
+        let explored = self_.owner().shroud().is_explored(location);
+        let info = &mobile.info;
+        *cursor = Some(
+            if mobile.is_trait_paused()
+                || !map.contains(location)
+                || (!explored && !mobile.locomotor_info.move_into_shroud)
+                || (explored && mobile.locomotor().movement_cost_for_cell(location) == MOVEMENT_COST_FOR_UNREACHABLE_CELL)
+            {
+                info.blocked_cursor.clone()
+            } else if let Some(c) = explored
+                .then(|| info.terrain_cursors.get(&map.terrain_type_info(location).ty))
+                .flatten()
+            {
+                c.clone()
+            } else {
+                info.cursor.clone()
+            },
+        );
+        true
+    }
+
+    fn is_queued(&self) -> bool {
+        self.is_queued.get()
+    }
+
+    fn target_overrides_selection(
+        &self,
+        self_: &ActorRef,
+        target: &Target,
+        _actors_at: &[ActorRef],
+        _xy: CPos,
+        modifiers: crate::orders::TargetModifiers,
+    ) -> bool {
+        if let Some(a) = target.actor().filter(|_| target.target_type() == TargetType::Actor) {
+            let selected = crate::selection::Selection::of(&self_.world()).is_some_and(|s| s.contains(a));
+            if !Rc::ptr_eq(&a.owner(), &self_.owner()) || selected {
+                return true;
+            }
+        }
+        modifiers.has_modifier(crate::orders::TargetModifiers::FORCE_MOVE)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

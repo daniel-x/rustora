@@ -4,6 +4,7 @@
 //! User interface of the rustora client: ports of `OpenRA.Game/Widgets`, `ChromeProvider`, `SpriteFont`,
 //! `FluentProvider` and the widgets and logic classes of `OpenRA.Mods.Common/Widgets`.
 
+pub mod annotations;
 pub mod assets;
 pub mod chrome;
 pub mod cursor;
@@ -15,6 +16,8 @@ pub mod input;
 pub mod loader;
 pub mod logic;
 pub mod net;
+pub mod orders;
+pub mod screen_map;
 pub mod viewport;
 pub mod widget;
 pub mod widgets;

@@ -2511,6 +2511,7 @@ dependencies = [
  "rustora-formats",
  "rustora-fs",
  "rustora-game",
+ "rustora-mods-common",
  "rustora-net",
  "rustora-render",
  "swash",

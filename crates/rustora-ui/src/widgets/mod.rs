@@ -26,6 +26,7 @@ mod slider;
 mod text_field;
 mod tooltip;
 mod viewport_controller;
+pub mod world_interaction;
 
 pub use background::BackgroundWidget;
 pub use button::{ButtonWidget, draw_background};
@@ -65,6 +66,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "DropDownButton" => cell(DropDownButtonWidget::new(assets)),
         "Checkbox" => cell(CheckboxWidget::new(assets)),
         "ViewportController" => cell(ViewportControllerWidget::default()),
+        "WorldInteractionController" => cell(world_interaction::WorldInteractionControllerWidget::new(assets)),
         "Slider" => cell(SliderWidget::default()),
         "HueSlider" => cell(HueSliderWidget::default()),
         "ColorMixer" => cell(ColorMixerWidget::default()),
