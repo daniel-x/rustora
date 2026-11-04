@@ -7,10 +7,15 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+use rustora_engine::sequence::ReadFile;
+use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Platform, ReadFs};
+use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
-use rustora_render::Renderer;
+use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
+use rustora_launch::{Step, load_world_of_type, open_map, shellmaps};
 use rustora_render::ui::UiList;
+use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::assets::Assets;
 use rustora_ui::cursor::{CursorState, Cursors};
 use rustora_ui::draw::DrawContext;
@@ -18,6 +23,9 @@ use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
 use rustora_ui::widget::{Ui, WidgetArgs};
+
+use crate::app::map_center;
+use crate::scene::Scene;
 
 struct ModFs(Rc<ModData>);
 
@@ -31,12 +39,74 @@ impl ReadFs for ModFs {
     }
 }
 
+/// The world behind the main menu. Its Lua script, which moves the camera and sends units, waits for P9.
+struct ShellWorld {
+    world: Rc<World>,
+    driver: SkirmishDriver,
+    read_file: ReadFile,
+    scene: Option<Scene>,
+    quads: Vec<Quad>,
+    center: (f32, f32),
+    ended: bool,
+}
+
+impl ShellWorld {
+    /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map.
+    fn load(engine: &Path, support: &str) -> Option<ShellWorld> {
+        let names = shellmaps(engine);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let name = names.get(now.subsec_nanos() as usize % names.len().max(1))?;
+        let package = open_map(engine, name)?;
+        let map = MapPackage::load(package.clone()).ok()?;
+        let lobby = skirmish_session(&map, &[], now.subsec_nanos() as i32).ok()?;
+        let (world, _, read_file) = load_world_of_type(engine, support, package, lobby, false, WorldType::Shellmap);
+        let driver = SkirmishDriver::new(&world);
+        let center = map_center(&world);
+        Some(ShellWorld {
+            world,
+            driver,
+            read_file,
+            scene: None,
+            quads: Vec::new(),
+            center,
+            ended: false,
+        })
+    }
+
+    fn tick(&mut self) {
+        if !self.ended && self.driver.step() == Step::Ended {
+            self.ended = true;
+        }
+    }
+
+    fn camera(&self, size: (u32, u32)) -> Camera {
+        Camera {
+            x: self.center.0 - size.0 as f32 / 2.0,
+            y: self.center.1 - size.1 as f32 / 2.0,
+            zoom: 1.0,
+            width: size.0,
+            height: size.1,
+        }
+    }
+
+    fn prepare(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
+        let cam = self.camera(size);
+        let read_file = self.read_file.clone();
+        let world = &self.world;
+        let scene = self.scene.get_or_insert_with(|| Scene::new(renderer, world, read_file));
+        self.quads = scene.build(renderer, world, None, &cam);
+    }
+}
+
 /// A loaded user interface with the shell root open.
 pub struct Client {
     pub ui: Ui,
     pub cursors: Cursors,
     pub cursor: CursorState,
     list: UiList,
+    shell: Option<ShellWorld>,
 }
 
 impl Client {
@@ -50,6 +120,11 @@ impl Client {
         let services = Services {
             mod_version: mod_data.manifest.metadata.version.clone(),
         };
+        let shell = if mod_data.content_available {
+            ShellWorld::load(engine, support)
+        } else {
+            None
+        };
         let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, Rc::new(services));
         ui.open_window("MAINMENU", WidgetArgs::default());
         Client {
@@ -57,11 +132,15 @@ impl Client {
             cursors,
             cursor: CursorState::default(),
             list: UiList::default(),
+            shell,
         }
     }
 
     /// Port of the user interface part of `Game.InnerLogicTick`.
     pub fn logic_tick(&mut self) {
+        if let Some(shell) = &mut self.shell {
+            shell.tick();
+        }
         self.cursor.tick(&self.cursors);
         self.ui.tick();
     }
@@ -73,7 +152,10 @@ impl Client {
     }
 
     /// Fills the draw list of the current frame.
-    pub fn prepare(&mut self, renderer: &mut Renderer) {
+    pub fn prepare(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
+        if let Some(shell) = &mut self.shell {
+            shell.prepare(renderer, size);
+        }
         self.list.clear();
         let assets = self.ui.assets.clone();
         let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
@@ -83,17 +165,20 @@ impl Client {
     }
 
     pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {
-        renderer.render(
-            target,
-            rustora_render::Camera {
-                x: 0.0,
-                y: 0.0,
-                zoom: 1.0,
-                width: size.0,
-                height: size.1,
-            },
-            &[],
-        );
+        match &self.shell {
+            Some(shell) => renderer.render(target, shell.camera(size), &shell.quads),
+            None => renderer.render(
+                target,
+                Camera {
+                    x: 0.0,
+                    y: 0.0,
+                    zoom: 1.0,
+                    width: size.0,
+                    height: size.1,
+                },
+                &[],
+            ),
+        }
         renderer.render_ui(target, size, &self.list);
     }
 
@@ -120,11 +205,11 @@ pub fn screenshot(engine: &Path, support: &str, size: (u32, u32), clicks: &[(i32
     let (device, queue) = rustora_render::headless_device().expect("no graphics adapter");
     let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
     let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32));
-    client.ui.tick();
+    client.logic_tick();
     for &(x, y) in clicks {
         client.click(x, y);
     }
-    client.prepare(&mut renderer);
+    client.prepare(&mut renderer, size);
     let rgba = rustora_render::render_offscreen(&mut renderer, size.0, size.1, |renderer, view| {
         client.render(renderer, view, size);
     });

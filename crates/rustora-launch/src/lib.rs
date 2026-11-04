@@ -81,13 +81,48 @@ pub fn open_map(engine: &Path, name: &str) -> Option<Arc<dyn Package>> {
     }
 }
 
-/// Loads the RA mod and the map `pkg` with its custom rules and creates the world for `lobby`.
+/// Loads the RA mod and the map `pkg` with its custom rules and creates a regular world for `lobby`.
 pub fn load_world(
     engine: &Path,
     support: &str,
     pkg: Arc<dyn Package>,
     lobby: rustora_net::session::Session,
     is_replay: bool,
+) -> (Rc<World>, Rc<ModData>, ReadFile) {
+    load_world_of_type(engine, support, pkg, lobby, is_replay, WorldType::Regular)
+}
+
+/// The maps of the RA mod folder with the `Shellmap` visibility, by file or folder name.
+pub fn shellmaps(engine: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(engine.join("mods/ra/maps"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            open_map(engine, name)
+                .and_then(|pkg| MapPackage::load(pkg).ok())
+                .is_some_and(|map| {
+                    map.yaml
+                        .nodes
+                        .iter()
+                        .find(|n| n.key == "Visibility")
+                        .is_some_and(|n| n.value.value_str().split(',').any(|v| v.trim() == "Shellmap"))
+                })
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// Loads the RA mod and the map `pkg` with its custom rules and creates the world for `lobby`.
+pub fn load_world_of_type(
+    engine: &Path,
+    support: &str,
+    pkg: Arc<dyn Package>,
+    lobby: rustora_net::session::Session,
+    is_replay: bool,
+    world_type: WorldType,
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
     let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
@@ -123,7 +158,7 @@ pub fn load_world(
         &tileset,
         read_file.clone(),
     )));
-    let world = World::new(map, rules, lobby, WorldType::Regular, 40, 3);
+    let world = World::new(map, rules, lobby, world_type, 40, 3);
     world.set_is_replay(is_replay);
     world.load_complete();
     (world, md, read_file)

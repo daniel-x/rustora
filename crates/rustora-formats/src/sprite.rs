@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Sprite file formats: `frame_count` for the simulation, `decode` for the renderer. Port of `ShpD2Loader.cs`, `ShpTDLoader.cs` and `TmpRALoader.cs`.
+//! Sprite file formats: `frame_count` for the simulation, `decode` for the renderer. Port of `ShpD2Loader.cs`, `ShpTDLoader.cs`, `TmpRALoader.cs`
+//! and `TmpTDLoader.cs`.
 
 fn u16_at(d: &[u8], o: usize) -> Option<u16> {
     Some(u16::from_le_bytes([*d.get(o)?, *d.get(o + 1)?]))
@@ -136,6 +137,40 @@ pub fn is_tmp_ra(d: &[u8]) -> bool {
     u32_at(d, 20) == Some(0) && u16_at(d, 26) == Some(0x2c73)
 }
 
+/// `TmpTDLoader.IsTmpTD`.
+pub fn is_tmp_td(d: &[u8]) -> bool {
+    u32_at(d, 16) == Some(0) && u32_at(d, 20) == Some(0x0d1a_ffff)
+}
+
+/// `TmpTDLoader.ParseFrames`.
+fn decode_tmp_td(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    let (width, height) = (u16_at(d, 0)? as usize, u16_at(d, 2)? as usize);
+    let img_start = u32_at(d, 12)? as usize;
+    let index_end = u32_at(d, 24)? as usize;
+    let index_start = u32_at(d, 28)? as usize;
+    d.get(index_start..index_end)?
+        .iter()
+        .map(|&b| {
+            if b == 255 {
+                return Some(SpriteFrame {
+                    frame_width: width,
+                    frame_height: height,
+                    ..SpriteFrame::default()
+                });
+            }
+            let start = img_start + b as usize * width * height;
+            Some(SpriteFrame {
+                width,
+                height,
+                frame_width: width,
+                frame_height: height,
+                offset: (0.0, 0.0),
+                data: d.get(start..start + width * height)?.to_vec(),
+            })
+        })
+        .collect()
+}
+
 /// Number of frames in a sprite file, trying the loaders in the order of `SpriteFormats`.
 pub fn frame_count(d: &[u8]) -> Option<usize> {
     if is_shp_d2(d) || is_shp_td(d) {
@@ -144,6 +179,11 @@ pub fn frame_count(d: &[u8]) -> Option<usize> {
     if is_tmp_ra(d) {
         let index_end = u32_at(d, 28)? as usize;
         let index_start = u32_at(d, 36)? as usize;
+        return index_end.checked_sub(index_start);
+    }
+    if is_tmp_td(d) {
+        let index_end = u32_at(d, 24)? as usize;
+        let index_start = u32_at(d, 28)? as usize;
         return index_end.checked_sub(index_start);
     }
     None
@@ -170,6 +210,9 @@ pub fn decode(d: &[u8]) -> Option<Vec<SpriteFrame>> {
     }
     if is_tmp_ra(d) {
         return decode_tmp_ra(d);
+    }
+    if is_tmp_td(d) {
+        return decode_tmp_td(d);
     }
     None
 }
@@ -337,4 +380,64 @@ fn decode_tmp_ra(d: &[u8]) -> Option<Vec<SpriteFrame>> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod d2_td_tests {
+    use super::*;
+
+    fn tmp_td_file() -> Vec<u8> {
+        let mut d = vec![0u8; 32];
+        d[0..2].copy_from_slice(&2u16.to_le_bytes());
+        d[2..4].copy_from_slice(&1u16.to_le_bytes());
+        d[12..16].copy_from_slice(&34u32.to_le_bytes());
+        d[20..24].copy_from_slice(&0x0d1a_ffffu32.to_le_bytes());
+        d[24..28].copy_from_slice(&34u32.to_le_bytes());
+        d[28..32].copy_from_slice(&32u32.to_le_bytes());
+        d.extend([0, 255, 7, 9]);
+        d
+    }
+
+    #[test]
+    fn tmp_td_decodes_tiles_and_empty_frames() {
+        let d = tmp_td_file();
+        assert_eq!(frame_count(&d), Some(2));
+        let frames = decode(&d).expect("frames");
+        assert_eq!(frames[0].data, [7, 9]);
+        assert_eq!((frames[0].width, frames[0].height), (2, 1));
+        assert!(frames[1].data.is_empty());
+        assert_eq!((frames[1].frame_width, frames[1].width), (2, 0));
+    }
+
+    fn shp_d2_file(flags: u16, body: &[u8], width: u16, height: u8) -> Vec<u8> {
+        let size = 10 + body.len() as u16;
+        let mut d = vec![1, 0];
+        d.extend(8u32.to_le_bytes());
+        d.extend((8 + size as u32).to_le_bytes());
+        d.extend(flags.to_le_bytes());
+        d.push(0);
+        d.extend(width.to_le_bytes());
+        d.push(height);
+        d.extend(size.to_le_bytes());
+        d.extend((body.len() as u16).to_le_bytes());
+        d.extend(body);
+        d
+    }
+
+    #[test]
+    fn shp_d2_expands_zero_runs_and_remaps_low_indices() {
+        let d = shp_d2_file(2, &[1, 0, 2, 9], 4, 1);
+        assert!(is_shp_d2(&d));
+        assert_eq!(frame_count(&d), Some(1));
+        let frames = decode(&d).expect("frames");
+        assert_eq!(frames[0].data, [0x7f, 0, 0, 9]);
+        assert_eq!(frames[0].offset, (0.0, 0.0));
+    }
+
+    #[test]
+    fn shp_d2_rejects_a_wrong_end_offset() {
+        let mut d = shp_d2_file(2, &[1, 2], 2, 1);
+        d[6] = 0x7f;
+        assert!(!is_shp_d2(&d));
+    }
 }

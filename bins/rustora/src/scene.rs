@@ -143,6 +143,9 @@ impl Scene {
             let Some(rs) = a.trait_or_default::<RenderSprites>() else {
                 continue;
             };
+            if rs.info.editor_only {
+                continue;
+            }
             let owner = a.owner();
             for (anim, palette, is_player_palette) in rs.animations() {
                 if anim.disable_func.as_ref().is_some_and(|f| f()) {

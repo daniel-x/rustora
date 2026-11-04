@@ -53,6 +53,8 @@ pub struct World {
     rules: Rc<Ruleset>,
     pub lobby_info: Session,
     pub world_type: WorldType,
+    /// `Game.Settings.Game.PauseShellmap`.
+    pub pause_shellmap: Cell<bool>,
     pub timestep: i32,
     pub order_latency: i32,
     world_tick: Cell<i32>,
@@ -129,6 +131,7 @@ impl World {
             timestep,
             order_latency,
             world_tick: Cell::new(0),
+            pause_shellmap: Cell::new(false),
             paused: Cell::new(false),
             is_game_over: Cell::new(false),
             end_game_requests: RefCell::new(Vec::new()),
@@ -461,7 +464,7 @@ impl World {
             self.resolve_game_save_trait_data();
             self.was_loading_game_save.set(false);
         }
-        if !self.paused.get() && (self.world_type != WorldType::Shellmap || self.world_tick.get() == 0) {
+        if !self.paused.get() && (self.world_type != WorldType::Shellmap || !self.pause_shellmap.get() || self.world_tick.get() == 0) {
             self.world_tick.set(self.world_tick.get() + 1);
             for a in self.actors() {
                 a.tick();

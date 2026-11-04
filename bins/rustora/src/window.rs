@@ -352,7 +352,7 @@ impl App {
     fn render(&mut self, el: &ActiveEventLoop) {
         self.apply_cursor(el);
         let Some(gpu) = self.gpu.as_mut() else { return };
-        self.client.prepare(&mut gpu.renderer);
+        self.client.prepare(&mut gpu.renderer, (gpu.config.width, gpu.config.height));
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {

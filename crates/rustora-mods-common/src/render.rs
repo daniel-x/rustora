@@ -29,7 +29,15 @@ use rustora_engine::{info_impl, load_info, register_traits};
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("RenderSprites", |n| load_info!(RenderSpritesInfo, n));
-    r.register("RenderSpritesEditorOnly", |n| load_info!(RenderSpritesInfo, n));
+    r.register("RenderSpritesEditorOnly", |n| {
+        let mut info = RenderSpritesInfo {
+            editor_only: true,
+            instance_name: n.instance_name.clone(),
+            ..RenderSpritesInfo::default()
+        };
+        rustora_core::fieldloader::FieldLoad::load(&mut info, &n.yaml).map_err(|e| format!("Trait name {}: {}", n.display_name(), e))?;
+        Ok(Rc::new(info) as Rc<dyn TraitInfo>)
+    });
     r.register("WithSpriteBody", |n| load_info!(WithSpriteBodyInfo, n));
     r.register("WithFacingSpriteBody", |n| load_info!(WithFacingSpriteBodyInfo, n));
     r.register("WithResourceLevelSpriteBody", |n| load_info!(WithResourceLevelSpriteBodyInfo, n));
@@ -58,6 +66,9 @@ pub struct RenderSpritesInfo {
     pub faction_images: IndexMap<String, String>,
     pub palette: Option<String>,
     pub player_palette: String,
+    /// `RenderSpritesEditorOnly`: invisible during games.
+    #[field(ignore)]
+    pub editor_only: bool,
 }
 
 impl Default for RenderSpritesInfo {
@@ -68,6 +79,7 @@ impl Default for RenderSpritesInfo {
             faction_images: IndexMap::new(),
             palette: None,
             player_palette: "player".into(),
+            editor_only: false,
         }
     }
 }
