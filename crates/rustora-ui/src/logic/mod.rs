@@ -36,10 +36,15 @@ pub struct Services {
     pub net: Net,
     /// Reads the lobby rules of a map. The client binary sets it.
     pub lobby_rules: RefCell<Option<LobbyRulesLookup>>,
+    /// Reads the color rules of the mod. The client binary sets it.
+    pub color_rules: RefCell<Option<ColorRulesLookup>>,
 }
 
 /// The function behind `Services::lobby_rules`.
 pub type LobbyRulesLookup = Rc<dyn Fn(&str) -> Option<Rc<LobbyRules>>>;
+
+/// The function behind `Services::color_rules`.
+pub type ColorRulesLookup = Rc<dyn Fn() -> Option<Rc<color_picker::ColorRules>>>;
 
 impl Default for Services {
     fn default() -> Services {
@@ -49,6 +54,7 @@ impl Default for Services {
             maps: Rc::default(),
             net: Rc::default(),
             lobby_rules: RefCell::new(None),
+            color_rules: RefCell::new(None),
         }
     }
 }
@@ -232,6 +238,7 @@ pub fn create(
         "ButtonTooltipLogic" => button_tooltip(ui, id, args),
         "SimpleTooltipLogic" => simple_tooltip(ui, id, args),
         "MapChooserLogic" => map_chooser::create(ui, id, args),
+        "ColorPickerLogic" => color_picker::create(ui, id, args, logic_args),
         "ConnectionLogic" => connection::create_connection(ui, id, args),
         "ConnectionFailedLogic" => connection::create_connection_failed(ui, id, args),
         "LobbyLogic" => lobby::create(ui, id, args, logic_args),

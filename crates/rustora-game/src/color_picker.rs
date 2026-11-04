@@ -45,7 +45,7 @@ pub fn to_hsv(c: Color) -> (f32, f32, f32) {
     (h, delta / max, max)
 }
 
-/// The fields of `ColorPickerManagerInfo` the server uses.
+/// The fields of `ColorPickerManagerInfo` that the server and the chooser use.
 #[derive(Clone, Debug)]
 pub struct ColorPicker {
     pub saturation_range: [f32; 2],
@@ -132,9 +132,17 @@ impl ColorPicker {
         self.make_valid_hsv(h, s, v, random, terrain, players)
     }
 
+    /// `RandomValidColor`.
+    pub fn random_valid_color(&self, random: &mut MersenneTwister, terrain: &[Color], players: &[Color]) -> Color {
+        let h = random.next_float();
+        let s = self.random_sat(random);
+        let v = self.random_val(random);
+        self.make_valid_hsv(h, s, v, random, terrain, players).0
+    }
+
     /// `RandomPresetColor`: a free preset color in random order, else a random valid color.
     pub fn random_preset_color(&self, random: &mut MersenneTwister, terrain: &[Color], players: &[Color]) -> Color {
-        for color in rustora_mods_common::util::shuffle(&self.preset_colors, random) {
+        for color in rustora_core::world_types::shuffle(&self.preset_colors, random) {
             if !self.is_invalid(color, terrain) && !self.is_invalid(color, players) {
                 return color;
             }

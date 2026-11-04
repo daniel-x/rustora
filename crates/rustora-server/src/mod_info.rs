@@ -15,12 +15,11 @@ use rustora_core::miniyaml::MiniYaml;
 use rustora_engine::actor_info::{TraitNode, parse_trait_nodes};
 use rustora_engine::terrain::TerrainInfo;
 use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
+use rustora_game::color_picker::ColorPicker;
 use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
 use rustora_mods_common::world::{PlayerReference, map_players};
 use rustora_net::session::{LobbyOptionState, Session};
-
-use crate::color::ColorPicker;
 
 /// `Session.MapStatus.Playable`.
 pub const MAP_STATUS_PLAYABLE: i32 = 2;
@@ -186,6 +185,24 @@ fn field_ints(t: &TraitNode, key: &str, default: &[i32]) -> Vec<i32> {
     )
 }
 
+/// Reads `ColorPickerManagerInfo` from the traits of the world actor.
+fn read_color_picker(world: &[TraitNode]) -> ColorPicker {
+    let mut color_picker = ColorPicker::default();
+    if let Some(t) = world.iter().find(|t| t.name == "ColorPickerManager") {
+        let floats = |k: &str, d: [f32; 2]| -> [f32; 2] {
+            let v: Vec<f32> = field(t, k).map_or_else(Vec::new, |v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect());
+            if v.len() == 2 { [v[0], v[1]] } else { d }
+        };
+        color_picker.saturation_range = floats("HsvSaturationRange", color_picker.saturation_range);
+        color_picker.value_range = floats("HsvValueRange", color_picker.value_range);
+        if let Some(v) = field(t, "SimilarityThreshold").and_then(|v| v.trim().parse().ok()) {
+            color_picker.similarity_threshold = v;
+        }
+        color_picker.preset_colors = field(t, "PresetColors").map_or_else(Vec::new, |v| v.split(',').filter_map(Color::parse).collect());
+    }
+    color_picker
+}
+
 fn parse_fluent(text: &str, out: &mut HashMap<String, String>) {
     let mut current = String::new();
     for line in text.lines() {
@@ -323,6 +340,23 @@ impl ServerMod {
         self.maps.contains_key(uid)
     }
 
+    /// `ColorPickerManagerInfo` of the default mod rules and the restricted colors of all tile sets.
+    pub fn default_color_rules(&self) -> Result<(ColorPicker, Vec<Color>), String> {
+        let rules = ModData::load_yaml(&self.data.file_system, &self.data.manifest.rules, None).map_err(|e| e.to_string())?;
+        let world = rules
+            .iter()
+            .find(|n| n.key.eq_ignore_ascii_case("World"))
+            .ok_or("rules lack World")?;
+        let world = parse_trait_nodes("World", &world.value.nodes).map_err(|e| e.to_string())?;
+        let mut terrain: Vec<Color> = Vec::new();
+        for color in self.restricted_colors.values().flatten() {
+            if !terrain.contains(color) {
+                terrain.push(*color);
+            }
+        }
+        Ok((read_color_picker(&world), terrain))
+    }
+
     /// The rules of the map `uid`, loaded on first use.
     pub fn map_info(&mut self, uid: &str) -> Result<Rc<MapInfo>, String> {
         if let Some(i) = self.infos.get(uid) {
@@ -365,21 +399,7 @@ impl ServerMod {
             status = MAP_STATUS_INCOMPATIBLE;
         }
 
-        let picker = world.iter().find(|t| t.name == "ColorPickerManager");
-        let mut color_picker = ColorPicker::default();
-        if let Some(t) = picker {
-            let floats = |k: &str, d: [f32; 2]| -> [f32; 2] {
-                let v: Vec<f32> = field(t, k).map_or_else(Vec::new, |v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect());
-                if v.len() == 2 { [v[0], v[1]] } else { d }
-            };
-            color_picker.saturation_range = floats("HsvSaturationRange", color_picker.saturation_range);
-            color_picker.value_range = floats("HsvValueRange", color_picker.value_range);
-            if let Some(v) = field(t, "SimilarityThreshold").and_then(|v| v.trim().parse().ok()) {
-                color_picker.similarity_threshold = v;
-            }
-            color_picker.preset_colors =
-                field(t, "PresetColors").map_or_else(Vec::new, |v| v.split(',').filter_map(Color::parse).collect());
-        }
+        let color_picker = read_color_picker(&world);
 
         Ok(MapInfo {
             uid: uid.to_string(),

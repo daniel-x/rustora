@@ -4,7 +4,6 @@
 //! OpenRA compatible game server (`OpenRA.Game/Server`).
 
 pub mod auth;
-pub mod color;
 pub mod connection;
 pub mod lobby;
 pub mod master_server;

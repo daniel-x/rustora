@@ -31,7 +31,7 @@ use rustora_ui::logic::Services;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
 
 use crate::app::map_center;
-use crate::net::{NetClient, lobby_rules_lookup};
+use crate::net::{LazyServerMod, NetClient, color_rules_lookup, lobby_rules_lookup};
 use crate::scene::Scene;
 
 struct ModFs(Rc<ModData>);
@@ -147,12 +147,14 @@ impl Client {
         let assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
         let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
+        let server_mod = LazyServerMod::new(engine, support);
         let services = Services {
             mod_version: mod_data.manifest.metadata.version.clone(),
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
             settings: Rc::new(RefCell::new(settings)),
             net: Rc::default(),
-            lobby_rules: RefCell::new(Some(lobby_rules_lookup(engine, support))),
+            lobby_rules: RefCell::new(Some(lobby_rules_lookup(server_mod.clone()))),
+            color_rules: RefCell::new(Some(color_rules_lookup(server_mod))),
         };
         let net = NetClient::new(engine, support, services.net.clone());
         let services = Rc::new(services);

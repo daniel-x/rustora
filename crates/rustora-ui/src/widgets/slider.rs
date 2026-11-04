@@ -46,11 +46,16 @@ impl Default for SliderWidget {
 }
 
 impl SliderWidget {
-    /// Port of `UpdateValue`.
-    pub fn update_value(&mut self, ui: &mut Ui, new_value: f32) {
+    /// Sets the value without calling `on_change`. Returns true if it changed.
+    pub fn set_value(&mut self, new_value: f32) -> bool {
         let old = self.value;
         self.value = new_value.clamp(self.minimum_value, self.maximum_value);
-        if old != self.value
+        old != self.value
+    }
+
+    /// Port of `UpdateValue`.
+    pub fn update_value(&mut self, ui: &mut Ui, new_value: f32) {
+        if self.set_value(new_value)
             && let Some(on_change) = self.on_change.clone()
         {
             let value = self.value;

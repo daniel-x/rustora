@@ -9,6 +9,7 @@ use std::rc::Rc;
 use rustora_fs::ReadFs;
 use rustora_game::GameError;
 use rustora_game::moddata::ModData;
+use rustora_render::ui::UiTexture;
 
 use crate::chrome::{Chrome, Metrics, Sprite};
 use crate::fluent::Messages;
@@ -22,6 +23,10 @@ pub struct Assets {
     pub fonts: HashMap<String, SpriteFont>,
     pub glyphs: GlyphSheet,
     pub minimaps: HashMap<String, Option<Sprite>>,
+    /// The texture of `HueSliderWidget`, shared by all choosers.
+    pub hue_texture: Option<UiTexture>,
+    /// The texture of `ColorMixerWidget` and the hue it shows.
+    pub mixer_texture: Option<(UiTexture, f32)>,
 }
 
 impl Assets {
@@ -55,6 +60,8 @@ impl Assets {
             fonts,
             glyphs: GlyphSheet::default(),
             minimaps: HashMap::new(),
+            hue_texture: None,
+            mixer_texture: None,
         })
     }
 
@@ -116,6 +123,8 @@ impl Assets {
             fonts: HashMap::new(),
             glyphs: GlyphSheet::default(),
             minimaps: HashMap::new(),
+            hue_texture: None,
+            mixer_texture: None,
         }
     }
 }

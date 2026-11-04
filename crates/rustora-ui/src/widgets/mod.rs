@@ -14,6 +14,7 @@ mod background;
 mod button;
 mod checkbox;
 mod color_block;
+mod color_mixer;
 mod container;
 mod dropdown;
 mod image;
@@ -29,6 +30,7 @@ pub use background::BackgroundWidget;
 pub use button::{ButtonWidget, draw_background};
 pub use checkbox::CheckboxWidget;
 pub use color_block::{ClientTooltipRegionWidget, ColorBlockWidget};
+pub use color_mixer::{ColorMixerWidget, HueSliderWidget};
 pub use container::ContainerWidget;
 pub use dropdown::{DropDownButtonWidget, MaskWidget};
 pub use image::ImageWidget;
@@ -61,6 +63,8 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "DropDownButton" => cell(DropDownButtonWidget::new(assets)),
         "Checkbox" => cell(CheckboxWidget::new(assets)),
         "Slider" => cell(SliderWidget::default()),
+        "HueSlider" => cell(HueSliderWidget::default()),
+        "ColorMixer" => cell(ColorMixerWidget::default()),
         "TextField" => cell(TextFieldWidget::new(assets, false)),
         "PasswordField" => cell(TextFieldWidget::new(assets, true)),
         "TooltipContainer" => cell(TooltipContainerWidget::default()),

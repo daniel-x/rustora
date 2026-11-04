@@ -1021,6 +1021,19 @@ impl MPos {
     }
 }
 
+/// Fisher-Yates shuffle consuming the random numbers like the C# iterator when fully enumerated.
+pub fn shuffle<T: Clone>(ts: &[T], random: &mut MersenneTwister) -> Vec<T> {
+    let mut items = ts.to_vec();
+    if items.is_empty() {
+        return items;
+    }
+    for i in 0..items.len() - 1 {
+        let j = random.next_max((items.len() - i) as i32) as usize;
+        items.swap(i, i + j);
+    }
+    items
+}
+
 /// Port of OpenRA's `MersenneTwister` (MT19937 with OpenRA's output reduction).
 #[derive(Clone)]
 pub struct MersenneTwister {

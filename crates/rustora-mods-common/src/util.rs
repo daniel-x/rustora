@@ -51,18 +51,7 @@ pub fn get_vertical_angle(source: WPos, target: WPos) -> WAngle {
     WVec::new(-delta.z, -delta.horizontal_length(), 0).yaw()
 }
 
-/// Fisher-Yates shuffle consuming the random numbers like the C# iterator when fully enumerated.
-pub fn shuffle<T: Clone>(ts: &[T], random: &mut MersenneTwister) -> Vec<T> {
-    let mut items = ts.to_vec();
-    if items.is_empty() {
-        return items;
-    }
-    for i in 0..items.len() - 1 {
-        let j = random.next_max((items.len() - i) as i32) as usize;
-        items.swap(i, i + j);
-    }
-    items
-}
+pub use rustora_core::world_types::shuffle;
 
 fn neighbours(c: CPos, allow_diagonal: bool) -> Vec<CPos> {
     let mut v = vec![
