@@ -128,6 +128,8 @@ pub struct SupportPowerInfo {
     pub kind: PowerKind,
     #[field(flatten)]
     pub base: PausableConditionalTraitInfo,
+    pub name: Option<String>,
+    pub description: Option<String>,
     pub charge_interval: i32,
     pub allow_multiple: bool,
     pub one_shot: bool,
@@ -229,6 +231,8 @@ impl Default for SupportPowerInfo {
             instance_name: None,
             kind: PowerKind::default(),
             base: PausableConditionalTraitInfo::default(),
+            name: None,
+            description: None,
             charge_interval: 0,
             icon_image: "icon".into(),
             icon: None,

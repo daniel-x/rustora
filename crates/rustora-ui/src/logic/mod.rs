@@ -25,6 +25,7 @@ pub mod command_bar;
 pub mod connection;
 pub mod game_info;
 pub mod game_save_browser;
+mod icon_tooltips;
 pub mod ingame;
 pub mod ingame_chat;
 pub mod ingame_hotkeys;
@@ -445,6 +446,8 @@ pub fn create(
         "CommandBarLogic" => command_bar::command_bar(ui, id, logic_args),
         "IngameMenuLogic" => ingame_menu::ingame_menu(ui, id, args, logic_args),
         "ProductionTooltipLogic" => sidebar::production_tooltip(ui, id, args),
+        "SupportPowerTooltipLogic" => icon_tooltips::support_power_tooltip(ui, id, args),
+        "ArmyTooltipLogic" => icon_tooltips::army_tooltip(ui, id, args),
         "SellOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Sell, "sell"),
         "RepairOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Repair, "repair"),
         "PowerdownOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::PowerDown, "power"),

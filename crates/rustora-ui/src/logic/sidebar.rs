@@ -17,8 +17,8 @@ use rustora_mods_common::tooltip::IProvideTooltipInfo;
 use super::{NoLogic, message, message_with, services};
 use crate::fluent::MessageArg;
 use crate::loader::cell;
-use crate::widget::{ChromeLogic, Ui, WidgetId};
-use crate::widgets::production::{LogicTickerWidget, ProductionPaletteWidget, ProductionTypeButtonWidget};
+use crate::widget::{ChromeLogic, Getter, Ui, WidgetId};
+use crate::widgets::production::{LogicTickerWidget, ProductionIcon, ProductionPaletteWidget, ProductionTypeButtonWidget};
 use crate::widgets::{BackgroundWidget, ImageWidget, LabelWithTooltipWidget, ScrollPanelWidget, TextFieldWidget};
 
 /// `Widget.Get`, which also finds the widget itself.
@@ -423,7 +423,7 @@ fn shared_text(ui: &mut Ui, label: WidgetId) -> Rc<RefCell<String>> {
 /// `ProductionTooltipLogic`; `BeforeRender` runs in `tick`.
 struct ProductionTooltip {
     widget: WidgetId,
-    palette: WidgetId,
+    get_icon: Getter<Option<ProductionIcon>>,
     queue_power: Option<Rc<PowerManager>>,
     labels: TooltipLabels,
     texts: TooltipTexts,
@@ -468,7 +468,7 @@ fn actor_name(world: &rustora_engine::world::World, ui: &Ui, a: &str) -> String 
 
 impl ChromeLogic for ProductionTooltip {
     fn tick(&mut self, ui: &mut Ui) {
-        let icon = ui.get::<ProductionPaletteWidget>(self.palette).tooltip_icon.clone();
+        let icon = (self.get_icon)();
         let Some(icon) = icon else { return };
         let actor = icon.actor.clone();
         let hotkey = icon
@@ -585,7 +585,8 @@ impl ChromeLogic for ProductionTooltip {
 }
 
 pub fn production_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
-    let (Some(palette), Some(player)) = (args.value::<WidgetId>("palette"), local_player(ui)) else {
+    let get_icon = args.value::<Getter<Option<ProductionIcon>>>("getTooltipIcon");
+    let (Some(get_icon), Some(player)) = (get_icon, args.value::<PlayerRef>("player")) else {
         return cell(NoLogic);
     };
 
@@ -614,18 +615,8 @@ pub fn production_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::Widge
         cost: shared_text(ui, labels.cost),
         desc: shared_text(ui, labels.desc),
     };
-    let palette_kind = ui.kind(palette);
-    ui.set_visible_fn(id, move || {
-        palette_kind
-            .try_borrow_mut()
-            .ok()
-            .and_then(|mut k| {
-                k.as_any()
-                    .downcast_mut::<ProductionPaletteWidget>()
-                    .map(|p| p.tooltip_icon.is_some())
-            })
-            .unwrap_or(false)
-    });
+    let g = get_icon.clone();
+    ui.set_visible_fn(id, move || g().is_some());
     let cost = Rc::new(Cell::new(0));
     let c = cost.clone();
     ui.label(labels.cost).get_color = Some(Rc::new(move || {
@@ -650,7 +641,7 @@ pub fn production_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::Widge
     let icon_margin = ui.node(labels.time_icon).bounds.x;
     cell(ProductionTooltip {
         widget: id,
-        palette,
+        get_icon,
         queue_power,
         labels,
         texts,

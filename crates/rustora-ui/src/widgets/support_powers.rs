@@ -14,6 +14,7 @@ use rustora_engine::target::Target;
 use rustora_engine::traits::subcell::FULL_CELL;
 use rustora_mods_common::support_powers::{SupportPowerInstance, SupportPowerManager};
 
+use super::TooltipContainerWidget;
 use super::impl_as_any;
 use super::production::format_time;
 use crate::draw::{DrawContext, Rect, TextStyle};
@@ -21,7 +22,7 @@ use crate::input::{KeyEvent, KeyInput, MouseButton, MouseEvent, MouseInput};
 use crate::logic::ingame::Ingame;
 use crate::logic::services;
 use crate::orders::{OrderContext, OrderGenerator};
-use crate::widget::{Ui, WidgetId, WidgetKind};
+use crate::widget::{Ui, WidgetArgs, WidgetId, WidgetKind};
 
 /// `SelectGenericPowerTarget`.
 pub struct SelectGenericPowerTarget {
@@ -67,14 +68,15 @@ impl OrderGenerator for SelectGenericPowerTarget {
     }
 }
 
+/// `SupportPowersWidget.SupportPowerIcon`.
 #[derive(Clone)]
-struct SupportPowerIcon {
-    power: Rc<SupportPowerInstance>,
-    pos: (i32, i32),
-    image: String,
-    sequence: String,
-    palette: String,
-    hotkey: Option<String>,
+pub struct SupportPowerIcon {
+    pub power: Rc<SupportPowerInstance>,
+    pub pos: (i32, i32),
+    pub image: String,
+    pub sequence: String,
+    pub palette: String,
+    pub hotkey: Option<String>,
 }
 
 /// Port of `SupportPowersWidget`.
@@ -96,6 +98,7 @@ pub struct SupportPowersWidget {
     pub horizontal: bool,
     pub icon_count: i32,
     pub on_icon_count_changed: Option<Rc<dyn Fn(&mut Ui, i32, i32)>>,
+    pub tooltip_icon: Option<SupportPowerIcon>,
     ingame: Option<Rc<Ingame>>,
     manager: Option<Rc<SupportPowerManager>>,
     icons: Vec<(Rect, SupportPowerIcon)>,
@@ -124,6 +127,7 @@ impl Default for SupportPowersWidget {
             horizontal: false,
             icon_count: 0,
             on_icon_count_changed: None,
+            tooltip_icon: None,
             ingame: None,
             manager: None,
             icons: Vec::new(),
@@ -285,11 +289,34 @@ impl WidgetKind for SupportPowersWidget {
         self.refresh_icons(ui, id);
     }
 
+    fn mouse_entered(&mut self, ui: &mut Ui, id: WidgetId) {
+        let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) else {
+            return;
+        };
+        let get_icon = super::tooltip::kind_getter(ui, id, |w: &SupportPowersWidget| w.tooltip_icon.clone());
+        let mut args = WidgetArgs::default().with_value("getTooltipIcon", get_icon);
+        if let Some(manager) = &self.manager {
+            args = args.with_value("player", manager.self_.owner());
+        }
+        TooltipContainerWidget::set_tooltip(ui, container, &self.tooltip_template, args);
+    }
+
+    fn mouse_exited(&mut self, ui: &mut Ui, _id: WidgetId) {
+        if let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) {
+            TooltipContainerWidget::remove_tooltip(ui, container);
+        }
+    }
+
     fn handle_mouse(&mut self, _ui: &mut Ui, _id: WidgetId, mi: &MouseInput) -> bool {
+        let icon_at = |icons: &[(Rect, SupportPowerIcon)]| icons.iter().find(|(r, _)| r.contains(mi.x, mi.y)).map(|(_, i)| i.clone());
+        if mi.event == MouseEvent::Move {
+            self.tooltip_icon = icon_at(&self.icons);
+            return false;
+        }
         if mi.event != MouseEvent::Down {
             return false;
         }
-        let clicked = self.icons.iter().find(|(r, _)| r.contains(mi.x, mi.y)).map(|(_, i)| i.clone());
+        let clicked = icon_at(&self.icons);
         if let Some(icon) = clicked {
             self.click_icon(&icon);
         }

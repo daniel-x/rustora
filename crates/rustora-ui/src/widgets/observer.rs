@@ -2,24 +2,28 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `GradientColorBlockWidget.cs`, `LineGraphWidget.cs`, `ObserverProductionIconsWidget.cs`,
-//! `ObserverSupportPowerIconsWidget.cs` and `ObserverArmyIconsWidget.cs`. The icon tooltips are not ported.
+//! `ObserverSupportPowerIconsWidget.cs` and `ObserverArmyIconsWidget.cs`.
 
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Color;
+use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::player::PlayerRef;
 use rustora_mods_common::player::statistics::PlayerStatistics;
 use rustora_mods_common::production::{BuildableInfo, ProductionItem, ProductionQueue, ProductionQueueInfo};
 use rustora_mods_common::render::RenderSpritesInfo;
 use rustora_mods_common::support_powers::SupportPowerManager;
 
+use super::TooltipContainerWidget;
 use super::impl_as_any;
-use super::production::{ProductionPaletteWidget, format_time};
-use crate::draw::{DrawContext, TextStyle};
+use super::production::{ProductionIcon, ProductionPaletteWidget, format_time};
+use super::support_powers::SupportPowerIcon;
+use super::tooltip::kind_getter;
+use crate::draw::{DrawContext, Rect, TextStyle};
 use crate::font::premultiplied;
 use crate::logic::ingame::Ingame;
 use crate::logic::services;
-use crate::widget::{Getter, Ui, WidgetId, WidgetKind};
+use crate::widget::{Getter, Ui, WidgetArgs, WidgetId, WidgetKind};
 use crate::world_sprites::UiFrame;
 
 const WHITE: Color = Color::from_argb(255, 255, 255, 255);
@@ -307,6 +311,10 @@ struct IconRow {
     clock_sequence: String,
     clock_palette: String,
     min_width: i32,
+    tooltip_template: String,
+    tooltip_container: Option<String>,
+    tooltip_token: i32,
+    last_icon_idx: usize,
     ingame: Option<Rc<Ingame>>,
 }
 
@@ -320,6 +328,10 @@ impl Default for IconRow {
             clock_sequence: "idle".into(),
             clock_palette: "chrome".into(),
             min_width: 240,
+            tooltip_template: String::new(),
+            tooltip_container: None,
+            tooltip_token: 0,
+            last_icon_idx: 0,
             ingame: None,
         }
     }
@@ -335,10 +347,62 @@ impl IconRow {
             "ClockSequence" => self.clock_sequence = value.to_string(),
             "ClockPalette" => self.clock_palette = value.to_string(),
             "MinWidth" => self.min_width = parse_i32(value, 240),
-            "TooltipTemplate" | "TooltipContainer" => {}
+            "TooltipTemplate" => self.tooltip_template = value.to_string(),
+            "TooltipContainer" => self.tooltip_container = Some(value.to_string()),
             _ => return false,
         }
         true
+    }
+
+    fn with_template(template: &str) -> IconRow {
+        IconRow {
+            tooltip_template: template.to_string(),
+            ..IconRow::default()
+        }
+    }
+
+    fn bounds(&self, pos: (i32, i32)) -> Rect {
+        Rect::new(pos.0, pos.1, self.icon_width, self.icon_height)
+    }
+
+    /// The `Tick` of the icon widgets: shows the tooltip of the icon under the mouse. `same` tells whether two icons
+    /// are of the same item, and `args` makes the tooltip arguments.
+    fn tick_tooltip<T: Clone>(
+        &mut self,
+        ui: &mut Ui,
+        id: WidgetId,
+        icons: &[(Rect, T)],
+        tooltip: &mut Option<T>,
+        same: impl Fn(&T, &T) -> bool,
+        args: impl FnOnce(&mut Ui) -> WidgetArgs,
+    ) {
+        let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) else {
+            return;
+        };
+        if ui.mouse_over != Some(id) {
+            if tooltip.is_some() {
+                TooltipContainerWidget::remove_tooltip_token(ui, container, self.tooltip_token);
+                self.last_icon_idx = 0;
+                *tooltip = None;
+            }
+            return;
+        }
+        let (mx, my) = ui.last_mouse;
+        if let Some(current) = tooltip.as_ref()
+            && icons
+                .get(self.last_icon_idx)
+                .is_some_and(|(r, icon)| same(icon, current) && r.contains(mx, my))
+        {
+            return;
+        }
+        if let Some(i) = icons.iter().position(|(r, _)| r.contains(mx, my)) {
+            self.last_icon_idx = i;
+            *tooltip = Some(icons[i].1.clone());
+            let args = args(ui);
+            self.tooltip_token = TooltipContainerWidget::set_tooltip(ui, container, &self.tooltip_template, args);
+            return;
+        }
+        *tooltip = None;
     }
 
     fn step(&self) -> i32 {
@@ -407,11 +471,39 @@ fn initialize_row(row: &mut IconRow, ui: &Ui) {
     row.ingame = services(ui).ingame.borrow().clone();
 }
 
+/// The player and the tooltip arguments of an icon widget.
+fn tooltip_args<W: WidgetKind + 'static, T: 'static>(
+    ui: &Ui,
+    id: WidgetId,
+    player: Option<PlayerRef>,
+    name: &str,
+    f: fn(&W) -> Option<T>,
+) -> WidgetArgs {
+    let args = WidgetArgs::default().with_value(name, kind_getter(ui, id, f));
+    match player {
+        Some(player) => args.with_value("player", player),
+        None => args,
+    }
+}
+
 /// Port of `ObserverProductionIconsWidget`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ObserverProductionIconsWidget {
     row: IconRow,
     pub get_player: GetPlayer,
+    icons: Vec<(Rect, ProductionIcon)>,
+    pub tooltip_icon: Option<ProductionIcon>,
+}
+
+impl Default for ObserverProductionIconsWidget {
+    fn default() -> Self {
+        ObserverProductionIconsWidget {
+            row: IconRow::with_template("PRODUCTION_TOOLTIP"),
+            get_player: None,
+            icons: Vec::new(),
+            tooltip_icon: None,
+        }
+    }
 }
 
 struct QueuedIcon {
@@ -441,7 +533,22 @@ impl WidgetKind for ObserverProductionIconsWidget {
         initialize_row(&mut self.row, ui);
     }
 
+    fn tick(&mut self, ui: &mut Ui, id: WidgetId) {
+        let player = self.get_player.as_ref().and_then(|f| f());
+        let mut tooltip = self.tooltip_icon.take();
+        self.row.tick_tooltip(
+            ui,
+            id,
+            &self.icons,
+            &mut tooltip,
+            |a, b| Rc::ptr_eq(&a.actor, &b.actor),
+            |ui| tooltip_args(ui, id, player, "getTooltipIcon", |w: &Self| w.tooltip_icon.clone()),
+        );
+        self.tooltip_icon = tooltip;
+    }
+
     fn draw(&mut self, ui: &mut Ui, id: WidgetId, dc: &mut DrawContext) {
+        self.icons.clear();
         let (Some(ingame), Some(player)) = (self.row.ingame.clone(), self.get_player.as_ref().and_then(|f| f())) else {
             return;
         };
@@ -508,10 +615,22 @@ impl WidgetKind for ObserverProductionIconsWidget {
                     (total - remaining) * (length - 1) / total
                 }
             });
-            icons.push(QueuedIcon {
-                pos,
-                queued: queued.into_iter().map(|(_, pi)| pi).collect(),
-            });
+            let queued: Vec<Rc<ProductionItem>> = queued.into_iter().map(|(_, pi)| pi).collect();
+            self.icons.push((
+                self.row.bounds(pos),
+                ProductionIcon {
+                    actor: actor.clone(),
+                    name: name.clone(),
+                    hotkey: None,
+                    image: image.clone(),
+                    sequence: bi.icon.clone(),
+                    palette: palette.clone(),
+                    pos,
+                    queued: queued.clone(),
+                    queue: queue.clone(),
+                },
+            ));
+            icons.push(QueuedIcon { pos, queued });
         }
         self.row.resize(ui, id, icons.len() as i32);
 
@@ -530,10 +649,23 @@ impl WidgetKind for ObserverProductionIconsWidget {
 }
 
 /// Port of `ObserverSupportPowerIconsWidget`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ObserverSupportPowerIconsWidget {
     row: IconRow,
     pub get_player: GetPlayer,
+    icons: Vec<(Rect, SupportPowerIcon)>,
+    pub tooltip_icon: Option<SupportPowerIcon>,
+}
+
+impl Default for ObserverSupportPowerIconsWidget {
+    fn default() -> Self {
+        ObserverSupportPowerIconsWidget {
+            row: IconRow::with_template("SUPPORT_POWER_TOOLTIP"),
+            get_player: None,
+            icons: Vec::new(),
+            tooltip_icon: None,
+        }
+    }
 }
 
 impl WidgetKind for ObserverSupportPowerIconsWidget {
@@ -547,7 +679,22 @@ impl WidgetKind for ObserverSupportPowerIconsWidget {
         initialize_row(&mut self.row, ui);
     }
 
+    fn tick(&mut self, ui: &mut Ui, id: WidgetId) {
+        let player = self.get_player.as_ref().and_then(|f| f());
+        let mut tooltip = self.tooltip_icon.take();
+        self.row.tick_tooltip(
+            ui,
+            id,
+            &self.icons,
+            &mut tooltip,
+            |a, b| Rc::ptr_eq(&a.power, &b.power),
+            |ui| tooltip_args(ui, id, player, "getTooltipIcon", |w: &Self| w.tooltip_icon.clone()),
+        );
+        self.tooltip_icon = tooltip;
+    }
+
     fn draw(&mut self, ui: &mut Ui, id: WidgetId, dc: &mut DrawContext) {
+        self.icons.clear();
         let (Some(ingame), Some(player)) = (self.row.ingame.clone(), self.get_player.as_ref().and_then(|f| f())) else {
             return;
         };
@@ -574,6 +721,17 @@ impl WidgetKind for ObserverSupportPowerIconsWidget {
                     (total - remaining) * (length - 1) / total
                 }
             });
+            self.icons.push((
+                self.row.bounds(pos),
+                SupportPowerIcon {
+                    power: power.clone(),
+                    pos,
+                    image: info.icon_image.clone(),
+                    sequence: sequence.to_string(),
+                    palette: info.icon_palette.clone(),
+                    hotkey: None,
+                },
+            ));
             icons.push((pos, power.clone()));
         }
         for (pos, power) in icons {
@@ -592,6 +750,7 @@ impl WidgetKind for ObserverSupportPowerIconsWidget {
 
 /// `ArmyUnit`: the icon and the sort keys of an actor type in the army display.
 struct ArmyUnit {
+    actor: Rc<ActorInfo>,
     image: String,
     icon: String,
     palette: String,
@@ -618,6 +777,7 @@ fn army_unit(ingame: &Ingame, player: &PlayerRef, name: &str, count: i32) -> Opt
         bi.icon_palette.clone()
     };
     Some(ArmyUnit {
+        actor: actor.clone(),
         image: rsi.get_image(&actor, &player.faction),
         icon: bi.icon.clone(),
         palette,
@@ -628,10 +788,23 @@ fn army_unit(ingame: &Ingame, player: &PlayerRef, name: &str, count: i32) -> Opt
 }
 
 /// Port of `ObserverArmyIconsWidget`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ObserverArmyIconsWidget {
     row: IconRow,
     pub get_player: GetPlayer,
+    icons: Vec<(Rect, Rc<ActorInfo>)>,
+    pub tooltip_unit: Option<Rc<ActorInfo>>,
+}
+
+impl Default for ObserverArmyIconsWidget {
+    fn default() -> Self {
+        ObserverArmyIconsWidget {
+            row: IconRow::with_template("ARMY_TOOLTIP"),
+            get_player: None,
+            icons: Vec::new(),
+            tooltip_unit: None,
+        }
+    }
 }
 
 impl WidgetKind for ObserverArmyIconsWidget {
@@ -645,7 +818,16 @@ impl WidgetKind for ObserverArmyIconsWidget {
         initialize_row(&mut self.row, ui);
     }
 
+    fn tick(&mut self, ui: &mut Ui, id: WidgetId) {
+        let mut tooltip = self.tooltip_unit.take();
+        self.row.tick_tooltip(ui, id, &self.icons, &mut tooltip, Rc::ptr_eq, |ui| {
+            tooltip_args(ui, id, None, "getTooltipUnit", |w: &Self| w.tooltip_unit.clone())
+        });
+        self.tooltip_unit = tooltip;
+    }
+
     fn draw(&mut self, ui: &mut Ui, id: WidgetId, dc: &mut DrawContext) {
+        self.icons.clear();
         let (Some(ingame), Some(player)) = (self.row.ingame.clone(), self.get_player.as_ref().and_then(|f| f())) else {
             return;
         };
@@ -666,6 +848,7 @@ impl WidgetKind for ObserverArmyIconsWidget {
             let pos = self.row.icon_top_left(ui, id, col as i32);
             let center = (pos.0 as f32 + 0.5 * size.0, pos.1 as f32 + 0.5 * size.1);
             self.row.draw_icon(dc, &unit.image, &unit.icon, &unit.palette, center);
+            self.icons.push((self.row.bounds(pos), unit.actor.clone()));
             positions.push(pos);
         }
         self.row.resize(ui, id, units.len() as i32);

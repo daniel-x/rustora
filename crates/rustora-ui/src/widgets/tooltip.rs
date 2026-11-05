@@ -11,6 +11,20 @@ use crate::widget::{Action, EventBounds, Ui, WidgetArgs, WidgetId, WidgetKind};
 const CURSOR_OFFSET: (i32, i32) = (0, 20);
 const BOTTOM_EDGE_Y_OFFSET: i32 = -5;
 
+/// A getter of the tooltip state of widget `id`, which a tooltip logic receives as `getTooltipIcon`. It returns `None`
+/// while the widget is borrowed.
+pub fn kind_getter<W: WidgetKind + 'static, T: 'static>(
+    ui: &Ui,
+    id: WidgetId,
+    f: impl Fn(&W) -> Option<T> + 'static,
+) -> crate::widget::Getter<Option<T>> {
+    let kind = ui.kind(id);
+    Rc::new(move || {
+        let mut k = kind.try_borrow_mut().ok()?;
+        k.as_any().downcast_mut::<W>().and_then(|w| f(w))
+    })
+}
+
 /// `TooltipContainerWidget.BeforeRender`, which a tooltip logic sets through the `beforeRender` widget argument.
 pub type BeforeRender = Rc<RefCell<Option<Action>>>;
 

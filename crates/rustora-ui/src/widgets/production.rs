@@ -680,8 +680,11 @@ impl WidgetKind for ProductionPaletteWidget {
         let Some(ingame) = self.ingame.clone() else {
             return;
         };
-        let palette_id = _id;
-        let args = WidgetArgs::default().with_value("palette", palette_id).with_value("ingame", ingame);
+        let get_icon = super::tooltip::kind_getter(ui, _id, |w: &ProductionPaletteWidget| w.tooltip_icon.clone());
+        let mut args = WidgetArgs::default().with_value("getTooltipIcon", get_icon);
+        if let Some(player) = ingame.local_player.clone() {
+            args = args.with_value("player", player);
+        }
         let container = ui.child(ui.root, &container);
         TooltipContainerWidget::set_tooltip(ui, container, &self.tooltip_template, args);
     }
