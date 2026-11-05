@@ -7,11 +7,11 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rustora_core::fieldloader::Color;
@@ -20,8 +20,10 @@ use rustora_engine::order_manager::{Connection, Incoming};
 use rustora_engine::world::World;
 use rustora_fs::Platform;
 use rustora_game::moddata::ModData;
+use rustora_net::game_information::GameInformation;
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::order::{OrderPacket, Packet, RawOrder, order_type};
+use rustora_net::replay::ReplayRecorder;
 use rustora_net::session::{Client, ClientState, Session};
 
 use crate::skirmish::BotSpec;
@@ -60,6 +62,7 @@ pub struct NetworkConnection {
     sent_immediate_orders: VecDeque<Vec<RawOrder>>,
     sent_sync: VecDeque<(i32, i32, u64)>,
     queued_sync: Vec<(i32, i32, u64)>,
+    recorder: Option<ReplayRecorder>,
 }
 
 impl NetworkConnection {
@@ -95,7 +98,26 @@ impl NetworkConnection {
             sent_immediate_orders: VecDeque::new(),
             sent_sync: VecDeque::new(),
             queued_sync: Vec::new(),
+            recorder: None,
         })
+    }
+
+    /// `StartRecording`: records the packets to a replay in `directory` once the game starts.
+    pub fn start_recording(&mut self, directory: PathBuf, filename: String) {
+        self.recorder = Some(ReplayRecorder::new(directory, filename));
+    }
+
+    /// The `ReplayRecorder.Metadata` that the replay file ends with.
+    pub fn set_replay_metadata(&mut self, info: Arc<Mutex<GameInformation>>) {
+        if let Some(r) = &mut self.recorder {
+            r.metadata = Some(info);
+        }
+    }
+
+    fn record(&mut self, client_id: i32, data: &[u8]) {
+        if let Some(r) = &mut self.recorder {
+            r.receive(client_id, data);
+        }
     }
 
     /// `Send`: a packet followed by the queued sync packets; write errors show up on the reader thread.
@@ -124,12 +146,14 @@ impl NetworkConnection {
     /// Takes the next thing to process, in the order of `IConnection.Receive`.
     pub fn next_incoming(&mut self) -> Option<Incoming> {
         if let Some(orders) = self.sent_immediate_orders.pop_front() {
+            self.record(self.client_id, &Packet::serialize_orders(0, &orders));
             return Some(Incoming::Immediate {
                 client_id: self.client_id,
                 orders: OrderPacket { frame: 0, orders },
             });
         }
         if let Some((frame, sync_hash, defeat_state)) = self.sent_sync.pop_front() {
+            self.record(self.client_id, &Packet::serialize_sync(frame, sync_hash, defeat_state));
             return Some(Incoming::Sync {
                 frame,
                 sync_hash,
@@ -142,12 +166,16 @@ impl NetworkConnection {
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
             };
             match Packet::parse(from, &data) {
-                Ok(Packet::Disconnect { frame, client_id }) => return Some(Incoming::Disconnect { client_id, frame }),
+                Ok(Packet::Disconnect { frame, client_id }) => {
+                    self.record(from, &data);
+                    return Some(Incoming::Disconnect { client_id, frame });
+                }
                 Ok(Packet::Sync {
                     frame,
                     sync_hash,
                     defeat_state,
                 }) => {
+                    self.record(from, &data);
                     return Some(Incoming::Sync {
                         frame,
                         sync_hash,
@@ -162,14 +190,21 @@ impl NetworkConnection {
                         "Received Ack for {count} > {} frames.",
                         self.sent_orders.len()
                     );
-                    let orders = self.sent_orders.drain(..count as usize).flatten().collect();
+                    let orders: Vec<RawOrder> = self.sent_orders.drain(..count as usize).flatten().collect();
+                    self.record(self.client_id, &Packet::serialize_orders(frame, &orders));
                     return Some(Incoming::Orders {
                         client_id: self.client_id,
                         orders: OrderPacket { frame, orders },
                     });
                 }
-                Ok(Packet::Orders(orders)) if orders.frame == 0 => return Some(Incoming::Immediate { client_id: from, orders }),
-                Ok(Packet::Orders(orders)) => return Some(Incoming::Orders { client_id: from, orders }),
+                Ok(Packet::Orders(orders)) => {
+                    self.record(from, &data);
+                    return Some(if orders.frame == 0 {
+                        Incoming::Immediate { client_id: from, orders }
+                    } else {
+                        Incoming::Orders { client_id: from, orders }
+                    });
+                }
                 Err(e) => panic!("Received unknown packet from client {from} with length {}: {e}", data.len()),
             }
         }

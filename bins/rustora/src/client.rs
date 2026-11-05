@@ -24,6 +24,7 @@ use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
 use rustora_launch::{Step, load_world_with_sound, open_map, shellmaps};
 use rustora_mods_common::sound::StartGameNotificationInfo;
+use rustora_mods_common::world::create_game_information;
 use rustora_net::game_information::ReplayMetadata;
 use rustora_net::replay::Replay;
 use rustora_net::session::Session;
@@ -179,13 +180,16 @@ impl ShellWorld {
         support: &str,
         package: Arc<dyn Package>,
         lobby: Session,
-        connection: NetworkConnection,
+        mut connection: NetworkConnection,
+        mod_data: &ModData,
         view: (i32, i32),
         distance: WorldViewport,
     ) -> ShellWorld {
         let local_client = connection.local_client_id();
         let is_host = lobby.client_with_index(local_client).is_some_and(|c| c.is_admin);
         let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true);
+        let manifest = &mod_data.manifest;
+        connection.set_replay_metadata(create_game_information(&world, &manifest.id, &manifest.metadata.version));
         let driver = SkirmishDriver::with_connection(&world, Box::new(connection), is_host);
         let viewport = world_viewport(&world, view, distance);
         let viewer = world
@@ -674,6 +678,7 @@ impl Client {
             package,
             session,
             connection,
+            &self.mod_data,
             self.ui.resolution,
             distance,
         );

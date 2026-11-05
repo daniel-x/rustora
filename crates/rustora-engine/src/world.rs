@@ -6,10 +6,12 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
+use rustora_net::game_information::{self, GameInformation};
 use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
 
@@ -17,7 +19,7 @@ use crate::actor::{Actor, ActorRef};
 use crate::actor_init::ActorInits;
 use crate::effect::EffectRef;
 use crate::map::Map;
-use crate::player::PlayerRef;
+use crate::player::{Player, PlayerRef, WinState};
 use crate::rules::Ruleset;
 use crate::trait_dict::TraitDict;
 use crate::traits::*;
@@ -29,6 +31,12 @@ pub enum WorldType {
     Regular,
     Shellmap,
     Editor,
+}
+
+/// `World.gameInfo` and the internal names of its players, in order.
+struct GameInfoTracker {
+    info: Arc<Mutex<GameInformation>>,
+    players: Vec<String>,
 }
 
 pub struct World {
@@ -77,6 +85,7 @@ pub struct World {
     game_save_last_sync_frame: Cell<i32>,
     was_loading_game_save: Cell<bool>,
     game_save_trait_data: RefCell<IndexMap<i32, MiniYaml>>,
+    game_info: RefCell<Option<GameInfoTracker>>,
 }
 
 /// `RustoraHarness.BotSeed`: the seed of the bot random numbers, derived from the lobby random seed.
@@ -152,6 +161,7 @@ impl World {
             game_save_last_sync_frame: Cell::new(-1),
             was_loading_game_save: Cell::new(false),
             game_save_trait_data: RefCell::new(IndexMap::new()),
+            game_info: RefCell::new(None),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -280,12 +290,48 @@ impl World {
         self.is_replay.set(v);
     }
 
+    /// Sets `World.gameInfo`; `players` are the internal names of the players of `info.players`, in order.
+    pub fn set_game_info(&self, info: Arc<Mutex<GameInformation>>, players: Vec<String>) {
+        *self.game_info.borrow_mut() = Some(GameInfoTracker { info, players });
+    }
+
+    pub fn game_info(&self) -> Option<Arc<Mutex<GameInformation>>> {
+        self.game_info.borrow().as_ref().map(|t| t.info.clone())
+    }
+
+    fn update_game_player(&self, player: &Player, update: impl FnOnce(&mut game_information::GamePlayer)) {
+        let tracker = self.game_info.borrow();
+        let Some(tracker) = tracker.as_ref() else { return };
+        let Some(i) = tracker.players.iter().position(|n| *n == player.internal_name) else {
+            return;
+        };
+        let mut info = tracker.info.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(p) = info.players.get_mut(i) {
+            update(p);
+        }
+    }
+
+    /// `World.OnPlayerWinStateChanged`.
+    pub fn on_player_win_state_changed(&self, player: &Player) {
+        let outcome = match player.win_state.get() {
+            WinState::Undefined => game_information::WinState::Undefined,
+            WinState::Won => game_information::WinState::Won,
+            WinState::Lost => game_information::WinState::Lost,
+        };
+        self.update_game_player(player, |p| {
+            p.outcome = outcome;
+            p.outcome_timestamp_utc = Some(game_information::now_utc());
+        });
+    }
+
     /// `World.OnClientDisconnected`.
     pub fn on_client_disconnected(&self, client_id: i32) {
         for player in self.players() {
             if player.client_index != client_id || !player.playable {
                 continue;
             }
+            let frame = self.net_frame_number.get();
+            self.update_game_player(&player, |p| p.disconnect_frame = frame);
             for n in self.world_actor().traits_implementing::<dyn INotifyPlayerDisconnected>() {
                 n.player_disconnected(self.world_actor(), &player);
             }
@@ -466,6 +512,9 @@ impl World {
         self.is_game_over.set(true);
         for t in self.world_actor().traits_implementing::<dyn IGameOver>() {
             t.game_over(self);
+        }
+        if let Some(info) = self.game_info() {
+            info.lock().unwrap_or_else(|e| e.into_inner()).root.final_game_tick = self.world_tick.get();
         }
     }
 

@@ -2617,6 +2617,7 @@ name = "rustora-net"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "log",
  "rustora-core",
  "rustora-derive",
  "socket2",

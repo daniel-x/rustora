@@ -6,7 +6,7 @@
 use indexmap::IndexSet;
 use rustora_core::field_enum;
 use rustora_core::fieldloader::{Color, LoadError, load};
-use rustora_core::miniyaml::MiniYaml;
+use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_derive::FieldLoad;
 
 use crate::NetError;
@@ -82,6 +82,15 @@ impl GameInformation {
         Ok(info)
     }
 
+    /// `GameInformation.Serialize`.
+    pub fn serialize(&self) -> String {
+        let mut nodes = vec![MiniYamlNode::new("Root", self.root.save())];
+        for (i, p) in self.players.iter().enumerate() {
+            nodes.push(MiniYamlNode::new(format!("Player@{i}"), p.save()));
+        }
+        nodes_to_string(&nodes)
+    }
+
     /// The start time in seconds since the Unix epoch.
     pub fn start_time(&self) -> Option<i64> {
         self.root.start_time_utc.as_deref().and_then(parse_utc)
@@ -109,6 +118,126 @@ impl GameInformation {
             .position(|p| std::ptr::eq(p, player))
             .map_or(0, |i| i + 1)
     }
+}
+
+impl WinState {
+    fn name(self) -> &'static str {
+        match self {
+            WinState::Undefined => "Undefined",
+            WinState::Won => "Won",
+            WinState::Lost => "Lost",
+        }
+    }
+}
+
+/// The `DateTime` default that `FieldSaver` writes for a time that was never set.
+const NO_TIME: &str = "0001-01-01 00-00-00";
+
+fn field(key: &str, value: impl ToString) -> MiniYamlNode {
+    MiniYamlNode::new(key, MiniYaml::from_value(value.to_string()))
+}
+
+fn text_field(key: &str, value: &Option<String>) -> MiniYamlNode {
+    field(key, value.as_deref().unwrap_or(""))
+}
+
+fn bool_field(key: &str, value: bool) -> MiniYamlNode {
+    field(key, if value { "True" } else { "False" })
+}
+
+fn color_text(c: Color) -> String {
+    if c.a() == 255 {
+        format!("{:02X}{:02X}{:02X}", c.r(), c.g(), c.b())
+    } else {
+        format!("{:02X}{:02X}{:02X}{:02X}", c.r(), c.g(), c.b(), c.a())
+    }
+}
+
+impl GamePlayer {
+    /// `FieldSaver.Save` of `GameInformation.Player`, in field declaration order.
+    fn save(&self) -> MiniYaml {
+        MiniYaml::new(
+            None,
+            vec![
+                field("ClientIndex", self.client_index),
+                field("Name", &self.name),
+                bool_field("IsHuman", self.is_human),
+                bool_field("IsBot", self.is_bot),
+                text_field("BotType", &self.bot_type),
+                text_field("FactionName", &self.faction_name),
+                text_field("FactionId", &self.faction_id),
+                field("Color", color_text(self.color)),
+                text_field("DisplayFactionName", &self.display_faction_name),
+                text_field("DisplayFactionId", &self.display_faction_id),
+                field("Team", self.team),
+                field("SpawnPoint", self.spawn_point),
+                field("Handicap", self.handicap),
+                bool_field("IsRandomFaction", self.is_random_faction),
+                bool_field("IsRandomSpawnPoint", self.is_random_spawn_point),
+                text_field("Fingerprint", &self.fingerprint),
+                field("Outcome", self.outcome.name()),
+                field("OutcomeTimestampUtc", self.outcome_timestamp_utc.as_deref().unwrap_or(NO_TIME)),
+                field("DisconnectFrame", self.disconnect_frame),
+            ],
+        )
+    }
+}
+
+impl GameRoot {
+    /// `FieldSaver.Save` of `GameInformation`, in field declaration order.
+    fn save(&self) -> MiniYaml {
+        let spawn_points: Vec<String> = self.disabled_spawn_points.iter().map(i32::to_string).collect();
+        MiniYaml::new(
+            None,
+            vec![
+                text_field("Mod", &self.mod_id),
+                text_field("Version", &self.version),
+                text_field("MapUid", &self.map_uid),
+                text_field("MapTitle", &self.map_title),
+                field("FinalGameTick", self.final_game_tick),
+                field("StartTimeUtc", self.start_time_utc.as_deref().unwrap_or(NO_TIME)),
+                field("EndTimeUtc", self.end_time_utc.as_deref().unwrap_or(NO_TIME)),
+                field("DisabledSpawnPoints", spawn_points.join(", ")),
+            ],
+        )
+    }
+}
+
+/// The current time as `FieldSaver` writes a UTC `DateTime`.
+pub fn now_utc() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    format_utc(secs)
+}
+
+/// `Game.TimestampedFilename`: `<mod><extra>-yyyy-MM-ddTHHmmssZ` in UTC.
+pub fn timestamped_filename(mod_id: &str, extra: &str) -> String {
+    let (date, time) = now_utc()
+        .split_once(' ')
+        .map(|(d, t)| (d.to_string(), t.replace('-', "")))
+        .unwrap_or_default();
+    format!("{mod_id}{extra}-{date}T{time}Z")
+}
+
+/// Formats seconds since the Unix epoch as `yyyy-MM-dd HH-mm-ss`.
+pub fn format_utc(secs: i64) -> String {
+    let (y, m, d) = civil_from_days(secs.div_euclid(86400));
+    let t = secs.rem_euclid(86400);
+    format!("{y:04}-{m:02}-{d:02} {:02}-{:02}-{:02}", t / 3600, t / 60 % 60, t % 60)
+}
+
+/// The date of a count of days since 1970-01-01 in the proleptic Gregorian calendar.
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 /// Parses a `yyyy-MM-dd HH-mm-ss` time of `FieldSaver` to seconds since the Unix epoch.
@@ -161,6 +290,29 @@ mod tests {
         assert_eq!(parse_utc("1970-01-01 00-00-00"), Some(0));
         assert_eq!(parse_utc("2026-11-02 19-13-29"), Some(1_793_646_809));
         assert_eq!(parse_utc("0001-01-01 00-00-00"), Some(-62_135_596_800));
+    }
+
+    #[test]
+    fn formats_field_saver_times() {
+        for t in [
+            "1970-01-01 00-00-00",
+            "2026-11-02 19-13-29",
+            "0001-01-01 00-00-00",
+            "2000-02-29 23-59-59",
+        ] {
+            assert_eq!(format_utc(parse_utc(t).unwrap()), t);
+        }
+    }
+
+    #[test]
+    fn serializes_like_field_saver() {
+        let data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../testdata/replays/b000-ore-lord.orarep"
+        ));
+        let Ok(data) = data else { return };
+        let yaml = crate::replay::read_metadata(&data).unwrap();
+        assert_eq!(GameInformation::deserialize(&yaml, "test").unwrap().serialize(), yaml);
     }
 
     #[test]

@@ -16,6 +16,7 @@ use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_engine::order_manager::{Connection, Incoming};
 use rustora_game::moddata::ModData;
 use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_response};
+use rustora_net::game_information::timestamped_filename;
 use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
 use rustora_server::mod_info::ServerMod;
@@ -243,7 +244,13 @@ impl NetClient {
     pub fn pump(&mut self, mod_data: &ModData, messages: &Messages, run_time: i64, name: &str, color: Color) -> bool {
         if let Some(receive) = &self.connecting {
             match receive.try_recv() {
-                Ok(Ok(connection)) => {
+                Ok(Ok(mut connection)) => {
+                    let manifest = &mod_data.manifest;
+                    let directory = Path::new(&self.support)
+                        .join("Replays")
+                        .join(&manifest.id)
+                        .join(&manifest.metadata.version);
+                    connection.start_recording(directory, timestamped_filename(&manifest.id, ""));
                     let mut net = self.net.borrow_mut();
                     net.local_client_id = connection.local_client_id();
                     net.connection_state = ConnectionState::Connected;

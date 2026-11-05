@@ -146,6 +146,7 @@ fn objectives_of(p: &PlayerRef) -> Rc<MissionObjectives> {
 
 fn set_win_state(p: &PlayerRef, s: WinState) {
     p.win_state.set(s);
+    p.player_actor().world().on_player_win_state_changed(p);
 }
 
 impl ISync for MissionObjectives {

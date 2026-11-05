@@ -707,3 +707,60 @@ impl IWorldLoaded for SpawnStartingUnits {
         }
     }
 }
+
+/// The `GameInformation` that `World` creates and fills in `LoadComplete` (`GameInformation.AddPlayer` for each
+/// player), stored in the world, which keeps it up to date for the replay metadata.
+pub fn create_game_information(
+    world: &World,
+    mod_id: &str,
+    version: &str,
+) -> std::sync::Arc<std::sync::Mutex<rustora_net::game_information::GameInformation>> {
+    use rustora_net::game_information::{GameInformation, GamePlayer, GameRoot, now_utc};
+    let factions = world.world_actor().info.trait_infos::<FactionInfo>();
+    let faction_name = |internal: &str| factions.iter().find(|f| f.internal() == internal).and_then(|f| f.name.clone());
+    let lobby = &world.lobby_info;
+    let mut info = GameInformation {
+        root: GameRoot {
+            mod_id: Some(mod_id.to_string()),
+            version: Some(version.to_string()),
+            map_uid: Some(world.map().uid.clone()),
+            map_title: Some(world.map().title.clone()),
+            disabled_spawn_points: lobby.disabled_spawn_points.iter().copied().collect(),
+            start_time_utc: Some(now_utc()),
+            ..Default::default()
+        },
+        players: Vec::new(),
+    };
+    let mut names = Vec::new();
+    for p in world.players() {
+        if p.non_combatant || !p.playable {
+            continue;
+        }
+        let Some(client) = lobby.client_with_index(p.client_index) else {
+            continue;
+        };
+        info.players.push(GamePlayer {
+            client_index: p.client_index,
+            name: p.player_name.clone(),
+            is_human: !p.is_bot,
+            is_bot: p.is_bot,
+            bot_type: p.bot_type.clone(),
+            faction_name: faction_name(&p.faction),
+            faction_id: Some(p.faction.clone()),
+            color: p.color,
+            display_faction_name: faction_name(&p.display_faction),
+            display_faction_id: Some(p.display_faction.clone()),
+            team: client.team,
+            spawn_point: p.spawn_point,
+            handicap: client.handicap,
+            is_random_faction: client.faction.as_deref() != Some(p.faction.as_str()),
+            is_random_spawn_point: p.display_spawn_point == 0,
+            fingerprint: client.fingerprint.clone(),
+            ..Default::default()
+        });
+        names.push(p.internal_name.clone());
+    }
+    let info = std::sync::Arc::new(std::sync::Mutex::new(info));
+    world.set_game_info(info.clone(), names);
+    info
+}
