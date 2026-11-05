@@ -1,0 +1,18 @@
+[package]
+name = "rustora-scripting"
+description = "Port of the OpenRA Lua scripting: the script context, global tables and actor and player properties"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-derive = { path = "../rustora-derive" }
+rustora-engine = { path = "../rustora-engine" }
+rustora-mods-common = { path = "../rustora-mods-common" }
+indexmap = "2"
+log = "0.4"
+mlua = { version = "0.12", features = ["lua51", "vendored"] }
+
+[lints]
+workspace = true

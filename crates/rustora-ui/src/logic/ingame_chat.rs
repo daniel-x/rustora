@@ -396,7 +396,7 @@ pub fn game_timer(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let time_limit = world
         .world_actor()
         .trait_or_default::<rustora_mods_common::player::objectives::TimeLimitManager>()
-        .map_or(0, |t| t.time_limit);
+        .map_or(0, |t| t.time_limit.get());
     ui.label(timer).get_text = Some(Rc::new(move || {
         let paused = world.paused() || world.replay_timestep.get() == 0;
         let show_status = (world.paused() || world.replay_timestep.get() != world.timestep) && start.elapsed().as_secs() % 2 == 0;

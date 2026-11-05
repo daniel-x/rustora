@@ -545,6 +545,16 @@ impl IResolveOrder for Captures {
     }
 }
 
+/// `new CaptureActor(self, target, null)` as queued by scripts.
+pub fn capture_activity(self_: &ActorRef, target: &Target) -> rustora_engine::activity::ActivityRef {
+    let hooks = CaptureActorHooks {
+        manager: self_.trait_::<CaptureManager>(),
+        enter_actor: RefCell::new(None),
+        enter_manager: RefCell::new(None),
+    };
+    Enter::new(self_, target, Box::new(hooks))
+}
+
 /// `CaptureActor`.
 struct CaptureActorHooks {
     manager: Rc<CaptureManager>,

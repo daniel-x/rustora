@@ -80,6 +80,13 @@ impl ActorReference {
                 "SubCell" => Rc::new(SubCellInit::new(get_value_yaml::<u8>(name, &n.value, false).map_err(err)?)),
                 "Faction" => Rc::new(FactionInit::new(n.value.value_str().to_string())),
                 "Health" => Rc::new(HealthInit::new(get_value_yaml::<i32>(name, &n.value, false).map_err(err)?)),
+                "FreeActor" => Rc::new(crate::base::FreeActorInit {
+                    value: get_value_yaml::<bool>(name, &n.value, false).map_err(err)?,
+                    instance_name: instance,
+                }),
+                "Stance" => Rc::new(crate::auto_target::StanceInit::new(
+                    get_value_yaml::<crate::auto_target::UnitStance>(name, &n.value, false).map_err(err)?,
+                )),
                 "TurretFacing" => Rc::new(TurretFacingInit {
                     value: get_value_yaml::<WAngle>(name, &n.value, false).map_err(err)?,
                     instance_name: instance,

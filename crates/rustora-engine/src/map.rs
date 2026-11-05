@@ -128,6 +128,7 @@ pub struct Map {
     tiles_by_distance: Vec<Vec<CVec>>,
     all_edge_cells: Vec<CPos>,
     sequences: std::cell::OnceCell<Rc<crate::sequence::SequenceSet>>,
+    read_file: std::cell::OnceCell<crate::sequence::ReadFile>,
 }
 
 fn isqrt_ceil(n: i32) -> i32 {
@@ -247,6 +248,7 @@ impl Map {
             tiles_by_distance: create_tiles_by_distance(),
             all_edge_cells: edge_cells(&bounds),
             sequences: std::cell::OnceCell::new(),
+            read_file: std::cell::OnceCell::new(),
             terrain,
             title: field("Title").unwrap_or_default(),
             uid: package.uid.clone(),
@@ -263,6 +265,15 @@ impl Map {
 
     pub fn set_sequences(&self, s: Rc<crate::sequence::SequenceSet>) {
         let _ = self.sequences.set(s);
+    }
+
+    pub fn set_read_file(&self, f: crate::sequence::ReadFile) {
+        let _ = self.read_file.set(f);
+    }
+
+    /// `Map.Open`: a file of the map package, else of the mod file system.
+    pub fn open(&self, name: &str) -> Option<Vec<u8>> {
+        self.read_file.get().and_then(|f| f(name))
     }
 
     /// `Map.Sequences`.

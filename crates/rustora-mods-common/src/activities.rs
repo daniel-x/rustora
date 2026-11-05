@@ -84,6 +84,33 @@ impl Activity for CallFunc {
     }
 }
 
+/// `Activities/SimpleTeleport.cs`.
+pub struct SimpleTeleport {
+    base: ActivityBase,
+    destination: CPos,
+}
+
+impl SimpleTeleport {
+    pub fn new(destination: CPos) -> ActivityRef {
+        Rc::new(SimpleTeleport {
+            base: ActivityBase::default(),
+            destination,
+        })
+    }
+}
+
+impl Activity for SimpleTeleport {
+    activity_common!("SimpleTeleport");
+
+    fn tick(&self, self_: &ActorRef) -> bool {
+        self_
+            .trait_::<dyn IPositionable>()
+            .set_position_cell(self_, self.destination, rustora_engine::traits::subcell::ANY);
+        self_.generation.set(self_.generation.get().wrapping_add(1));
+        true
+    }
+}
+
 pub struct WaitFor {
     base: ActivityBase,
     f: Option<Box<dyn Fn() -> bool>>,

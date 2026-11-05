@@ -640,7 +640,7 @@ impl LegacyBridgeLayer {
         let mut footprint = Vec::new();
         for ind in 0..size_x * size_y {
             let subtile = CPos::new(ni + ind % size_x, nj + ind / size_x);
-            if !map.contains(subtile) {
+            if !map.tiles.contains_cell(subtile) {
                 continue;
             }
             let sub = *map.tiles.at(subtile);

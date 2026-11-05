@@ -497,6 +497,8 @@ pub struct SpawnMapActorsInfo {
 #[derive(Default)]
 pub struct SpawnMapActors {
     pub actors: RefCell<IndexMap<String, ActorRef>>,
+    /// The ID of the last actor created from the map.
+    pub last_map_actor_id: std::cell::Cell<u32>,
 }
 
 register_traits!(SpawnMapActors: IWorldLoaded);
@@ -515,6 +517,7 @@ impl IWorldLoaded for SpawnMapActors {
             r.inits.push(Rc::new(SkipMakeAnimsInit));
             r.inits.push(Rc::new(SpawnedByMapInit));
             let a = world.create_actor(&r.actor_type, r.inits);
+            self.last_map_actor_id.set(a.id);
             self.actors.borrow_mut().insert(n.key.clone(), a);
         }
     }

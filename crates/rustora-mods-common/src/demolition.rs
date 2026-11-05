@@ -178,6 +178,22 @@ impl IOrderVoice for Demolition {
 type EnterTarget = (ActorRef, Vec<Rc<dyn IDemolishable>>);
 
 /// `Demolish`.
+impl Demolition {
+    pub fn is_trait_disabled(&self) -> bool {
+        self.state.is_trait_disabled()
+    }
+
+    /// `GetDemolishActivity(self, target, null)`.
+    pub fn demolish_activity(&self, self_: &ActorRef, target: &Target) -> rustora_engine::activity::ActivityRef {
+        let hooks = DemolishHooks {
+            info: self.info.clone(),
+            notifiers: self_.traits_implementing::<dyn INotifyDemolition>(),
+            enter: Rc::new(RefCell::new(None)),
+        };
+        Enter::new(self_, target, Box::new(hooks))
+    }
+}
+
 struct DemolishHooks {
     info: Rc<DemolitionInfo>,
     notifiers: Vec<Rc<dyn INotifyDemolition>>,

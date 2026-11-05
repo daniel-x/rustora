@@ -191,6 +191,26 @@ impl IResolveOrder for Infiltrates {
     }
 }
 
+impl Infiltrates {
+    pub fn is_trait_disabled(&self) -> bool {
+        self.state.is_trait_disabled()
+    }
+
+    /// `new Infiltrate(self, target, this, null)` as queued by scripts.
+    pub fn info(&self) -> &Rc<InfiltratesInfo> {
+        &self.info
+    }
+
+    pub fn infiltrate_activity(&self, self_: &ActorRef, target: &Target) -> rustora_engine::activity::ActivityRef {
+        let hooks = InfiltrateHooks {
+            infiltrates: self.me.upgrade().expect("alive"),
+            notifiers: self_.traits_implementing::<dyn INotifyInfiltration>(),
+            enter_actor: RefCell::new(None),
+        };
+        Enter::new(self_, target, Box::new(hooks))
+    }
+}
+
 /// `Infiltrate`.
 struct InfiltrateHooks {
     infiltrates: Rc<Infiltrates>,
@@ -702,7 +722,7 @@ impl Disguise {
         self.handle_disguise(old_actor, old_owner);
     }
 
-    fn disguise_as_info(&self, actor_info: Rc<ActorInfo>, new_owner: Option<PlayerRef>) {
+    pub fn disguise_as_info(&self, actor_info: Rc<ActorInfo>, new_owner: Option<PlayerRef>) {
         let old_actor = self.as_actor();
         let old_owner = self.as_player();
         *self.as_player.borrow_mut() = new_owner;

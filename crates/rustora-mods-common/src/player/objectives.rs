@@ -74,6 +74,16 @@ pub trait INotifyWinStateChanged {
     fn on_player_lost(&self, player: &PlayerRef);
 }
 
+pub trait INotifyObjectivesUpdated {
+    fn on_objective_added(&self, player: &PlayerRef, id: usize);
+    fn on_objective_completed(&self, player: &PlayerRef, id: usize);
+    fn on_objective_failed(&self, player: &PlayerRef, id: usize);
+}
+
+fn objectives_updated_listeners(player: &PlayerRef) -> Vec<Rc<dyn INotifyObjectivesUpdated>> {
+    player.player_actor().traits_implementing::<dyn INotifyObjectivesUpdated>()
+}
+
 pub trait INotifyOwnerLost {
     fn on_owner_lost(&self, self_: &ActorRef);
 }
@@ -188,15 +198,21 @@ impl MissionObjectives {
     }
 
     pub fn add(&self, player: &PlayerRef, description: &str, ty: &str, required: bool) -> usize {
-        let mut o = self.objectives.borrow_mut();
-        o.push(MissionObjective {
-            required,
-            description: description.into(),
-            ty: ty.into(),
-            state: ObjectiveState::Incomplete,
-        });
+        let id = {
+            let mut o = self.objectives.borrow_mut();
+            o.push(MissionObjective {
+                required,
+                description: description.into(),
+                ty: ty.into(),
+                state: ObjectiveState::Incomplete,
+            });
+            o.len() - 1
+        };
         player.has_objectives.set(true);
-        o.len() - 1
+        for n in objectives_updated_listeners(player) {
+            n.on_objective_added(player, id);
+        }
+        id
     }
 
     fn win_state_changed_listeners(player: &PlayerRef) -> Vec<Rc<dyn INotifyWinStateChanged>> {
@@ -210,6 +226,9 @@ impl MissionObjectives {
                 return;
             }
             o[id].state = ObjectiveState::Completed;
+        }
+        for n in objectives_updated_listeners(player) {
+            n.on_objective_completed(player, id);
         }
         let all_done = {
             let o = self.objectives.borrow();
@@ -244,6 +263,9 @@ impl MissionObjectives {
             o[id].state = ObjectiveState::Failed;
             o[id].required
         };
+        for n in objectives_updated_listeners(player) {
+            n.on_objective_failed(player, id);
+        }
         if required {
             for n in Self::win_state_changed_listeners(player) {
                 n.on_player_lost(player);
@@ -614,7 +636,9 @@ pub struct TimeLimitManager {
     info: Rc<TimeLimitManagerInfo>,
     ticks_per_second: i32,
     /// The time limit in ticks, zero for none.
-    pub time_limit: i32,
+    pub time_limit: std::cell::Cell<i32>,
+    /// The time remaining notification, settable by scripts.
+    pub notification: RefCell<String>,
 }
 
 register_traits!(TimeLimitManager: ITick, INotifyTimeLimit);
@@ -629,18 +653,19 @@ info_impl!(TimeLimitManagerInfo => |info, init| {
         .unwrap_or(info.time_limit_default);
     Some(Rc::new(TimeLimitManager {
         ticks_per_second,
-        time_limit: minutes * 60 * ticks_per_second,
+        time_limit: std::cell::Cell::new(minutes * 60 * ticks_per_second),
+        notification: RefCell::new(info.notification.clone()),
         info,
     }))
 });
 
 impl ITick for TimeLimitManager {
     fn tick(&self, self_: &ActorRef) {
-        if self.time_limit <= 0 {
+        if self.time_limit.get() <= 0 {
             return;
         }
         let world = self_.world();
-        let remaining = self.time_limit - world.world_tick();
+        let remaining = self.time_limit.get() - world.world_tick();
         if remaining == 0 {
             for t in self_.traits_implementing::<dyn INotifyTimeLimit>() {
                 t.notify_timer_expired(self_);
@@ -661,8 +686,8 @@ impl ITick for TimeLimitManager {
                 continue;
             }
             let text = self
-                .info
                 .notification
+                .borrow()
                 .replace("{0}", &m.to_string())
                 .replace("{1}", if m > 1 { "s" } else { "" });
             world.sound.add_player_system_line(&text, "");

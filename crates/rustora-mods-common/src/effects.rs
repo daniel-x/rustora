@@ -537,3 +537,58 @@ impl Effect for SpriteAnnotation {
         render_animation(&self.animation, self.pos, WVec::ZERO, 0, &self.palette, out);
     }
 }
+
+/// `Effects/SpawnActorEffect.cs`: adds an actor to the world after a delay and queues its path.
+pub struct SpawnActorEffect {
+    me: Weak<SpawnActorEffect>,
+    actor: ActorRef,
+    path_after_spawn: Vec<rustora_core::world_types::CPos>,
+    activity_at_destination: RefCell<Option<rustora_engine::activity::ActivityRef>>,
+    move_: Option<Rc<dyn crate::interfaces::IMove>>,
+    remaining_delay: Cell<i32>,
+}
+
+impl SpawnActorEffect {
+    pub fn new(
+        actor: ActorRef,
+        delay: i32,
+        path_after_spawn: Vec<rustora_core::world_types::CPos>,
+        activity_at_destination: Option<rustora_engine::activity::ActivityRef>,
+    ) -> Rc<SpawnActorEffect> {
+        let move_ = actor.trait_or_default::<dyn crate::interfaces::IMove>();
+        Rc::new_cyclic(|me| SpawnActorEffect {
+            me: me.clone(),
+            actor,
+            path_after_spawn,
+            activity_at_destination: RefCell::new(activity_at_destination),
+            move_,
+            remaining_delay: Cell::new(delay),
+        })
+    }
+}
+
+impl Effect for SpawnActorEffect {
+    fn tick(&self, world: &Rc<World>) {
+        let delay = self.remaining_delay.get();
+        self.remaining_delay.set(delay - 1);
+        if delay > 0 {
+            return;
+        }
+        world.add(&self.actor);
+        if let Some(m) = &self.move_ {
+            for &cell in &self.path_after_spawn {
+                self.actor.queue_activity(m.move_to(cell, 2, None, false));
+            }
+        }
+        if let Some(a) = self.activity_at_destination.borrow_mut().take() {
+            self.actor.queue_activity(a);
+        }
+        if let Some(me) = self.me.upgrade() {
+            world.add_frame_end_task(Box::new(move |w: &Rc<World>| w.remove_effect(&(me as EffectRef))));
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}

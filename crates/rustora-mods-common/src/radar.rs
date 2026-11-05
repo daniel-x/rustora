@@ -83,6 +83,8 @@ impl AppearsOnRadar {
 pub enum PingVisibility {
     All,
     AlliesOf(PlayerRef),
+    /// Seen only by this player.
+    Only(PlayerRef),
 }
 
 /// `RadarPing`.
@@ -104,6 +106,7 @@ impl RadarPing {
         match &self.visibility {
             PingVisibility::All => true,
             PingVisibility::AlliesOf(p) => p.is_allied_with(viewer.map(|v| &**v)),
+            PingVisibility::Only(p) => viewer.is_some_and(|v| Rc::ptr_eq(v, p)),
         }
     }
 

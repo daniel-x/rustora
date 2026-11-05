@@ -191,12 +191,25 @@ impl GainsExperience {
     }
 
     pub fn give_levels(&self, num_levels: i32) {
+        self.give_levels_silently(num_levels, false);
+    }
+
+    /// `GiveLevels(numLevels, silent)`.
+    pub fn give_levels_silently(&self, num_levels: i32, silent: bool) {
         if self.max_level == 0 {
             return;
         }
         let new_level = (self.level.get() + num_levels).min(self.max_level);
         let required = self.next_level.borrow()[(new_level - 1) as usize].0;
-        self.give_experience(required - self.experience.get());
+        self.give_experience_silently(required - self.experience.get(), silent);
+    }
+
+    pub fn experience(&self) -> i32 {
+        self.experience.get()
+    }
+
+    pub fn max_level(&self) -> i32 {
+        self.max_level
     }
 
     pub fn give_experience(&self, amount: i32) {

@@ -148,6 +148,7 @@ pub fn load_world_with_sound(
     let rules_yaml = ModData::load_yaml(&fs, &md.manifest.rules, map_package.section("Rules")).expect("rules");
     let mut registry = TraitRegistry::default();
     rustora_mods_common::register(&mut registry);
+    rustora_scripting::register(&mut registry);
     let weapons_yaml = ModData::load_yaml(&fs, &md.manifest.weapons, map_package.section("Weapons")).expect("weapons");
     let mut weapon_registry = rustora_engine::weapon::WeaponRegistry::default();
     rustora_mods_common::weapons::register_weapon_parts(&mut weapon_registry);
@@ -176,6 +177,7 @@ pub fn load_world_with_sound(
     let md = Rc::new(md);
     let md2 = md.clone();
     let read_file: ReadFile = Rc::new(move |name: &str| pkg.get(name).or_else(|| md2.file_system.try_open(name)));
+    map.set_read_file(read_file.clone());
     map.set_sequences(Rc::new(rustora_engine::sequence::SequenceSet::new(
         &sequences,
         &tileset,

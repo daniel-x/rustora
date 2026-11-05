@@ -13,6 +13,7 @@ rustora-fs = { path = "../rustora-fs" }
 rustora-game = { path = "../rustora-game" }
 rustora-mods-common = { path = "../rustora-mods-common" }
 rustora-net = { path = "../rustora-net" }
+rustora-scripting = { path = "../rustora-scripting" }
 
 [lints]
 workspace = true

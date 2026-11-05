@@ -128,7 +128,8 @@ pub struct Buildable;
 register_traits!(Buildable);
 info_impl!(BuildableInfo => |_, _| Some(Rc::new(Buildable)));
 
-fn get_initial_faction(ai: &ActorInfo, default: &str) -> String {
+/// `BuildableInfo.GetInitialFaction`.
+pub fn get_initial_faction(ai: &ActorInfo, default: &str) -> String {
     ai.trait_info::<BuildableInfo>()
         .and_then(|b| b.force_faction.clone())
         .unwrap_or_else(|| default.to_string())
@@ -974,6 +975,11 @@ impl ProductionQueue {
 
     pub fn enabled(&self) -> bool {
         self.enabled.get()
+    }
+
+    /// Whether this is a `ClassicProductionQueue`.
+    pub fn is_classic(&self) -> bool {
+        self.classic.is_some()
     }
 
     pub fn is_valid_faction(&self) -> bool {

@@ -399,11 +399,13 @@ pub struct PowerManager {
     power_outage_total_ticks: Cell<i32>,
     is_low_power: Cell<bool>,
     was_low_power: Cell<bool>,
+    /// `PlayLowPowerNotification`, settable by scripts.
+    pub play_low_power_notification: Cell<bool>,
     was_hack_enabled: Cell<bool>,
 }
 
 register_traits!(PowerManager: INotifyCreated, ITick, ISync, IResolveOrder);
-info_impl!(PowerManagerInfo => |_, init| {
+info_impl!(PowerManagerInfo => |info, init| {
     let dev_mode = init.self_.trait_::<DeveloperMode>();
     Some(Rc::new(PowerManager {
         last_power_advice: Cell::new(None),
@@ -417,6 +419,7 @@ info_impl!(PowerManagerInfo => |_, init| {
         power_outage_total_ticks: Cell::new(0),
         is_low_power: Cell::new(false),
         was_low_power: Cell::new(false),
+        play_low_power_notification: Cell::new(info.advice_interval > 0),
     }))
 });
 
@@ -545,7 +548,7 @@ impl PowerManager {
             .last_power_advice
             .get()
             .is_none_or(|t| t.elapsed().as_millis() > info.advice_interval as u128);
-        if info.advice_interval > 0 && self.is_low_power.get() && due {
+        if self.play_low_power_notification.get() && self.is_low_power.get() && due {
             rustora_engine::sound::notify_owner(
                 &self.self_,
                 "Speech",

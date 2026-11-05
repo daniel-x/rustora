@@ -650,7 +650,8 @@ impl SupportPower {
         (-n / 2..=n / 2).filter(|&i| !(i == 0 && n & 1 == 0)).collect()
     }
 
-    fn send_airstrike(&self, self_: &ActorRef, target: rustora_core::world_types::WPos, facing: Option<WAngle>) -> Vec<ActorRef> {
+    /// `AirstrikePower.SendAirstrike`: returns the aircraft.
+    pub fn send_airstrike(&self, self_: &ActorRef, target: rustora_core::world_types::WPos, facing: Option<WAngle>) -> Vec<ActorRef> {
         let w = self_.world();
         let facing = facing.unwrap_or_else(|| self.random_facing(&w));
         let (target, start_edge, finish_edge, rotation) = self.flight_path(&w, target, facing);
@@ -703,7 +704,8 @@ impl SupportPower {
         aircraft
     }
 
-    fn send_paratroopers(&self, self_: &ActorRef, target: rustora_core::world_types::WPos, facing: Option<WAngle>) {
+    /// `ParatroopersPower.SendParatroopers`: returns the aircraft.
+    pub fn send_paratroopers(&self, self_: &ActorRef, target: rustora_core::world_types::WPos, facing: Option<WAngle>) -> Vec<ActorRef> {
         let w = self_.world();
         let facing = facing.unwrap_or_else(|| self.random_facing(&w));
         let (target, start_edge, finish_edge, rotation) = self.flight_path(&w, target, facing);
@@ -731,6 +733,7 @@ impl SupportPower {
             .map(|p| w.create_actor_add(false, &p.to_lowercase(), ActorInits::new().with(OwnerInit::from_player(&owner))))
             .collect();
         let (info, indices) = (self.info.clone(), self.squad_indices());
+        let ret = aircraft.clone();
         w.add_frame_end_task(Box::new(move |w| {
             let per_plane = ((info.drop_items.len() as i32 + info.squad_size - 1) / info.squad_size) as usize;
             let mut added = 0;
@@ -764,6 +767,7 @@ impl SupportPower {
                 u.dispose();
             }
         }));
+        ret
     }
 }
 

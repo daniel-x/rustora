@@ -174,6 +174,11 @@ impl INotifyCashTransfer for DeliversCash {
     }
 }
 
+/// The `DonateCash` activity without a target line, as scripts queue it.
+pub fn donate_cash_activity(self_: &ActorRef, target: &Target, payload: i32, player_experience: i32) -> rustora_engine::activity::ActivityRef {
+    Enter::new(self_, target, Box::new(DonateCashHooks { payload, player_experience }))
+}
+
 struct DonateCashHooks {
     payload: i32,
     player_experience: i32,
@@ -296,6 +301,11 @@ info_impl!(InstantlyRepairsInfo => |info, _init| Some(Rc::new_cyclic(|me| Instan
 conditional_simple!(InstantlyRepairs);
 
 impl InstantlyRepairs {
+    /// The `InstantRepair` activity without a target line, as scripts queue it.
+    pub fn instant_repair_activity(&self, self_: &ActorRef, target: &Target) -> rustora_engine::activity::ActivityRef {
+        Enter::new(self_, target, Box::new(InstantRepairHooks { info: self.info.clone() }))
+    }
+
     fn is_valid_actor(&self, target: &ActorRef) -> bool {
         target
             .trait_or_default::<InstantlyRepairable>()
