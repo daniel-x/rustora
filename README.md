@@ -24,7 +24,8 @@ without graphics and compares the sync hashes.
 
 ## License
 
-GPL-3.0-or-later, the same terms as OpenRA, of which this is a derived work.
+GPL-3.0-or-later, the same terms as OpenRA, of which this is a derived work. See `COPYING` for the
+license text and `AUTHORS` for the rustora authors and the OpenRA developers and contributors.
 
 ## Authorship
 
