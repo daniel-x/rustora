@@ -99,6 +99,13 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let main_menu = panel(ui, "MAIN_MENU", MenuType::Main);
     on_click(ui, main_menu, "SINGLEPLAYER_BUTTON", switch(MenuType::Singleplayer));
     on_click(ui, main_menu, "EXTRAS_BUTTON", switch(MenuType::Extras));
+    let settings_menu = menu.clone();
+    on_click(ui, main_menu, "SETTINGS_BUTTON", move |ui| {
+        settings_menu.set(MenuType::None);
+        let to_main = settings_menu.clone();
+        let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| to_main.set(MenuType::Main)));
+        ui.open_window("SETTINGS_PANEL", args);
+    });
     let multiplayer_menu = menu.clone();
     on_click(ui, main_menu, "MULTIPLAYER_BUTTON", move |ui| {
         multiplayer_menu.set(MenuType::None);

@@ -18,6 +18,7 @@ mod color_mixer;
 mod container;
 pub mod control_groups;
 mod dropdown;
+mod hotkey_entry;
 mod image;
 mod label;
 mod map_preview;
@@ -42,6 +43,7 @@ pub use color_block::{ClientTooltipRegionWidget, ColorBlockWidget};
 pub use color_mixer::{ColorMixerWidget, HueSliderWidget};
 pub use container::ContainerWidget;
 pub use dropdown::{DropDownButtonWidget, MaskWidget};
+pub use hotkey_entry::{HotkeyCallback, HotkeyEntryWidget};
 pub use image::ImageWidget;
 pub use label::{LabelWidget, LabelWithTooltipWidget, TextAlign, TextVAlign};
 pub use map_preview::{MapPreviewWidget, SpawnOccupant};
@@ -71,7 +73,15 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "Radar" => cell(radar::RadarWidget::default()),
         "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
-        "Label" | "LabelForInput" => cell(LabelWidget::new(assets)),
+        "Label" => cell(LabelWidget::new(assets)),
+        "LabelForInput" => cell(LabelWidget {
+            for_input: Some(String::new()),
+            ..LabelWidget::new(assets)
+        }),
+        "LabelWithHighlight" => cell(LabelWidget {
+            highlight_color: Some(assets.metrics.color("TextHighlightColor")),
+            ..LabelWidget::new(assets)
+        }),
         "ColorBlock" => cell(ColorBlockWidget::default()),
         "ClientTooltipRegion" => cell(ClientTooltipRegionWidget::default()),
         "LabelWithTooltip" => cell(LabelWithTooltipWidget::new(assets)),
@@ -86,6 +96,8 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "WorldInteractionController" => cell(world_interaction::WorldInteractionControllerWidget::new(assets)),
         "ProgressBar" => cell(ProgressBarWidget::default()),
         "Slider" => cell(SliderWidget::default()),
+        "HotkeyEntry" => cell(HotkeyEntryWidget::new(assets)),
+        "ExponentialSlider" => cell(SliderWidget::exponential()),
         "HueSlider" => cell(HueSliderWidget::default()),
         "ColorMixer" => cell(ColorMixerWidget::default()),
         "TextField" => cell(TextFieldWidget::new(assets, false)),

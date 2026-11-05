@@ -82,6 +82,11 @@ pub trait WidgetKind: Any {
         None
     }
 
+    /// Port of `InputWidget.IsDisabled`, read by `LabelForInputWidget`. None if the widget is no input.
+    fn input_disabled(&mut self) -> Option<bool> {
+        self.as_button().map(|b| b.disabled_now())
+    }
+
     /// Returns the label part of this widget if it derives from `LabelWidget` in C#.
     fn as_label(&mut self) -> Option<&mut crate::widgets::LabelWidget> {
         None

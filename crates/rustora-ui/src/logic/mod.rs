@@ -34,6 +34,7 @@ pub mod main_menu;
 pub mod map_chooser;
 pub mod map_preview;
 pub mod multiplayer;
+pub mod settings;
 pub mod sidebar;
 
 use rustora_engine::sound::{AudioRules, Sound};
@@ -332,6 +333,12 @@ pub fn create(
         "ModContentSourceTooltipLogic" => installer::create_source_tooltip(ui, id, args),
         "DownloadPackageLogic" => installer::create_download(ui, id, args),
         "InstallFromSourceLogic" => installer::create_install_from_source(ui, id, args),
+        "SettingsLogic" => settings::create(ui, id, args, logic_args),
+        "DisplaySettingsLogic" => settings::display(ui, id, args),
+        "AudioSettingsLogic" => settings::audio(ui, id, args),
+        "InputSettingsLogic" => settings::input(ui, id, args),
+        "HotkeysSettingsLogic" => settings::hotkeys(ui, id, args, logic_args),
+        "AdvancedSettingsLogic" => settings::advanced(ui, id, args),
         "MapPreviewLogic" => map_preview::create(ui, id, args),
         "LobbyOptionsLogic" => lobby_options::create(ui, id, args),
         "LatencyTooltipLogic" => lobby_utils::latency_tooltip(ui, id, args),

@@ -261,6 +261,10 @@ impl TextFieldWidget {
 impl WidgetKind for TextFieldWidget {
     impl_as_any!();
 
+    fn input_disabled(&mut self) -> Option<bool> {
+        Some(self.disabled_now())
+    }
+
     fn set_field(&mut self, key: &str, value: &str) -> bool {
         let color = |current: Color| Color::parse(value).unwrap_or(current);
         match key {

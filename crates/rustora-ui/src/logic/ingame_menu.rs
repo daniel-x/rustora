@@ -218,6 +218,16 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
                     );
                 }));
             }
+            "SETTINGS" => {
+                let button = add_button(ui, name, "menu-ingame.settings");
+                let h = hide_menu.clone();
+                ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
+                    h.set(true);
+                    let h = h.clone();
+                    let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| h.set(false)));
+                    ui.open_window("SETTINGS_PANEL", args);
+                }));
+            }
             "RESUME" => {
                 let label = if world.is_game_over() {
                     "menu-ingame.return-to-map"

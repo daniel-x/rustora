@@ -23,6 +23,8 @@ pub struct SliderWidget {
     pub get_value: Option<Getter<f32>>,
     pub disabled: bool,
     pub is_disabled: Option<Getter<bool>>,
+    /// `ExpA` and `ExpB` of `ExponentialSliderWidget`.
+    pub exponential: Option<(f64, f64)>,
     is_moving: bool,
 }
 
@@ -40,12 +42,21 @@ impl Default for SliderWidget {
             get_value: None,
             disabled: false,
             is_disabled: None,
+            exponential: None,
             is_moving: false,
         }
     }
 }
 
 impl SliderWidget {
+    /// Port of `ExponentialSliderWidget`.
+    pub fn exponential() -> SliderWidget {
+        SliderWidget {
+            exponential: Some((1.0e-3, 6.908)),
+            ..SliderWidget::default()
+        }
+    }
+
     /// Sets the value without calling `on_change`. Returns true if it changed.
     pub fn set_value(&mut self, new_value: f32) -> bool {
         let old = self.value;
@@ -65,12 +76,23 @@ impl SliderWidget {
 
     /// Port of `ValueFromPx`.
     pub fn value_from_px(&self, x: i32, rb: Rect) -> f32 {
-        self.minimum_value + (self.maximum_value - self.minimum_value) * (x as f32 - 0.5 * rb.h as f32) / (rb.w - rb.h) as f32
+        let linear = (x as f32 - 0.5 * rb.h as f32) / (rb.w - rb.h) as f32;
+        let fraction = match self.exponential {
+            Some(_) if linear <= 0.0 => 0.0,
+            Some((a, b)) => (a * (b * f64::from(linear)).exp()).clamp(0.0, 1.0) as f32,
+            None => linear,
+        };
+        self.minimum_value + (self.maximum_value - self.minimum_value) * fraction
     }
 
     /// Port of `PxFromValue`.
     pub fn px_from_value(&self, value: f32, rb: Rect) -> i32 {
-        (0.5 * rb.h as f32 + (rb.w - rb.h) as f32 * (value - self.minimum_value) / (self.maximum_value - self.minimum_value)) as i32
+        let fraction = (value - self.minimum_value) / (self.maximum_value - self.minimum_value);
+        let fraction = match self.exponential {
+            Some((a, b)) => ((f64::from(fraction) / a).ln() / b).clamp(0.0, 1.0) as f32,
+            None => fraction,
+        };
+        (0.5 * rb.h as f32 + (rb.w - rb.h) as f32 * fraction) as i32
     }
 
     fn thumb_rect(&self, rb: Rect) -> Rect {
@@ -86,6 +108,10 @@ impl SliderWidget {
 impl WidgetKind for SliderWidget {
     impl_as_any!();
 
+    fn input_disabled(&mut self) -> Option<bool> {
+        Some(self.disabled_now())
+    }
+
     fn set_field(&mut self, key: &str, value: &str) -> bool {
         let float = |current: f32| value.parse().unwrap_or(current);
         match key {
@@ -97,6 +123,11 @@ impl WidgetKind for SliderWidget {
             "MaximumValue" => self.maximum_value = float(self.maximum_value),
             "Value" => self.value = float(self.value),
             "Disabled" => self.disabled = parse_bool(value),
+            "ExpA" | "ExpB" => {
+                let (a, b) = self.exponential.unwrap_or((1.0e-3, 6.908));
+                let v = value.parse().unwrap_or(if key == "ExpA" { a } else { b });
+                self.exponential = Some(if key == "ExpA" { (v, b) } else { (a, v) });
+            }
             _ => return false,
         }
         true

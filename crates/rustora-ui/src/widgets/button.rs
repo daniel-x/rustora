@@ -141,6 +141,20 @@ impl ButtonWidget {
         }
     }
 
+    /// Port of `WidgetUtils.TruncateButtonToTooltip`.
+    pub fn truncate_to_tooltip(ui: &mut Ui, id: WidgetId, text: &str) {
+        let width = ui.node(id).bounds.w;
+        let (font, margins) = {
+            let b = ui.button(id);
+            (b.font.clone(), b.left_margin + b.right_margin)
+        };
+        let truncated = ui.truncate_text(&font, text, width - margins);
+        let tooltip = (truncated != text).then(|| text.to_string());
+        let mut b = ui.button(id);
+        b.get_text = Some(Rc::new(move || truncated.clone()));
+        b.get_tooltip_text = tooltip.map(|t| -> Getter<String> { Rc::new(move || t.clone()) });
+    }
+
     pub fn disabled_now(&self) -> bool {
         self.is_disabled.as_ref().map_or(self.disabled, |f| f())
     }

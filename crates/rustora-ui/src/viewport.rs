@@ -45,6 +45,16 @@ fn size_range(distance: WorldViewport) -> (f32, f32) {
     }
 }
 
+/// Whether `ShowBattlefieldCameraDropdown` offers a distance for a window of this native height.
+pub fn valid_viewport_distance(distance: WorldViewport, window_height: f32) -> bool {
+    match distance {
+        WorldViewport::Close => true,
+        WorldViewport::Medium => size_range(WorldViewport::Medium).0 < window_height,
+        WorldViewport::Far => size_range(WorldViewport::Far).0 < window_height,
+        WorldViewport::Native => ALLOW_NATIVE_ZOOM && size_range(WorldViewport::Far).1 < window_height,
+    }
+}
+
 /// Port of `CalculateMinimumZoom`.
 fn calculate_minimum_zoom(height: f32, min_height: f32, max_height: f32) -> f32 {
     if height <= max_height {

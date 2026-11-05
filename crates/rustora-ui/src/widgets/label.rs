@@ -49,6 +49,11 @@ pub struct LabelWidget {
     pub word_wrap: bool,
     pub get_text: Option<Getter<String>>,
     pub get_color: Option<Getter<Color>>,
+    /// `LabelWithHighlightWidget.HighlightColor`: text between `<` and `>` is drawn in this color.
+    pub highlight_color: Option<Color>,
+    /// `LabelForInputWidget.For`: the sibling input whose disabled state selects `text_disabled_color`.
+    pub for_input: Option<String>,
+    pub text_disabled_color: Color,
 }
 
 impl LabelWidget {
@@ -90,6 +95,9 @@ impl LabelWidget {
             word_wrap: false,
             get_text: None,
             get_color: None,
+            highlight_color: None,
+            for_input: None,
+            text_disabled_color: m.color("TextDisabledColor"),
         }
     }
 }
@@ -120,6 +128,8 @@ impl WidgetKind for LabelWidget {
             "ContrastColorLight" => self.contrast_light = Color::parse(value).unwrap_or(self.contrast_light),
             "ContrastRadius" => self.contrast_radius = value.parse().unwrap_or(self.contrast_radius),
             "WordWrap" => self.word_wrap = parse_bool(value),
+            "HighlightColor" if self.highlight_color.is_some() => self.highlight_color = Color::parse(value),
+            "For" if self.for_input.is_some() => self.for_input = Some(value.to_string()),
             _ => return false,
         }
         true
@@ -156,7 +166,13 @@ impl WidgetKind for LabelWidget {
             TextAlign::Center => x += (bounds.w - tw) / 2,
             TextAlign::Right => x += bounds.w - tw,
         }
-        let color = self.get_color.as_ref().map_or(self.text_color, |f| f());
+        let mut color = self.get_color.as_ref().map_or(self.text_color, |f| f());
+        if let Some(name) = self.for_input.as_deref().filter(|n| !n.is_empty()) {
+            let input = ui.node(id).parent.and_then(|p| ui.find(p, name));
+            if input.is_some_and(|i| ui.kind(i).borrow_mut().input_disabled() == Some(true)) {
+                color = self.text_disabled_color;
+            }
+        }
         let style = if self.contrast {
             TextStyle::Contrast {
                 dark: self.contrast_dark,
@@ -172,12 +188,42 @@ impl WidgetKind for LabelWidget {
         } else {
             TextStyle::Plain
         };
-        dc.draw_text(&self.font, &text, x, y, color, style);
+        match self.highlight_color {
+            Some(highlight) => {
+                for (part, highlighted) in highlight_components(&text) {
+                    dc.draw_text(&self.font, part, x, y, if highlighted { highlight } else { color }, style);
+                    x += dc.measure(&self.font, part).0;
+                }
+            }
+            None => dc.draw_text(&self.font, &text, x, y, color, style),
+        }
     }
 
     fn cursor(&self, _default: &str) -> Option<String> {
         None
     }
+}
+
+/// Port of `LabelWithHighlightWidget.MakeComponents`: splits the text into parts and marks the parts between `<` and
+/// `>`.
+fn highlight_components(text: &str) -> Vec<(&str, bool)> {
+    let mut components = Vec::new();
+    for mut line in text.split("\\n") {
+        while !line.is_empty() {
+            match (line.find('<'), line.find('>')) {
+                (Some(start), Some(end)) if start > 0 && end > start => {
+                    components.push((&line[..start], false));
+                    components.push((&line[start + 1..end], true));
+                    line = &line[end + 1..];
+                }
+                _ => {
+                    components.push((line, false));
+                    break;
+                }
+            }
+        }
+    }
+    components
 }
 
 /// Port of `LabelWithTooltipWidget`.
