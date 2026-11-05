@@ -56,8 +56,12 @@ fn opt_color(a: &crate::values::Args, i: usize) -> LuaResult<Option<Color>> {
 
 pub fn media() -> Group<()> {
     Group::new("Media", &[])
-        .method("PlaySpeechNotification", |lua, _, a| notification(lua, a.get(0)?, "Speech", &a.get::<String>(1)?))
-        .method("PlaySoundNotification", |lua, _, a| notification(lua, a.get(0)?, "Sounds", &a.get::<String>(1)?))
+        .method("PlaySpeechNotification", |lua, _, a| {
+            notification(lua, a.get(0)?, "Speech", &a.get::<String>(1)?)
+        })
+        .method("PlaySoundNotification", |lua, _, a| {
+            notification(lua, a.get(0)?, "Sounds", &a.get::<String>(1)?)
+        })
         .method("PlaySound", |lua, _, a| {
             let file: String = a.get(0)?;
             rustora_engine::sound::play(&*world(lua)?, SoundType::World, &file, 1.0);
@@ -119,7 +123,9 @@ pub fn media() -> Group<()> {
             let duration: i32 = a.opt(2, 30)?;
             let color = opt_color(a, 3)?.unwrap_or(WHITE);
             let w = world(lua)?;
-            let Some(text) = text.filter(|t| !t.is_empty()) else { return Ok(()) };
+            let Some(text) = text.filter(|t| !t.is_empty()) else {
+                return Ok(());
+            };
             if !w.map().contains(w.map().cell_containing(position)) {
                 return Ok(());
             }
@@ -201,7 +207,13 @@ pub fn beacon() -> Group<()> {
         host().beacon(&owner, position, duration);
         if show_pings && let Some(pings) = radar_pings(lua)? {
             let viewer = world(lua)?.sound.local_player();
-            pings.add(PingVisibility::AlliesOf(owner.clone()), viewer.as_ref(), position, owner.color, duration);
+            pings.add(
+                PingVisibility::AlliesOf(owner.clone()),
+                viewer.as_ref(),
+                position,
+                owner.color,
+                duration,
+            );
         }
         Ok(())
     })

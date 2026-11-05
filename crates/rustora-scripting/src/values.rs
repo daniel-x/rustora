@@ -220,7 +220,9 @@ pub fn actors_table(lua: &Lua, actors: &[ActorRef]) -> LuaResult<Value> {
 }
 
 pub fn players_table(lua: &Lua, players: &[PlayerRef]) -> LuaResult<Value> {
-    Ok(Value::Table(lua.create_sequence_from(players.iter().map(|p| LuaPlayer(p.clone())))?))
+    Ok(Value::Table(
+        lua.create_sequence_from(players.iter().map(|p| LuaPlayer(p.clone())))?,
+    ))
 }
 
 /// The arguments of a call from Lua with the conversions of `ScriptMemberWrapper.Invoke`.
@@ -449,11 +451,7 @@ impl UserData for LuaWVec {
         });
         m.add_meta_function(MetaMethod::Mul, |_, (a, b): (Value, Value)| {
             match (WVec::from_script(&a), int_arg(&b)) {
-                (Some(x), Some(y)) => Ok(LuaWVec(WVec::new(
-                    x.x.wrapping_mul(y),
-                    x.y.wrapping_mul(y),
-                    x.z.wrapping_mul(y),
-                ))),
+                (Some(x), Some(y)) => Ok(LuaWVec(WVec::new(x.x.wrapping_mul(y), x.y.wrapping_mul(y), x.z.wrapping_mul(y)))),
                 _ => invalid("WVec.Multiply(WVec, integer)", &a, &b),
             }
         });

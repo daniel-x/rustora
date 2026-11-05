@@ -20,8 +20,7 @@ const MAX_USER_SCRIPT_MEMORY: usize = 50 * 1024 * 1024;
 const MAX_USER_SCRIPT_INSTRUCTIONS: i32 = 1_000_000;
 
 const ALLOWED_GLOBALS: &[&str] = &[
-    "ipairs", "next", "pairs", "pcall", "select", "tonumber", "tostring", "type", "unpack", "xpcall", "math", "string",
-    "table",
+    "ipairs", "next", "pairs", "pcall", "select", "tonumber", "tostring", "type", "unpack", "xpcall", "math", "string", "table",
 ];
 
 pub struct ScriptContext {
@@ -80,9 +79,7 @@ impl ScriptContext {
             ctx.fatal_error(&e);
             return ctx;
         }
-        let _ = ctx
-            .lua
-            .set_memory_limit(ctx.lua.used_memory() + MAX_USER_SCRIPT_MEMORY);
+        let _ = ctx.lua.set_memory_limit(ctx.lua.used_memory() + MAX_USER_SCRIPT_MEMORY);
         for script in scripts {
             let loaded = match world.map().open(script) {
                 Some(bytes) => {
@@ -136,9 +133,7 @@ impl ScriptContext {
         }
         for (name, actor) in crate::globals::map_actors(world) {
             if globals.contains_key(name.as_str())? {
-                return error(format!(
-                    "The global name '{name}' is reserved, and may not be used by a map actor"
-                ));
+                return error(format!("The global name '{name}' is reserved, and may not be used by a map actor"));
             }
             globals.raw_set(name.as_str(), LuaActor(actor))?;
         }

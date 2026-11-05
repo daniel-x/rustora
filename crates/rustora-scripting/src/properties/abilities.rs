@@ -34,7 +34,7 @@ use rustora_mods_common::support_powers::{PowerKind, SupportPower};
 use rustora_mods_common::transforms::{Sellable, Transforms};
 
 use crate::members::Group;
-use crate::values::{FromScript, LuaResult, actors_table, actor_string, error, type_name};
+use crate::values::{FromScript, LuaResult, actor_string, actors_table, error, type_name};
 
 type G = Group<ActorRef>;
 
@@ -109,7 +109,10 @@ fn support_power_groups() -> Vec<G> {
                         type_name(&v)
                     ));
                 };
-                let cs = actor.traits_implementing::<Chronoshiftable>().into_iter().find(|c| !c.is_trait_disabled());
+                let cs = actor
+                    .traits_implementing::<Chronoshiftable>()
+                    .into_iter()
+                    .find(|c| !c.is_trait_disabled());
                 if let Some(cs) = cs
                     && cs.can_chronoshift_to(cell)
                 {
@@ -138,13 +141,16 @@ fn ability_groups() -> Vec<G> {
                 Ok(())
             })
             .method("CanCapture", |_, a, args| Ok(can_capture(a, &args.get(0)?))),
-        G::new("Cloak", &["CloakInfo"]).get("IsCloaked", |_, a| {
-            Ok(a.traits_implementing::<Cloak>().iter().any(|c| c.cloaked()))
-        }),
+        G::new("Cloak", &["CloakInfo"]).get("IsCloaked", |_, a| Ok(a.traits_implementing::<Cloak>().iter().any(|c| c.cloaked()))),
         G::new("Ability", &["IMoveInfo", "DeliversCashInfo"]).method("DeliverCash", |_, a, args| {
             let target: ActorRef = args.get(0)?;
             let info = a.info.trait_info::<DeliversCashInfo>().expect("required");
-            a.queue_activity(donate_cash_activity(a, &Target::from_actor(Some(&target)), info.payload, info.player_experience));
+            a.queue_activity(donate_cash_activity(
+                a,
+                &Target::from_actor(Some(&target)),
+                info.payload,
+                info.player_experience,
+            ));
             Ok(())
         }),
         G::new("Combat", &["IMoveInfo", "DemolitionInfo"]).method("Demolish", |_, a, args| {
@@ -168,7 +174,10 @@ fn ability_groups() -> Vec<G> {
         }),
         G::new("Ability", &["IMoveInfo", "InstantlyRepairsInfo"]).method("InstantlyRepair", |_, a, args| {
             let target: ActorRef = args.get(0)?;
-            let r = a.traits_implementing::<InstantlyRepairs>().into_iter().find(|r| !r.is_trait_disabled());
+            let r = a
+                .traits_implementing::<InstantlyRepairs>()
+                .into_iter()
+                .find(|r| !r.is_trait_disabled());
             if let Some(r) = r {
                 a.queue_activity(r.instant_repair_activity(a, &Target::from_actor(Some(&target))));
             }

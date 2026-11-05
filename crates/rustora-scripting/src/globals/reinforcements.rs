@@ -61,7 +61,11 @@ fn move_to(actor: &ActorRef, dest: CPos) {
 }
 
 /// A `CallFunc` activity that calls `f` with the arguments from `args`, reporting errors as fatal.
-fn call_func<A: IntoLuaMulti>(context: Weak<ScriptContext>, f: Function, args: impl FnOnce() -> A + 'static) -> rustora_engine::activity::ActivityRef {
+fn call_func<A: IntoLuaMulti>(
+    context: Weak<ScriptContext>,
+    f: Function,
+    args: impl FnOnce() -> A + 'static,
+) -> rustora_engine::activity::ActivityRef {
     CallFunc::new(Box::new(move || {
         if let Some(c) = context.upgrade() {
             c.call(&f, args());

@@ -208,8 +208,7 @@ impl GlobalTable {
     pub fn new(group: Group<()>) -> LuaResult<GlobalTable> {
         let name = group.name;
         let groups = Rc::new(vec![group]);
-        let table = bind(&groups, 0..1, |m| format!("Table '{name}' defines multiple members '{m}'"))
-            .map_err(mlua::Error::RuntimeError)?;
+        let table = bind(&groups, 0..1, |m| format!("Table '{name}' defines multiple members '{m}'")).map_err(mlua::Error::RuntimeError)?;
         Ok(GlobalTable { group: groups, table })
     }
 

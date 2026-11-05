@@ -21,7 +21,7 @@ use super::call_lua_func;
 use crate::host::host;
 use crate::members::Group;
 use crate::script_traits::ScriptTags;
-use crate::values::{LuaCPos, LuaPlayer, LuaWAngle, LuaWPos, error, actor_string};
+use crate::values::{LuaCPos, LuaPlayer, LuaWAngle, LuaWPos, actor_string, error};
 
 fn effective_owner(a: &ActorRef) -> PlayerRef {
     a.cache()
@@ -34,9 +34,14 @@ fn effective_owner(a: &ActorRef) -> PlayerRef {
 /// `Enum<UnitStance>.TryParse(value, true, ...)`, which also accepts the numeric values.
 fn parse_stance(value: &str) -> Option<UnitStance> {
     if let Ok(n) = value.trim().parse::<i32>() {
-        return [UnitStance::HoldFire, UnitStance::ReturnFire, UnitStance::Defend, UnitStance::AttackAnything]
-            .get(usize::try_from(n).ok()?)
-            .copied();
+        return [
+            UnitStance::HoldFire,
+            UnitStance::ReturnFire,
+            UnitStance::Defend,
+            UnitStance::AttackAnything,
+        ]
+        .get(usize::try_from(n).ok()?)
+        .copied();
     }
     UnitStance::parse("Stance", Some(value), None).ok()
 }
@@ -56,13 +61,8 @@ pub fn groups() -> Vec<G> {
                 |_, a| Ok(a.is_in_world()),
                 |_, a, value: bool| {
                     let actor = a.clone();
-                    a.world().add_frame_end_task(Box::new(move |w| {
-                        if value {
-                            w.add(&actor)
-                        } else {
-                            w.remove(&actor)
-                        }
-                    }));
+                    a.world()
+                        .add_frame_end_task(Box::new(move |w| if value { w.add(&actor) } else { w.remove(&actor) }));
                     Ok(())
                 },
             )

@@ -21,13 +21,7 @@ pub mod utils;
 
 /// The global tables.
 pub fn all(_lua: &Lua, _world: &Rc<World>) -> LuaResult<Vec<Group<()>>> {
-    let mut groups = vec![
-        map::actor(),
-        utils::angle(),
-        media::beacon(),
-        media::camera(),
-        media::hsl_color(),
-    ];
+    let mut groups = vec![map::actor(), utils::angle(), media::beacon(), media::camera(), media::hsl_color()];
     groups.extend(utils::coordinates());
     groups.extend([
         utils::date_time(),

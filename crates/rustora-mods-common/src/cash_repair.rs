@@ -175,8 +175,20 @@ impl INotifyCashTransfer for DeliversCash {
 }
 
 /// The `DonateCash` activity without a target line, as scripts queue it.
-pub fn donate_cash_activity(self_: &ActorRef, target: &Target, payload: i32, player_experience: i32) -> rustora_engine::activity::ActivityRef {
-    Enter::new(self_, target, Box::new(DonateCashHooks { payload, player_experience }))
+pub fn donate_cash_activity(
+    self_: &ActorRef,
+    target: &Target,
+    payload: i32,
+    player_experience: i32,
+) -> rustora_engine::activity::ActivityRef {
+    Enter::new(
+        self_,
+        target,
+        Box::new(DonateCashHooks {
+            payload,
+            player_experience,
+        }),
+    )
 }
 
 struct DonateCashHooks {

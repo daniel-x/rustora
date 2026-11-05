@@ -52,7 +52,9 @@ pub fn has_custom_layer(_lua: &Lua, _index: u8) -> LuaResult<bool> {
 }
 
 fn spawn_map_actors(w: &World) -> LuaResult<Rc<SpawnMapActors>> {
-    w.world_actor().trait_or_default::<SpawnMapActors>().map_or_else(|| error("SpawnMapActors is missing"), Ok)
+    w.world_actor()
+        .trait_or_default::<SpawnMapActors>()
+        .map_or_else(|| error("SpawnMapActors is missing"), Ok)
 }
 
 fn lobby_option(w: &World, id: &str) -> Option<String> {
@@ -91,7 +93,9 @@ pub fn map() -> Group<()> {
             let cell = w.map().choose_random_edge_cell(&mut w.shared_random.borrow_mut());
             Ok(LuaCPos(cell))
         })
-        .method("ClosestEdgeCell", |lua, _, a| Ok(LuaCPos(world(lua)?.map().choose_closest_edge_cell(a.get(0)?))))
+        .method("ClosestEdgeCell", |lua, _, a| {
+            Ok(LuaCPos(world(lua)?.map().choose_closest_edge_cell(a.get(0)?)))
+        })
         .method("ClosestMatchingEdgeCell", |lua, _, a| {
             let given: CPos = a.get(0)?;
             let filter: Function = a.get(1)?;
@@ -157,7 +161,13 @@ pub fn map() -> Group<()> {
 
 fn init_value<T: FromScript>(name: &str, value: &Value) -> LuaResult<T> {
     T::from_script(value).map_or_else(
-        || error(format!("Invalid data type for '{name}' (expected one of {}, got {})", T::NAME, type_name(value))),
+        || {
+            error(format!(
+                "Invalid data type for '{name}' (expected one of {}, got {})",
+                T::NAME,
+                type_name(value)
+            ))
+        },
         Ok,
     )
 }
@@ -244,7 +254,10 @@ pub fn actor() -> Group<()> {
                 .rules()
                 .actors()
                 .flat_map(|(_, a)| {
-                    let plain = a.trait_infos::<ProductionQueueInfo>().into_iter().map(|q| (q.ty.clone(), q.build_duration_modifier));
+                    let plain = a
+                        .trait_infos::<ProductionQueueInfo>()
+                        .into_iter()
+                        .map(|q| (q.ty.clone(), q.build_duration_modifier));
                     let classic = a
                         .trait_infos::<ClassicProductionQueueInfo>()
                         .into_iter()
@@ -274,7 +287,9 @@ pub fn actor() -> Group<()> {
             let ai = actor_info(&*world(lua)?, &ty)?;
             match ai.trait_info::<ValuedInfo>() {
                 Some(v) => Ok(v.cost),
-                None => error(format!("Actor type '{ty}' does not have the Valued trait required to get the Cost.")),
+                None => error(format!(
+                    "Actor type '{ty}' does not have the Valued trait required to get the Cost."
+                )),
             }
         })
 }

@@ -262,14 +262,7 @@ impl INotifyObjectivesUpdated for ScriptTriggers {
 }
 
 impl INotifyCapture for ScriptTriggers {
-    fn on_capture(
-        &self,
-        self_: &ActorRef,
-        captor: &ActorRef,
-        old_owner: &PlayerRef,
-        new_owner: &PlayerRef,
-        _types: BitSet<CaptureType>,
-    ) {
+    fn on_capture(&self, self_: &ActorRef, captor: &ActorRef, old_owner: &PlayerRef, new_owner: &PlayerRef, _types: BitSet<CaptureType>) {
         if self.world_disposing() {
             return;
         }

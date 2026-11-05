@@ -98,11 +98,16 @@ fn actor_production() -> Vec<Group<ActorRef>> {
             a.queue_activity(WaitFor::new(
                 Box::new(move || {
                     for p in &productions {
-                        let ty = production_type.clone().or_else(|| bi.build_at_production_type.clone()).unwrap_or_default();
+                        let ty = production_type
+                            .clone()
+                            .or_else(|| bi.build_at_production_type.clone())
+                            .unwrap_or_default();
                         if !ty.is_empty() && !p.info.produces.contains(&ty) {
                             continue;
                         }
-                        let faction = faction_variant.clone().unwrap_or_else(|| get_initial_faction(&actor_info, &p.faction()));
+                        let faction = faction_variant
+                            .clone()
+                            .unwrap_or_else(|| get_initial_faction(&actor_info, &p.faction()));
                         let mut inits = ActorInits::new();
                         inits.push(Rc::new(OwnerInit::from_player(&actor.owner())));
                         inits.push(Rc::new(FactionInit::new(faction)));
@@ -212,7 +217,10 @@ fn actor_production() -> Vec<Group<ActorRef>> {
 /// The enabled queues of `a` when its properties were first used.
 fn actor_queues(lua: &Lua, a: &ActorRef) -> LuaResult<Rc<Vec<Rc<ProductionQueue>>>> {
     Ok(ctx(lua)?.group_state(a.id, "ProductionQueueProperties", || {
-        a.traits_implementing::<ProductionQueue>().into_iter().filter(|q| q.enabled()).collect()
+        a.traits_implementing::<ProductionQueue>()
+            .into_iter()
+            .filter(|q| q.enabled())
+            .collect()
     }))
 }
 

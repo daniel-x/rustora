@@ -9,9 +9,9 @@ use std::rc::Rc;
 use indexmap::{IndexMap, IndexSet};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
-use rustora_mods_common::actor_reference::UnknownInit;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, register_traits, value_init};
+use rustora_mods_common::actor_reference::UnknownInit;
 
 value_init!(ScriptTagsInit, Vec<String>);
 
@@ -36,8 +36,7 @@ info_impl!(ScriptTagsInfo => |info, init| {
         .0
         .iter()
         .filter_map(|i| i.as_any().downcast_ref::<UnknownInit>())
-        .filter(|i| i.name == "ScriptTags")
-        .last()
+        .rfind(|i| i.name == "ScriptTags")
     {
         tags.extend(i.yaml.value_str().split(',').map(str::trim).filter(|t| !t.is_empty()).map(String::from));
     }
@@ -109,6 +108,10 @@ impl ScriptLobbyDropdown {
 impl INotifyCreated for ScriptLobbyDropdown {
     fn created(&self, self_: &ActorRef) {
         let world = self_.world();
-        *self.value.borrow_mut() = world.lobby_info.global_settings.option_str(&self.info.id, &self.info.default).to_string();
+        *self.value.borrow_mut() = world
+            .lobby_info
+            .global_settings
+            .option_str(&self.info.id, &self.info.default)
+            .to_string();
     }
 }

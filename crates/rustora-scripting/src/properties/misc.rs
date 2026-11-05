@@ -7,7 +7,7 @@
 
 use rustora_engine::actor::ActorRef;
 use rustora_engine::player::PlayerRef;
-use rustora_mods_common::base::{Power, PowerManager, PowerState, PlayerExperience};
+use rustora_mods_common::base::{PlayerExperience, Power, PowerManager, PowerState};
 use rustora_mods_common::conditions::ScaredyCat;
 use rustora_mods_common::experience::{ExternalCondition, GainsExperience};
 use rustora_mods_common::player::PlayerResources;
@@ -112,8 +112,7 @@ fn revoke_condition(a: &ActorRef, source: usize, args: &Args) -> LuaResult<()> {
 
 fn accepts_condition(a: &ActorRef, source: usize, args: &Args) -> LuaResult<bool> {
     let condition: String = args.get(0)?;
-    Ok(a
-        .traits_implementing::<ExternalCondition>()
+    Ok(a.traits_implementing::<ExternalCondition>()
         .iter()
         .any(|t| t.info.condition == condition && t.can_grant_condition(source)))
 }
@@ -139,7 +138,9 @@ pub fn actor_groups() -> Vec<Group<ActorRef>> {
             Ok(())
         }),
         Group::<ActorRef>::new("Power", &["PowerInfo"]).get("Power", |_, a| {
-            Ok(a.traits_implementing::<Power>().iter().fold(0i32, |s, p| s.wrapping_add(p.get_enabled_power())))
+            Ok(a.traits_implementing::<Power>()
+                .iter()
+                .fold(0i32, |s, p| s.wrapping_add(p.get_enabled_power())))
         }),
         Group::<ActorRef>::new("General", &["ExternalConditionInfo"])
             .method("GrantCondition", |_, a, args| grant_condition(a, S, args))

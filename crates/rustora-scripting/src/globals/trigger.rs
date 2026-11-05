@@ -193,7 +193,9 @@ pub fn global() -> Group<()> {
         .method("OnPlayerWon", |lua, _, a| register_player(lua, a, Trigger::OnPlayerWon))
         .method("OnPlayerLost", |lua, _, a| register_player(lua, a, Trigger::OnPlayerLost))
         .method("OnObjectiveAdded", |lua, _, a| register_player(lua, a, Trigger::OnObjectiveAdded))
-        .method("OnObjectiveCompleted", |lua, _, a| register_player(lua, a, Trigger::OnObjectiveCompleted))
+        .method("OnObjectiveCompleted", |lua, _, a| {
+            register_player(lua, a, Trigger::OnObjectiveCompleted)
+        })
         .method("OnObjectiveFailed", |lua, _, a| register_player(lua, a, Trigger::OnObjectiveFailed))
         .method("OnAddedToWorld", |lua, _, a| register(lua, a, Trigger::OnAddedToWorld))
         .method("OnRemovedFromWorld", |lua, _, a| register(lua, a, Trigger::OnRemovedFromWorld))
@@ -266,7 +268,9 @@ pub fn global() -> Group<()> {
         })
         .method("OnInfiltrated", |lua, _, a| register(lua, a, Trigger::OnInfiltrated))
         .method("OnDiscovered", |lua, _, a| register(lua, a, Trigger::OnDiscovered))
-        .method("OnPlayerDiscovered", |lua, _, a| register_player(lua, a, Trigger::OnPlayerDiscovered))
+        .method("OnPlayerDiscovered", |lua, _, a| {
+            register_player(lua, a, Trigger::OnPlayerDiscovered)
+        })
         .method("OnSold", |lua, _, a| register(lua, a, Trigger::OnSold))
         .method("OnTimerExpired", |lua, _, a| register_world(lua, a, Trigger::OnTimerExpired))
         .method("ClearAll", |_, _, a| {

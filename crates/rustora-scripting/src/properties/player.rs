@@ -11,11 +11,11 @@ use rustora_engine::actor::ActorRef;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::world::World;
 use rustora_mods_common::attack::AttackBase;
+use rustora_mods_common::base::MapOptions;
 use rustora_mods_common::mobile::MobileInfo;
 use rustora_mods_common::player::objectives::{MissionObjective, MissionObjectives, ObjectiveState, has_no_required_units};
 use rustora_mods_common::player::statistics::PlayerStatistics;
 use rustora_mods_common::production::TechTree;
-use rustora_mods_common::base::MapOptions;
 
 use crate::context::world;
 use crate::host::{host, resolved_player_name};
@@ -34,7 +34,8 @@ fn owned_actors(p: &PlayerRef, filter: impl Fn(&ActorRef) -> bool) -> Vec<ActorR
 
 /// The team and handicap of the lobby client of `p`, or zeros.
 fn client_values(p: &PlayerRef) -> (i32, i32) {
-    pw(p).lobby_info
+    pw(p)
+        .lobby_info
         .clients
         .iter()
         .find(|c| c.index == p.client_index)
@@ -72,9 +73,7 @@ fn player() -> G {
             let actors: Vec<ActorRef> = pw(p)
                 .actors_having_trait::<AttackBase>()
                 .into_iter()
-                .filter(|a| {
-                    Rc::ptr_eq(&a.owner(), p) && !a.is_dead() && a.is_in_world() && a.info.has_trait_info::<MobileInfo>()
-                })
+                .filter(|a| Rc::ptr_eq(&a.owner(), p) && !a.is_dead() && a.is_in_world() && a.info.has_trait_info::<MobileInfo>())
                 .collect();
             actors_table(lua, &actors)
         })

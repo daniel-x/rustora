@@ -126,7 +126,9 @@ pub fn resolved_player_name(lua: &Lua, player: &PlayerRef) -> String {
 
 /// `Platform.EngineDir`.
 pub fn engine_dir() -> String {
-    let mut dir = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut dir = std::env::current_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if !dir.ends_with(std::path::MAIN_SEPARATOR) {
         dir.push(std::path::MAIN_SEPARATOR);
     }
