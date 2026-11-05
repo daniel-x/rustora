@@ -31,9 +31,10 @@ pub struct LogicTickerWidget {
 impl WidgetKind for LogicTickerWidget {
     impl_as_any!();
 
-    fn tick(&mut self, ui: &mut Ui, _id: WidgetId) {
+    /// Runs `OnTick` deferred, and only if this ticker was not removed in between, since ids get reused.
+    fn tick(&mut self, ui: &mut Ui, id: WidgetId) {
         if let Some(f) = self.on_tick.clone() {
-            ui.defer(move |ui| f(ui));
+            ui.defer_for(id, move |ui| f(ui));
         }
     }
 
@@ -414,7 +415,7 @@ impl ProductionPaletteWidget {
         let producer = self.current_queue.as_ref().and_then(|q| q.most_likely_producer());
         let (Some(queue), Some((producer_actor, producer))) = (self.current_queue.clone(), producer) else {
             if self.displayed_icon_count != 0 {
-                self.icon_count_changed(ui, self.displayed_icon_count, 0);
+                self.icon_count_changed(ui, id, self.displayed_icon_count, 0);
                 self.displayed_icon_count = 0;
             }
             ui.node_mut(id).event_rect = Some(Rect::default());
@@ -471,13 +472,13 @@ impl ProductionPaletteWidget {
         }
         ui.node_mut(id).event_rect = Some(union.unwrap_or_default());
         if old_count != self.displayed_icon_count {
-            self.icon_count_changed(ui, old_count, self.displayed_icon_count);
+            self.icon_count_changed(ui, id, old_count, self.displayed_icon_count);
         }
     }
 
-    fn icon_count_changed(&self, ui: &mut Ui, old: i32, new: i32) {
+    fn icon_count_changed(&self, ui: &mut Ui, id: WidgetId, old: i32, new: i32) {
         if let Some(f) = self.on_icon_count_changed.clone() {
-            ui.defer(move |ui| f(ui, old, new));
+            ui.defer_for(id, move |ui| f(ui, old, new));
         }
     }
 

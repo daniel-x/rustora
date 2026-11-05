@@ -414,6 +414,17 @@ impl Ui {
         self.deferred.push(Rc::new(action));
     }
 
+    /// [`Ui::defer`] for an action of widget `id` that is dropped if the widget is removed before it runs, since
+    /// ids get reused.
+    pub fn defer_for(&mut self, id: WidgetId, action: impl Fn(&mut Ui) + 'static) {
+        let me = Rc::downgrade(&self.kind(id));
+        self.defer(move |ui| {
+            if me.upgrade().is_some_and(|k| ui.exists(id) && Rc::ptr_eq(&k, &ui.kind(id))) {
+                action(ui);
+            }
+        });
+    }
+
     fn run_deferred(&mut self) {
         for action in std::mem::take(&mut self.deferred) {
             action(self);

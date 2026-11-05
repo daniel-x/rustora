@@ -202,7 +202,7 @@ impl SupportPowersWidget {
             && let Some(f) = self.on_icon_count_changed.clone()
         {
             let new = self.icon_count;
-            ui.defer(move |ui| f(ui, old, new));
+            ui.defer_for(id, move |ui| f(ui, old, new));
         }
     }
 
