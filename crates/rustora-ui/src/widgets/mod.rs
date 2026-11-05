@@ -20,6 +20,7 @@ mod dropdown;
 mod image;
 mod label;
 mod map_preview;
+pub mod menu_button;
 pub mod production;
 mod scroll_item;
 mod scroll_panel;
@@ -58,6 +59,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "LogicTicker" => cell(production::LogicTickerWidget::default()),
         "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
         "SupportPowers" => cell(support_powers::SupportPowersWidget::default()),
+        "MenuButton" => cell(menu_button::MenuButtonWidget::new(assets)),
         "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
         "Label" | "LabelForInput" => cell(LabelWidget::new(assets)),

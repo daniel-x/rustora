@@ -22,6 +22,7 @@ use crate::widgets::LabelWidget;
 pub mod color_picker;
 pub mod connection;
 pub mod ingame;
+pub mod ingame_menu;
 pub mod lobby;
 pub mod lobby_options;
 pub mod lobby_utils;
@@ -84,6 +85,19 @@ pub(crate) fn cosmetic_random(count: usize) -> usize {
 
 /// Port of `ConfirmationDialogs.ButtonPrompt` with a confirm and a cancel button. `text` is already resolved.
 pub(crate) fn button_prompt(ui: &mut Ui, title: &str, text: &str, on_confirm: Action, confirm_text: &str) {
+    button_prompt_with_cancel(ui, title, text, on_confirm, confirm_text, None, None);
+}
+
+/// `ConfirmationDialogs.ButtonPrompt` with a cancel action and text.
+pub(crate) fn button_prompt_with_cancel(
+    ui: &mut Ui,
+    title: &str,
+    text: &str,
+    on_confirm: Action,
+    confirm_text: &str,
+    on_cancel: Option<Action>,
+    cancel_text: Option<&str>,
+) {
     let prompt = ui.open_window("TWOBUTTON_PROMPT", WidgetArgs::default());
     let title = message(ui, title);
     let title_label = ui.child(prompt, "PROMPT_TITLE");
@@ -117,7 +131,16 @@ pub(crate) fn button_prompt(ui: &mut Ui, title: &str, text: &str, on_confirm: Ac
     let cancel = ui.child(prompt, "CANCEL_BUTTON");
     ui.node_mut(cancel).visible = true;
     ui.node_mut(cancel).bounds.y += header_height;
-    ui.button(cancel).on_click = Some(Rc::new(|ui| ui.close_window()));
+    ui.button(cancel).on_click = Some(Rc::new(move |ui| {
+        ui.close_window();
+        if let Some(f) = &on_cancel {
+            f(ui);
+        }
+    }));
+    if let Some(key) = cancel_text {
+        let text = message(ui, key);
+        ui.button(cancel).get_text = Some(Rc::new(move || text.clone()));
+    }
 }
 
 /// Port of `SimpleTooltipLogic`.
@@ -240,6 +263,8 @@ pub fn create(
         "IngameCashCounterLogic" => sidebar::cash_counter(ui, id),
         "IngamePowerCounterLogic" => sidebar::power_counter(ui, id),
         "SupportPowerBinLogic" => sidebar::support_power_bin(ui, id),
+        "MenuButtonsChromeLogic" => ingame_menu::menu_buttons(ui, id),
+        "IngameMenuLogic" => ingame_menu::ingame_menu(ui, id, args, logic_args),
         "ProductionTooltipLogic" => sidebar::production_tooltip(ui, id, args),
         "SellOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Sell, "sell"),
         "RepairOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Repair, "repair"),

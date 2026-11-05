@@ -248,13 +248,18 @@ impl Client {
     /// Carries out the network requests of the user interface, then receives and sends.
     fn pump_network(&mut self) {
         let requests = std::mem::take(&mut self.ui.requests);
+        let mut leave = false;
         for request in requests {
             match request {
+                AppRequest::LeaveGame => leave = true,
                 AppRequest::CreateLocalServer { map, skirmish } => self.net.create_local_server(map, skirmish),
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
             }
+        }
+        if leave {
+            self.leave_game();
         }
         let (name, color) = {
             let settings = self.services.settings.borrow();
@@ -266,6 +271,27 @@ impl Client {
         if started {
             self.start_game();
         }
+    }
+
+    /// `IngameMenuLogic.OnQuit` without the exit delay and fade: `Game.Disconnect`, `Ui.ResetAll` and
+    /// `Game.LoadShellMap`.
+    fn leave_game(&mut self) {
+        self.net.disconnect();
+        self.ui.reset_all();
+        *self.services.ingame.borrow_mut() = None;
+        let (distance, pause_shellmap) = {
+            let settings = self.services.settings.borrow();
+            (settings.graphics.viewport_distance, settings.game.pause_shellmap)
+        };
+        self.shell = if self.mod_data.content_available {
+            ShellWorld::load(&self.engine, &self.support, self.ui.resolution, distance)
+        } else {
+            None
+        };
+        if let Some(shell) = &self.shell {
+            shell.world.pause_shellmap.set(pause_shellmap);
+        }
+        self.ui.load_widget("MAINMENU", Some(self.ui.root), &WidgetArgs::default());
     }
 
     /// `Game.StartGame`. The in-game user interface follows with slice 6 of P8.

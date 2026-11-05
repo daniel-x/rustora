@@ -244,6 +244,8 @@ pub enum AppRequest {
     },
     /// `Game.Disconnect`.
     Disconnect,
+    /// `IngameMenuLogic.OnQuit`: disconnect, reset the user interface and load the shell map.
+    LeaveGame,
 }
 
 /// Port of the static `Ui` class and the widget tree.
