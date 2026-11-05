@@ -735,7 +735,6 @@ impl Server {
         let name = client.name.clone().unwrap_or_default();
         let is_admin = client.is_admin;
         self.lobby.clients.push(client);
-        let map = self.map.clone();
         if let Some(c) = self.conn_mut(player_index) {
             c.validated = true;
             println!("Client {player_index}: Accepted connection from {}.", c.end_point);
@@ -761,6 +760,7 @@ impl Server {
                 self.send_order_to(player_index, "Message", &motd);
             }
         }
+        let map = self.map.clone();
         if self.lobby.global_settings.map_status & MAP_STATUS_UNSAFE_CUSTOM_RULES != 0 {
             self.send_fluent_message_to(player_index, "notification-custom-rules", &[]);
         }

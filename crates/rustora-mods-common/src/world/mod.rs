@@ -581,6 +581,70 @@ pub struct SpawnStartingUnits {
 register_traits!(SpawnStartingUnits: IWorldLoaded);
 info_impl!(SpawnStartingUnitsInfo => |info, _| Some(Rc::new(SpawnStartingUnits { info })));
 
+impl SpawnStartingUnits {
+    /// The support actor part of `SpawnUnitsForPlayer`.
+    fn spawn_support_actors(&self, w: &Rc<World>, p: &PlayerRef, group: &StartingUnitsInfo, home_locations: &[CPos]) {
+        if group.support_actors.is_empty() {
+            return;
+        }
+        let spawn_cells: Vec<CPos> = w
+            .map()
+            .find_tiles_in_annulus(p.home_location, group.inner_support_radius + 1, group.outer_support_radius, false)
+            .collect();
+        let path_finder = w.world_actor().trait_or_default::<crate::path_finder_trait::PathFinder>();
+        for s in &group.support_actors {
+            let rules = w.rules().actor(&s.to_lowercase()).unwrap_or_else(|| panic!("unknown actor {s}"));
+            let mobile = rules.trait_info::<crate::mobile::MobileInfo>();
+            let aircraft = rules.trait_info::<crate::aircraft::AircraftInfo>();
+            let can_enter = |c: CPos| match (&mobile, &aircraft) {
+                (Some(m), _) => m.can_enter_cell(
+                    w,
+                    None,
+                    c,
+                    rustora_engine::traits::subcell::FULL_CELL,
+                    None,
+                    crate::locomotor::BlockedByActor::All,
+                ),
+                (None, Some(a)) => a.can_enter_cell(w, c, None, crate::locomotor::BlockedByActor::All),
+                (None, None) => panic!("{s} has no supported IPositionableInfo"),
+            };
+            let locomotor = mobile.as_ref().map(|m| crate::locomotor::locomotor_by_name(w, &m.locomotor));
+            let valid: Vec<CPos> = spawn_cells
+                .iter()
+                .copied()
+                .filter(|&c| can_enter(c))
+                .filter(|&c| match (&path_finder, &locomotor) {
+                    (Some(pf), Some(l)) => home_locations
+                        .iter()
+                        .any(|&h| pf.path_might_exist_for_locomotor_blocked_by_immovable(l, c, h)),
+                    _ => true,
+                })
+                .collect();
+            let cell = crate::bots::random_or_default(&valid, &w.shared_random).unwrap_or(CPos::ZERO);
+            if cell == CPos::ZERO {
+                log::debug!("No cells available to spawn starting unit {s} for player {}", p.player_name);
+                continue;
+            }
+            let shares_cell = mobile.as_ref().is_some_and(|m| m.locomotor_info(w).shares_cell);
+            let sub = if shares_cell {
+                crate::actor_map::WorldExt::actor_map(&**w).free_subcell(cell, rustora_engine::traits::subcell::ANY, true)
+            } else {
+                0
+            };
+            let facing = group
+                .support_actors_facing
+                .unwrap_or_else(|| WAngle::new(w.shared_random.borrow_mut().next_max(1024)));
+            let inits = ActorInits::new()
+                .with(OwnerInit::from_player(p))
+                .with(LocationInit::new(cell))
+                .with(rustora_engine::actor_init::SubCellInit::new(sub))
+                .with(FacingInit::new(facing))
+                .with(SpawnedByMapInit);
+            w.create_actor(&s.to_lowercase(), inits);
+        }
+    }
+}
+
 impl IWorldLoaded for SpawnStartingUnits {
     fn world_loaded(&self, w: &Rc<World>) {
         let refs = w.world_actor().trait_::<CreateMapPlayers>().references.borrow().clone();
@@ -607,19 +671,39 @@ impl IWorldLoaded for SpawnStartingUnits {
                 panic!("No starting units defined for faction {} with class {class}", p.faction);
             }
             let group = groups[w.shared_random.borrow_mut().next_max(groups.len() as i32) as usize].clone();
-            if let Some(base) = &group.base_actor {
-                let facing = group
-                    .base_actor_facing
-                    .unwrap_or_else(|| WAngle::new(w.shared_random.borrow_mut().next_max(1024)));
-                let inits = ActorInits::new()
-                    .with(LocationInit::new(p.home_location + group.base_actor_offset))
-                    .with(OwnerInit::from_player(&p))
-                    .with(SkipMakeAnimsInit)
-                    .with(FacingInit::new(facing))
-                    .with(SpawnedByMapInit);
-                w.create_actor(&base.to_lowercase(), inits);
-            }
-            assert!(group.support_actors.is_empty(), "support actors need the pathfinder port");
+            let home_locations: Vec<CPos> = match &group.base_actor {
+                Some(base) => {
+                    let facing = group
+                        .base_actor_facing
+                        .unwrap_or_else(|| WAngle::new(w.shared_random.borrow_mut().next_max(1024)));
+                    let inits = ActorInits::new()
+                        .with(LocationInit::new(p.home_location + group.base_actor_offset))
+                        .with(OwnerInit::from_player(&p))
+                        .with(SkipMakeAnimsInit)
+                        .with(FacingInit::new(facing))
+                        .with(SpawnedByMapInit);
+                    let base_actor = w.create_actor(&base.to_lowercase(), inits);
+                    let movable = base_actor
+                        .trait_or_default::<crate::mobile::Mobile>()
+                        .is_some_and(|m| !m.is_trait_disabled() && !m.is_trait_paused() && !m.is_immovable());
+                    if movable {
+                        vec![base_actor.location()]
+                    } else {
+                        let occupied: Vec<CPos> = base_actor
+                            .trait_::<dyn IOccupySpace>()
+                            .occupied_cells()
+                            .into_iter()
+                            .map(|(c, _)| c)
+                            .collect();
+                        crate::util::expand_footprint(&occupied, true)
+                            .into_iter()
+                            .filter(|c| !occupied.contains(c))
+                            .collect()
+                    }
+                }
+                None => vec![p.home_location],
+            };
+            self.spawn_support_actors(w, &p, &group, &home_locations);
         }
     }
 }
