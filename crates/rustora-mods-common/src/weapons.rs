@@ -83,6 +83,7 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.warheads
         .insert("HealthPercentageDamage", |y| load_damage(y, DamageKind::HealthPercentage));
     r.warheads.insert("CreateEffect", warhead_loader!(CreateEffectWarhead));
+    r.warheads.insert("LeaveSmudge", warhead_loader!(LeaveSmudgeWarhead));
     r.warheads.insert("CreateResource", warhead_loader!(CreateResourceWarhead));
     r.warheads.insert("DestroyResource", warhead_loader!(DestroyResourceWarhead));
     r.warheads.insert("FireCluster", warhead_loader!(FireClusterWarhead));
@@ -629,6 +630,65 @@ impl IWarhead for CreateEffectWarhead {
                 let e: EffectRef = SpriteEffect::at(w, pos, WAngle::ZERO, &image, &explosion, palette);
                 w.add_effect(e);
             }));
+        }
+    }
+}
+
+/// `Warheads/LeaveSmudgeWarhead.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct LeaveSmudgeWarhead {
+    #[field(flatten)]
+    pub base: WarheadBase,
+    pub size: Vec<i32>,
+    pub smudge_type: IndexSet<String>,
+    pub chance: i32,
+}
+
+impl Default for LeaveSmudgeWarhead {
+    fn default() -> Self {
+        LeaveSmudgeWarhead {
+            base: WarheadBase::default(),
+            size: vec![0, 0],
+            smudge_type: IndexSet::new(),
+            chance: 100,
+        }
+    }
+}
+
+impl IWarhead for LeaveSmudgeWarhead {
+    fn delay(&self) -> i32 {
+        self.base.delay
+    }
+
+    fn do_impact(&self, target: &Target, args: &WarheadArgs) {
+        if target.target_type() == TargetType::Invalid {
+            return;
+        }
+        let fired_by = &args.source_actor;
+        let w = fired_by.world();
+        if self.chance < w.local_random.borrow_mut().next_max(100) {
+            return;
+        }
+        let pos = target.center_position();
+        if w.map().distance_above_terrain(pos) > self.base.air_threshold {
+            return;
+        }
+        let layers = w.world_actor().traits_implementing::<crate::smudge::SmudgeLayer>();
+        for cell in annulus_cells(&w, w.map().cell_containing(pos), &self.size) {
+            let terrain = w.map().terrain_type_info(cell);
+            let Some(kind) = terrain.accepts_smudge_type.iter().find(|t| self.smudge_type.contains(*t)) else {
+                continue;
+            };
+            if w.actor_map()
+                .get_actors_at(cell)
+                .iter()
+                .any(|a| !self.base.is_valid_against(a, fired_by))
+            {
+                continue;
+            }
+            if let Some(layer) = layers.iter().find(|l| &l.info.smudge_type == kind) {
+                layer.add_smudge(cell);
+            }
         }
     }
 }

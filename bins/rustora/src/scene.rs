@@ -8,12 +8,16 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos};
+use rustora_engine::frozen::FrozenActorLayer;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::render::{Renderable, render_actor};
 use rustora_engine::world::World;
+use rustora_mods_common::palettes::ShroudRendererInfo;
 use rustora_mods_common::render::WithSpriteBody;
 use rustora_mods_common::resources::ResourceLayer;
 use rustora_mods_common::selection::mouse_bounds_info;
+use rustora_mods_common::smudge::SmudgeLayer;
+use rustora_mods_common::visibility::FrozenUnderFog;
 use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::draw::Rect;
 use rustora_ui::screen_map::ActorBounds;
@@ -43,6 +47,44 @@ pub fn bounds_rect(center: (i32, i32), bounds: &[WDist]) -> Rect {
         oy += bounds[3].length * ts / 1024;
     }
     Rect::new(center.0 + ox, center.1 + oy, w, h)
+}
+
+const ALL_CORNERS: u8 = 0x0f;
+const ALL_SIDES: u8 = 0xf0;
+
+/// `ShroudRenderer.GetEdges` for the neighbors of a cell, where `set` tells which cells do not need an edge.
+fn neighbor_edges(x: i32, y: i32, set: &impl Fn(i32, i32) -> bool, extended: bool) -> u8 {
+    const TL: u8 = 0x01;
+    const TR: u8 = 0x02;
+    const BR: u8 = 0x04;
+    const BL: u8 = 0x08;
+    const TOP: u8 = 0x10 | TL | TR;
+    const RIGHT: u8 = 0x20 | TR | BR;
+    const BOTTOM: u8 = 0x40 | BR | BL;
+    const LEFT: u8 = 0x80 | TL | BL;
+    let mut edges = 0;
+    for (dx, dy, e) in [(0, -1, TOP), (1, 0, RIGHT), (0, 1, BOTTOM), (-1, 0, LEFT)] {
+        if !set(x + dx, y + dy) {
+            edges |= e;
+        }
+    }
+    let ucorner = edges & ALL_CORNERS;
+    for (dx, dy, e) in [(-1, -1, TL), (1, -1, TR), (1, 1, BR), (-1, 1, BL)] {
+        if !set(x + dx, y + dy) {
+            edges |= e;
+        }
+    }
+    if extended { edges ^ ucorner } else { edges & ALL_CORNERS }
+}
+
+/// The quad of a sprite centered on a cell.
+fn cell_quad(s: &Sprite, x: i32, y: i32, row: u32) -> Quad {
+    Quad::sprite(
+        s.rect,
+        x as f32 * TILE_SIZE + TILE_SIZE / 2.0 + s.offset[0] - s.rect.w as f32 / 2.0,
+        y as f32 * TILE_SIZE + TILE_SIZE / 2.0 + s.offset[1] - s.rect.h as f32 / 2.0,
+        row,
+    )
 }
 
 fn on_camera(q: &Quad, cam: &Camera) -> bool {
@@ -179,11 +221,28 @@ impl Scene {
             }
         }
         self.add_resources(renderer, world, &cells, &mut quads);
+        self.add_smudges(renderer, world, viewer, &cells, &mut quads);
 
         let mut renderables = Vec::new();
         for a in world.actors() {
-            if a.is_in_world() && viewer.is_none_or(|v| a.can_be_viewed_by_player(Some(v))) {
+            if !a.is_in_world() {
+                continue;
+            }
+            if let Some(f) = a.trait_or_default::<FrozenUnderFog>() {
+                f.tick_render(&a);
+            }
+            if viewer.is_none_or(|v| a.can_be_viewed_by_player(Some(v))) {
                 render_actor(&a, &mut renderables);
+            }
+        }
+        if let Some(v) = viewer
+            && let Some(layer) = v.player_actor().trait_or_default::<FrozenActorLayer>()
+            && let (Some(&first), Some(&last)) = (cells.first(), cells.last())
+        {
+            for f in layer.frozen_actors_in_region(first, last, true) {
+                if !f.shrouded() {
+                    renderables.extend(f.renderables.borrow().iter().cloned());
+                }
             }
         }
         for e in world.effects() {
@@ -192,15 +251,7 @@ impl Scene {
         self.add_renderables(renderer, &renderables, cam, &mut quads);
 
         if let Some(v) = viewer {
-            let shroud = v.shroud();
-            for &c in &cells {
-                let (x, y) = (c.x() as f32 * TILE_SIZE, c.y() as f32 * TILE_SIZE);
-                if !shroud.is_explored(c) {
-                    quads.push(Quad::solid(x, y, TILE_SIZE, TILE_SIZE, [0.0, 0.0, 0.0, 1.0]));
-                } else if !shroud.is_visible(c) {
-                    quads.push(Quad::solid(x, y, TILE_SIZE, TILE_SIZE, [0.0, 0.0, 0.0, 0.5]));
-                }
-            }
+            self.add_shroud(renderer, world, v, cam, &mut quads);
         }
         let mut above = Vec::new();
         for e in world.effects() {
@@ -247,6 +298,93 @@ impl Scene {
         let resolved = self.sprites.sequence(renderer, &seq)?;
         let [l, t, r, b] = resolved.bounds;
         Some(Rect::new(center.0 + l, center.1 + t, r - l, b - t))
+    }
+
+    /// `SmudgeLayer.IRenderOverlay`.
+    fn add_smudges(&mut self, renderer: &mut Renderer, world: &World, viewer: Option<&PlayerRef>, cells: &[CPos], quads: &mut Vec<Quad>) {
+        let seqs = world.map().sequences().clone();
+        for layer in world.world_actor().traits_implementing::<SmudgeLayer>() {
+            layer.tick_render(viewer);
+            if layer.is_empty() {
+                continue;
+            }
+            let row = self.palettes.named(&layer.info.palette);
+            for &c in cells {
+                let Some(smudge) = layer.at(c) else { continue };
+                let seq = seqs.get_sequence(&layer.info.sequence, &smudge.kind);
+                let Some(resolved) = self.sprites.sequence(renderer, &seq) else {
+                    continue;
+                };
+                if let Some(s) = resolved.sprite(smudge.depth, WAngle::ZERO) {
+                    quads.push(cell_quad(&s, c.x(), c.y(), row));
+                }
+            }
+        }
+    }
+
+    /// `ShroudRenderer.RenderShroud`, evaluated per frame for the cells on the camera, including the first row outside
+    /// the map bounds.
+    fn add_shroud(&mut self, renderer: &mut Renderer, world: &World, viewer: &PlayerRef, cam: &Camera, quads: &mut Vec<Quad>) {
+        let Some(info) = world.world_actor().info.trait_info::<ShroudRendererInfo>() else {
+            return;
+        };
+        let seqs = world.map().sequences().clone();
+        let shroud_seq = seqs.get_sequence(&info.sequence, &info.shroud_variants[0]);
+        let fog_seq = seqs.get_sequence(&info.sequence, &info.fog_variants[0]);
+        let (Some(shroud_sprites), Some(fog_sprites)) = (
+            self.sprites.sequence(renderer, &shroud_seq),
+            self.sprites.sequence(renderer, &fog_seq),
+        ) else {
+            return;
+        };
+        let (fog_row, shroud_row) = (self.palettes.named(&info.fog_palette), self.palettes.named(&info.shroud_palette));
+        let extended = info.use_extended_index;
+        let not_visible = if extended { ALL_SIDES } else { ALL_CORNERS };
+        let mut index_of = vec![0u8; 256];
+        for (i, &e) in info.index.iter().enumerate() {
+            index_of[e as usize] = i as u8;
+        }
+        let shroud = viewer.shroud();
+        let map = world.map();
+        let contains = |x: i32, y: i32| {
+            let c = CPos::new(x, y);
+            map.contains(c).then_some(c)
+        };
+        let visible = |x: i32, y: i32| contains(x, y).is_some_and(|c| shroud.is_visible(c));
+        let explored = |x: i32, y: i32| contains(x, y).is_some_and(|c| shroud.is_explored(c));
+        let ts = TILE_SIZE;
+        let (x0, y0) = ((cam.x / ts).floor() as i32 - 1, (cam.y / ts).floor() as i32 - 1);
+        let x1 = ((cam.x + cam.width as f32 / cam.zoom) / ts).ceil() as i32 + 1;
+        let y1 = ((cam.y + cam.height as f32 / cam.zoom) / ts).ceil() as i32 + 1;
+        let b = map.bounds;
+        let mut fog_quads = Vec::new();
+        let mut shroud_quads = Vec::new();
+        for y in y0.max(b.y - 1)..y1.min(b.y + b.height + 1) {
+            for x in x0.max(b.x - 1)..x1.min(b.x + b.width + 1) {
+                let (edges_shroud, edges_fog) = if !explored(x, y) {
+                    (not_visible, not_visible)
+                } else {
+                    let fog = if visible(x, y) {
+                        neighbor_edges(x, y, &visible, extended)
+                    } else {
+                        not_visible
+                    };
+                    (neighbor_edges(x, y, &explored, extended), fog)
+                };
+                for (edges, sprites, row, out) in [
+                    (edges_fog, &fog_sprites, fog_row, &mut fog_quads),
+                    (edges_shroud, &shroud_sprites, shroud_row, &mut shroud_quads),
+                ] {
+                    if edges != 0
+                        && let Some(s) = sprites.sprite(index_of[edges as usize] as i32, WAngle::ZERO)
+                    {
+                        out.push(cell_quad(&s, x, y, row));
+                    }
+                }
+            }
+        }
+        quads.append(&mut fog_quads);
+        quads.append(&mut shroud_quads);
     }
 
     /// `ResourceRenderer` of RA: the frame follows the density, the variant is a per-cell hash instead of

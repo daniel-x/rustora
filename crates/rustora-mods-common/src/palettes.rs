@@ -19,6 +19,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("ShroudPalette", |n| load_info!(ShroudPaletteInfo, n));
     r.register("RotationPaletteEffect", |n| load_info!(RotationPaletteEffectInfo, n));
     r.register("LightPaletteRotator", |n| load_info!(LightPaletteRotatorInfo, n));
+    r.register("ShroudRenderer", |n| load_info!(ShroudRendererInfo, n));
 }
 
 /// A trait without runtime state, whose info is read by the client.
@@ -38,8 +39,46 @@ palette_info!(
     PlayerColorPaletteInfo,
     ShroudPaletteInfo,
     RotationPaletteEffectInfo,
-    LightPaletteRotatorInfo
+    LightPaletteRotatorInfo,
+    ShroudRendererInfo
 );
+
+/// `ShroudRendererInfo`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ShroudRendererInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub sequence: String,
+    pub shroud_variants: Vec<String>,
+    pub fog_variants: Vec<String>,
+    pub shroud_palette: String,
+    pub fog_palette: String,
+    pub index: Vec<i32>,
+    pub use_extended_index: bool,
+    pub override_full_shroud: Option<String>,
+    pub override_shroud_index: i32,
+    pub override_full_fog: Option<String>,
+    pub override_fog_index: i32,
+}
+
+impl Default for ShroudRendererInfo {
+    fn default() -> Self {
+        ShroudRendererInfo {
+            instance_name: None,
+            sequence: "shroud".into(),
+            shroud_variants: vec!["shroud".into()],
+            fog_variants: vec!["fog".into()],
+            shroud_palette: "shroud".into(),
+            fog_palette: "fog".into(),
+            index: vec![12, 9, 8, 3, 1, 6, 4, 2, 13, 11, 7, 14],
+            use_extended_index: false,
+            override_full_shroud: None,
+            override_shroud_index: 15,
+            override_full_fog: None,
+            override_fog_index: 15,
+        }
+    }
+}
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct PaletteFromFileInfo {

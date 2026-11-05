@@ -46,6 +46,8 @@ pub struct FrozenActor {
     hidden: Cell<bool>,
     shrouded: Cell<bool>,
     pub need_renderables: Cell<bool>,
+    /// `FrozenActor.Renderables`: what the client draws while the actor is hidden.
+    pub renderables: RefCell<Rc<Vec<crate::render::Renderable>>>,
     pub update_visibility_next_tick: Cell<bool>,
 }
 
@@ -75,6 +77,7 @@ impl FrozenActor {
             visible: Cell::new(true),
             hidden: Cell::new(false),
             shrouded: Cell::new(false),
+            renderables: RefCell::new(Rc::new(Vec::new())),
             need_renderables: Cell::new(starts_revealed),
             update_visibility_next_tick: Cell::new(false),
         });

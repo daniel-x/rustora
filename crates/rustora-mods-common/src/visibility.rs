@@ -478,6 +478,26 @@ impl FrozenUnderFog {
     }
 }
 
+impl FrozenUnderFog {
+    /// `ITickRender.TickRender`: captures the actor's renderables for the frozen actors that need them.
+    pub fn tick_render(&self, self_: &ActorRef) {
+        let mut renderables = None;
+        for (_, state) in self.frozen_states.borrow().iter() {
+            let frozen = &state.frozen_actor;
+            if !frozen.need_renderables.get() {
+                continue;
+            }
+            let captured = renderables.get_or_insert_with(|| {
+                let mut out = Vec::new();
+                rustora_engine::render::render_actor(self_, &mut out);
+                Rc::new(out)
+            });
+            frozen.need_renderables.set(false);
+            *frozen.renderables.borrow_mut() = captured.clone();
+        }
+    }
+}
+
 impl ICreatesFrozenActors for FrozenUnderFog {
     fn on_visibility_changed(&self, frozen: &FrozenActor) {
         if !self.created.get() {

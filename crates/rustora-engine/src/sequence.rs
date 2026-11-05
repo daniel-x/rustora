@@ -194,6 +194,11 @@ impl SequenceSet {
             .contains_key(sequence)
     }
 
+    /// `SequenceSet.Sequences`: the sequence names of an image.
+    pub fn sequence_names(&self, image: &str) -> Vec<String> {
+        self.images.get(image).map_or_else(Vec::new, |s| s.keys().cloned().collect())
+    }
+
     pub fn has_image(&self, image: &str) -> bool {
         self.images.contains_key(image)
     }

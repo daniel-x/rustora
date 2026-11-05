@@ -20,6 +20,7 @@ pub mod combat;
 pub mod conditions;
 pub mod crates;
 pub mod death;
+pub mod decorations;
 pub mod effects;
 pub mod experience;
 pub mod game_save;
@@ -62,6 +63,8 @@ use rustora_engine::rules::TraitRegistry;
 pub fn register(r: &mut TraitRegistry) {
     actor_map::register(r);
     palettes::register(r);
+    smudge::register(r);
+    decorations::register(r);
     render_traits::register(r);
     game_save::register(r);
     selection::register(r);

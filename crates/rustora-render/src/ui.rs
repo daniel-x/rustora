@@ -18,6 +18,8 @@ pub struct UiQuad {
     pub dst: [f32; 4],
     pub src: [f32; 4],
     pub color: [f32; 4],
+    /// Corners of a solid rotated quad, replacing `dst`.
+    pub corners: Option<[[f32; 2]; 4]>,
 }
 
 /// Quads in draw order with the clip rectangles that apply from a quad index on.
@@ -45,6 +47,26 @@ impl UiList {
             dst,
             src: [0.0, 0.0, 1.0, 1.0],
             color,
+            corners: None,
+        });
+    }
+
+    /// Adds a solid line, `width` pixels thick, with a premultiplied color, as `RgbaColorRenderer.DrawLine`.
+    pub fn line(&mut self, from: [f32; 2], to: [f32; 2], width: f32, color: [f32; 4]) {
+        let d = [to[0] - from[0], to[1] - from[1]];
+        let len = (d[0] * d[0] + d[1] * d[1]).sqrt().max(f32::EPSILON);
+        let n = [-d[1] / len * width / 2.0, d[0] / len * width / 2.0];
+        self.quads.push(UiQuad {
+            texture: UiTexture(0),
+            dst: [0.0; 4],
+            src: [0.0, 0.0, 1.0, 1.0],
+            color,
+            corners: Some([
+                [from[0] - n[0], from[1] - n[1]],
+                [from[0] + n[0], from[1] + n[1]],
+                [to[0] + n[0], to[1] + n[1]],
+                [to[0] - n[0], to[1] - n[1]],
+            ]),
         });
     }
 }
@@ -279,6 +301,17 @@ impl UiPass {
                 uv: [u, t],
                 color: q.color,
             };
+            if let Some([a, b, c, d]) = q.corners {
+                vertices.extend_from_slice(&[
+                    v(a[0], a[1], u0, v0),
+                    v(b[0], b[1], u1, v0),
+                    v(c[0], c[1], u1, v1),
+                    v(a[0], a[1], u0, v0),
+                    v(c[0], c[1], u1, v1),
+                    v(d[0], d[1], u0, v1),
+                ]);
+                continue;
+            }
             vertices.extend_from_slice(&[
                 v(x, y, u0, v0),
                 v(x + w, y, u1, v0),

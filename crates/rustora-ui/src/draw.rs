@@ -116,6 +116,7 @@ impl<'a> DrawContext<'a> {
             dst: [x, y, w, h],
             src: [s.x as f32, s.y as f32, s.w as f32, s.h as f32],
             color: WHITE,
+            corners: None,
         });
     }
 

@@ -74,6 +74,20 @@ pub struct DetectionType;
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct CloakInfo {
+    pub cloak_sound: Option<String>,
+    pub uncloak_sound: Option<String>,
+    pub cloak_style: String,
+    pub cloaked_alpha: f32,
+    pub cloaked_color: rustora_core::fieldloader::Color,
+    pub cloaked_palette: Option<String>,
+    pub is_player_palette: bool,
+    pub effect_image: Option<String>,
+    pub cloak_effect_sequence: Option<String>,
+    pub uncloak_effect_sequence: Option<String>,
+    pub effect_palette: String,
+    pub effect_palette_is_player_palette: bool,
+    pub effect_offset: rustora_core::world_types::WVec,
+    pub effect_tracks_actor: bool,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -93,6 +107,20 @@ impl Default for CloakInfo {
             base: PausableConditionalTraitInfo::default(),
             initial_delay: 10,
             cloak_delay: 30,
+            cloak_sound: None,
+            uncloak_sound: None,
+            cloak_style: "Alpha".into(),
+            cloaked_alpha: 0.55,
+            cloaked_color: rustora_core::fieldloader::Color::from_argb(140, 0, 0, 0),
+            cloaked_palette: None,
+            is_player_palette: false,
+            effect_image: None,
+            cloak_effect_sequence: None,
+            uncloak_effect_sequence: None,
+            effect_palette: "effect".into(),
+            effect_palette_is_player_palette: false,
+            effect_offset: rustora_core::world_types::WVec::ZERO,
+            effect_tracks_actor: true,
             uncloak_on: UncloakType(
                 UncloakType::Attack.0 | UncloakType::Unload.0 | UncloakType::Infiltrate.0 | UncloakType::Demolish.0 | UncloakType::Dock.0,
             ),
@@ -121,6 +149,7 @@ register_traits!(
     INotifyUnloadCargo,
     INotifyLoadCargo,
     INotifyAttack,
+    rustora_engine::render::IRenderModifier,
     IVisibilityModifier,
     INotifyDockClient,
     INotifyDockHost,
@@ -183,7 +212,64 @@ impl INotifyCreated for Cloak {
     }
 }
 
+impl rustora_engine::render::IRenderModifier for Cloak {
+    /// `ModifyRender`. The scene only asks for actors the render player can see.
+    fn modify_render(&self, self_: &ActorRef, renderables: &mut Vec<rustora_engine::render::Renderable>) {
+        use rustora_engine::render::{PaletteRef, Renderable};
+        if self.remaining_time.get() > 0 || self.state.is_trait_disabled() || self.state.is_trait_paused() {
+            return;
+        }
+        let info = &self.info;
+        let c = info.cloaked_color;
+        for r in renderables.iter_mut() {
+            let Renderable::Sprite(s) = r else { continue };
+            if s.is_decoration {
+                continue;
+            }
+            match info.cloak_style.as_str() {
+                "Alpha" => s.alpha = info.cloaked_alpha,
+                "Color" => {
+                    s.replace_color = Some([c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0]);
+                    s.alpha = c.a() as f32 / 255.0;
+                }
+                "Palette" => s.palette = PaletteRef::resolve(info.cloaked_palette.as_deref(), info.is_player_palette, &self_.owner()),
+                _ => {}
+            }
+        }
+    }
+}
+
 impl Cloak {
+    /// The effect of a cloak state change.
+    fn spawn_effect(&self, self_: &ActorRef, sequence: Option<&str>) {
+        let info = &self.info;
+        let (Some(image), Some(sequence)) = (info.effect_image.as_deref(), sequence) else {
+            return;
+        };
+        let offset = info.effect_offset;
+        let pos = self_.center_position();
+        let a = self_.clone();
+        let pos_func: Box<dyn Fn() -> rustora_core::world_types::WPos> = if info.effect_tracks_actor {
+            Box::new(move || a.center_position() + offset)
+        } else {
+            Box::new(move || pos + offset)
+        };
+        let palette =
+            rustora_engine::render::PaletteRef::resolve(Some(&info.effect_palette), info.effect_palette_is_player_palette, &self_.owner());
+        let w = self_.world();
+        let e: rustora_engine::effect::EffectRef = crate::effects::SpriteEffect::new(
+            &w,
+            pos_func,
+            Rc::new(|| rustora_core::world_types::WAngle::ZERO),
+            image,
+            sequence,
+            palette,
+            false,
+            0,
+        );
+        w.add_frame_end_task(Box::new(move |w| w.add_effect(e)));
+    }
+
     pub fn is_trait_disabled(&self) -> bool {
         self.state.is_trait_disabled()
     }
@@ -241,10 +327,24 @@ impl ITick for Cloak {
             }
         }
         let is_cloaked = self.cloaked();
+        let show_change = !(self.first_tick.get() && self.info.initial_delay == 0)
+            && self
+                .other_cloaks
+                .get()
+                .and_then(|o| o.as_ref())
+                .is_none_or(|others| !others.iter().any(|c| c.cloaked()));
         if is_cloaked && !self.was_cloaked.get() {
             self.grant_cloaked_condition(self_);
-        } else if !is_cloaked && self.was_cloaked.get() && self.cloaked_token.get() != INVALID_CONDITION_TOKEN {
-            self.cloaked_token.set(self_.revoke_condition(self.cloaked_token.get()));
+            if show_change {
+                self.spawn_effect(self_, self.info.cloak_effect_sequence.as_deref());
+            }
+        } else if !is_cloaked && self.was_cloaked.get() {
+            if self.cloaked_token.get() != INVALID_CONDITION_TOKEN {
+                self.cloaked_token.set(self_.revoke_condition(self.cloaked_token.get()));
+            }
+            if show_change {
+                self.spawn_effect(self_, self.info.uncloak_effect_sequence.as_deref());
+            }
         }
         self.was_cloaked.set(is_cloaked);
         self.first_tick.set(false);

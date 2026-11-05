@@ -2,18 +2,21 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The selection annotations of `SelectionDecorationsBase.cs`: `SelectionBoxAnnotationRenderable` and the health
-//! bar of `SelectionBarsAnnotationRenderable`. Extra bars, decorations and path debugging follow with slice 7.
+//! bar of `SelectionBarsAnnotationRenderable`. Extra bars and path debugging are not ported.
 
 use rustora_core::fieldloader::Color;
+use rustora_core::world_types::{WAngle, WPos, WRot, WVec};
 use rustora_engine::damage::DamageState;
 use rustora_engine::traits::IHealth;
 use rustora_engine::world::WorldType;
 use rustora_game::settings::{Settings, StatusBarsType};
+use rustora_mods_common::decorations::{AnnotationCircle, IDecoration, IRenderCircles};
 use rustora_mods_common::selection::SelectableInfo;
 
 use crate::draw::{DrawContext, Rect};
 use crate::logic::ingame::Ingame;
 use crate::screen_map::SelectionContext;
+use crate::viewport::Viewport;
 
 fn line(dc: &mut DrawContext, a: (f32, f32), b: (f32, f32), c: Color) {
     let (l, r) = (a.0.min(b.0), a.0.max(b.0));
@@ -76,6 +79,83 @@ fn health_bar(dc: &mut DrawContext, health: &dyn IHealth, start: (f32, f32), end
     }
 }
 
+const RANGE_CIRCLE_SEGMENTS: i32 = 32;
+
+/// `RangeCircleAnnotationRenderable.DrawRangeCircle` and the sweep lines of `DetectionCircleAnnotationRenderable`.
+fn draw_circle(dc: &mut DrawContext, viewport: &Viewport, c: &AnnotationCircle) {
+    let view = |p: WPos| {
+        let (x, y) = viewport.world_to_view_px((p.x * 24 / 1024, (p.y - p.z) * 24 / 1024));
+        [x as f32, y as f32]
+    };
+    let at = |facing: i32| {
+        let rot = WRot::from_yaw(WAngle::from_facing(facing));
+        view(c.center + WVec::new(c.radius.length, 0, 0).rotate(&rot))
+    };
+    if let Some((count, separation, first)) = c.trail {
+        let center = view(c.center);
+        for i in 0..count {
+            let step = if separation.angle <= 512 { 1 } else { -1 };
+            let angle = first - WAngle::new(i * step);
+            let end = view(c.center + WVec::new(angle.cos(), angle.sin(), 0) * c.radius.length / 1024);
+            let alpha = c.color.a() as i32 - i * c.color.a() as i32 / count;
+            let with_alpha = |col: Color| Color::from_argb(alpha as u8, col.r(), col.g(), col.b());
+            dc.list
+                .line(center, end, c.border_width, crate::font::premultiplied(with_alpha(c.border_color)));
+            dc.list.line(center, end, c.width, crate::font::premultiplied(with_alpha(c.color)));
+        }
+    }
+    for i in 0..RANGE_CIRCLE_SEGMENTS {
+        let (a, b) = (at(8 * i), at(8 * i + 6));
+        if c.border_width > 0.0 {
+            dc.list.line(a, b, c.border_width, crate::font::premultiplied(c.border_color));
+        }
+        if c.width > 0.0 {
+            dc.list.line(a, b, c.width, crate::font::premultiplied(c.color));
+        }
+    }
+}
+
+/// `SelectionDecorationsBase.DrawDecorations`, the `IDecoration` part.
+fn draw_decorations(
+    dc: &mut DrawContext,
+    ingame: &Ingame,
+    viewport: &Viewport,
+    a: &rustora_engine::actor::ActorRef,
+    b: Rect,
+    selected: bool,
+) {
+    for d in a.traits_implementing::<dyn IDecoration>() {
+        if d.requires_selection() && !selected {
+            continue;
+        }
+        let Some(deco) = d.render_decoration(a, ingame.render_player.as_ref()) else {
+            continue;
+        };
+        let (anchor, margin) = match deco.position.as_str() {
+            "TopLeft" => ((b.x, b.y), (deco.margin.x, deco.margin.y)),
+            "TopRight" => ((b.right(), b.y), (-deco.margin.x, deco.margin.y)),
+            "BottomLeft" => ((b.x, b.bottom()), (deco.margin.x, -deco.margin.y)),
+            "BottomRight" => ((b.right(), b.bottom()), (-deco.margin.x, -deco.margin.y)),
+            "Top" => ((b.x + b.w / 2, b.y), (0, deco.margin.y)),
+            _ => ((b.x + b.w / 2, b.y + b.h / 2), (0, 0)),
+        };
+        let (ox, oy) = viewport.world_to_view_px(anchor);
+        let origin = (ox + margin.0, oy + margin.1);
+        for s in &deco.sprites {
+            let Some(f) = ingame.world_sprites.frame(dc.renderer, &s.image, &s.sequence, s.frame, &s.palette) else {
+                continue;
+            };
+            let stride = if s.stride == Default::default() {
+                (f.sprite.w, 0)
+            } else {
+                (s.stride.x, s.stride.y)
+            };
+            let pos = ((origin.0 + s.index * stride.0) as f32, (origin.1 + s.index * stride.1) as f32);
+            dc.draw_frame_centered(f, pos);
+        }
+    }
+}
+
 /// Draws the selection boxes and health bars of all actors in the screen map, in screen pixels.
 pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings) {
     {
@@ -125,5 +205,26 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
         {
             health_bar(dc, &**h, view(b.x + 1, b.y), view(b.right() - 1, b.y));
         }
+        draw_decorations(dc, ingame, &viewport, a, b, selected);
+    }
+    let mut circles = Vec::new();
+    for a in ingame.world.actors() {
+        if !a.is_in_world() || a.is_dead() {
+            continue;
+        }
+        let renderers = a.traits_implementing::<dyn IRenderCircles>();
+        if renderers.is_empty() {
+            continue;
+        }
+        let selected = ingame.selection.contains(&a);
+        for r in renderers {
+            r.circles(&a, ingame.render_player.as_ref(), false, &mut circles);
+            if selected {
+                r.circles(&a, ingame.render_player.as_ref(), true, &mut circles);
+            }
+        }
+    }
+    for c in &circles {
+        draw_circle(dc, &viewport, c);
     }
 }
