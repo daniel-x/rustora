@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `LogicTickerWidget.cs`, `ProductionTypeButtonWidget.cs` and `ProductionPaletteWidget.cs`.
-//! sounds, speech notifications, transient text lines and production icon overlays.
+//! Without production icon overlays.
 
 use std::rc::Rc;
 
