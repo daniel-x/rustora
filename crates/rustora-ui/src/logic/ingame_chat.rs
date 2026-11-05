@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `LoadIngameChatLogic.cs`, `IngameChatLogic.cs` and `GameTimerLogic.cs`. Chat commands are not ported.
+//! Ports of `LoadIngameChatLogic.cs`, `IngameChatLogic.cs` and `GameTimerLogic.cs`.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -255,7 +255,9 @@ pub fn ingame_chat(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
             let content = ui.get::<TextFieldWidget>(text).text();
             if !content.is_empty() {
                 if content.starts_with('/') {
-                    log::debug!("Chat commands are not ported: {content}");
+                    if let Some(ingame) = services(ui).ingame.borrow().clone() {
+                        super::chat_commands::on_chat(ui, &ingame, content.trim());
+                    }
                 } else {
                     let finished = local.as_ref().is_some_and(|l| l.win_state.get() != WinState::Undefined);
                     let team_number = match (team, is_observer || finished) {

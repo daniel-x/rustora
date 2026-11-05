@@ -19,6 +19,7 @@ use crate::net::{LobbyRules, Net};
 use crate::widget::{Action, ChromeLogic, Getter, Ui, WidgetArgs, WidgetId};
 use crate::widgets::LabelWidget;
 
+pub mod chat_commands;
 pub mod color_picker;
 pub mod command_bar;
 pub mod connection;

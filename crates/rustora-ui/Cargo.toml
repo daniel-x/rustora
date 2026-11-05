@@ -17,6 +17,7 @@ rustora-mods-common = { path = "../rustora-mods-common" }
 indexmap = "2"
 png = "0.18"
 log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 swash = "0.2"
 fluent-bundle = "0.16"
 unic-langid = "0.9"

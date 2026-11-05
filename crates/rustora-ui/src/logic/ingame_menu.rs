@@ -21,7 +21,7 @@ use crate::widget::{Action, AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
 use crate::widgets::menu_button::MenuButtonWidget;
 
 /// `World.SetPauseState`.
-fn set_pause_state(world: &rustora_engine::world::World, paused: bool) {
+pub(crate) fn set_pause_state(world: &rustora_engine::world::World, paused: bool) {
     let mut o = Order::new("PauseGame", None, Target::Invalid, false);
     o.target_string = Some(if paused { "Pause" } else { "UnPause" }.to_string());
     world.issue_order(o);

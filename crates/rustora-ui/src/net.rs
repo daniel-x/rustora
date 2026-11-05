@@ -35,6 +35,13 @@ pub enum TextNotificationPool {
     Transients,
 }
 
+/// Hour and minute of the local time, for `TextNotification.time`.
+pub fn local_time() -> (u32, u32) {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    (now.hour(), now.minute())
+}
+
 /// `TextNotificationsManager.SystemClientId`.
 pub const SYSTEM_CLIENT_ID: i32 = -1;
 

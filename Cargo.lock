@@ -2660,6 +2660,7 @@ dependencies = [
 name = "rustora-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "fluent-bundle",
  "indexmap",
  "log",
