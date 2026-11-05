@@ -28,6 +28,7 @@ pub struct WorldInteractionControllerWidget {
     is_dragging: bool,
     deadzone: i32,
     cursor: Option<String>,
+    selection_hash: Option<i32>,
 }
 
 /// `ChromeMetrics.TryGet` with white as the fallback.
@@ -54,6 +55,7 @@ impl WorldInteractionControllerWidget {
             is_dragging: false,
             deadzone: 24,
             cursor: None,
+            selection_hash: None,
         }
     }
 
@@ -80,12 +82,12 @@ impl WorldInteractionControllerWidget {
 
     fn handle(&mut self, ui: &mut Ui, id: WidgetId, ingame: &Ingame, ctx: &OrderContext, mi: &MouseInput) -> bool {
         let generator = ingame.order_generator();
-        let Some(uog) = generator.as_unit_order_generator() else {
+        if !generator.is_unit_order_generator() {
             Self::apply_orders(ingame, ctx, mi);
             self.is_dragging = false;
             self.yield_mouse_focus(ui, id, Some(mi));
             return true;
-        };
+        }
         let multi_click = mi.multi_tap >= 2;
         let selection = &ingame.selection;
         if mi.button == MouseButton::Left && mi.event == MouseEvent::Down {
@@ -101,7 +103,7 @@ impl WorldInteractionControllerWidget {
                 && !self.is_valid_dragbox()
                 && !selection.actors().is_empty()
                 && !multi_click
-                && uog.input_overrides_selection(ctx, self.mouse_pos, mi)
+                && generator.input_overrides_selection(ctx, self.mouse_pos, mi)
             {
                 Self::apply_orders(ingame, ctx, mi);
                 self.is_dragging = false;
@@ -121,11 +123,10 @@ impl WorldInteractionControllerWidget {
                     drop(viewport);
                     selection.combine(&new_selection, true, false);
                 }
-            } else if self.is_dragging && (uog.clear_selection_on_left_click() || self.is_valid_dragbox()) {
+            } else if self.is_dragging && (generator.clear_selection_on_left_click() || self.is_valid_dragbox()) {
                 let new_selection = sel.select_actors_in_box_with_deadzone(self.drag_start, self.mouse_pos, mi.modifiers);
                 selection.combine(&new_selection, mi.modifiers.shift, self.drag_start == self.mouse_pos);
             }
-            generator.selection_changed(ctx);
             ingame.cancel_input_mode();
             self.is_dragging = false;
             self.yield_mouse_focus(ui, id, Some(mi));
@@ -147,7 +148,8 @@ impl WidgetKind for WorldInteractionControllerWidget {
         self.ingame = services(ui).ingame.borrow().clone();
     }
 
-    /// Also ticks the order generator, which `World.Tick` does in C#.
+    /// Also ticks the order generator, which `World.Tick` does in C#, and tells it about selection changes, which
+    /// `Selection` does in C# at the time of the change.
     fn tick(&mut self, ui: &mut Ui, _id: WidgetId) {
         let Some(ingame) = self.ingame.clone() else {
             return;
@@ -155,7 +157,14 @@ impl WidgetKind for WorldInteractionControllerWidget {
         let settings = services(ui).settings.clone();
         let settings = settings.borrow();
         let generator = ingame.order_generator();
-        ingame.with_order_context(&settings, |ctx| generator.tick(ctx));
+        let hash = ingame.selection.hash();
+        let selection_changed = self.selection_hash.replace(hash).is_some_and(|last| last != hash);
+        ingame.with_order_context(&settings, |ctx| {
+            if selection_changed {
+                generator.selection_changed(ctx);
+            }
+            ingame.order_generator().tick(ctx);
+        });
     }
 
     fn draw(&mut self, ui: &mut Ui, _id: WidgetId, dc: &mut DrawContext) {

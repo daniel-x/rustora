@@ -29,8 +29,8 @@ mod scroll_panel;
 mod slider;
 pub mod support_powers;
 mod text_field;
-mod tooltip;
-mod viewport_controller;
+pub mod tooltip;
+pub mod viewport_controller;
 pub mod world_interaction;
 
 pub use background::BackgroundWidget;
@@ -57,7 +57,8 @@ pub fn container() -> Rc<RefCell<dyn WidgetKind>> {
 /// Port of `ObjectCreator.CreateObject<Widget>`.
 pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetKind>>> {
     Some(match type_name {
-        "Container" | "LogicKeyListener" => container(),
+        "Container" => container(),
+        "LogicKeyListener" => cell(production::LogicKeyListenerWidget::default()),
         "LogicTicker" => cell(production::LogicTickerWidget::default()),
         "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
         "SupportPowers" => cell(support_powers::SupportPowersWidget::default()),

@@ -33,6 +33,7 @@ pub struct Ingame {
     order_generator: RefCell<Rc<dyn OrderGenerator>>,
     world_default_cursor: String,
     default_order_generator: Rc<dyn OrderGenerator>,
+    unit_order_generator: UnitOrderGenerator,
 }
 
 impl Ingame {
@@ -50,10 +51,11 @@ impl Ingame {
         if let Some(groups) = rustora_mods_common::selection::ControlGroups::of(&world) {
             groups.set_local_player(local_player.clone());
         }
-        let default_order_generator: Rc<dyn OrderGenerator> = Rc::new(UnitOrderGenerator {
+        let unit_order_generator = UnitOrderGenerator {
             world_select_cursor,
             world_default_cursor: world_default_cursor.clone(),
-        });
+        };
+        let default_order_generator: Rc<dyn OrderGenerator> = Rc::new(unit_order_generator.clone());
         Ingame {
             world,
             viewport,
@@ -65,7 +67,13 @@ impl Ingame {
             order_generator: RefCell::new(default_order_generator.clone()),
             world_default_cursor,
             default_order_generator,
+            unit_order_generator,
         }
+    }
+
+    /// A new `UnitOrderGenerator`, as the base of the generators that derive from it in C#.
+    pub fn unit_order_generator(&self) -> UnitOrderGenerator {
+        self.unit_order_generator.clone()
     }
 
     /// `World.OrderGenerator`.

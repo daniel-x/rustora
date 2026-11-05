@@ -57,6 +57,8 @@ pub struct ButtonWidget {
     pub is_highlighted: Option<Getter<bool>>,
     pub on_click: Option<Action>,
     pub on_double_click: Option<Action>,
+    pub on_key_press: Option<Action>,
+    pub disable_key_repeat: bool,
     pub on_mouse_down: Option<Rc<dyn Fn(&mut Ui, &MouseInput)>>,
     pub tooltip_container: Option<String>,
     pub tooltip_template: String,
@@ -96,6 +98,8 @@ impl ButtonWidget {
             is_highlighted: None,
             on_click: None,
             on_double_click: None,
+            on_key_press: None,
+            disable_key_repeat: false,
             on_mouse_down: None,
             tooltip_container: None,
             tooltip_template: "BUTTON_TOOLTIP".into(),
@@ -159,7 +163,8 @@ impl ButtonWidget {
             "TooltipTemplate" => self.tooltip_template = value.to_string(),
             "TooltipText" => self.tooltip_text = value.to_string(),
             "TooltipDesc" => self.tooltip_desc = value.to_string(),
-            "DisableKeyRepeat" | "DisableKeySound" | "ClickSound" | "ClickDisabledSound" => {}
+            "DisableKeyRepeat" => self.disable_key_repeat = parse_bool(value),
+            "DisableKeySound" | "ClickSound" | "ClickDisabledSound" => {}
             _ => return false,
         }
         true
@@ -344,11 +349,11 @@ impl WidgetKind for ButtonWidget {
             .key
             .as_deref()
             .is_some_and(|key| ui.assets.borrow().hotkeys.is_activated(key, e));
-        if e.event != KeyEvent::Down || !activated {
+        if e.event != KeyEvent::Down || !activated || (self.disable_key_repeat && e.repeat) {
             return false;
         }
         if !self.disabled_now()
-            && let Some(action) = self.on_click.clone()
+            && let Some(action) = self.on_key_press.clone().or_else(|| self.on_click.clone())
         {
             ui.defer(move |ui| action(ui));
         }

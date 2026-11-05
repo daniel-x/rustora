@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use super::impl_as_any;
 use crate::draw::DrawContext;
-use crate::widget::{EventBounds, Ui, WidgetArgs, WidgetId, WidgetKind};
+use crate::widget::{Action, EventBounds, Ui, WidgetArgs, WidgetId, WidgetKind};
 
 const CURSOR_OFFSET: (i32, i32) = (0, 20);
 const BOTTOM_EDGE_Y_OFFSET: i32 = -5;
 
-/// Port of `TooltipContainerWidget`. The tooltip loads on the first tick after the delay, because fonts are not
-/// measurable while a frame is being drawn.
+/// `TooltipContainerWidget.BeforeRender`, which a tooltip logic sets through the `beforeRender` widget argument.
+pub type BeforeRender = Rc<RefCell<Option<Action>>>;
+
+/// Port of `TooltipContainerWidget`. The tooltip loads on the first tick after the delay, and `BeforeRender` runs on
+/// each tick instead of each frame, because fonts are not measurable while a frame is being drawn.
 #[derive(Clone)]
 pub struct TooltipContainerWidget {
     pub tooltip_delay_milliseconds: i64,
@@ -17,6 +23,7 @@ pub struct TooltipContainerWidget {
     pending: Option<(String, WidgetArgs)>,
     next_token: i32,
     current_token: i32,
+    before_render: BeforeRender,
 }
 
 impl Default for TooltipContainerWidget {
@@ -27,6 +34,7 @@ impl Default for TooltipContainerWidget {
             pending: None,
             next_token: 1,
             current_token: 0,
+            before_render: BeforeRender::default(),
         }
     }
 }
@@ -62,6 +70,7 @@ impl TooltipContainerWidget {
             }
             widget.tooltip = None;
             widget.pending = None;
+            *widget.before_render.borrow_mut() = None;
         }
         ui.remove_children(id);
     }
@@ -104,8 +113,14 @@ impl WidgetKind for TooltipContainerWidget {
             && self.tooltip.is_none()
             && let Some((template, args)) = self.pending.take()
         {
-            let args = args.with_value("tooltipContainer", id);
+            let args = args
+                .with_value("tooltipContainer", id)
+                .with_value("beforeRender", self.before_render.clone());
             self.tooltip = Some(ui.load_widget(&template, Some(id), &args));
+        }
+        let before_render = self.before_render.borrow().clone();
+        if let Some(before_render) = before_render {
+            ui.defer_for(id, move |ui| before_render(ui));
         }
     }
 

@@ -25,6 +25,7 @@ use crate::interfaces::*;
 use crate::player::PlayerResources;
 use crate::production::get_sell_value;
 use crate::render::WithMakeAnimation;
+use crate::tooltip::IProvideTooltipInfo;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("Transforms", |n| load_info!(TransformsInfo, n));
@@ -351,6 +352,7 @@ pub struct SellableInfo {
     pub refund_percent: i32,
     pub show_ticks: bool,
     pub skip_make_animation: bool,
+    pub show_tooltip_text: bool,
     pub cursor: String,
 }
 
@@ -362,6 +364,7 @@ impl Default for SellableInfo {
             refund_percent: 50,
             show_ticks: true,
             skip_make_animation: false,
+            show_tooltip_text: true,
             cursor: "sell".into(),
         }
     }
@@ -372,13 +375,33 @@ pub struct Sellable {
     state: ConditionalState,
 }
 
+impl IProvideTooltipInfo for Sellable {
+    fn is_tooltip_visible(&self, self_: &ActorRef, for_player: Option<&rustora_engine::player::PlayerRef>, sell_mode: bool) -> bool {
+        self.info.show_tooltip_text
+            && !self.state.is_trait_disabled()
+            && sell_mode
+            && for_player.is_some_and(|p| Rc::ptr_eq(p, &self_.owner()))
+    }
+
+    fn tooltip_text(&self, self_: &ActorRef, _message: &dyn Fn(&str) -> String) -> String {
+        let sell_value = get_sell_value(self_) as i64;
+        let (hp, max_hp) = self_
+            .trait_or_default::<dyn IHealth>()
+            .map_or((1, 1), |h| (h.hp() as i64, h.max_hp() as i64));
+        format!(
+            "Refund: ${}",
+            (sell_value * self.info.refund_percent as i64 * hp / (100 * max_hp)) as i32
+        )
+    }
+}
+
 impl Sellable {
     pub fn is_trait_disabled(&self) -> bool {
         self.state.is_trait_disabled()
     }
 }
 
-register_traits!(Sellable: IResolveOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(Sellable: IResolveOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync, IProvideTooltipInfo);
 info_impl!(SellableInfo => |info, _| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new(Sellable { info, state }))

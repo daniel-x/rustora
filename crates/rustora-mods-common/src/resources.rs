@@ -27,6 +27,7 @@ use crate::util;
 pub fn register(r: &mut TraitRegistry) {
     r.register("ResourceLayer", |n| load_info!(ResourceLayerInfo, n));
     r.register("SeedsResource", |n| load_info!(SeedsResourceInfo, n));
+    r.register("ResourceRenderer", |n| load_info!(ResourceRendererInfo, n));
 }
 
 #[derive(Clone, Debug, Default)]
@@ -75,6 +76,34 @@ fn load_resource_types(yaml: &MiniYaml) -> Result<IndexMap<String, ResourceTypeI
     }
     Ok(ret)
 }
+
+/// The tooltip part of `ResourceRendererInfo`: the fluent key of the name of each resource type. Drawing lives in
+/// the client.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ResourceRendererInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(loader = "load_resource_names")]
+    pub resource_types: IndexMap<String, String>,
+}
+
+fn load_resource_names(yaml: &MiniYaml) -> Result<IndexMap<String, String>, LoadError> {
+    let mut ret = IndexMap::new();
+    if let Some(r) = yaml.node_with_key_or_default("ResourceTypes")? {
+        for n in &r.value.nodes {
+            let name = n.value.nodes.iter().find(|x| x.key == "Name").and_then(|x| x.value.value.clone());
+            ret.insert(n.key.clone(), name.unwrap_or_default());
+        }
+    }
+    Ok(ret)
+}
+
+pub struct ResourceRenderer {
+    pub info: Rc<ResourceRendererInfo>,
+}
+
+register_traits!(ResourceRenderer);
+info_impl!(ResourceRendererInfo => |info, _init| Some(Rc::new(ResourceRenderer { info })));
 
 pub type ResourceCellChanged = Rc<dyn Fn(CPos, Option<&str>)>;
 

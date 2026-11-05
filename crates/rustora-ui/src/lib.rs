@@ -8,6 +8,7 @@ pub mod annotations;
 pub mod assets;
 pub mod button_orders;
 pub mod chrome;
+pub mod command_orders;
 pub mod cursor;
 pub mod draw;
 pub mod fluent;

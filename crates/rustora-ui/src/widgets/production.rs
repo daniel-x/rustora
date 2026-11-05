@@ -47,6 +47,28 @@ impl WidgetKind for LogicTickerWidget {
     }
 }
 
+/// Port of `LogicKeyListenerWidget`.
+#[derive(Clone, Default)]
+pub struct LogicKeyListenerWidget {
+    pub handlers: Vec<Rc<dyn Fn(&mut Ui, &KeyInput) -> bool>>,
+}
+
+impl WidgetKind for LogicKeyListenerWidget {
+    impl_as_any!();
+
+    fn handle_key(&mut self, ui: &mut Ui, _id: WidgetId, e: &KeyInput) -> bool {
+        self.handlers.iter().any(|h| h(ui, e))
+    }
+
+    fn ignores_mouse_over(&self) -> bool {
+        true
+    }
+
+    fn cursor(&self, _default: &str) -> Option<String> {
+        None
+    }
+}
+
 /// Port of `ProductionTypeButtonWidget`: a button with a production group.
 #[derive(Clone)]
 pub struct ProductionTypeButtonWidget {

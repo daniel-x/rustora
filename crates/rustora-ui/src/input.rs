@@ -30,6 +30,40 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
+    pub const SHIFT: Modifiers = Modifiers {
+        shift: true,
+        ctrl: false,
+        alt: false,
+        meta: false,
+    };
+    pub const CTRL: Modifiers = Modifiers {
+        shift: false,
+        ctrl: true,
+        alt: false,
+        meta: false,
+    };
+    pub const ALT: Modifiers = Modifiers {
+        shift: false,
+        ctrl: false,
+        alt: true,
+        meta: false,
+    };
+
+    /// `self | other`.
+    pub fn union(self, other: Modifiers) -> Modifiers {
+        Modifiers {
+            shift: self.shift || other.shift,
+            ctrl: self.ctrl || other.ctrl,
+            alt: self.alt || other.alt,
+            meta: self.meta || other.meta,
+        }
+    }
+
+    /// `HasFlag`.
+    pub fn contains(self, other: Modifiers) -> bool {
+        self.union(other) == self
+    }
+
     /// `Modifiers.HasModifier` with the bit values of the `Modifiers` enum: shift 1, alt 2, ctrl 4, meta 8.
     pub fn has_flags(self, flags: u32) -> bool {
         let bits = u32::from(self.shift) | u32::from(self.alt) << 1 | u32::from(self.ctrl) << 2 | u32::from(self.meta) << 3;

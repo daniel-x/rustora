@@ -5,15 +5,46 @@
 //! client that gives the order, so their state may change freely; the resulting `Order` is what gets synced.
 
 use std::any::Any;
+use std::rc::Rc;
 
 use rustora_core::world_types::CPos;
+use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::bitset::BitSet;
 use rustora_engine::frozen::FrozenActorRef;
 use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRelationship;
+use rustora_engine::rules::TraitRegistry;
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::terrain::TargetableType;
+use rustora_engine::{info_impl, load_info, register_traits};
+
+pub fn register(r: &mut TraitRegistry) {
+    r.register("CommandBarBlacklist", |n| load_info!(CommandBarBlacklistInfo, n));
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct CommandBarBlacklistInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub disable_stop: bool,
+    pub disable_waypoint_mode: bool,
+}
+
+impl Default for CommandBarBlacklistInfo {
+    fn default() -> Self {
+        CommandBarBlacklistInfo {
+            instance_name: None,
+            disable_stop: true,
+            disable_waypoint_mode: true,
+        }
+    }
+}
+
+pub struct CommandBarBlacklist;
+
+register_traits!(CommandBarBlacklist);
+info_impl!(CommandBarBlacklistInfo => |_info, _init| Some(Rc::new(CommandBarBlacklist)));
 
 /// `TargetModifiers` flags.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

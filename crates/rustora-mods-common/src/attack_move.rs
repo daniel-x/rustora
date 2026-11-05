@@ -30,6 +30,10 @@ pub struct AttackMoveInfo {
     pub attack_move_condition: Option<String>,
     pub assault_move_condition: Option<String>,
     pub move_into_shroud: bool,
+    pub attack_move_cursor: String,
+    pub attack_move_blocked_cursor: String,
+    pub assault_move_cursor: String,
+    pub assault_move_blocked_cursor: String,
 }
 
 impl Default for AttackMoveInfo {
@@ -39,6 +43,10 @@ impl Default for AttackMoveInfo {
             attack_move_condition: None,
             assault_move_condition: None,
             move_into_shroud: true,
+            attack_move_cursor: "attackmove".into(),
+            attack_move_blocked_cursor: "attackmove-blocked".into(),
+            assault_move_cursor: "assaultmove".into(),
+            assault_move_blocked_cursor: "assaultmove-blocked".into(),
         }
     }
 }

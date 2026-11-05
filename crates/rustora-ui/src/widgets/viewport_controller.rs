@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Port of `ViewportControllerWidget.cs` without the world tooltip, which follows with the selection.
+//! Port of `ViewportControllerWidget.cs`. Frozen actors have no tooltip yet.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use rustora_engine::actor::ActorRef;
+use rustora_engine::traits::IDisabledTrait;
 use rustora_game::settings::MouseScrollType;
+use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
+use rustora_mods_common::tooltip::{Tooltip, TooltipInfo};
 
-use super::impl_as_any;
+use super::{TooltipContainerWidget, impl_as_any};
 use crate::draw::DrawContext;
 use crate::input::{KeyEvent, KeyInput, MouseButton, MouseEvent, MouseInput};
-use crate::logic::services;
+use crate::logic::ingame::Ingame;
+use crate::logic::{message, services};
+use crate::screen_map::with_highest_selection_priority;
 use crate::viewport::{ScrollDirection, Viewport};
-use crate::widget::{Ui, WidgetId, WidgetKind};
+use crate::widget::{Ui, WidgetArgs, WidgetId, WidgetKind};
+use crate::widgets::world_interaction::view_to_world;
 
 const SCROLL_CURSORS: [(ScrollDirection, &str); 8] = [
     (ScrollDirection(1 | 2), "scroll-tl"),
@@ -44,10 +51,27 @@ const SCROLL_OFFSETS: [(ScrollDirection, f32, f32); 4] = [
     (ScrollDirection::RIGHT, 1.0, 0.0),
 ];
 
-/// Port of `ViewportControllerWidget`.
+/// `WorldTooltipType` with the value that goes with it.
 #[derive(Clone, Default)]
+pub enum WorldTooltip {
+    #[default]
+    None,
+    Unexplored,
+    Actor(ActorRef, Rc<Tooltip>),
+    Resource(String),
+}
+
+/// The tooltip state shared with `WorldTooltipLogic`.
+pub type SharedWorldTooltip = Rc<RefCell<WorldTooltip>>;
+
+/// Port of `ViewportControllerWidget`.
+#[derive(Clone)]
 pub struct ViewportControllerWidget {
     viewport: Option<Rc<RefCell<Viewport>>>,
+    ingame: Option<Rc<Ingame>>,
+    tooltip_container: Option<String>,
+    tooltip_template: String,
+    tooltip: SharedWorldTooltip,
     keys: Keys,
     bookmark_save_prefix: String,
     bookmark_restore_prefix: String,
@@ -85,7 +109,78 @@ fn length(a: (i32, i32), b: (i32, i32)) -> f32 {
     (dx * dx + dy * dy).sqrt()
 }
 
+impl Default for ViewportControllerWidget {
+    fn default() -> Self {
+        ViewportControllerWidget {
+            viewport: None,
+            ingame: None,
+            tooltip_container: None,
+            tooltip_template: "WORLD_TOOLTIP".to_string(),
+            tooltip: SharedWorldTooltip::default(),
+            keys: Keys::default(),
+            bookmark_save_prefix: String::new(),
+            bookmark_restore_prefix: String::new(),
+            bookmark_count: 0,
+            bookmarks: Vec::new(),
+            edge_directions: ScrollDirection::default(),
+            keyboard_directions: ScrollDirection::default(),
+            joystick_start: None,
+            joystick_end: None,
+            standard_start: None,
+            is_standard_scrolling: false,
+            last_scroll_time: 0,
+            deadzone: 0,
+            edge_scroll: false,
+            mouse_over: false,
+        }
+    }
+}
+
 impl ViewportControllerWidget {
+    /// `UpdateMouseover`.
+    fn update_mouseover(&self, ui: &Ui) -> WorldTooltip {
+        let Some(ingame) = &self.ingame else {
+            return WorldTooltip::None;
+        };
+        let world_px = ingame.viewport.borrow().view_to_world_px(ui.last_mouse);
+        let cell = view_to_world(world_px);
+        if !ingame.world.map().contains(cell) {
+            return WorldTooltip::None;
+        }
+        if ingame.render_player.as_ref().is_some_and(|p| !p.shroud().is_explored(cell)) {
+            return WorldTooltip::Unexplored;
+        }
+        let settings = services(ui).settings.clone();
+        let settings = settings.borrow();
+        let under_cursor = ingame.with_order_context(&settings, |ctx| {
+            let sel = ctx.selection_context();
+            let candidates: Vec<_> = ctx
+                .screen_map
+                .actors_at_mouse(world_px)
+                .into_iter()
+                .filter(|e| e.actor.info.has_trait_info::<TooltipInfo>() && !sel.fog_obscures(&e.actor))
+                .collect();
+            with_highest_selection_priority(&candidates, world_px, ui.modifiers)
+        });
+        if let Some(actor) = under_cursor {
+            let tooltip = actor.traits_implementing::<Tooltip>().into_iter().find(|t| !t.is_trait_disabled());
+            return tooltip.map_or(WorldTooltip::None, |t| WorldTooltip::Actor(actor, t));
+        }
+        let world_actor = ingame.world.world_actor();
+        let (Some(layer), Some(renderer)) = (
+            world_actor.trait_or_default::<ResourceLayer>(),
+            world_actor.trait_or_default::<ResourceRenderer>(),
+        ) else {
+            return WorldTooltip::None;
+        };
+        let resource = layer.get_resource(cell);
+        resource
+            .ty
+            .as_deref()
+            .and_then(|ty| renderer.info.resource_types.get(ty))
+            .map_or(WorldTooltip::None, |name| WorldTooltip::Resource(message(ui, name)))
+    }
+
     fn is_joystick_scrolling(&self) -> bool {
         match (self.joystick_start, self.joystick_end) {
             (Some(start), Some(end)) => length(start, end) > self.deadzone as f32,
@@ -139,7 +234,14 @@ impl WidgetKind for ViewportControllerWidget {
                 self.bookmark_count = value.parse().unwrap_or(0);
                 return true;
             }
-            "TooltipContainer" | "TooltipTemplate" => return true,
+            "TooltipContainer" => {
+                self.tooltip_container = Some(value.to_string());
+                return true;
+            }
+            "TooltipTemplate" => {
+                self.tooltip_template = value.to_string();
+                return true;
+            }
             _ => return false,
         };
         *target = value.to_string();
@@ -148,16 +250,24 @@ impl WidgetKind for ViewportControllerWidget {
 
     fn initialize(&mut self, ui: &mut Ui, _id: WidgetId) {
         let services = services(ui);
-        self.viewport = services.ingame.borrow().as_ref().map(|ingame| ingame.viewport.clone());
+        self.ingame = services.ingame.borrow().clone();
+        self.viewport = self.ingame.as_ref().map(|ingame| ingame.viewport.clone());
         self.bookmarks = vec![None; self.bookmark_count];
     }
 
-    fn mouse_entered(&mut self, _ui: &mut Ui, _id: WidgetId) {
+    fn mouse_entered(&mut self, ui: &mut Ui, _id: WidgetId) {
         self.mouse_over = true;
+        if let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) {
+            let args = WidgetArgs::default().with_value("viewportTooltip", self.tooltip.clone());
+            TooltipContainerWidget::set_tooltip(ui, container, &self.tooltip_template, args);
+        }
     }
 
-    fn mouse_exited(&mut self, _ui: &mut Ui, _id: WidgetId) {
+    fn mouse_exited(&mut self, ui: &mut Ui, _id: WidgetId) {
         self.mouse_over = false;
+        if let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) {
+            TooltipContainerWidget::remove_tooltip(ui, container);
+        }
     }
 
     fn draw(&mut self, ui: &mut Ui, _id: WidgetId, _dc: &mut DrawContext) {
@@ -196,6 +306,8 @@ impl WidgetKind for ViewportControllerWidget {
                 self.last_scroll_time = ui.run_time();
             }
         }
+        drop(settings);
+        *self.tooltip.borrow_mut() = self.update_mouseover(ui);
     }
 
     fn cursor(&self, _default: &str) -> Option<String> {

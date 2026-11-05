@@ -14,6 +14,8 @@ pub struct ImageWidget {
     pub click_through: bool,
     pub get_image_name: Option<Getter<String>>,
     pub get_image_collection: Option<Getter<String>>,
+    /// `WidgetUtils.BindButtonIcon`: the button whose state selects the image variant.
+    pub state_button: Option<WidgetId>,
 }
 
 impl Default for ImageWidget {
@@ -24,6 +26,7 @@ impl Default for ImageWidget {
             click_through: true,
             get_image_name: None,
             get_image_collection: None,
+            state_button: None,
         }
     }
 }
@@ -48,7 +51,33 @@ impl WidgetKind for ImageWidget {
             .as_ref()
             .map_or_else(|| self.image_collection.clone(), |f| f());
         let name = self.get_image_name.as_ref().map_or_else(|| self.image_name.clone(), |f| f());
-        if let Some(sprite) = dc.image(&collection, &name) {
+        let sprite = match self.state_button {
+            Some(button) => {
+                let (disabled, pressed, highlighted) = {
+                    let b = ui.button(button);
+                    (
+                        b.disabled_now(),
+                        b.depressed,
+                        b.is_highlighted.as_ref().map_or(b.highlighted, |f| f()),
+                    )
+                };
+                let suffix = match (disabled, pressed, ui.mouse_over == Some(button)) {
+                    (true, _, _) => "-disabled",
+                    (_, true, _) => "-pressed",
+                    (_, _, true) => "-hover",
+                    _ => "",
+                };
+                let collection = if highlighted {
+                    format!("{collection}-highlighted")
+                } else {
+                    collection
+                };
+                dc.image(&collection, &format!("{name}{suffix}"))
+                    .or_else(|| dc.image(&collection, &name))
+            }
+            None => dc.image(&collection, &name),
+        };
+        if let Some(sprite) = sprite {
             let (x, y) = ui.render_origin(id);
             dc.draw_sprite(sprite, x as f32, y as f32);
         }

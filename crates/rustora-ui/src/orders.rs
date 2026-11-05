@@ -75,13 +75,26 @@ pub trait OrderGenerator {
     fn button_order(&self) -> Option<crate::button_orders::ButtonOrder> {
         None
     }
-    /// `this is UnitOrderGenerator`.
-    fn as_unit_order_generator(&self) -> Option<&UnitOrderGenerator> {
+    /// Which command bar button made this generator, for the button highlights.
+    fn command_mode(&self) -> Option<crate::command_orders::CommandMode> {
         None
+    }
+    /// `this is UnitOrderGenerator`.
+    fn is_unit_order_generator(&self) -> bool {
+        false
+    }
+    /// `UnitOrderGenerator.InputOverridesSelection`.
+    fn input_overrides_selection(&self, _ctx: &OrderContext, _xy: (i32, i32), _mi: &MouseInput) -> bool {
+        true
+    }
+    /// `UnitOrderGenerator.ClearSelectionOnLeftClick`.
+    fn clear_selection_on_left_click(&self) -> bool {
+        true
     }
 }
 
 /// `UnitOrderGenerator`.
+#[derive(Clone)]
 pub struct UnitOrderGenerator {
     pub world_select_cursor: String,
     pub world_default_cursor: String,
@@ -161,37 +174,6 @@ impl UnitOrderGenerator {
         }
         None
     }
-
-    /// Used for classic mouse orders, determines whether or not action at `xy` is move or select.
-    pub fn input_overrides_selection(&self, ctx: &OrderContext, xy: (i32, i32), mi: &MouseInput) -> bool {
-        let sel = ctx.selection_context();
-        let candidates: Vec<_> = ctx
-            .screen_map
-            .actors_at_mouse(xy)
-            .into_iter()
-            .filter(|e| {
-                let a = &e.actor;
-                !a.is_dead()
-                    && a.info.has_trait_info::<SelectableInfo>()
-                    && (a.owner().is_allied_with(ctx.render_player.map(|p| &**p)) || !sel.fog_obscures(a))
-            })
-            .collect();
-        let Some(actor) = with_highest_selection_priority(&candidates, xy, mi.modifiers) else {
-            return true;
-        };
-        let target = Target::from_actor(Some(&actor));
-        let cell = ctx.world.map().cell_containing(target.center_position());
-        let actors_at = rustora_mods_common::actor_map::WorldExt::actor_map(&**ctx.world).get_actors_at(cell);
-        let modifiers = target_modifiers(mi.modifiers);
-        ctx.selection.actors().iter().any(|a| {
-            Self::order_for_unit(ctx, a, &target, cell, mi)
-                .is_some_and(|o| o.order.target_overrides_selection(a, &o.target, &actors_at, cell, modifiers))
-        })
-    }
-
-    pub fn clear_selection_on_left_click(&self) -> bool {
-        true
-    }
 }
 
 impl OrderGenerator for UnitOrderGenerator {
@@ -259,7 +241,34 @@ impl OrderGenerator for UnitOrderGenerator {
         })
     }
 
-    fn as_unit_order_generator(&self) -> Option<&UnitOrderGenerator> {
-        Some(self)
+    fn is_unit_order_generator(&self) -> bool {
+        true
+    }
+
+    /// Used for classic mouse orders, determines whether or not action at `xy` is move or select.
+    fn input_overrides_selection(&self, ctx: &OrderContext, xy: (i32, i32), mi: &MouseInput) -> bool {
+        let sel = ctx.selection_context();
+        let candidates: Vec<_> = ctx
+            .screen_map
+            .actors_at_mouse(xy)
+            .into_iter()
+            .filter(|e| {
+                let a = &e.actor;
+                !a.is_dead()
+                    && a.info.has_trait_info::<SelectableInfo>()
+                    && (a.owner().is_allied_with(ctx.render_player.map(|p| &**p)) || !sel.fog_obscures(a))
+            })
+            .collect();
+        let Some(actor) = with_highest_selection_priority(&candidates, xy, mi.modifiers) else {
+            return true;
+        };
+        let target = Target::from_actor(Some(&actor));
+        let cell = ctx.world.map().cell_containing(target.center_position());
+        let actors_at = rustora_mods_common::actor_map::WorldExt::actor_map(&**ctx.world).get_actors_at(cell);
+        let modifiers = target_modifiers(mi.modifiers);
+        ctx.selection.actors().iter().any(|a| {
+            Self::order_for_unit(ctx, a, &target, cell, mi)
+                .is_some_and(|o| o.order.target_overrides_selection(a, &o.target, &actors_at, cell, modifiers))
+        })
     }
 }

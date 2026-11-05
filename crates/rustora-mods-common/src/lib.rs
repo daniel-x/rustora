@@ -62,6 +62,7 @@ pub fn register(r: &mut TraitRegistry) {
     selection::register(r);
     tooltip::register(r);
     radar::register(r);
+    orders::register(r);
     aircraft::register(r);
     attack::register(r);
     attack_move::register(r);

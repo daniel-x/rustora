@@ -8,9 +8,11 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Color;
+use rustora_engine::player::PlayerRef;
 use rustora_mods_common::base::{DeveloperMode, PowerManager};
 use rustora_mods_common::player::PlayerResources;
 use rustora_mods_common::production::ProductionQueue;
+use rustora_mods_common::tooltip::IProvideTooltipInfo;
 
 use super::{NoLogic, message, message_with, services};
 use crate::fluent::MessageArg;
@@ -687,6 +689,138 @@ pub fn bind_order_button(ui: &mut Ui, id: WidgetId, kind: crate::button_orders::
     let image = ui.child(id, "ICON");
     let icon = icon.to_string();
     ui.get::<ImageWidget>(image).get_image_name = Some(Rc::new(move || if active() { format!("{icon}-active") } else { icon.clone() }));
+    cell(NoLogic)
+}
+
+/// `Player.ResolvedPlayerName`.
+pub fn resolved_player_name(ui: &Ui, world: &rustora_engine::world::World, player: &PlayerRef) -> String {
+    let Some(bot_type) = player.bot_type.as_deref() else {
+        return player.player_name.clone();
+    };
+    let name = player
+        .player_actor()
+        .info
+        .trait_infos::<rustora_mods_common::bots::ModularBotInfo>()
+        .iter()
+        .find(|b| b.ty == bot_type)
+        .and_then(|b| b.name.as_deref().map(|n| message(ui, n)))
+        .unwrap_or_else(|| bot_type.to_string());
+    let number = world
+        .players()
+        .iter()
+        .filter(|p| p.bot_type.as_deref() == Some(bot_type))
+        .position(|p| Rc::ptr_eq(p, player))
+        .unwrap_or(0) as i64
+        + 1;
+    message_with(
+        ui,
+        "enumerated-bot-name",
+        &[("name", MessageArg::Text(&name)), ("number", MessageArg::Number(number))],
+    )
+}
+
+/// `WorldTooltipLogic`. The frozen actor tooltip is not ported.
+pub fn world_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+    use crate::widgets::tooltip::BeforeRender;
+    use crate::widgets::viewport_controller::{SharedWorldTooltip, WorldTooltip};
+
+    let (Some(tooltip), Some(before_render), Some(ingame)) = (
+        args.value::<SharedWorldTooltip>("viewportTooltip"),
+        args.value::<BeforeRender>("beforeRender"),
+        services(ui).ingame.borrow().clone(),
+    ) else {
+        return cell(NoLogic);
+    };
+    let t = tooltip.clone();
+    ui.set_visible_fn(id, move || !matches!(*t.borrow(), WorldTooltip::None));
+    let (label, flag, owner, extras) = (
+        ui.child(id, "LABEL"),
+        ui.child(id, "FLAG"),
+        ui.child(id, "OWNER"),
+        ui.child(id, "EXTRA"),
+    );
+    let font = ui.label(label).font.clone();
+    let owner_font = ui.label(owner).font.clone();
+    let single_height = ui.node(ui.child(id, "SINGLE_HEIGHT")).bounds.h;
+    let double_height = ui.node(ui.child(id, "DOUBLE_HEIGHT")).bounds.h;
+    let extra_height_on_double = ui.node(extras).bounds.y;
+    let extra_height_on_single = extra_height_on_double - (double_height - single_height);
+    let unrevealed_terrain = message(ui, "label-unrevealed-terrain");
+
+    let label_text = shared_text(ui, label);
+    let owner_text = shared_text(ui, owner);
+    let extra_text = shared_text(ui, extras);
+    let show_owner = Rc::new(Cell::new(false));
+    let flag_faction: Rc<RefCell<String>> = Rc::default();
+    let owner_color = Rc::new(Cell::new(Color::from_argb(255, 255, 255, 255)));
+    let s = show_owner.clone();
+    ui.set_visible_fn(flag, move || s.get());
+    let s = show_owner.clone();
+    ui.set_visible_fn(owner, move || s.get());
+    {
+        let mut f = ui.get::<ImageWidget>(flag);
+        f.get_image_collection = Some(Rc::new(|| "flags".to_string()));
+        let ff = flag_faction.clone();
+        f.get_image_name = Some(Rc::new(move || ff.borrow().clone()));
+    }
+    let c = owner_color.clone();
+    ui.label(owner).get_color = Some(Rc::new(move || c.get()));
+
+    *before_render.borrow_mut() = Some(Rc::new(move |ui: &mut Ui| {
+        let current = tooltip.borrow().clone();
+        let label_string;
+        let mut extra = String::new();
+        let mut owner_player: Option<PlayerRef> = None;
+        match &current {
+            WorldTooltip::None => return,
+            WorldTooltip::Unexplored => label_string = unrevealed_terrain.clone(),
+            WorldTooltip::Resource(name) => label_string = name.clone(),
+            WorldTooltip::Actor(actor, t) => {
+                let o = actor.owner();
+                if !o.non_combatant && t.info.show_owner_row {
+                    owner_player = Some(o.clone());
+                }
+                let stance = o.relationship_with(ingame.render_player.as_deref());
+                let resolve = |key: &str| message(ui, key);
+                label_string = t.info.tooltip_for_player_stance(stance, &resolve);
+                let sell_mode = ingame.order_generator().button_order() == Some(crate::button_orders::ButtonOrder::Sell);
+                let lines: Vec<String> = actor
+                    .traits_implementing::<dyn IProvideTooltipInfo>()
+                    .into_iter()
+                    .filter(|i| i.is_tooltip_visible(actor, ingame.render_player.as_ref(), sell_mode))
+                    .map(|i| i.tooltip_text(actor, &resolve))
+                    .collect();
+                extra = lines.join("\n");
+            }
+        }
+        let text_width = ui.measure(&font, &label_string).0.max(ui.measure(&font, &extra).0);
+        ui.node_mut(label).bounds.w = text_width;
+        let label_x = ui.node(label).bounds.x;
+        let mut width = 2 * label_x + text_width;
+        let mut height = single_height;
+        show_owner.set(owner_player.is_some());
+        if let Some(o) = &owner_player {
+            let name = resolved_player_name(ui, &ingame.world, o);
+            *flag_faction.borrow_mut() = o.faction.clone();
+            owner_color.set(o.color);
+            height = double_height;
+            width = width.max(ui.node(owner).bounds.x + ui.measure(&owner_font, &name).0 + label_x);
+            *owner_text.borrow_mut() = name;
+        }
+        if !extra.is_empty() {
+            height += ui.measure(&font, &extra).1 + ui.node(extras).bounds.h;
+            ui.node_mut(extras).bounds.y = if owner_player.is_some() {
+                extra_height_on_double
+            } else {
+                extra_height_on_single
+            };
+        }
+        let b = &mut ui.node_mut(id).bounds;
+        b.w = width;
+        b.h = height;
+        *label_text.borrow_mut() = label_string;
+        *extra_text.borrow_mut() = extra;
+    }));
     cell(NoLogic)
 }
 
