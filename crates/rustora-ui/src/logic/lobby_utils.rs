@@ -319,7 +319,7 @@ pub fn setup_latency_widget(ui: &mut Ui, parent: WidgetId, client: Option<&Clien
 }
 
 /// `SetupProfileWidget`.
-fn setup_profile_widget(ui: &mut Ui, parent: WidgetId, client: &Client) {
+pub(crate) fn setup_profile_widget(ui: &mut Ui, parent: WidgetId, client: &Client) {
     if let Some(profile) = ui.find(parent, "PROFILE") {
         let name = if client.is_bot() {
             "bot".to_string()

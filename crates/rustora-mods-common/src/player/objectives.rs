@@ -29,7 +29,45 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("ConquestVictoryConditions", |n| load_info!(ConquestVictoryConditionsInfo, n));
     r.register("OwnerLostAction", |n| load_info!(OwnerLostActionInfo, n));
     r.register("MustBeDestroyed", |n| load_info!(MustBeDestroyedInfo, n));
+    r.register("ObjectivesPanel", |n| load_info!(ObjectivesPanelInfo, n));
+    r.register("MissionData", |n| load_info!(MissionDataInfo, n));
 }
+
+/// `ObjectivesPanelInfo`. The user interface reads the info; the trait has no state.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ObjectivesPanelInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub panel_name: Option<String>,
+    pub exit_delay: i32,
+}
+
+impl Default for ObjectivesPanelInfo {
+    fn default() -> Self {
+        ObjectivesPanelInfo {
+            instance_name: None,
+            panel_name: None,
+            exit_delay: 1400,
+        }
+    }
+}
+
+info_impl!(ObjectivesPanelInfo => |_info, _init| None);
+
+/// `MissionDataInfo`. Only the briefing is read; the videos come with P9.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct MissionDataInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub briefing: Option<String>,
+    pub background_video: Option<String>,
+    pub briefing_video: Option<String>,
+    pub start_video: Option<String>,
+    pub win_video: Option<String>,
+    pub loss_video: Option<String>,
+}
+
+info_impl!(MissionDataInfo => |_info, _init| None);
 
 pub trait INotifyWinStateChanged {
     fn on_player_won(&self, player: &PlayerRef);
@@ -47,6 +85,7 @@ pub enum ObjectiveState {
     Failed,
 }
 
+#[derive(Clone, Debug)]
 pub struct MissionObjective {
     pub required: bool,
     pub description: String,
@@ -137,6 +176,16 @@ impl IWorldLoaded for MissionObjectives {
 }
 
 impl MissionObjectives {
+    /// `Objectives`.
+    pub fn objectives(&self) -> Vec<MissionObjective> {
+        self.objectives.borrow().clone()
+    }
+
+    /// The count of objectives, to notice `ObjectiveAdded`.
+    pub fn objective_count(&self) -> usize {
+        self.objectives.borrow().len()
+    }
+
     pub fn add(&self, player: &PlayerRef, description: &str, ty: &str, required: bool) -> usize {
         let mut o = self.objectives.borrow_mut();
         o.push(MissionObjective {

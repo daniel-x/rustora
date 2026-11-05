@@ -96,6 +96,10 @@ pub struct NetState {
     /// `Game.RunTime` until which chat is disabled, `i64::MAX` until further notice.
     pub chat_disabled_until: i64,
     pub notifications: Vec<TextNotification>,
+    /// `TextNotificationsManager.MutedPlayers`: the client indexes whose chat is hidden.
+    pub muted_players: std::collections::HashSet<i32>,
+    /// `UnitOrders.KickVoteTarget`.
+    pub kick_vote_target: Option<i32>,
     pub outgoing: Vec<RawOrder>,
     /// The `Game.BeforeGameStart` handler.
     pub before_game_start: Option<crate::widget::Action>,

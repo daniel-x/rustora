@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `MenuButtonsChromeLogic.cs` and `IngameMenuLogic.cs`. The menu has the abort, surrender and resume
-//! buttons; restart, load, save, music, settings and the editor buttons, the game info panel, the menu fade effect
+//! buttons; restart, load, save, music, settings and the editor buttons, the menu fade effect
 //! and the leave notification are not ported.
 
 use std::cell::{Cell, RefCell};
@@ -14,6 +14,7 @@ use rustora_engine::player::WinState;
 use rustora_engine::target::Target;
 use rustora_engine::world::WorldType;
 
+use super::game_info::{HideMenu, IngameInfoPanel, cheats_enabled};
 use super::{NoLogic, button_prompt_with_cancel, message, services};
 use crate::loader::cell;
 use crate::widget::{Action, AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
@@ -42,24 +43,33 @@ pub fn menu_buttons(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
         b.is_disabled = Some(Rc::new(move || d.get()));
         let d = disable_system_buttons.clone();
         let ingame = ingame.clone();
-        b.on_click = Some(Rc::new(move |ui: &mut Ui| open_menu_panel(ui, options, &ingame, d.clone())));
+        b.on_click = Some(Rc::new(move |ui: &mut Ui| {
+            open_menu_panel(ui, options, &ingame, d.clone(), IngameInfoPanel::AutoSelect)
+        }));
     }
     if let Some(debug) = ui.find(id, "DEBUG_BUTTON") {
-        let enabled = ingame
-            .world
-            .lobby_info
-            .global_settings
-            .lobby_options
-            .get("cheats")
-            .and_then(|o| o.value.as_deref())
-            .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        let enabled = cheats_enabled(&ingame.world);
         ui.set_visible_fn(debug, move || enabled);
+        let d = disable_system_buttons.clone();
+        let mut b = ui.button(debug);
+        b.is_disabled = Some(Rc::new(move || d.get()));
+        let d = disable_system_buttons.clone();
+        let ingame = ingame.clone();
+        b.on_click = Some(Rc::new(move |ui: &mut Ui| {
+            open_menu_panel(ui, debug, &ingame, d.clone(), IngameInfoPanel::Debug)
+        }));
     }
     cell(NoLogic)
 }
 
 /// `OpenMenuPanel`.
-fn open_menu_panel(ui: &mut Ui, button: WidgetId, ingame: &Rc<crate::logic::ingame::Ingame>, disable: Rc<Cell<bool>>) {
+fn open_menu_panel(
+    ui: &mut Ui,
+    button: WidgetId,
+    ingame: &Rc<crate::logic::ingame::Ingame>,
+    disable: Rc<Cell<bool>>,
+    initial_panel: IngameInfoPanel,
+) {
     disable.set(true);
     let (container, pause, hide_ingame_ui) = {
         let b = ui.get::<MenuButtonWidget>(button);
@@ -93,7 +103,9 @@ fn open_menu_panel(ui: &mut Ui, button: WidgetId, ingame: &Rc<crate::logic::inga
         }
         disable.set(false);
     });
-    let args = WidgetArgs::default().with_action("onExit", on_exit);
+    let args = WidgetArgs::default()
+        .with_action("onExit", on_exit)
+        .with_value("initialPanel", initial_panel);
     let widget = ui.load_widget(&container, Some(menu_root), &args);
     current.set(Some(widget));
     ui.run_after_tick(|ui: &mut Ui| ui.reset_tooltips());
@@ -249,6 +261,20 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
         b.y -= n * stride.1 / 2;
         b.w += n * stride.0;
         b.h += n * stride.1;
+    }
+    if let Some(panel_root) = ui.find(id, "PANEL_ROOT")
+        && world.world_type != WorldType::Editor
+    {
+        let h = hide_menu.clone();
+        let request_hide: HideMenu = Rc::new(move |hide| h.set(hide));
+        let initial_panel = args.value::<IngameInfoPanel>("initialPanel").unwrap_or(IngameInfoPanel::AutoSelect);
+        let args = WidgetArgs::default()
+            .with_value("initialPanel", initial_panel)
+            .with_value("hideMenu", request_hide)
+            .with_action("closeMenu", close_menu.clone());
+        let panel = ui.load_widget("GAME_INFO_PANEL", Some(panel_root), &args);
+        let h = hide_menu.clone();
+        ui.set_visible_fn(panel, move || !h.get());
     }
     cell(NoLogic)
 }

@@ -22,6 +22,7 @@ use crate::widgets::LabelWidget;
 pub mod color_picker;
 pub mod command_bar;
 pub mod connection;
+pub mod game_info;
 pub mod ingame;
 pub mod ingame_chat;
 pub mod ingame_hotkeys;
@@ -126,8 +127,28 @@ pub(crate) fn button_prompt_with_cancel(
     on_cancel: Option<Action>,
     cancel_text: Option<&str>,
 ) {
-    let prompt = ui.open_window("TWOBUTTON_PROMPT", WidgetArgs::default());
     let title = message(ui, title);
+    button_prompt_full(ui, title, text, on_confirm, confirm_text, on_cancel, cancel_text, None);
+}
+
+/// `ConfirmationDialogs.ButtonPrompt` with a resolved title and an optional other button and its text.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn button_prompt_full(
+    ui: &mut Ui,
+    title: String,
+    text: &str,
+    on_confirm: Action,
+    confirm_text: &str,
+    on_cancel: Option<Action>,
+    cancel_text: Option<&str>,
+    other: Option<(Action, &str)>,
+) {
+    let name = if other.is_some() {
+        "THREEBUTTON_PROMPT"
+    } else {
+        "TWOBUTTON_PROMPT"
+    };
+    let prompt = ui.open_window(name, WidgetArgs::default());
     let title_label = ui.child(prompt, "PROMPT_TITLE");
     ui.get::<LabelWidget>(title_label).get_text = Some(Rc::new(move || title.clone()));
 
@@ -169,6 +190,17 @@ pub(crate) fn button_prompt_with_cancel(
     if let Some(key) = cancel_text {
         let text = message(ui, key);
         ui.button(cancel).get_text = Some(Rc::new(move || text.clone()));
+    }
+    if let Some((on_other, other_text)) = other
+        && let Some(button) = ui.find(prompt, "OTHER_BUTTON")
+    {
+        ui.node_mut(button).visible = true;
+        ui.node_mut(button).bounds.y += header_height;
+        ui.button(button).on_click = Some(on_other);
+        if !other_text.is_empty() {
+            let text = message(ui, other_text);
+            ui.button(button).get_text = Some(Rc::new(move || text.clone()));
+        }
     }
 }
 
@@ -333,6 +365,11 @@ pub fn create(
         "ModContentSourceTooltipLogic" => installer::create_source_tooltip(ui, id, args),
         "DownloadPackageLogic" => installer::create_download(ui, id, args),
         "InstallFromSourceLogic" => installer::create_install_from_source(ui, id, args),
+        "GameInfoLogic" => game_info::game_info(ui, id, args),
+        "GameInfoBriefingLogic" => game_info::briefing(ui, id),
+        "GameInfoObjectivesLogic" => game_info::objectives(ui, id),
+        "GameInfoStatsLogic" => game_info::stats(ui, id, args),
+        "DebugMenuLogic" => game_info::debug_menu(ui, id),
         "SettingsLogic" => settings::create(ui, id, args, logic_args),
         "DisplaySettingsLogic" => settings::display(ui, id, args),
         "AudioSettingsLogic" => settings::audio(ui, id, args),

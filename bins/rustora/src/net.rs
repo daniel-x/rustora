@@ -230,6 +230,8 @@ impl NetClient {
         net.session = Session::default();
         net.outgoing.clear();
         net.notifications.clear();
+        net.muted_players.clear();
+        net.kick_vote_target = None;
     }
 
     /// Takes the connection and the final session when `StartGame` arrived.
@@ -422,12 +424,24 @@ pub fn process_client_order(
     let parse = |t: &str| Session::deserialize(t, &order.order_string).map_err(|e| e.to_string());
     match order.order_string.as_str() {
         "Chat" => {
-            if let Some(line) = chat_notification(net, client_id, order) {
+            if !net.muted_players.contains(&client_id)
+                && let Some(line) = chat_notification(net, client_id, order)
+            {
                 net.notifications.push(line);
             }
             return Ok(());
         }
         _ if client_id != 0 => return Ok(()),
+        "StartKickVote" => {
+            net.kick_vote_target = Some(order.extra_data as i32);
+            return Ok(());
+        }
+        "EndKickVote" => {
+            if net.kick_vote_target == Some(order.extra_data as i32) {
+                net.kick_vote_target = None;
+            }
+            return Ok(());
+        }
         "ServerError" => net.server_error = Some(text.to_string()),
         "AuthenticationError" => {
             net.server_error = Some(text.to_string());

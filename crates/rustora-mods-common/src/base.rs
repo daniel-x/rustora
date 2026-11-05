@@ -154,6 +154,9 @@ impl DeveloperMode {
     pub fn disable_shroud(&self) -> bool {
         self.enabled.get() && self.disable_shroud.get()
     }
+    pub fn path_debug(&self) -> bool {
+        self.enabled.get() && self.path_debug.get()
+    }
     pub fn unlimited_power(&self) -> bool {
         self.enabled.get() && self.unlimited_power.get()
     }
