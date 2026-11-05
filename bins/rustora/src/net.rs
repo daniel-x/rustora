@@ -146,6 +146,8 @@ pub struct NetClient {
     support: String,
     pub net: Net,
     local_port: Option<u16>,
+    /// The port of the server of `create_server`, which may still be loading when the client joins it.
+    created_port: Option<u16>,
     connecting: Option<Receiver<Result<NetworkConnection, String>>>,
     connection: Option<NetworkConnection>,
     /// The orders of `Game.CreateAndStartLocalServer`, sent once the first lobby information arrived.
@@ -161,6 +163,7 @@ impl NetClient {
             support: support.to_string(),
             net,
             local_port: None,
+            created_port: None,
             connecting: None,
             connection: None,
             setup_orders: Vec::new(),
@@ -171,6 +174,7 @@ impl NetClient {
     /// `Game.CreateServer`.
     pub fn create_server(&mut self, name: String, port: u16, password: String, advertise_online: bool, map: String) {
         let (engine, support) = (self.engine.clone(), self.support.clone());
+        self.created_port = Some(port);
         std::thread::spawn(move || {
             let settings = ServerSettings {
                 server_type: ServerType::Multiplayer,
@@ -208,8 +212,11 @@ impl NetClient {
     /// `Game.JoinServer`.
     pub fn join(&mut self, target: &str, password: &str) {
         self.connection = None;
-        let local = target == LOCAL_SERVER_TARGET;
-        let address = match (local, self.local_port) {
+        let created = self
+            .created_port
+            .is_some_and(|port| target.rsplit_once(':').is_some_and(|(_, p)| p == port.to_string()));
+        let local = target == LOCAL_SERVER_TARGET || created;
+        let address = match (target == LOCAL_SERVER_TARGET, self.local_port) {
             (true, Some(port)) => format!("127.0.0.1:{port}"),
             _ => target.to_string(),
         };
@@ -242,6 +249,7 @@ impl NetClient {
         self.connection = None;
         self.connecting = None;
         self.local_port = None;
+        self.created_port = None;
         self.setup_orders.clear();
         let mut net = self.net.borrow_mut();
         net.connection_state = ConnectionState::NotConnected;
