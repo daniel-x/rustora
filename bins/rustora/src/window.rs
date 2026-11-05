@@ -22,12 +22,12 @@ use winit::window::{CustomCursor, Window, WindowId};
 
 use crate::client::Client;
 
-/// `Ui.Timestep`.
-const LOGIC_INTERVAL: Duration = Duration::from_millis(40);
 /// `MaxLogicTicksBehind` of `Game.Loop`.
 const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
 /// The render interval of `Game.Loop` with the default settings: the swap chain waits for vertical sync.
 const RENDER_INTERVAL: Duration = Duration::from_millis(1);
+/// `1000 / MinReplayFps` of `Game.Loop`: the longest time between two renders while the logic falls behind.
+const MAX_RENDER_INTERVAL: Duration = Duration::from_millis(100);
 const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
 
 struct Gpu {
@@ -55,6 +55,8 @@ struct App {
     suspended: bool,
     next_logic: Instant,
     next_render: Instant,
+    forced_next_render: Instant,
+    render_before_next_tick: bool,
 }
 
 /// The system clipboard. It is empty and ignores writes where the system offers none.
@@ -98,6 +100,8 @@ pub fn run(engine: &Path, support: &str, size: (u32, u32), args: &[String]) {
         suspended: false,
         next_logic: now,
         next_render: now,
+        forced_next_render: now,
+        render_before_next_tick: false,
     };
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.run_app(&mut app).expect("run event loop");
@@ -359,6 +363,7 @@ impl App {
     }
 
     fn render(&mut self, el: &ActiveEventLoop) {
+        self.render_before_next_tick = false;
         self.apply_cursor(el);
         let Some(gpu) = self.gpu.as_mut() else { return };
         self.client.prepare(&mut gpu.renderer, (gpu.config.width, gpu.config.height));
@@ -451,21 +456,34 @@ impl ApplicationHandler for App {
         }
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick and one render.
+    /// One pass of `Game.Loop`: at most one logic tick and one render. A game renders after each world tick, and a
+    /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`].
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.flush_motion();
         let now = Instant::now();
         if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
             self.next_logic = now;
         }
-        if now >= self.next_logic {
-            self.next_logic += LOGIC_INTERVAL;
+        let force_render = self.render_before_next_tick || now >= self.forced_next_render;
+        if now >= self.next_logic && !self.render_before_next_tick {
+            self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
             self.client.logic_tick();
+            if self.client.renders_every_tick() {
+                self.render_before_next_tick = true;
+            }
         }
-        if now >= self.next_render && !self.suspended {
+        let is_time_to_render = now >= self.next_render;
+        if self.suspended {
+            if is_time_to_render {
+                self.next_render = now + RENDER_INTERVAL;
+                self.render_before_next_tick = false;
+            }
+        } else if (is_time_to_render && now < self.next_logic) || force_render {
             self.next_render = now + RENDER_INTERVAL;
-            if let Some(gpu) = &self.gpu {
-                gpu.window.request_redraw();
+            self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
+            match &self.gpu {
+                Some(gpu) => gpu.window.request_redraw(),
+                None => self.render_before_next_tick = false,
             }
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {

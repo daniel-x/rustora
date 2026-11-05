@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use rustora_audio::MixerDevice;
-use rustora_engine::order_manager::Connection;
+use rustora_engine::order_manager::{Connection, ReplayConnection};
 use rustora_engine::player::PlayerRef;
 use rustora_engine::sequence::ReadFile;
 use rustora_engine::sound::{AudioDevice, AudioRules, NullAudioDevice, Sound};
@@ -24,6 +24,8 @@ use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
 use rustora_launch::{Step, load_world_with_sound, open_map, shellmaps};
 use rustora_mods_common::sound::StartGameNotificationInfo;
+use rustora_net::game_information::ReplayMetadata;
+use rustora_net::replay::Replay;
 use rustora_net::session::Session;
 use rustora_render::ui::UiList;
 use rustora_render::{Camera, Quad, Renderer};
@@ -36,6 +38,7 @@ use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
 use rustora_ui::logic::ingame::Ingame;
 use rustora_ui::logic::installer::InstallerContext;
+use rustora_ui::logic::replay_browser::prompt_confirm_replay_compatibility;
 use rustora_ui::music::MusicPlaylist;
 use rustora_ui::viewport::Viewport;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
@@ -67,6 +70,28 @@ struct ShellWorld {
     ingame: Option<Rc<Ingame>>,
     ended: bool,
     game_over_seen: bool,
+}
+
+/// `Ui.Timestep`.
+pub const UI_TIMESTEP: i32 = 40;
+/// `Game.TimestepJankThreshold`.
+const TIMESTEP_JANK_THRESHOLD: i64 = 250;
+
+/// `TickTime`: the time of the last tick of a clock whose timestep may change between ticks.
+struct TickTime {
+    value: i64,
+}
+
+impl TickTime {
+    fn should_advance(&self, tick: i64, timestep: i32) -> bool {
+        timestep != 0 && tick - self.value >= timestep as i64
+    }
+
+    fn advance(&mut self, tick: i64, timestep: i32) {
+        let step = timestep as i64;
+        let integral = (tick - self.value) / step * step;
+        self.value += if integral >= TIMESTEP_JANK_THRESHOLD { integral } else { step };
+    }
 }
 
 /// `WorldRenderer.ProjectedPosition` for a flat map.
@@ -186,6 +211,34 @@ impl ShellWorld {
         }
     }
 
+    /// `Game.JoinReplay` and `Game.StartGame` for a replay: the world plays the recorded orders.
+    fn start_replay(
+        engine: &Path,
+        support: &str,
+        package: Arc<dyn Package>,
+        lobby: Session,
+        replay: Replay,
+        view: (i32, i32),
+        distance: WorldViewport,
+    ) -> ShellWorld {
+        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, true, WorldType::Regular, true);
+        let connection = ReplayConnection::new(replay.chunks, world.order_latency);
+        let driver = SkirmishDriver::with_connection(&world, Box::new(connection), false);
+        let viewport = world_viewport(&world, view, distance);
+        ShellWorld {
+            world,
+            driver,
+            read_file,
+            scene: None,
+            quads: Vec::new(),
+            viewport,
+            viewer: None,
+            ingame: None,
+            ended: false,
+            game_over_seen: false,
+        }
+    }
+
     /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map.
     fn load(engine: &Path, support: &str, view: (i32, i32), distance: WorldViewport) -> Option<ShellWorld> {
         let names = shellmaps(engine);
@@ -213,9 +266,27 @@ impl ShellWorld {
         })
     }
 
+    /// `OrderManager.SuggestedTimestep`.
+    fn suggested_timestep(&self) -> i32 {
+        let world = &self.world;
+        if world.is_replay() {
+            world.replay_timestep.get()
+        } else if self.driver.orders.tick_scale != 1.0 {
+            ((self.driver.orders.tick_scale * world.timestep as f32) as i32).max(1)
+        } else {
+            world.timestep
+        }
+    }
+
     fn tick(&mut self) {
         if !self.ended && self.driver.step() == Step::Ended {
             self.ended = true;
+        }
+        if self.world.is_replay() && self.driver.orders.out_of_sync.is_some() {
+            self.world.replay_timestep.set(0);
+            if let Some(replay) = self.ingame.as_ref().and_then(|i| i.replay.as_ref()) {
+                replay.out_of_sync.set(true);
+            }
         }
         if let Some(ingame) = &self.ingame {
             ingame.selection.tick(ingame.render_player().as_ref());
@@ -323,6 +394,8 @@ pub struct Client {
     mod_data: Rc<ModData>,
     services: Rc<Services>,
     net: NetClient,
+    ui_tick_time: TickTime,
+    world_tick_time: TickTime,
 }
 
 impl Client {
@@ -360,7 +433,13 @@ impl Client {
         let mod_audio = load_mod_audio(&mod_data);
         sound.load_music_files(&mod_audio);
         let services = Services {
+            mod_id: mod_data.manifest.id.clone(),
             mod_version: mod_data.manifest.metadata.version.clone(),
+            installed_mods: mod_data.installed.clone(),
+            replay_dir: Path::new(support)
+                .join("Replays")
+                .join(&mod_data.manifest.id)
+                .join(&mod_data.manifest.metadata.version),
             content_installer_mod: installer_mod,
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
             settings: Rc::new(RefCell::new(settings)),
@@ -404,6 +483,12 @@ impl Client {
             }
             None => {
                 ui.load_widget("MAINMENU", Some(ui.root), &menu_args);
+                if let Some(path) = args.iter().find_map(|a| a.strip_prefix("Launch.Replay=")) {
+                    let meta = ReplayMetadata::read(Path::new(path));
+                    if prompt_confirm_replay_compatibility(&mut ui, meta.as_ref(), Rc::new(|_| {})) {
+                        ui.requests.push(AppRequest::JoinReplay(path.to_string()));
+                    }
+                }
             }
         }
         Client {
@@ -417,25 +502,59 @@ impl Client {
             mod_data,
             services,
             net,
+            ui_tick_time: TickTime {
+                value: -(UI_TIMESTEP as i64),
+            },
+            world_tick_time: TickTime {
+                value: -(UI_TIMESTEP as i64),
+            },
         }
     }
 
-    /// Port of the user interface part of `Game.InnerLogicTick`.
-    pub fn logic_tick(&mut self) {
-        self.pump_network();
-        if let Some(shell) = &mut self.shell {
-            shell.tick();
-            if shell.ingame.is_some() {
-                let run_time = self.ui.run_time();
-                let assets = self.ui.assets.clone();
-                shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, run_time);
-            }
-            let assets = self.ui.assets.clone();
-            shell.update_audio(&self.services, &assets.borrow().messages);
+    /// The timestep of the world clock: `OrderManager.SuggestedTimestep`, or `Ui.Timestep` without a world.
+    fn world_timestep(&self) -> i32 {
+        self.shell.as_ref().map_or(UI_TIMESTEP, ShellWorld::suggested_timestep)
+    }
+
+    /// The interval of `Game.Loop` between two calls of [`Client::logic_tick`] in milliseconds.
+    pub fn logic_interval(&self) -> i32 {
+        match self.world_timestep() {
+            0 => UI_TIMESTEP,
+            t => t,
         }
-        self.services.sound.tick();
-        self.cursor.tick(&self.cursors);
-        self.ui.tick();
+    }
+
+    /// True while a world other than a replay runs: `Game.Loop` renders at least once per logic tick then.
+    pub fn renders_every_tick(&self) -> bool {
+        self.shell.as_ref().is_some_and(|s| !s.world.is_replay())
+    }
+
+    /// Port of `Game.InnerLogicTick`: the user interface ticks at `Ui.Timestep`, the world at its own timestep.
+    pub fn logic_tick(&mut self) {
+        let now = self.ui.run_time();
+        let ui_due = self.ui_tick_time.should_advance(now, UI_TIMESTEP);
+        if ui_due {
+            self.ui_tick_time.advance(now, UI_TIMESTEP);
+            self.pump_network();
+        }
+        let timestep = self.world_timestep();
+        if self.world_tick_time.should_advance(now, timestep) {
+            self.world_tick_time.advance(now, timestep);
+            if let Some(shell) = &mut self.shell {
+                shell.tick();
+                if shell.ingame.is_some() {
+                    let assets = self.ui.assets.clone();
+                    shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, now);
+                }
+                let assets = self.ui.assets.clone();
+                shell.update_audio(&self.services, &assets.borrow().messages);
+            }
+            self.services.sound.tick();
+        }
+        if ui_due {
+            self.cursor.tick(&self.cursors);
+            self.ui.tick();
+        }
     }
 
     /// Carries out the network requests of the user interface, then receives and sends.
@@ -443,6 +562,7 @@ impl Client {
         let requests = std::mem::take(&mut self.ui.requests);
         let mut leave = false;
         let mut reload = None;
+        let mut replay = None;
         for request in requests {
             match request {
                 AppRequest::LeaveGame => leave = true,
@@ -455,6 +575,7 @@ impl Client {
                     map,
                 } => self.net.create_server(name, port, password, advertise_online, map),
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
+                AppRequest::JoinReplay(path) => replay = Some(path),
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
@@ -465,6 +586,10 @@ impl Client {
         }
         if let Some(mod_id) = reload {
             self.replace_mod(&mod_id);
+            return;
+        }
+        if let Some(path) = replay {
+            self.join_replay(&path);
             return;
         }
         let (name, color) = {
@@ -543,7 +668,7 @@ impl Client {
         self.ui.reset_all();
         self.dispose_world();
         let distance = self.services.settings.borrow().graphics.viewport_distance;
-        let mut shell = ShellWorld::start_game(
+        let shell = ShellWorld::start_game(
             &self.engine,
             &self.support,
             package,
@@ -552,6 +677,66 @@ impl Client {
             self.ui.resolution,
             distance,
         );
+        self.enter_game(shell, None);
+    }
+
+    /// `Game.JoinReplay`: the session of the replay replaces the lobby, and the world starts at once.
+    fn join_replay(&mut self, path: &str) {
+        let replay = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|data| Replay::parse(&data).map_err(|e| e.to_string()));
+        let mut replay = match replay {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("cannot read the replay {path}: {e}");
+                return;
+            }
+        };
+        let Some(lobby) = replay.lobby_info.take() else {
+            log::error!("the replay {path} has no lobby information");
+            return;
+        };
+        let package = lobby
+            .global_settings
+            .map
+            .as_deref()
+            .and_then(|uid| self.services.maps.borrow().get(uid))
+            .and_then(|map| map.open_package(&self.mod_data.file_system));
+        let Some(package) = package else {
+            log::error!("The replay cannot start without its map");
+            return;
+        };
+        self.net.disconnect();
+        {
+            let mut net = self.services.net.borrow_mut();
+            net.session = lobby.clone();
+            net.local_client_id = -1;
+            net.revision += 1;
+        }
+        let handler = self.services.net.borrow_mut().before_game_start.take();
+        if let Some(handler) = handler {
+            handler(&mut self.ui);
+        }
+        self.ui.reset_all();
+        self.dispose_world();
+        let tick_count = replay.tick_count;
+        let final_game_tick = replay
+            .metadata
+            .as_deref()
+            .and_then(|m| rustora_net::game_information::GameInformation::deserialize(m, path).ok())
+            .map_or(0, |info| info.root.final_game_tick);
+        let distance = self.services.settings.borrow().graphics.viewport_distance;
+        let shell = ShellWorld::start_replay(&self.engine, &self.support, package, lobby, replay, self.ui.resolution, distance);
+        let status = rustora_ui::logic::ingame::ReplayStatus {
+            tick_count,
+            final_game_tick,
+            out_of_sync: std::cell::Cell::new(false),
+        };
+        self.enter_game(shell, Some(status));
+    }
+
+    /// The part of `Game.StartGame` after the world loaded: the in-game user interface.
+    fn enter_game(&mut self, mut shell: ShellWorld, replay: Option<rustora_ui::logic::ingame::ReplayStatus>) {
         let (select_cursor, default_cursor) = {
             let assets = self.ui.assets.borrow();
             (
@@ -559,14 +744,16 @@ impl Client {
                 assets.metrics.string("WorldDefaultCursor"),
             )
         };
-        let ingame = Rc::new(Ingame::new(
+        let mut ingame = Ingame::new(
             shell.world.clone(),
             shell.viewport.clone(),
             shell.viewer.clone(),
             Rc::new(crate::ui_sprites::UiSprites::new(&shell.world, shell.read_file.clone())),
             select_cursor,
             default_cursor,
-        ));
+        );
+        ingame.replay = replay;
+        let ingame = Rc::new(ingame);
         shell.ingame = Some(ingame.clone());
         *self.services.ingame.borrow_mut() = Some(ingame);
         self.shell = Some(shell);

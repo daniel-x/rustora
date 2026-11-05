@@ -22,6 +22,23 @@ enum MenuType {
     None,
 }
 
+/// `MainMenuLogic.MenuPanel`: the panel a game was started from, reopened when the menu returns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuPanel {
+    None,
+    Skirmish,
+    Multiplayer,
+    Replays,
+}
+
+thread_local! {
+    static LAST_GAME_STATE: Cell<MenuPanel> = const { Cell::new(MenuPanel::None) };
+}
+
+fn remember_panel(panel: MenuPanel) -> Action {
+    Rc::new(move |_| LAST_GAME_STATE.with(|s| s.set(panel)))
+}
+
 fn on_click(ui: &Ui, root: WidgetId, button: &str, action: impl Fn(&mut Ui) + 'static) {
     let id = ui.child(root, button);
     ui.button(id).on_click = Some(Rc::new(action));
@@ -61,13 +78,44 @@ fn start_skirmish_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
         ui.requests.push(AppRequest::Disconnect);
         to_singleplayer.set(MenuType::Singleplayer);
     });
-    let on_connect: Action = Rc::new(move |ui| lobby::open_lobby(ui, on_exit.clone(), Rc::new(|_| {}), true));
+    let on_connect: Action = Rc::new(move |ui| lobby::open_lobby(ui, on_exit.clone(), remember_panel(MenuPanel::Skirmish), true));
     let to_main = menu.clone();
     let on_abort: Action = Rc::new(move |ui| {
         ui.requests.push(AppRequest::Disconnect);
         to_main.set(MenuType::Main);
     });
     connection::connect(ui, LOCAL_SERVER_TARGET, "", on_connect, on_abort);
+}
+
+/// Port of `OpenMultiplayerPanel`.
+fn open_multiplayer_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
+    menu.set(MenuType::None);
+    let to_main = menu.clone();
+    crate::logic::multiplayer::open_multiplayer_panel(
+        ui,
+        remember_panel(MenuPanel::Multiplayer),
+        Rc::new(move |_| to_main.set(MenuType::Main)),
+    );
+}
+
+/// Port of `OpenReplayBrowserPanel`.
+fn open_replay_browser_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
+    menu.set(MenuType::None);
+    let to_extras = menu.clone();
+    let args = WidgetArgs::default()
+        .with_action("onExit", Rc::new(move |_| to_extras.set(MenuType::Extras)))
+        .with_action("onStart", remember_panel(MenuPanel::Replays));
+    ui.open_window("REPLAYBROWSER_PANEL", args);
+}
+
+/// Port of `OpenMenuBasedOnLastGame`.
+fn open_menu_based_on_last_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
+    match LAST_GAME_STATE.with(|s| s.replace(MenuPanel::None)) {
+        MenuPanel::Replays => open_replay_browser_panel(ui, menu),
+        MenuPanel::Skirmish => start_skirmish_game(ui, menu),
+        MenuPanel::Multiplayer => open_multiplayer_panel(ui, menu),
+        MenuPanel::None => {}
+    }
 }
 
 /// Port of `OnRemoteDirectConnect`, without the server browser behind the lobby until that is ported.
@@ -108,9 +156,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     });
     let multiplayer_menu = menu.clone();
     on_click(ui, main_menu, "MULTIPLAYER_BUTTON", move |ui| {
-        multiplayer_menu.set(MenuType::None);
-        let to_main = multiplayer_menu.clone();
-        crate::logic::multiplayer::open_multiplayer_panel(ui, Rc::new(|_| {}), Rc::new(move |_| to_main.set(MenuType::Main)));
+        open_multiplayer_panel(ui, &multiplayer_menu)
     });
     if let Some(content_button) = ui.find(main_menu, "CONTENT_BUTTON") {
         let installer_mod = services(ui).content_installer_mod.clone();
@@ -132,6 +178,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
 
     let extras = panel(ui, "EXTRAS_MENU", MenuType::Extras);
     on_click(ui, extras, "MAP_EDITOR_BUTTON", switch(MenuType::MapEditor));
+    let replays_menu = menu.clone();
+    on_click(ui, extras, "REPLAYS_BUTTON", move |ui| open_replay_browser_panel(ui, &replays_menu));
     let music_menu = menu.clone();
     on_click(ui, extras, "MUSIC_BUTTON", move |ui| {
         music_menu.set(MenuType::None);
@@ -162,6 +210,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     hide_unported_notices(ui, widget);
     if let Some(target) = args.value::<String>("directConnect") {
         direct_connect(ui, &target, &menu);
+    } else {
+        open_menu_based_on_last_game(ui, &menu);
     }
     cell(NoLogic)
 }

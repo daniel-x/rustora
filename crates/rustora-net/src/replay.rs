@@ -99,7 +99,8 @@ impl Replay {
     }
 }
 
-fn read_metadata(data: &[u8]) -> Option<String> {
+/// The `GameInformation` yaml of the metadata block at the end of a replay file.
+pub fn read_metadata(data: &[u8]) -> Option<String> {
     if data.len() < 20 {
         return None;
     }

@@ -3,7 +3,7 @@
 
 //! Ports of the logic classes of `OpenRA.Mods.Common/Widgets/Logic`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::rc::Rc;
@@ -38,6 +38,8 @@ pub mod multiplayer;
 pub mod music_player;
 pub mod observer;
 pub mod observer_stats;
+pub mod replay_browser;
+pub mod replay_control;
 pub mod settings;
 pub mod sidebar;
 
@@ -47,7 +49,12 @@ use crate::music::MusicPlaylist;
 
 /// The application state that logic classes read.
 pub struct Services {
+    pub mod_id: String,
     pub mod_version: String,
+    /// `Game.Mods`: the installed mods by id.
+    pub installed_mods: std::collections::HashMap<String, std::sync::Arc<dyn rustora_fs::Package>>,
+    /// `Platform.SupportDir/Replays/<mod>/<version>`: where the replays of this mod version are recorded.
+    pub replay_dir: std::path::PathBuf,
     /// `ContentInstallerFileSystemLoader.ContentInstallerMod`.
     pub content_installer_mod: Option<String>,
     pub settings: Rc<RefCell<Settings>>,
@@ -76,7 +83,10 @@ pub type ColorRulesLookup = Rc<dyn Fn() -> Option<Rc<color_picker::ColorRules>>>
 impl Default for Services {
     fn default() -> Services {
         Services {
+            mod_id: String::new(),
             mod_version: String::new(),
+            installed_mods: Default::default(),
+            replay_dir: std::path::PathBuf::new(),
             content_installer_mod: None,
             settings: Rc::new(RefCell::new(Settings::load("", &[]))),
             maps: Rc::default(),
@@ -113,6 +123,86 @@ pub(crate) fn message_with(ui: &Ui, key: &str, args: &[(&str, MessageArg)]) -> S
 pub(crate) fn cosmetic_random(count: usize) -> usize {
     let word = RandomState::new().build_hasher().finish();
     (word % count.max(1) as u64) as usize
+}
+
+/// `button.OnClick()`.
+pub(crate) fn click_button(ui: &mut Ui, button: WidgetId) {
+    let on_click = ui.button(button).on_click.clone();
+    if let Some(f) = on_click {
+        f(ui);
+    }
+}
+
+/// Port of `ConfirmationDialogs.TextInputPrompt`. `title`, `prompt` and `accept_text` are message keys.
+pub(crate) fn text_input_prompt(
+    ui: &mut Ui,
+    title: &str,
+    prompt: &str,
+    initial_text: &str,
+    on_accept: Rc<dyn Fn(&mut Ui, String)>,
+    accept_text: &str,
+    input_validator: Rc<dyn Fn(&str) -> bool>,
+) {
+    use crate::widgets::{LabelWidget, TextFieldWidget};
+    let panel = ui.open_window("TEXT_INPUT_PROMPT", WidgetArgs::default());
+    let title = message(ui, title);
+    let title_label = ui.child(panel, "PROMPT_TITLE");
+    ui.get::<LabelWidget>(title_label).get_text = Some(Rc::new(move || title.clone()));
+    let prompt = message(ui, prompt);
+    let prompt_label = ui.child(panel, "PROMPT_TEXT");
+    ui.get::<LabelWidget>(prompt_label).get_text = Some(Rc::new(move || prompt.clone()));
+
+    let input = ui.child(panel, "INPUT_TEXT");
+    let accept = ui.child(panel, "ACCEPT_BUTTON");
+    let cancel = ui.child(panel, "CANCEL_BUTTON");
+    let is_valid = Rc::new(Cell::new(false));
+    let validate: Rc<dyn Fn(&mut Ui) -> bool> = {
+        let is_valid = is_valid.clone();
+        Rc::new(move |ui: &mut Ui| {
+            let valid = input_validator(&ui.get::<TextFieldWidget>(input).text());
+            is_valid.set(valid);
+            ui.button(accept).disabled = !valid;
+            valid
+        })
+    };
+    {
+        let mut field = ui.get::<TextFieldWidget>(input);
+        field.set_text(initial_text);
+        field.cursor_position = initial_text.chars().count();
+        let valid = is_valid.clone();
+        field.is_valid = Some(Rc::new(move || valid.get()));
+        field.on_enter_key = Some(Rc::new(move |ui, _| {
+            if ui.button(accept).disabled {
+                return false;
+            }
+            click_button(ui, accept);
+            true
+        }));
+        field.on_esc_key = Some(Rc::new(move |ui, _| {
+            click_button(ui, cancel);
+            true
+        }));
+        let v = validate.clone();
+        field.on_text_edited = Some(Rc::new(move |ui| {
+            v(ui);
+        }));
+    }
+    ui.keyboard_focus = Some(input);
+    if !accept_text.is_empty() {
+        let text = message(ui, accept_text);
+        ui.button(accept).get_text = Some(Rc::new(move || text.clone()));
+    }
+    let v = validate.clone();
+    ui.button(accept).on_click = Some(Rc::new(move |ui| {
+        if !v(ui) {
+            return;
+        }
+        let text = ui.get::<TextFieldWidget>(input).text();
+        ui.close_window();
+        on_accept(ui, text);
+    }));
+    ui.button(cancel).on_click = Some(Rc::new(|ui| ui.close_window()));
+    validate(ui);
 }
 
 /// Port of `ConfirmationDialogs.ButtonPrompt` with a confirm and a cancel button. `text` is already resolved.
@@ -339,6 +429,8 @@ pub fn create(
         "LoadIngameChatLogic" => ingame_chat::load_ingame_chat(ui, id),
         "IngameChatLogic" => ingame_chat::ingame_chat(ui, id, args, logic_args),
         "GameTimerLogic" => ingame_chat::game_timer(ui, id),
+        "ReplayBrowserLogic" => replay_browser::create(ui, id, args),
+        "ReplayControlBarLogic" => replay_control::replay_control_bar(ui, id),
         "WorldTooltipLogic" => sidebar::world_tooltip(ui, id, args),
         "CommandBarLogic" => command_bar::command_bar(ui, id, logic_args),
         "IngameMenuLogic" => ingame_menu::ingame_menu(ui, id, args, logic_args),

@@ -261,6 +261,8 @@ pub enum AppRequest {
     Disconnect,
     /// `IngameMenuLogic.OnQuit`: disconnect, reset the user interface and load the shell map.
     LeaveGame,
+    /// `Game.JoinReplay` for the replay file at this path.
+    JoinReplay(String),
 }
 
 /// Port of the static `Ui` class and the widget tree.

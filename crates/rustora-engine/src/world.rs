@@ -58,6 +58,8 @@ pub struct World {
     /// `Game.Settings.Game.PauseShellmap`.
     pub pause_shellmap: Cell<bool>,
     pub timestep: i32,
+    /// `World.ReplayTimestep`: the playback interval of a replay in milliseconds, 0 while paused.
+    pub replay_timestep: Cell<i32>,
     pub order_latency: i32,
     world_tick: Cell<i32>,
     paused: Cell<bool>,
@@ -132,6 +134,7 @@ impl World {
             lobby_info,
             world_type,
             timestep,
+            replay_timestep: Cell::new(timestep),
             order_latency,
             world_tick: Cell::new(0),
             pause_shellmap: Cell::new(false),
@@ -215,6 +218,11 @@ impl World {
     /// `IsLoadingGameSave`: true while the orders of a game save are replayed.
     pub fn is_loading_game_save(&self) -> bool {
         self.net_frame_number.get() <= self.game_save_last_frame.get()
+    }
+
+    /// `OrderManager.NetFrameNumber`.
+    pub fn net_frame_number(&self) -> i32 {
+        self.net_frame_number.get()
     }
 
     pub fn set_net_frame_number(&self, frame: i32) {

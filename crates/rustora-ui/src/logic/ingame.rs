@@ -3,7 +3,7 @@
 
 //! The in-game state of the user interface and a port of `LoadIngamePlayerOrObserverUILogic.cs`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use rustora_engine::player::{PlayerRef, WinState};
@@ -36,6 +36,18 @@ pub struct Ingame {
     world_default_cursor: String,
     default_order_generator: Rc<dyn OrderGenerator>,
     unit_order_generator: UnitOrderGenerator,
+    /// The state of a replay, `None` for a game.
+    pub replay: Option<ReplayStatus>,
+}
+
+/// What `ReplayControlBarLogic` reads of a `ReplayConnection` and its `OrderManager`.
+pub struct ReplayStatus {
+    /// `ReplayConnection.TickCount`: the last net frame of the replay.
+    pub tick_count: i32,
+    /// `ReplayConnection.FinalGameTick`: the last world tick from the metadata, 0 if unknown.
+    pub final_game_tick: i32,
+    /// `OrderManager.IsOutOfSync`.
+    pub out_of_sync: Cell<bool>,
 }
 
 impl Ingame {
@@ -84,6 +96,7 @@ impl Ingame {
             world_default_cursor,
             default_order_generator,
             unit_order_generator,
+            replay: None,
         }
     }
 

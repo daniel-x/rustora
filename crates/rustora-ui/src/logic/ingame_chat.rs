@@ -378,10 +378,34 @@ pub fn game_timer(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let world = ingame.world.clone();
     let start = Instant::now();
     ui.label(timer).get_text = Some(Rc::new(move || {
-        if world.paused() && start.elapsed().as_secs() % 2 == 0 {
+        let paused = world.paused() || world.replay_timestep.get() == 0;
+        let show_status = (world.paused() || world.replay_timestep.get() != world.timestep) && start.elapsed().as_secs() % 2 == 0;
+        if paused && show_status {
             return paused_text.clone();
         }
         format_time(world.world_tick().max(0), world.timestep)
     }));
+    let is_tooltip_label = ui.kind(timer).borrow_mut().as_any().is::<crate::widgets::LabelWithTooltipWidget>();
+    if is_tooltip_label {
+        let complete = |ui: &Ui, p: i32| message_with(ui, "label-replay-complete", &[("percentage", MessageArg::Number(p as i64))]);
+        let texts: Vec<String> = (0..=100).map(|p| complete(ui, p)).collect();
+        let world = ingame.world.clone();
+        let getter: Option<crate::widget::Getter<String>> = match &ingame.replay {
+            Some(r) if r.final_game_tick != 0 => {
+                let total = r.final_game_tick;
+                Some(Rc::new(move || {
+                    texts[(world.world_tick() * 100 / total).clamp(0, 100) as usize].clone()
+                }))
+            }
+            Some(r) if r.tick_count != 0 => {
+                let total = r.tick_count;
+                Some(Rc::new(move || {
+                    texts[(world.net_frame_number() * 100 / total).clamp(0, 100) as usize].clone()
+                }))
+            }
+            _ => None,
+        };
+        ui.get::<crate::widgets::LabelWithTooltipWidget>(timer).get_tooltip_text = getter;
+    }
     cell(NoLogic)
 }

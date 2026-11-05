@@ -418,7 +418,8 @@ pub fn transient_notifications(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn Chro
 pub fn disconnect_watcher(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let net = services(ui).net.clone();
     let ticker = ui.child(id, "DISCONNECT_WATCHER");
-    let disconnected = Cell::new(false);
+    let is_replay = services(ui).ingame.borrow().as_ref().is_some_and(|i| i.world.is_replay());
+    let disconnected = Cell::new(is_replay);
     ui.get::<LogicTickerWidget>(ticker).on_tick = Some(Rc::new(move |ui: &mut Ui| {
         if disconnected.get() || net.borrow().connection_state != ConnectionState::NotConnected {
             return;
