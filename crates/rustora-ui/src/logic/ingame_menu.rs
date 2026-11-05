@@ -206,6 +206,28 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
                     );
                 }));
             }
+            "RESTART" if world.world_type == WorldType::Regular && is_single_player => {
+                let button = add_button(ui, name, "menu-ingame.restart");
+                let (h, l, show) = (hide_menu.clone(), leaving.clone(), show_menu.clone());
+                ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
+                    h.set(true);
+                    let l = l.clone();
+                    let on_confirm: Action = Rc::new(move |ui: &mut Ui| {
+                        ui.close_window();
+                        ui.requests.push(AppRequest::RestartGame);
+                        l.set(true);
+                    });
+                    button_prompt_with_cancel(
+                        ui,
+                        "dialog-restart-mission.title",
+                        &message(ui, "dialog-restart-mission.prompt"),
+                        on_confirm,
+                        "dialog-restart-mission.confirm",
+                        Some(show.clone()),
+                        Some("dialog-restart-mission.cancel"),
+                    );
+                }));
+            }
             "SURRENDER" if world.world_type == WorldType::Regular && !is_single_player => {
                 let Some(player) = ingame.local_player.clone() else { continue };
                 let button = add_button(ui, name, "menu-ingame.surrender");

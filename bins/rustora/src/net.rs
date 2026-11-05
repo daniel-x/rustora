@@ -148,6 +148,8 @@ pub struct NetClient {
     local_port: Option<u16>,
     connecting: Option<Receiver<Result<NetworkConnection, String>>>,
     connection: Option<NetworkConnection>,
+    /// The orders of `Game.CreateAndStartLocalServer`, sent once the first lobby information arrived.
+    setup_commands: Vec<String>,
 }
 
 impl NetClient {
@@ -159,6 +161,7 @@ impl NetClient {
             local_port: None,
             connecting: None,
             connection: None,
+            setup_commands: Vec::new(),
         }
     }
 
@@ -187,6 +190,11 @@ impl NetClient {
 
     pub fn create_local_server(&mut self, map: String, skirmish: bool) {
         self.local_port = create_local_server(self.engine.clone(), self.support.clone(), map, skirmish);
+    }
+
+    /// Sets the commands that the next connection sends when its lobby information is ready.
+    pub fn set_setup_commands(&mut self, commands: Vec<String>) {
+        self.setup_commands = commands;
     }
 
     /// `Game.JoinServer`.
@@ -226,6 +234,7 @@ impl NetClient {
         self.connection = None;
         self.connecting = None;
         self.local_port = None;
+        self.setup_commands.clear();
         let mut net = self.net.borrow_mut();
         net.connection_state = ConnectionState::NotConnected;
         net.session = Session::default();
@@ -284,6 +293,14 @@ impl NetClient {
             }
             if started {
                 return true;
+            }
+        }
+        if !self.setup_commands.is_empty() {
+            let mut net = self.net.borrow_mut();
+            if net.local_client().is_some() {
+                for command in std::mem::take(&mut self.setup_commands) {
+                    net.command(&command);
+                }
             }
         }
         let outgoing = std::mem::take(&mut self.net.borrow_mut().outgoing);

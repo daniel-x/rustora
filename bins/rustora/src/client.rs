@@ -400,6 +400,8 @@ pub struct Client {
     mod_data: Rc<ModData>,
     services: Rc<Services>,
     net: NetClient,
+    /// The replay file of the running replay, for `Game.RestartGame`.
+    replay_path: Option<String>,
     ui_tick_time: TickTime,
     world_tick_time: TickTime,
 }
@@ -509,6 +511,7 @@ impl Client {
             mod_data,
             services,
             net,
+            replay_path: None,
             ui_tick_time: TickTime {
                 value: -(UI_TIMESTEP as i64),
             },
@@ -571,6 +574,7 @@ impl Client {
         let mut leave = false;
         let mut reload = None;
         let mut replay = None;
+        let mut restart = false;
         for request in requests {
             match request {
                 AppRequest::LeaveGame => leave = true,
@@ -584,6 +588,7 @@ impl Client {
                 } => self.net.create_server(name, port, password, advertise_online, map),
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
                 AppRequest::JoinReplay(path) => replay = Some(path),
+                AppRequest::RestartGame => restart = true,
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
@@ -595,6 +600,15 @@ impl Client {
         if let Some(mod_id) = reload {
             self.replace_mod(&mod_id);
             return;
+        }
+        if restart {
+            match self.replay_path.clone() {
+                Some(path) => replay = Some(path),
+                None => {
+                    self.restart_game();
+                    return;
+                }
+            }
         }
         if let Some(path) = replay {
             self.join_replay(&path);
@@ -635,6 +649,32 @@ impl Client {
         self.ui.load_widget("MAINMENU", Some(self.ui.root), &WidgetArgs::default());
     }
 
+    /// `Game.RestartGame` for a game: a new local server gets the lobby of the current game with a new random seed,
+    /// and the game starts at once.
+    fn restart_game(&mut self) {
+        let mut lobby = self.services.net.borrow().session.clone();
+        lobby.global_settings.random_seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos() as i32);
+        let map = lobby
+            .global_settings
+            .map
+            .clone()
+            .filter(|uid| self.services.maps.borrow().get(uid).is_some());
+        let Some(map) = map else {
+            self.leave_game();
+            return;
+        };
+        self.net.disconnect();
+        self.ui.reset_all();
+        *self.services.ingame.borrow_mut() = None;
+        self.dispose_world();
+        self.net.create_local_server(map, true);
+        self.net.join(rustora_ui::net::LOCAL_SERVER_TARGET, "");
+        self.net
+            .set_setup_commands(vec![format!("sync_lobby {}", lobby.serialize()), "startgame".to_string()]);
+    }
+
     /// The rest of `Game.InitializeMod`: drops everything of the running mod and starts `mod_id`.
     fn replace_mod(&mut self, mod_id: &str) {
         self.net.disconnect();
@@ -658,6 +698,7 @@ impl Client {
 
     /// `Game.StartGame`. The in-game user interface follows with slice 6 of P8.
     fn start_game(&mut self) {
+        self.replay_path = None;
         let handler = self.services.net.borrow_mut().before_game_start.take();
         if let Some(handler) = handler {
             handler(&mut self.ui);
@@ -716,6 +757,7 @@ impl Client {
             return;
         };
         self.net.disconnect();
+        self.replay_path = Some(path.to_string());
         {
             let mut net = self.services.net.borrow_mut();
             net.session = lobby.clone();

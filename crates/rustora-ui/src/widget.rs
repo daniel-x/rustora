@@ -263,6 +263,8 @@ pub enum AppRequest {
     LeaveGame,
     /// `Game.JoinReplay` for the replay file at this path.
     JoinReplay(String),
+    /// `Game.RestartGame`: the same replay again, or a new local server with the lobby of the current game.
+    RestartGame,
 }
 
 /// Port of the static `Ui` class and the widget tree.
