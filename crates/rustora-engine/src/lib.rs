@@ -19,6 +19,7 @@ pub mod net_collections;
 pub mod order;
 pub mod order_manager;
 pub mod player;
+pub mod render;
 pub mod rules;
 pub mod sequence;
 pub mod shroud;

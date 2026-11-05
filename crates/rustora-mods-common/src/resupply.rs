@@ -463,8 +463,14 @@ info_impl!(RepairsUnitsInfo => |info, _init| {
 });
 conditional_simple!(RepairsUnits);
 
-const RESUPPLY_REPAIR: u8 = 1;
-const RESUPPLY_REARM: u8 = 2;
+pub const RESUPPLY_REPAIR: u8 = 1;
+pub const RESUPPLY_REARM: u8 = 2;
+
+/// `INotifyResupply`, implemented by traits of the resupply host. `types` holds `RESUPPLY_*` flags.
+pub trait INotifyResupply {
+    fn before_resupply(&self, self_: &ActorRef, target: &ActorRef, types: u8);
+    fn resupply_tick(&self, self_: &ActorRef, target: &ActorRef, types: u8);
+}
 
 pub struct Resupply {
     base: ActivityBase,
@@ -682,6 +688,12 @@ impl Activity for Resupply {
             self.cancel(self_, true);
         }
         if self.base.is_canceling() || is_host_invalid {
+            if !is_host_invalid {
+                let host = self.host_actor();
+                for n in host.traits_implementing::<dyn INotifyResupply>() {
+                    n.resupply_tick(host, self_, 0);
+                }
+            }
             if is_close_enough || is_host_invalid {
                 self.on_resupply_ending(self_, is_host_invalid);
             }
@@ -703,6 +715,9 @@ impl Activity for Resupply {
         if !self.actual_resupply_started.get() && self.active_resupply_types.get() > 0 {
             self.actual_resupply_started.set(true);
             let host = self.host_actor();
+            for n in host.traits_implementing::<dyn INotifyResupply>() {
+                n.before_resupply(host, self_, self.active_resupply_types.get());
+            }
             for nd in &self.notify_dock_clients {
                 nd.docked(self_, host);
             }
@@ -715,6 +730,10 @@ impl Activity for Resupply {
         }
         if self.active_resupply_types.get() & RESUPPLY_REARM != 0 && self.rearmable.as_ref().unwrap().rearm_tick(self_) {
             self.active_resupply_types.set(self.active_resupply_types.get() & !RESUPPLY_REARM);
+        }
+        let host = self.host_actor();
+        for n in host.traits_implementing::<dyn INotifyResupply>() {
+            n.resupply_tick(host, self_, self.active_resupply_types.get());
         }
         if self.active_resupply_types.get() == 0 {
             self.on_resupply_ending(self_, false);

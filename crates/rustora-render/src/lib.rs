@@ -13,7 +13,7 @@ pub mod ui;
 
 const SHEET_SIZE: u32 = 2048;
 /// Number of palette rows of the palette texture.
-pub const MAX_PALETTES: u32 = 64;
+pub const MAX_PALETTES: u32 = 128;
 
 /// A sprite in a sheet.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -34,8 +34,19 @@ pub struct Quad {
     pub w: f32,
     pub h: f32,
     pub palette: Option<u32>,
-    /// Premultiplied color for solid quads; for sprites only the alpha is used.
+    /// Premultiplied color for solid quads; for sprites only the alpha is used, unless `replace_color` is set.
     pub color: [f32; 4],
+    /// Sprite texels draw `color` scaled by the palette alpha, the shader's `ReplaceColor` mode.
+    pub replace_color: bool,
+    /// Solid lines: the four corners and the color of the last two, replacing `x`, `y`, `w`, `h`.
+    pub line: Option<Line>,
+}
+
+/// The geometry of a solid line quad.
+#[derive(Clone, Copy, Debug)]
+pub struct Line {
+    pub corners: [[f32; 2]; 4],
+    pub end_color: [f32; 4],
 }
 
 impl Quad {
@@ -48,6 +59,8 @@ impl Quad {
             h: sprite.h as f32,
             palette: Some(palette),
             color: [1.0; 4],
+            replace_color: false,
+            line: None,
         }
     }
 
@@ -60,7 +73,27 @@ impl Quad {
             h,
             palette: None,
             color,
+            replace_color: false,
+            line: None,
         }
+    }
+
+    /// A line from `from` to `to`, `width` pixels thick, as `RgbaColorRenderer.DrawLine`.
+    pub fn line(from: [f32; 2], to: [f32; 2], width: f32, from_color: [f32; 4], to_color: [f32; 4]) -> Quad {
+        let d = [to[0] - from[0], to[1] - from[1]];
+        let len = (d[0] * d[0] + d[1] * d[1]).sqrt().max(f32::EPSILON);
+        let n = [-d[1] / len * width / 2.0, d[0] / len * width / 2.0];
+        let mut q = Quad::solid(from[0].min(to[0]), from[1].min(to[1]), d[0].abs(), d[1].abs(), from_color);
+        q.line = Some(Line {
+            corners: [
+                [from[0] - n[0], from[1] - n[1]],
+                [from[0] + n[0], from[1] + n[1]],
+                [to[0] + n[0], to[1] + n[1]],
+                [to[0] - n[0], to[1] - n[1]],
+            ],
+            end_color: to_color,
+        });
+        q
     }
 }
 
@@ -393,21 +426,44 @@ impl Renderer {
             let palette = q.palette.map_or(-1.0, |p| p as f32);
             let (u0, v0) = (q.sprite.x as f32, q.sprite.y as f32);
             let (u1, v1) = (u0 + q.sprite.w as f32, v0 + q.sprite.h as f32);
+            let color = if q.replace_color {
+                [q.color[0], q.color[1], q.color[2], -q.color[3]]
+            } else {
+                q.color
+            };
             let v = |x: f32, y: f32, u: f32, w: f32| Vertex {
                 pos: [x, y],
                 uv: [u, w],
                 palette,
-                color: q.color,
+                color,
             };
-            let (x0, y0, x1, y1) = (q.x, q.y, q.x + q.w, q.y + q.h);
-            vertices.extend_from_slice(&[
-                v(x0, y0, u0, v0),
-                v(x1, y0, u1, v0),
-                v(x1, y1, u1, v1),
-                v(x0, y0, u0, v0),
-                v(x1, y1, u1, v1),
-                v(x0, y1, u0, v1),
-            ]);
+            if let Some(l) = &q.line {
+                let [a, b, c, d] = l.corners;
+                let p = |pos: [f32; 2], color: [f32; 4]| Vertex {
+                    pos,
+                    uv: [0.0, 0.0],
+                    palette,
+                    color,
+                };
+                vertices.extend_from_slice(&[
+                    p(a, q.color),
+                    p(b, q.color),
+                    p(c, l.end_color),
+                    p(a, q.color),
+                    p(c, l.end_color),
+                    p(d, l.end_color),
+                ]);
+            } else {
+                let (x0, y0, x1, y1) = (q.x, q.y, q.x + q.w, q.y + q.h);
+                vertices.extend_from_slice(&[
+                    v(x0, y0, u0, v0),
+                    v(x1, y0, u1, v0),
+                    v(x1, y1, u1, v1),
+                    v(x0, y0, u0, v0),
+                    v(x1, y1, u1, v1),
+                    v(x0, y1, u0, v1),
+                ]);
+            }
             let sheet = if q.palette.is_some() {
                 q.sprite.sheet
             } else {

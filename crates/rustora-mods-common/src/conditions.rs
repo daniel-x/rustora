@@ -422,6 +422,7 @@ impl Default for WithSpriteTurretInfo {
 }
 
 pub struct WithSpriteTurret {
+    pub info: Rc<WithSpriteTurretInfo>,
     state: ConditionalState,
     pub default_animation: Rc<Animation>,
 }
@@ -461,11 +462,27 @@ info_impl!(WithSpriteTurretInfo => |info, init| {
             info.palette.clone(),
             info.is_player_palette,
         );
-        WithSpriteTurret { state: ConditionalState::new(&info.base), default_animation: anim }
+        WithSpriteTurret { info: info.clone(), state: ConditionalState::new(&info.base), default_animation: anim }
     });
     Some(t)
 });
 rustora_engine::conditional_simple!(WithSpriteTurret);
+
+impl WithSpriteTurret {
+    /// `WithSpriteTurret.PlayCustomAnimation`.
+    pub fn play_custom_animation(self: &Rc<Self>, self_: &ActorRef, name: &str) {
+        let (me, a) = (self.clone(), self_.clone());
+        let seq = crate::render::normalize_sequence(&self.default_animation, crate::render::get_damage_state(self_), name);
+        self.default_animation.play_then(
+            &seq,
+            Some(Rc::new(move || {
+                let ds = crate::render::get_damage_state(&a);
+                me.default_animation
+                    .play_repeating(&crate::render::normalize_sequence(&me.default_animation, ds, &me.info.sequence));
+            })),
+        );
+    }
+}
 
 impl crate::interfaces::INotifyDamageStateChanged for WithSpriteTurret {
     fn damage_state_changed(&self, self_: &ActorRef, _e: &rustora_engine::damage::AttackInfo) {

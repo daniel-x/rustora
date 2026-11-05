@@ -9,24 +9,19 @@ use std::rc::Rc;
 
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos};
 use rustora_engine::player::PlayerRef;
+use rustora_engine::render::{Renderable, render_actor};
 use rustora_engine::world::World;
-use rustora_mods_common::render::{RenderSprites, WithSpriteBody};
+use rustora_mods_common::render::WithSpriteBody;
 use rustora_mods_common::resources::ResourceLayer;
 use rustora_mods_common::selection::mouse_bounds_info;
 use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::draw::Rect;
 use rustora_ui::screen_map::ActorBounds;
 
+use crate::palettes::Palettes;
 use crate::sprites::{Sprite, SpriteCache};
 
 pub const TILE_SIZE: f32 = 24.0;
-
-/// Palette rows: terrain, neutral player palette, effects, then one remapped player palette per player.
-const TERRAIN_PALETTE: u32 = 0;
-const PLAYER_BASE_PALETTE: u32 = 1;
-const EFFECT_PALETTE: u32 = 2;
-const FIRST_PLAYER_PALETTE: u32 = 3;
-const PLAYER_REMAP: [usize; 16] = [80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95];
 
 pub fn world_to_px(p: WPos) -> (f32, f32) {
     (p.x as f32 * TILE_SIZE / 1024.0, (p.y - p.z) as f32 * TILE_SIZE / 1024.0)
@@ -50,58 +45,25 @@ pub fn bounds_rect(center: (i32, i32), bounds: &[WDist]) -> Rect {
     Rect::new(center.0 + ox, center.1 + oy, w, h)
 }
 
+fn on_camera(q: &Quad, cam: &Camera) -> bool {
+    let (w, h) = (cam.width as f32 / cam.zoom, cam.height as f32 / cam.zoom);
+    q.x < cam.x + w && q.x + q.w > cam.x && q.y < cam.y + h && q.y + q.h > cam.y
+}
+
 pub struct Scene {
     sprites: SpriteCache,
     terrain: HashMap<u16, Rc<Vec<Option<Sprite>>>>,
-    player_palettes: HashMap<u32, u32>,
+    palettes: Palettes,
     variant_seed: u32,
-}
-
-/// Loads `.pal` files with the transparent and shadow indices of RA's `rules/palettes.yaml`.
-fn load_palette(read_file: &rustora_engine::sequence::ReadFile, name: &str, shadow: &[usize]) -> rustora_formats::palette::Palette {
-    let d = read_file(name).unwrap_or_else(|| panic!("palette {name} not found"));
-    rustora_formats::palette::load(&d, &[0], shadow).expect("palette")
 }
 
 impl Scene {
     pub fn new(renderer: &mut Renderer, world: &World, read_file: rustora_engine::sequence::ReadFile) -> Scene {
-        let map = world.map();
-        let terrain_pal = format!("{}.pal", map.tileset.to_lowercase());
-        renderer.set_palette(TERRAIN_PALETTE, &load_palette(&read_file, &terrain_pal, &[3, 4]));
-        let player = load_palette(&read_file, "temperat.pal", &[4]);
-        renderer.set_palette(PLAYER_BASE_PALETTE, &player);
-        renderer.set_palette(EFFECT_PALETTE, &player);
-        let mut player_palettes = HashMap::new();
-        for (i, p) in world.players().iter().enumerate() {
-            let row = FIRST_PLAYER_PALETTE + i as u32;
-            if row >= rustora_render::MAX_PALETTES {
-                break;
-            }
-            let c = p.color.argb;
-            let rgb = [(c >> 16) as u8, (c >> 8) as u8, c as u8];
-            renderer.set_palette(row, &rustora_formats::palette::player_remap(&player, &PLAYER_REMAP, rgb));
-            player_palettes.insert(p.player_actor().id, row);
-        }
         Scene {
-            sprites: SpriteCache::new(read_file, &map.tileset),
+            palettes: Palettes::new(renderer, world, &read_file),
+            sprites: SpriteCache::new(read_file, &world.map().tileset),
             terrain: HashMap::new(),
-            player_palettes,
             variant_seed: 0x9e37_79b9,
-        }
-    }
-
-    fn palette_row(&self, name: Option<&str>, is_player_palette: bool, owner: &PlayerRef) -> u32 {
-        if is_player_palette || name == Some("player") {
-            return self
-                .player_palettes
-                .get(&owner.player_actor().id)
-                .copied()
-                .unwrap_or(PLAYER_BASE_PALETTE);
-        }
-        match name {
-            Some("terrain") => TERRAIN_PALETTE,
-            Some("player") | Some("player-noshadow") => PLAYER_BASE_PALETTE,
-            _ => EFFECT_PALETTE,
         }
     }
 
@@ -137,8 +99,70 @@ impl Scene {
         (y0..y1).flat_map(move |y| (x0..x1).map(move |x| CPos::new(x, y)))
     }
 
+    /// Appends the quads of `renderables`, sorted as in `WorldRenderer.GenerateRenderables`, and culled to `cam`.
+    fn add_renderables(&mut self, renderer: &mut Renderer, renderables: &[Renderable], cam: &Camera, quads: &mut Vec<Quad>) {
+        let mut keyed: Vec<(i32, Quad)> = Vec::with_capacity(renderables.len());
+        for r in renderables {
+            let key = r.sort_key();
+            self.add_renderable(renderer, r, key, cam, &mut keyed);
+        }
+        keyed.sort_by_key(|(k, _)| *k);
+        quads.extend(keyed.into_iter().map(|(_, q)| q));
+    }
+
+    fn add_renderable(&mut self, renderer: &mut Renderer, r: &Renderable, key: i32, cam: &Camera, out: &mut Vec<(i32, Quad)>) {
+        match r {
+            Renderable::Sprite(s) => {
+                let Some(resolved) = self.sprites.sequence(renderer, &s.sequence) else {
+                    return;
+                };
+                let Some(sprite) = resolved.sprite(s.frame, s.facing) else {
+                    return;
+                };
+                let (x, y) = world_to_px(s.pos + s.offset);
+                let scale = resolved.scale;
+                let (w, h) = (sprite.rect.w as f32 * scale, sprite.rect.h as f32 * scale);
+                let mut quad = Quad::sprite(
+                    sprite.rect,
+                    x + sprite.offset[0] * scale - (w / 2.0).trunc(),
+                    y + sprite.offset[1] * scale - (h / 2.0).trunc(),
+                    self.palettes.row(&s.palette),
+                );
+                quad.w = w;
+                quad.h = h;
+                quad.color[3] = s.alpha;
+                if let Some([r, g, b]) = s.replace_color {
+                    quad.color = [r, g, b, s.alpha];
+                    quad.replace_color = true;
+                }
+                if on_camera(&quad, cam) {
+                    out.push((key + resolved.z_offset, quad));
+                }
+            }
+            Renderable::Line {
+                from,
+                to,
+                width,
+                from_color,
+                to_color,
+            } => {
+                let (a, b) = (world_to_px(*from), world_to_px(*to));
+                let px_width = width * TILE_SIZE / 1024.0;
+                let quad = Quad::line([a.0, a.1], [b.0, b.1], px_width, *from_color, *to_color);
+                out.push((key, quad));
+            }
+            Renderable::Group { items, .. } => {
+                for item in items {
+                    self.add_renderable(renderer, item, key, cam, out);
+                }
+            }
+        }
+    }
+
     /// Builds the quads of one frame as seen by `viewer` (everything if `None`).
     pub fn build(&mut self, renderer: &mut Renderer, world: &World, viewer: Option<&PlayerRef>, cam: &Camera) -> Vec<Quad> {
+        self.palettes.update(renderer, world.world_tick());
+        let terrain_row = self.palettes.named("terrain");
         let mut quads = Vec::new();
         let cells: Vec<CPos> = Self::visible_cells(world, cam).collect();
         let map = world.map();
@@ -150,63 +174,22 @@ impl Scene {
                     s.rect,
                     c.x() as f32 * TILE_SIZE + s.offset[0] - s.rect.w as f32 / 2.0 + TILE_SIZE / 2.0,
                     c.y() as f32 * TILE_SIZE + s.offset[1] - s.rect.h as f32 / 2.0 + TILE_SIZE / 2.0,
-                    TERRAIN_PALETTE,
+                    terrain_row,
                 ));
             }
         }
         self.add_resources(renderer, world, &cells, &mut quads);
 
-        let mut actor_quads: Vec<(i32, Quad)> = Vec::new();
+        let mut renderables = Vec::new();
         for a in world.actors() {
-            if !a.is_in_world() || viewer.is_some_and(|v| !a.can_be_viewed_by_player(Some(v))) {
-                continue;
-            }
-            let Some(rs) = a.trait_or_default::<RenderSprites>() else {
-                continue;
-            };
-            if rs.info.editor_only {
-                continue;
-            }
-            let owner = a.owner();
-            for (anim, palette, is_player_palette) in rs.animations() {
-                if anim.disable_func.as_ref().is_some_and(|f| f()) {
-                    continue;
-                }
-                let Some(seq) = anim.animation.current_sequence() else { continue };
-                let Some(resolved) = self.sprites.sequence(renderer, &seq) else {
-                    continue;
-                };
-                let facing = (anim.animation.facing_func)();
-                let Some(s) = resolved.sprite(anim.animation.current_frame(), facing) else {
-                    continue;
-                };
-                let pos = a.center_position() + anim.offset_func.as_ref().map_or_else(Default::default, |f| f());
-                let z = anim.zoffset_func.as_ref().map_or(0, |f| f(pos)) + resolved.z_offset;
-                let (px, py) = world_to_px(pos);
-                if std::env::var_os("RUSTORA_DUMP_ANIMS").is_some() {
-                    eprintln!(
-                        "{} {} {}.{} frame {} at {px:.0},{py:.0} palette {palette:?}",
-                        a.id,
-                        a.info.name,
-                        seq.image,
-                        seq.name,
-                        anim.animation.current_frame()
-                    );
-                }
-                let row = self.palette_row(palette.as_deref(), is_player_palette, &owner);
-                actor_quads.push((
-                    pos.y + pos.z + z,
-                    Quad::sprite(
-                        s.rect,
-                        px + s.offset[0] - s.rect.w as f32 / 2.0,
-                        py + s.offset[1] - s.rect.h as f32 / 2.0,
-                        row,
-                    ),
-                ));
+            if a.is_in_world() && viewer.is_none_or(|v| a.can_be_viewed_by_player(Some(v))) {
+                render_actor(&a, &mut renderables);
             }
         }
-        actor_quads.sort_by_key(|(k, _)| *k);
-        quads.extend(actor_quads.into_iter().map(|(_, q)| q));
+        for e in world.effects() {
+            e.render(viewer, &mut renderables);
+        }
+        self.add_renderables(renderer, &renderables, cam, &mut quads);
 
         if let Some(v) = viewer {
             let shroud = v.shroud();
@@ -219,6 +202,11 @@ impl Scene {
                 }
             }
         }
+        let mut above = Vec::new();
+        for e in world.effects() {
+            e.render_above_shroud(viewer, &mut above);
+        }
+        self.add_renderables(renderer, &above, cam, &mut quads);
         quads
     }
 
@@ -268,6 +256,7 @@ impl Scene {
             return;
         };
         let seqs = world.map().sequences().clone();
+        let player_row = self.palettes.named("player");
         for &c in cells {
             let r = layer.get_resource(c);
             let Some(ty) = r.ty.as_deref() else { continue };
@@ -298,7 +287,7 @@ impl Scene {
                     s.rect,
                     x + s.offset[0] - s.rect.w as f32 / 2.0,
                     y + s.offset[1] - s.rect.h as f32 / 2.0,
-                    PLAYER_BASE_PALETTE,
+                    player_row,
                 ));
             }
         }

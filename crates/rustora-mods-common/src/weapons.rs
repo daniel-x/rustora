@@ -9,8 +9,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use indexmap::{IndexMap, IndexSet};
+use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::MiniYaml;
-use rustora_core::world_types::{CPos, CVec, Int2, WAngle, WDist, WPos, WRot, WVec, isqrt_i32};
+use rustora_core::world_types::{CPos, CVec, Int2, MersenneTwister, WAngle, WDist, WPos, WRot, WVec, isqrt_i32};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_ext::{enabled_target_types, targetable_positions};
@@ -19,7 +20,9 @@ use rustora_engine::conditional::*;
 use rustora_engine::damage::{Damage, DamageTypes};
 use rustora_engine::effect::{Effect, EffectRef};
 use rustora_engine::player::{PlayerRef, PlayerRelationship};
+use rustora_engine::render::{PaletteRef, Renderable, SpriteRenderable, fog_obscures, render_animation};
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sequence::{Animation, Sequence};
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::terrain::TargetableType;
 use rustora_engine::traits::subcell::FULL_CELL;
@@ -29,6 +32,7 @@ use rustora_engine::world::World;
 use rustora_engine::{conditional_simple, info_impl, load_info, register_traits};
 
 use crate::actor_map::WorldExt;
+use crate::effects::{ContrailFader, ContrailFields, SharedContrail, SpriteEffect};
 use crate::health::HealthInfo;
 use crate::hit_shape::{ArmorType, HitShape};
 use crate::resources::ResourceLayer;
@@ -518,6 +522,13 @@ impl IWarhead for DamageWarhead {
 pub struct CreateEffectWarhead {
     #[field(flatten)]
     pub base: WarheadBase,
+    pub explosions: Vec<String>,
+    pub image: Option<String>,
+    pub explosion_palette: String,
+    pub use_player_palette: bool,
+    pub force_display_at_ground_level: bool,
+    pub impact_sounds: Vec<String>,
+    pub impact_sound_chance: i32,
     pub impact_actors: bool,
     pub inaccuracy: WDist,
 }
@@ -526,6 +537,13 @@ impl Default for CreateEffectWarhead {
     fn default() -> Self {
         CreateEffectWarhead {
             base: WarheadBase::default(),
+            explosions: Vec::new(),
+            image: Some("explosion".into()),
+            explosion_palette: "effect".into(),
+            use_player_palette: false,
+            force_display_at_ground_level: false,
+            impact_sounds: Vec::new(),
+            impact_sound_chance: 100,
             impact_actors: true,
             inaccuracy: WDist::ZERO,
         }
@@ -588,7 +606,7 @@ impl IWarhead for CreateEffectWarhead {
             return;
         }
         let fired_by = &args.source_actor;
-        let pos = target.center_position();
+        let mut pos = target.center_position();
         let w = fired_by.world();
         let at_impact = if self.impact_actors {
             self.actor_type_at_impact(&w, pos, fired_by)
@@ -598,10 +616,30 @@ impl IWarhead for CreateEffectWarhead {
         if at_impact == ImpactActorType::Invalid || (at_impact == ImpactActorType::None && !self.is_valid_against_terrain(&w, pos)) {
             return;
         }
-        if self.inaccuracy.length > 0 {
-            WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2);
+        let explosion = random_or_default(&w, &self.explosions);
+        if let (Some(image), Some(explosion)) = (self.image.clone(), explosion) {
+            if self.inaccuracy.length > 0 {
+                pos = pos + WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2) * self.inaccuracy.length / 1024;
+            }
+            if self.force_display_at_ground_level {
+                pos = pos - WVec::new(0, 0, w.map().distance_above_terrain(pos).length);
+            }
+            let palette = PaletteRef::resolve(Some(&self.explosion_palette), self.use_player_palette, &fired_by.owner());
+            w.add_frame_end_task(Box::new(move |w| {
+                let e: EffectRef = SpriteEffect::at(w, pos, WAngle::ZERO, &image, &explosion, palette);
+                w.add_effect(e);
+            }));
         }
     }
+}
+
+/// `RandomOrDefault(world.LocalRandom)`.
+fn random_or_default(w: &World, items: &[String]) -> Option<String> {
+    if items.is_empty() {
+        return None;
+    }
+    let i = w.local_random.borrow_mut().next_max(items.len() as i32);
+    Some(items[i as usize].clone())
 }
 
 fn annulus_cells(w: &World, center: CPos, size: &[i32]) -> Vec<CPos> {
@@ -814,12 +852,84 @@ impl IWarhead for FireClusterWarhead {
     }
 }
 
-fn random_sequence_draw(w: &World, sequences: &[String]) {
-    w.shared_random.borrow_mut().next_max(sequences.len() as i32);
+/// `sequences.Random(world.SharedRandom)`.
+fn random_sequence(w: &World, sequences: &[String]) -> String {
+    let i = w.shared_random.borrow_mut().next_max(sequences.len() as i32);
+    sequences[i as usize].clone()
+}
+
+/// The palette and shadow fields of `BulletInfo`, `MissileInfo` and `GravityBombInfo`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ProjectileVisuals {
+    pub palette: String,
+    pub is_player_palette: bool,
+    pub shadow: bool,
+    pub shadow_color: Color,
+    pub trail_palette: String,
+    pub trail_use_player_palette: bool,
+}
+
+impl Default for ProjectileVisuals {
+    fn default() -> Self {
+        ProjectileVisuals {
+            palette: "effect".into(),
+            is_player_palette: false,
+            shadow: false,
+            shadow_color: Color::from_argb(140, 0, 0, 0),
+            trail_palette: "effect".into(),
+            trail_use_player_palette: false,
+        }
+    }
+}
+
+impl ProjectileVisuals {
+    fn trail_palette(&self, owner: &PlayerRef) -> PaletteRef {
+        PaletteRef::resolve(Some(&self.trail_palette), self.trail_use_player_palette, owner)
+    }
+
+    /// `RenderAnimation` of the projectiles: the optional shadow on the ground, then the projectile.
+    fn render(&self, anim: &Animation, pos: WPos, args: &ProjectileArgs, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        if fog_obscures(viewer, pos) {
+            return;
+        }
+        let palette = PaletteRef::resolve(Some(&self.palette), self.is_player_palette, &args.source_actor.owner());
+        if self.shadow {
+            let w = args.source_actor.world();
+            let shadow_pos = pos - WVec::new(0, 0, w.map().distance_above_terrain(pos).length);
+            let first = out.len();
+            render_animation(anim, shadow_pos, WVec::ZERO, 0, &palette, out);
+            for r in &mut out[first..] {
+                if let Renderable::Sprite(s) = r {
+                    let c = self.shadow_color;
+                    s.replace_color = Some([c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0]);
+                    s.alpha = c.a() as f32 / 255.0;
+                }
+            }
+        }
+        render_animation(anim, pos, WVec::ZERO, 0, &palette, out);
+    }
+}
+
+fn projectile_animation(w: &World, image: Option<&str>, sequences: &[String], facing: Rc<dyn Fn() -> WAngle>) -> Option<Rc<Animation>> {
+    let image = image.filter(|i| !i.is_empty())?;
+    let anim = Animation::new(w.map().sequences().clone(), image, Some(facing), None);
+    anim.play_repeating(&random_sequence(w, sequences));
+    Some(anim)
+}
+
+fn add_contrail_fader(world: &World, pos: WPos, contrail: &Option<SharedContrail>) {
+    if let Some(c) = contrail {
+        let fader: EffectRef = ContrailFader::new(pos, c.clone());
+        world.add_frame_end_task(Box::new(move |w| w.add_effect(fader)));
+    }
 }
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct BulletInfo {
+    #[field(flatten)]
+    pub visuals: ProjectileVisuals,
+    #[field(flatten)]
+    pub contrail: ContrailFields,
     pub speed: Vec<WDist>,
     pub image: Option<String>,
     pub sequences: Vec<String>,
@@ -842,6 +952,8 @@ pub struct BulletInfo {
 impl Default for BulletInfo {
     fn default() -> Self {
         BulletInfo {
+            visuals: ProjectileVisuals::default(),
+            contrail: ContrailFields::default(),
             speed: vec![WDist::new(17)],
             image: None,
             sequences: vec!["idle".to_string()],
@@ -890,18 +1002,30 @@ impl IProjectileInfo for BulletInfo {
             target = target + WVec::new(0, 0, info.airburst_altitude.length);
         }
         let pos = args.source;
-        if info.image.as_deref().is_some_and(|i| !i.is_empty()) {
-            random_sequence_draw(&w, &info.sequences);
-        }
+        let facing_ticks = Rc::new(Cell::new(0));
+        let length = 1.max((target - pos).length() / speed.length);
+        let yaw = (target - pos).yaw();
+        let f = facing_ticks.clone();
+        let anim = projectile_animation(
+            &w,
+            info.image.as_deref(),
+            &info.sequences,
+            Rc::new(move || effective_facing(f.get(), length, angle, yaw)),
+        );
+        let contrail = info.contrail.create(&args.source_actor);
         Some(Rc::new_cyclic(|me: &Weak<Bullet>| Bullet {
             me: me.clone(),
+            anim,
+            contrail,
+            yaw,
+            facing_ticks,
             speed,
             angle,
             pos: Cell::new(pos),
             last_pos: Cell::new(WPos::ZERO),
             target: Cell::new(target),
             source: Cell::new(pos),
-            length: Cell::new(1.max((target - pos).length() / speed.length)),
+            length: Cell::new(length),
             ticks: Cell::new(0),
             smoke_ticks: Cell::new(info.trail_delay),
             remaining_bounces: Cell::new(info.bounce_count),
@@ -915,8 +1039,27 @@ impl IProjectileInfo for BulletInfo {
     }
 }
 
+/// `Bullet.GetEffectiveFacing`.
+fn effective_facing(ticks: i32, length: i32, angle: WAngle, facing: WAngle) -> WAngle {
+    let at = ticks as f32 / (length - 1) as f32;
+    let attitude = angle.tan() as f32 * (1.0 - 2.0 * at) / (4.0 * 1024.0);
+    let u = (facing.angle % 512) as f32 / 512.0;
+    let scale = 2048.0 * u * (1.0 - u);
+    let f = facing.angle as f32;
+    WAngle::new(if facing.angle < 512 {
+        f - scale * attitude
+    } else {
+        f + scale * attitude
+    } as i32)
+}
+
 struct Bullet {
     me: Weak<Bullet>,
+    anim: Option<Rc<Animation>>,
+    contrail: Option<SharedContrail>,
+    yaw: WAngle,
+    /// A copy of `ticks` for the facing function of the animation.
+    facing_ticks: Rc<Cell<i32>>,
     info: Rc<BulletInfo>,
     args: ProjectileArgs,
     speed: WDist,
@@ -944,10 +1087,27 @@ impl Bullet {
         if info.trail_image.as_deref().is_some_and(|i| !i.is_empty()) {
             self.smoke_ticks.set(self.smoke_ticks.get() - 1);
             if self.smoke_ticks.get() < 0 {
-                let seqs = info.clone();
-                w.add_frame_end_task(Box::new(move |w| random_sequence_draw(w, &seqs.trail_sequences)));
+                let info2 = info.clone();
+                let delayed = WPos::lerp_quadratic(
+                    self.source.get(),
+                    self.target.get(),
+                    self.angle,
+                    self.ticks.get() - info.trail_delay,
+                    self.length.get(),
+                );
+                let facing = effective_facing(self.ticks.get(), self.length.get(), self.angle, self.yaw);
+                let palette = info.visuals.trail_palette(&self.args.source_actor.owner());
+                w.add_frame_end_task(Box::new(move |w| {
+                    let seq = random_sequence(w, &info2.trail_sequences);
+                    let image = info2.trail_image.as_deref().unwrap_or_default();
+                    let e: EffectRef = SpriteEffect::at(w, delayed, facing, image, &seq, palette);
+                    w.add_effect(e);
+                }));
                 self.smoke_ticks.set(info.trail_interval);
             }
+        }
+        if let Some(c) = &self.contrail {
+            c.borrow_mut().update(self.pos.get());
         }
         let t = self.ticks.get();
         self.ticks.set(t + 1);
@@ -1010,6 +1170,10 @@ impl Bullet {
 
 impl Effect for Bullet {
     fn tick(&self, world: &Rc<World>) {
+        if let Some(a) = &self.anim {
+            a.tick();
+        }
+        self.facing_ticks.set(self.ticks.get());
         self.last_pos.set(self.pos.get());
         self.pos.set(WPos::lerp_quadratic(
             self.source.get(),
@@ -1019,6 +1183,7 @@ impl Effect for Bullet {
             self.length.get(),
         ));
         if self.should_explode(world) {
+            add_contrail_fader(world, self.pos.get(), &self.contrail);
             let me: EffectRef = self.me.upgrade().expect("bullet");
             world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
             let pos = self.pos.get();
@@ -1035,6 +1200,18 @@ impl Effect for Bullet {
 
     fn sync_hash(&self) -> i32 {
         self.pos.get().hash() ^ self.last_pos.get().hash() ^ self.target.get().hash() ^ self.source.get().hash()
+    }
+
+    fn render(&self, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        if let Some(c) = &self.contrail {
+            c.borrow().render(viewer, out);
+        }
+        if self.ticks.get() >= self.length.get() {
+            return;
+        }
+        if let Some(a) = &self.anim {
+            self.info.visuals.render(a, self.pos.get(), &self.args, viewer, out);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -1122,6 +1299,8 @@ impl Effect for InstantHit {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct GravityBombInfo {
+    #[field(flatten)]
+    pub visuals: ProjectileVisuals,
     pub image: Option<String>,
     pub sequences: Vec<String>,
     pub open_sequence: Option<String>,
@@ -1132,6 +1311,7 @@ pub struct GravityBombInfo {
 impl Default for GravityBombInfo {
     fn default() -> Self {
         GravityBombInfo {
+            visuals: ProjectileVisuals::default(),
             image: None,
             sequences: vec!["idle".to_string()],
             open_sequence: None,
@@ -1144,28 +1324,32 @@ impl Default for GravityBombInfo {
 impl IProjectileInfo for GravityBombInfo {
     fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
         let w = args.source_actor.world();
-        let mut anim = None;
-        if let Some(image) = self.image.as_deref().filter(|i| !i.is_empty()) {
+        let facing = args.facing;
+        let anim = self.image.as_deref().filter(|i| !i.is_empty()).map(|image| {
+            let a = Animation::new(w.map().sequences().clone(), image, Some(Rc::new(move || facing)), None);
             match self.open_sequence.as_deref().filter(|s| !s.is_empty()) {
                 Some(open) => {
-                    let a = rustora_engine::sequence::Animation::new(w.map().sequences().clone(), image, None, None);
-                    let (world, count) = (w.clone(), self.sequences.len() as i32);
+                    let (world, sequences, weak) = (w.clone(), self.sequences.clone(), Rc::downgrade(&a));
                     a.play_then(
                         open,
                         Some(Rc::new(move || {
-                            world.shared_random.borrow_mut().next_max(count);
+                            let seq = random_sequence(&world, &sequences);
+                            if let Some(a) = weak.upgrade() {
+                                a.play_repeating(&seq);
+                            }
                         })),
                     );
-                    anim = Some(a);
                 }
-                None => random_sequence_draw(&w, &self.sequences),
+                None => a.play_repeating(&random_sequence(&w, &self.sequences)),
             }
-        }
+            a
+        });
         let v = self.velocity;
         let a = self.acceleration;
         let velocity = WVec::new(v.y, -v.x, v.z).rotate(&WRot::from_yaw(args.facing));
         Some(Rc::new_cyclic(|me: &Weak<GravityBomb>| GravityBomb {
             me: me.clone(),
+            visuals: self.visuals.clone(),
             anim,
             acceleration: WVec::new(a.y, -a.x, a.z),
             velocity: Cell::new(velocity),
@@ -1182,8 +1366,8 @@ impl IProjectileInfo for GravityBombInfo {
 
 struct GravityBomb {
     me: Weak<GravityBomb>,
-    /// Runs the open sequence, whose `PlayThen` callback picks the falling sequence with a shared random draw.
-    anim: Option<Rc<rustora_engine::sequence::Animation>>,
+    visuals: ProjectileVisuals,
+    anim: Option<Rc<Animation>>,
     acceleration: WVec,
     velocity: Cell<WVec>,
     pos: Cell<WPos>,
@@ -1220,6 +1404,12 @@ impl Effect for GravityBomb {
         self.pos.get().hash() ^ self.last_pos.get().hash()
     }
 
+    fn render(&self, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        if let Some(a) = &self.anim {
+            self.visuals.render(a, self.pos.get(), &self.args, viewer, out);
+        }
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -1227,6 +1417,12 @@ impl Effect for GravityBomb {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct TeslaZapInfo {
+    pub image: String,
+    pub bright_sequence: String,
+    pub dim_sequence: String,
+    pub palette: String,
+    pub bright_zaps: i32,
+    pub dim_zaps: i32,
     pub duration: i32,
     pub damage_duration: i32,
     pub track_target: bool,
@@ -1235,6 +1431,12 @@ pub struct TeslaZapInfo {
 impl Default for TeslaZapInfo {
     fn default() -> Self {
         TeslaZapInfo {
+            image: "litning".into(),
+            bright_sequence: "bright".into(),
+            dim_sequence: "dim".into(),
+            palette: "effect".into(),
+            bright_zaps: 1,
+            dim_zaps: 2,
             duration: 2,
             damage_duration: 1,
             track_target: true,
@@ -1257,6 +1459,100 @@ impl IProjectileInfo for TeslaZapInfo {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+const ZAP_STEPS: [[i32; 5]; 8] = [
+    [8, 8, 4, 4, 0],
+    [-8, -8, -4, -4, 0],
+    [8, 0, 4, 4, 1],
+    [-8, 0, -4, 4, 1],
+    [0, 8, 4, 4, 2],
+    [0, -8, 4, -4, 2],
+    [-8, 8, -4, 4, 3],
+    [8, -8, 4, -4, 3],
+];
+
+/// `WorldRenderer.ScreenPosition` with the RA tile size.
+fn zap_screen_position(p: WPos) -> [f32; 2] {
+    [24.0 * p.x as f32 / 1024.0, 24.0 * (p.y - p.z) as f32 / 1024.0]
+}
+
+/// `TeslaZapRenderable.DrawZapWandering`.
+fn draw_zap_wandering(
+    random: &mut MersenneTwister,
+    from: [f32; 2],
+    to: [f32; 2],
+    seq: &Rc<Sequence>,
+    palette: &PaletteRef,
+    items: &mut Vec<Renderable>,
+) {
+    let dist = [to[0] - from[0], to[1] - from[1]];
+    let len = (dist[0] * dist[0] + dist[1] * dist[1]).sqrt();
+    if len == 0.0 {
+        return;
+    }
+    let norm = [-dist[1] / len, dist[0] / len];
+    let wander = |random: &mut MersenneTwister, t: f32| {
+        let d = WDist::from_pdf(random, 2).length as f32 * len / 4096.0;
+        [from[0] + t * dist[0] + d * norm[0], from[1] + t * dist[1] + d * norm[1]]
+    };
+    if random.next_max(2) != 0 {
+        let p1 = wander(random, 1.0 / 3.0);
+        let p2 = wander(random, 2.0 / 3.0);
+        let p1 = draw_zap(from, p1, seq, palette, items);
+        let p2 = draw_zap(p1, p2, seq, palette, items);
+        draw_zap(p2, to, seq, palette, items);
+    } else {
+        let p1 = wander(random, 0.5);
+        let p1 = draw_zap(from, p1, seq, palette, items);
+        draw_zap(p1, to, seq, palette, items);
+    }
+}
+
+/// `TeslaZapRenderable.DrawZap`. Returns the end of the drawn path.
+fn draw_zap(from: [f32; 2], to: [f32; 2], seq: &Rc<Sequence>, palette: &PaletteRef, items: &mut Vec<Renderable>) -> [f32; 2] {
+    let dist = [to[0] - from[0], to[1] - from[1]];
+    let q = [-dist[1], dist[0]];
+    let c = -(from[0] * q[0] + from[1] * q[1]);
+    let mut z = from;
+    let mut count = 0;
+    while (to[0] - z[0]).abs() > 5.0 || (to[1] - z[1]).abs() > 5.0 {
+        let cur = (to[0] - z[0]).powi(2) + (to[1] - z[1]).powi(2);
+        let moved = |t: &[i32; 5]| [z[0] + t[0] as f32, z[1] + t[1] as f32];
+        let step = ZAP_STEPS
+            .iter()
+            .filter(|t| {
+                let m = moved(t);
+                (to[0] - m[0]).powi(2) + (to[1] - m[1]).powi(2) < cur
+            })
+            .min_by(|a, b| {
+                let key = |t: &[i32; 5]| {
+                    let m = moved(t);
+                    (m[0] * q[0] + m[1] * q[1] + c).abs()
+                };
+                key(a).total_cmp(&key(b))
+            })
+            .expect("a zap step approaches the target");
+        let (x, y) = ((z[0] + step[2] as f32) as i32, (z[1] + step[3] as f32) as i32);
+        items.push(Renderable::Sprite(SpriteRenderable {
+            sequence: seq.clone(),
+            frame: step[4],
+            facing: WAngle::ZERO,
+            pos: WPos::new(1024 * x / 24, 1024 * y / 24, 0),
+            offset: WVec::ZERO,
+            z_offset: 0,
+            palette: palette.clone(),
+            alpha: 1.0,
+            replace_color: None,
+            is_decoration: true,
+        }));
+        z = [z[0] + step[0] as f32, z[1] + step[1] as f32];
+        count += 1;
+        if count >= 1000 {
+            break;
+        }
+    }
+    z
 }
 
 struct TeslaZap {
@@ -1304,6 +1600,35 @@ impl Effect for TeslaZap {
         self.target.get().hash()
     }
 
+    fn render(&self, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        let source = self.args.source;
+        let target = self.target.get();
+        if fog_obscures(viewer, source) && fog_obscures(viewer, target) {
+            return;
+        }
+        let w = self.args.source_actor.world();
+        let seqs = w.map().sequences();
+        let info = &self.info;
+        let (bright, dim) = (
+            seqs.get_sequence(&info.image, &info.bright_sequence),
+            seqs.get_sequence(&info.image, &info.dim_sequence),
+        );
+        let palette = PaletteRef::named(&info.palette);
+        let (from, to) = (zap_screen_position(source), zap_screen_position(target));
+        let mut items = Vec::new();
+        let mut random = w.local_random.borrow_mut();
+        for (seq, count) in [(&dim, info.dim_zaps), (&bright, info.bright_zaps)] {
+            for _ in 0..count {
+                draw_zap_wandering(&mut random, from, to, seq, &palette, &mut items);
+            }
+        }
+        out.push(Renderable::Group {
+            pos: source,
+            z_offset: 0,
+            items,
+        });
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -1311,6 +1636,10 @@ impl Effect for TeslaZap {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct MissileInfo {
+    #[field(flatten)]
+    pub visuals: ProjectileVisuals,
+    #[field(flatten)]
+    pub contrail: ContrailFields,
     pub image: Option<String>,
     pub sequences: Vec<String>,
     pub minimum_launch_angle: WAngle,
@@ -1348,6 +1677,8 @@ pub struct MissileInfo {
 impl Default for MissileInfo {
     fn default() -> Self {
         MissileInfo {
+            visuals: ProjectileVisuals::default(),
+            contrail: ContrailFields::default(),
             image: None,
             sequences: vec!["idle".to_string()],
             minimum_launch_angle: WAngle::new(-64),
@@ -1472,11 +1803,15 @@ impl IProjectileInfo for MissileInfo {
         );
         let h_facing = args.facing.facing();
         let velocity = facing_rotated(WVec::new(0, -speed, 0), v_facing, h_facing);
-        if info.image.as_deref().is_some_and(|i| !i.is_empty()) {
-            random_sequence_draw(&w, &info.sequences);
-        }
+        let render_facing = Rc::new(Cell::new(args.facing));
+        let f = render_facing.clone();
+        let anim = projectile_animation(&w, info.image.as_deref(), &info.sequences, Rc::new(move || f.get()));
+        let contrail = info.contrail.create(&args.source_actor);
         Some(Rc::new_cyclic(|me: &Weak<Missile>| Missile {
             me: me.clone(),
+            anim,
+            contrail,
+            render_facing,
             gravity: WVec::new(0, 0, -info.gravity),
             max_speed: info.speed.length,
             ticks: Cell::new(0),
@@ -1517,6 +1852,9 @@ enum MissileState {
 /// `Missile`, without the `TerrainHeightAware` code paths that Red Alert does not use.
 struct Missile {
     me: Weak<Missile>,
+    anim: Option<Rc<Animation>>,
+    contrail: Option<SharedContrail>,
+    render_facing: Rc<Cell<WAngle>>,
     info: Rc<MissileInfo>,
     args: ProjectileArgs,
     gravity: WVec,
@@ -1716,6 +2054,9 @@ impl Effect for Missile {
     fn tick(&self, world: &Rc<World>) {
         let info = &self.info;
         let args = &self.args;
+        if let Some(a) = &self.anim {
+            a.tick();
+        }
         self.ticks.set(self.ticks.get() + 1);
         if self.ticks.get() == info.homing_activation_delay + 1 {
             self.state.set(MissileState::Homing);
@@ -1764,6 +2105,7 @@ impl Effect for Missile {
             self.homing_tick(world, tar_dist, rel_hor)
         };
         let last_pos = self.pos.get();
+        self.render_facing.set(WVec::new(mv.x, mv.y - mv.z, 0).yaw());
         if info.allow_snapping && self.state.get() != MissileState::Freefall && rel_dist < mv.length() {
             self.pos.set(new_tar + self.offset);
         } else {
@@ -1779,10 +2121,21 @@ impl Effect for Missile {
         if info.trail_image.as_deref().is_some_and(|i| !i.is_empty()) {
             self.ticks_to_next_smoke.set(self.ticks_to_next_smoke.get() - 1);
             if self.ticks_to_next_smoke.get() < 0 && (self.state.get() != MissileState::Freefall || info.trail_when_deactivated) {
-                let seqs = info.clone();
-                world.add_frame_end_task(Box::new(move |w| random_sequence_draw(w, &seqs.trail_sequences)));
+                let info2 = info.clone();
+                let at = self.pos.get() - mv * 3 / 2;
+                let facing = self.render_facing.get();
+                let palette = info.visuals.trail_palette(&args.source_actor.owner());
+                world.add_frame_end_task(Box::new(move |w| {
+                    let seq = random_sequence(w, &info2.trail_sequences);
+                    let image = info2.trail_image.as_deref().unwrap_or_default();
+                    let e: EffectRef = SpriteEffect::at(w, at, facing, image, &seq, palette);
+                    w.add_effect(e);
+                }));
                 self.ticks_to_next_smoke.set(info.trail_interval);
             }
+        }
+        if let Some(c) = &self.contrail {
+            c.borrow_mut().update(self.pos.get());
         }
         self.distance_covered
             .set(self.distance_covered.get() + WDist::new(self.speed.get()));
@@ -1796,6 +2149,7 @@ impl Effect for Missile {
             || (!info.bound_to_terrain_type.is_empty() && world.map().terrain_type_info(cell).ty != info.bound_to_terrain_type)
             || (height.length < info.airburst_altitude.length && rel_hor < info.close_enough.length);
         if should_explode {
+            add_contrail_fader(world, pos, &self.contrail);
             let me: EffectRef = self.me.upgrade().expect("missile");
             world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
             if self.ticks.get() <= info.arm {
@@ -1818,6 +2172,15 @@ impl Effect for Missile {
 
     fn sync_hash(&self) -> i32 {
         self.pos.get().hash() ^ self.h_facing.get() ^ self.v_facing.get()
+    }
+
+    fn render(&self, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        if let Some(c) = &self.contrail {
+            c.borrow().render(viewer, out);
+        }
+        if let Some(a) = &self.anim {
+            self.info.visuals.render(a, self.pos.get(), &self.args, viewer, out);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

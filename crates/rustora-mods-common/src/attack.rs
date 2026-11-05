@@ -82,6 +82,8 @@ pub struct ArmamentInfo {
     pub ammo_usage: i32,
     pub cursor: String,
     pub outside_range_cursor: String,
+    pub muzzle_sequence: Option<String>,
+    pub muzzle_palette: String,
 }
 
 impl Default for ArmamentInfo {
@@ -92,6 +94,8 @@ impl Default for ArmamentInfo {
             name: "primary".into(),
             weapon: String::new(),
             turret: "primary".into(),
+            muzzle_sequence: None,
+            muzzle_palette: "effect".into(),
             fire_delay: 0,
             local_offset: Vec::new(),
             local_yaw: Vec::new(),

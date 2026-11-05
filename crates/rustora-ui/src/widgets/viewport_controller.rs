@@ -270,6 +270,10 @@ impl WidgetKind for ViewportControllerWidget {
         }
     }
 
+    fn tick(&mut self, ui: &mut Ui, _id: WidgetId) {
+        *self.tooltip.borrow_mut() = self.update_mouseover(ui);
+    }
+
     fn draw(&mut self, ui: &mut Ui, _id: WidgetId, _dc: &mut DrawContext) {
         let Some(viewport) = self.viewport.clone() else {
             return;
@@ -307,7 +311,6 @@ impl WidgetKind for ViewportControllerWidget {
             }
         }
         drop(settings);
-        *self.tooltip.borrow_mut() = self.update_mouseover(ui);
     }
 
     fn cursor(&self, _default: &str) -> Option<String> {

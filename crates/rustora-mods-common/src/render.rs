@@ -42,6 +42,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("WithFacingSpriteBody", |n| load_info!(WithFacingSpriteBodyInfo, n));
     r.register("WithResourceLevelSpriteBody", |n| load_info!(WithResourceLevelSpriteBodyInfo, n));
     r.register("WithHarvesterSpriteBody", |n| load_info!(WithHarvesterSpriteBodyInfo, n));
+    r.register("WithWallSpriteBody", |n| load_info!(WithWallSpriteBodyInfo, n));
     r.register("WithMakeAnimation", |n| load_info!(WithMakeAnimationInfo, n));
     r.register("WithBuildingPlacedAnimation", |n| load_info!(WithBuildingPlacedAnimationInfo, n));
     r.register("WithDockingAnimation", |n| load_info!(WithDockingAnimationInfo, n));
@@ -108,7 +109,7 @@ pub struct RenderSprites {
     anims: RefCell<Vec<Rc<AnimationWrapper>>>,
 }
 
-register_traits!(RenderSprites: ITick);
+register_traits!(RenderSprites: ITick, rustora_engine::render::IRender);
 info_impl!(RenderSpritesInfo => |info, init| {
     let faction = init.inits.get::<FactionInit>().map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
     Some(Rc::new(RenderSprites { info, faction, anims: RefCell::new(Vec::new()) }))
@@ -119,6 +120,22 @@ impl ITick for RenderSprites {
         let anims = self.anims.borrow().clone();
         for a in anims {
             a.animation.animation.tick();
+        }
+    }
+}
+
+impl rustora_engine::render::IRender for RenderSprites {
+    fn render(&self, self_: &ActorRef, out: &mut Vec<rustora_engine::render::Renderable>) {
+        if self.info.editor_only {
+            return;
+        }
+        let owner = self_.owner();
+        for a in self.anims.borrow().iter() {
+            if a.animation.disable_func.as_ref().is_some_and(|f| f()) {
+                continue;
+            }
+            let palette = rustora_engine::render::PaletteRef::resolve(a.palette.as_deref(), a.is_player_palette, &owner);
+            rustora_engine::render::render_animation_with_offset(&a.animation, self_, &palette, out);
         }
     }
 }
@@ -237,6 +254,11 @@ pub struct WithFacingSpriteBodyInfo {
 
 enum BodyVariant {
     Plain,
+    Wall {
+        ty: String,
+        adjacent: Rc<Cell<i32>>,
+        dirty: Cell<bool>,
+    },
     ResourceLevel {
         stages: i32,
         player_resources: RefCell<Rc<crate::player::PlayerResources>>,
@@ -268,6 +290,10 @@ impl TraitObject for WithSpriteBody {
         }
         if let BodyVariant::ResourceLevel { .. } = self.variant {
             dict.add::<dyn INotifyOwnerChanged>(actor, self.clone());
+        }
+        if let BodyVariant::Wall { .. } = self.variant {
+            dict.add::<dyn ITick>(actor, self.clone());
+            dict.add::<dyn INotifyRemovedFromWorld>(actor, self.clone());
         }
         dict.add::<dyn ISync>(actor, self);
     }
@@ -341,6 +367,32 @@ fn new_sprite_body(
 }
 
 info_impl!(WithSpriteBodyInfo => |info, init| Some(new_sprite_body(info, init, "WithSpriteBody", None, BodyVariant::Plain)));
+/// `WithWallSpriteBodyInfo`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithWallSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(name = "Type")]
+    pub wall_type: String,
+}
+
+impl Default for WithWallSpriteBodyInfo {
+    fn default() -> Self {
+        WithWallSpriteBodyInfo {
+            base: WithSpriteBodyInfo::default(),
+            instance_name: None,
+            wall_type: "wall".into(),
+        }
+    }
+}
+
+info_impl!(WithWallSpriteBodyInfo => |info, init| {
+    let v = BodyVariant::Wall { ty: info.wall_type.clone(), adjacent: Rc::new(Cell::new(0)), dirty: Cell::new(true) };
+    Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithWallSpriteBody", None, v))
+});
+
 info_impl!(WithFacingSpriteBodyInfo => |info, init| {
     let facing = make_facing_func(&init.self_);
     Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithFacingSpriteBody", Some(facing), BodyVariant::Plain))
@@ -390,6 +442,7 @@ info_impl!(WithHarvesterSpriteBodyInfo => |info, init| {
 
 impl ITick for WithSpriteBody {
     fn tick(&self, _self_: &ActorRef) {
+        self.tick_wall(_self_);
         let BodyVariant::Harvester { image_by_fullness, harv } = &self.variant else {
             return;
         };
@@ -420,12 +473,94 @@ impl ConditionalHooks for WithSpriteBody {
         if let BodyVariant::ResourceLevel { .. } = self.variant {
             self.configure_animation(self_);
         }
+        if let BodyVariant::Wall { dirty, .. } = &self.variant {
+            dirty.set(true);
+            self.play_wall_animation(self_);
+            update_wall_neighbours(self_);
+            let anim = self.default_animation.clone();
+            self_.world().add_frame_end_task(Box::new(move |_| anim.tick()));
+        }
     }
 }
 
 conditional_plumbing!(WithSpriteBody);
 
+const WALL_DIRECTIONS: [(i32, i32); 8] = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)];
+
+fn actors_around(self_: &ActorRef) -> Vec<ActorRef> {
+    use crate::actor_map::WorldExt;
+    let w = self_.world();
+    let map = w.actor_map();
+    WALL_DIRECTIONS
+        .iter()
+        .flat_map(|&(x, y)| map.get_actors_at(self_.location() + rustora_core::world_types::CVec::new(x, y)))
+        .collect()
+}
+
+/// `WithWallSpriteBody.UpdateNeighbours`.
+fn update_wall_neighbours(self_: &ActorRef) {
+    for a in actors_around(self_) {
+        for b in a.traits_implementing::<WithSpriteBody>() {
+            if let BodyVariant::Wall { dirty, .. } = &b.variant {
+                dirty.set(true);
+            }
+        }
+    }
+}
+
+impl INotifyRemovedFromWorld for WithSpriteBody {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        update_wall_neighbours(self_);
+    }
+}
+
 impl WithSpriteBody {
+    fn play_wall_animation(&self, self_: &ActorRef) {
+        if let BodyVariant::Wall { adjacent, .. } = &self.variant {
+            let adjacent = adjacent.clone();
+            self.default_animation.play_fetch_index(
+                &self.normalize_sequence(self_, &self.info.sequence),
+                Rc::new(move || adjacent.get()),
+            );
+        }
+    }
+
+    /// `WithWallSpriteBody.ITick.Tick`.
+    fn tick_wall(&self, self_: &ActorRef) {
+        let BodyVariant::Wall { ty, adjacent, dirty } = &self.variant else {
+            return;
+        };
+        if !dirty.get() {
+            return;
+        }
+        let mut bits = 0;
+        for a in actors_around(self_) {
+            let connector = a
+                .traits_implementing::<WithSpriteBody>()
+                .into_iter()
+                .find(|b| !b.is_trait_disabled());
+            let Some(b) = connector else { continue };
+            let BodyVariant::Wall { ty: other, .. } = &b.variant else {
+                continue;
+            };
+            let facing = self_.location() - a.location();
+            if other != ty || facing.x.abs() + facing.y.abs() != 1 {
+                continue;
+            }
+            if facing.y > 0 {
+                bits |= 1;
+            } else if facing.x < 0 {
+                bits |= 2;
+            } else if facing.y < 0 {
+                bits |= 4;
+            } else if facing.x > 0 {
+                bits |= 8;
+            }
+        }
+        adjacent.set(bits);
+        dirty.set(false);
+    }
+
     fn configure_animation(&self, self_: &ActorRef) {
         let BodyVariant::ResourceLevel { stages, player_resources } = &self.variant else {
             return;
@@ -475,6 +610,12 @@ impl INotifyCreated for WithSpriteBody {
 
 impl INotifyDamageStateChanged for WithSpriteBody {
     fn damage_state_changed(&self, self_: &ActorRef, _e: &AttackInfo) {
+        if let BodyVariant::Wall { .. } = self.variant {
+            if !self.is_trait_disabled() {
+                self.play_wall_animation(self_);
+            }
+            return;
+        }
         if let Some(s) = self.default_animation.current_sequence() {
             self.default_animation.replace_anim(&self.normalize_sequence(self_, &s.name));
         }

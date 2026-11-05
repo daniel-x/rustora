@@ -6,6 +6,8 @@
 use std::any::Any;
 use std::rc::Rc;
 
+use crate::player::PlayerRef;
+use crate::render::Renderable;
 use crate::world::World;
 
 pub type EffectRef = Rc<dyn Effect>;
@@ -19,5 +21,9 @@ pub trait Effect: Any {
     fn sync_hash(&self) -> i32 {
         0
     }
+    /// `IEffect.Render`.
+    fn render(&self, _viewer: Option<&PlayerRef>, _out: &mut Vec<Renderable>) {}
+    /// `IEffectAboveShroud.RenderAboveShroud`.
+    fn render_above_shroud(&self, _viewer: Option<&PlayerRef>, _out: &mut Vec<Renderable>) {}
     fn as_any(&self) -> &dyn Any;
 }

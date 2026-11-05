@@ -43,5 +43,9 @@ fn fs_main(v: VertexOut) -> @location(0) vec4<f32> {
     if (index == 0u) {
         discard;
     }
-    return textureLoad(palettes, vec2<i32>(i32(index), i32(v.palette)), 0) * v.color.a;
+    let texel = textureLoad(palettes, vec2<i32>(i32(index), i32(v.palette)), 0);
+    if (v.color.a < 0.0) {
+        return vec4<f32>(v.color.rgb, 1.0) * -v.color.a * texel.a;
+    }
+    return texel * v.color.a;
 }

@@ -14,6 +14,7 @@
 mod app;
 mod client;
 mod net;
+mod palettes;
 mod scene;
 mod sprites;
 mod ui_sprites;

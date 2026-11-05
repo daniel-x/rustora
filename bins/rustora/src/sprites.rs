@@ -48,6 +48,7 @@ pub struct ResolvedSequence {
     pub facings: i32,
     classic_facings: bool,
     pub z_offset: i32,
+    pub scale: f32,
     /// `ISpriteSequence.Bounds`: the union of the frame rectangles around the frame centers (left, top, right, bottom).
     pub bounds: [i32; 4],
 }
@@ -326,6 +327,7 @@ impl SpriteCache {
             facings: seq.facings,
             classic_facings: flag(data, defaults, "UseClassicFacings"),
             z_offset,
+            scale: value(data, defaults, "Scale").and_then(|v| v.parse().ok()).unwrap_or(1.0),
         })
     }
 }
