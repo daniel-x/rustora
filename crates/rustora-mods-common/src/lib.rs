@@ -37,6 +37,7 @@ pub mod path_finder_trait;
 pub mod pathfinder;
 pub mod player;
 pub mod production;
+pub mod radar;
 pub mod render;
 pub mod resources;
 pub mod resupply;
@@ -60,6 +61,7 @@ pub fn register(r: &mut TraitRegistry) {
     game_save::register(r);
     selection::register(r);
     tooltip::register(r);
+    radar::register(r);
     aircraft::register(r);
     attack::register(r);
     attack_move::register(r);

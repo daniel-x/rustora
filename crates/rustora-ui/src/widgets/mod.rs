@@ -22,6 +22,7 @@ mod label;
 mod map_preview;
 pub mod menu_button;
 pub mod production;
+pub mod radar;
 mod scroll_item;
 mod scroll_panel;
 mod slider;
@@ -60,6 +61,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
         "SupportPowers" => cell(support_powers::SupportPowersWidget::default()),
         "MenuButton" => cell(menu_button::MenuButtonWidget::new(assets)),
+        "Radar" => cell(radar::RadarWidget::default()),
         "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
         "Label" | "LabelForInput" => cell(LabelWidget::new(assets)),

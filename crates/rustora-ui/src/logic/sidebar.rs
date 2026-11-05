@@ -689,3 +689,38 @@ pub fn bind_order_button(ui: &mut Ui, id: WidgetId, kind: crate::button_orders::
     ui.get::<ImageWidget>(image).get_image_name = Some(Rc::new(move || if active() { format!("{icon}-active") } else { icon.clone() }));
     cell(NoLogic)
 }
+
+/// `IngameRadarDisplayLogic`, without the radar sounds.
+pub fn radar_display(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
+    use crate::widgets::radar::RadarWidget;
+    let Some(player) = local_player(ui) else {
+        return cell(NoLogic);
+    };
+    let Some(world) = services(ui).ingame.borrow().as_ref().map(|i| i.world.clone()) else {
+        return cell(NoLogic);
+    };
+    let enabled = Rc::new(Cell::new(false));
+    let radar = ui.child(id, "RADAR_MINIMAP");
+    let e = enabled.clone();
+    ui.get::<RadarWidget>(radar).is_enabled = Some(Rc::new(move || e.get()));
+    let developer = player.player_actor().trait_::<DeveloperMode>();
+    let ticker = ui.child(id, "RADAR_TICKER");
+    let e = enabled.clone();
+    ui.get::<LogicTickerWidget>(ticker).on_tick = Some(Rc::new(move |_ui: &mut Ui| {
+        let any_radar = world
+            .actors_with_trait::<rustora_mods_common::gps::ProvidesRadar>()
+            .iter()
+            .any(|(a, r)| !rustora_engine::traits::IDisabledTrait::is_trait_disabled(&**r) && Rc::ptr_eq(&a.owner(), &player));
+        e.set(developer.disable_shroud() || any_radar);
+    }));
+    if let Some(block) = ui.find(id, "RADAR_FADETOBLACK") {
+        let alpha = Rc::new(Cell::new(0u8));
+        let a = alpha.clone();
+        ui.get::<RadarWidget>(radar).animating = Some(Rc::new(move |x: f32| a.set((255.0 * x) as u8)));
+        let a = alpha.clone();
+        ui.set_visible_fn(block, move || a.get() != 0);
+        let a = alpha.clone();
+        ui.get::<crate::widgets::ColorBlockWidget>(block).get_color = Some(Rc::new(move || Color::from_argb(a.get(), 0, 0, 0)));
+    }
+    cell(NoLogic)
+}

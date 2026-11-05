@@ -268,6 +268,8 @@ pub struct Ui {
     pub window_has_focus: bool,
     /// `Game.GetModifierKeys`.
     pub modifiers: crate::input::Modifiers,
+    /// The cursor sequences of the mod, for `CursorProvider.HasCursorSequence`.
+    pub cursor_names: Rc<std::collections::HashSet<String>>,
     /// `Viewport.LastMoveRunTime`.
     pub last_move_time: i64,
     /// `Game.Settings.Game.UIScrollSpeed`.
@@ -315,6 +317,7 @@ impl Ui {
             previous_mouse: (0, 0),
             window_has_focus: true,
             modifiers: Default::default(),
+            cursor_names: Rc::default(),
             last_move_time: 0,
             ui_scroll_speed: 50.0,
             start: Instant::now(),

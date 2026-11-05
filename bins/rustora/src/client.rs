@@ -216,6 +216,7 @@ impl Client {
         }
         let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, services.clone());
         ui.ui_scroll_speed = ui_scroll_speed;
+        ui.cursor_names = Rc::new(cursors.names());
         let mut menu_args = WidgetArgs::default();
         if let Some(target) = args.iter().find_map(|a| a.strip_prefix("Launch.Connect=")) {
             menu_args = menu_args.with_value("directConnect", target.to_string());

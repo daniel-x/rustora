@@ -129,6 +129,11 @@ impl Cursors {
         Ok(Cursors { sequences })
     }
 
+    /// `CursorProvider.HasCursorSequence` for all names at once.
+    pub fn names(&self) -> std::collections::HashSet<String> {
+        self.sequences.keys().cloned().collect()
+    }
+
     pub fn image(&self, name: &str, frame: usize) -> Option<&CursorImage> {
         self.sequences.get(name).and_then(|s| s.get(frame))
     }

@@ -263,6 +263,7 @@ pub fn create(
         "IngameCashCounterLogic" => sidebar::cash_counter(ui, id),
         "IngamePowerCounterLogic" => sidebar::power_counter(ui, id),
         "SupportPowerBinLogic" => sidebar::support_power_bin(ui, id),
+        "IngameRadarDisplayLogic" => sidebar::radar_display(ui, id),
         "MenuButtonsChromeLogic" => ingame_menu::menu_buttons(ui, id),
         "IngameMenuLogic" => ingame_menu::ingame_menu(ui, id, args, logic_args),
         "ProductionTooltipLogic" => sidebar::production_tooltip(ui, id, args),
