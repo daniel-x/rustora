@@ -46,6 +46,7 @@ pub enum MoveResult {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct MobileInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -73,6 +74,7 @@ pub struct MobileInfo {
 impl Default for MobileInfo {
     fn default() -> Self {
         MobileInfo {
+            voice: "Action".into(),
             instance_name: None,
             base: PausableConditionalTraitInfo::default(),
             locomotor: String::new(),
@@ -161,6 +163,7 @@ pub struct Mobile {
 
 register_traits!(
     Mobile: IResolveOrder,
+    rustora_engine::sound::IOrderVoice,
     crate::orders::IIssueOrder,
     IOccupySpace,
     IPositionable,
@@ -1083,5 +1086,19 @@ impl Activity for LeaveProductionActivity {
                 ));
             }
         }
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for Mobile {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        if self.is_trait_disabled() {
+            return None;
+        }
+        let allowed = match order.order_string.as_str() {
+            "Move" => crate::util::voice_allows_target(self_, order, self.locomotor_info.move_into_shroud),
+            "Scatter" | "Stop" => true,
+            _ => false,
+        };
+        allowed.then(|| self.info.voice.clone())
     }
 }

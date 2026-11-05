@@ -14,7 +14,7 @@ use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::*;
 use rustora_engine::{info_impl, load_info, register_traits};
 
-use crate::actor_reference::HealthInit;
+use crate::actor_reference::{AllowZeroHealthInit, HealthInit};
 use crate::interfaces::*;
 
 pub fn register(r: &mut TraitRegistry) {
@@ -65,7 +65,8 @@ info_impl!(HealthInfo => |info, init| {
     let max_hp = if info.hp > 0 { info.hp } else { 1 };
     let mut hp = max_hp;
     if let Some(h) = init.inits.get::<HealthInit>() {
-        let v = if h.value <= 0 { 1 } else { h.value };
+        let allow_zero = h.value == 0 && init.inits.get::<AllowZeroHealthInit>().is_some();
+        let v = if h.value <= 0 && !allow_zero { 1 } else { h.value };
         hp = (v as i64 * max_hp as i64 / 100) as i32;
     }
     Some(Rc::new(Health {

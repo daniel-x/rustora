@@ -72,6 +72,12 @@ pub enum Renderable {
         from_color: [f32; 4],
         to_color: [f32; 4],
     },
+    /// One subtile of a terrain template in the terrain palette, as `Bridge` draws it.
+    Tile {
+        tile: crate::map::TerrainTile,
+        pos: WPos,
+        z_offset: i32,
+    },
     /// Parts drawn together at one sort position, as `ContrailRenderable` and `TeslaZapRenderable` do.
     Group {
         pos: WPos,
@@ -85,6 +91,7 @@ impl Renderable {
         match self {
             Renderable::Sprite(s) => s.pos + s.offset,
             Renderable::Line { from, .. } => *from,
+            Renderable::Tile { pos, .. } => *pos,
             Renderable::Group { pos, .. } => *pos,
         }
     }
@@ -93,6 +100,7 @@ impl Renderable {
         match self {
             Renderable::Sprite(s) => s.z_offset,
             Renderable::Line { .. } => 0,
+            Renderable::Tile { z_offset, .. } => *z_offset,
             Renderable::Group { z_offset, .. } => *z_offset,
         }
     }

@@ -142,17 +142,25 @@ impl Scene {
     }
 
     /// Appends the quads of `renderables`, sorted as in `WorldRenderer.GenerateRenderables`, and culled to `cam`.
-    fn add_renderables(&mut self, renderer: &mut Renderer, renderables: &[Renderable], cam: &Camera, quads: &mut Vec<Quad>) {
+    fn add_renderables(&mut self, renderer: &mut Renderer, world: &World, renderables: &[Renderable], cam: &Camera, quads: &mut Vec<Quad>) {
         let mut keyed: Vec<(i32, Quad)> = Vec::with_capacity(renderables.len());
         for r in renderables {
             let key = r.sort_key();
-            self.add_renderable(renderer, r, key, cam, &mut keyed);
+            self.add_renderable(renderer, world, r, key, cam, &mut keyed);
         }
         keyed.sort_by_key(|(k, _)| *k);
         quads.extend(keyed.into_iter().map(|(_, q)| q));
     }
 
-    fn add_renderable(&mut self, renderer: &mut Renderer, r: &Renderable, key: i32, cam: &Camera, out: &mut Vec<(i32, Quad)>) {
+    fn add_renderable(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &World,
+        r: &Renderable,
+        key: i32,
+        cam: &Camera,
+        out: &mut Vec<(i32, Quad)>,
+    ) {
         match r {
             Renderable::Sprite(s) => {
                 let Some(resolved) = self.sprites.sequence(renderer, &s.sequence) else {
@@ -193,9 +201,25 @@ impl Scene {
                 let quad = Quad::line([a.0, a.1], [b.0, b.1], px_width, *from_color, *to_color);
                 out.push((key, quad));
             }
+            Renderable::Tile { tile, pos, .. } => {
+                let frames = self.template_frames(renderer, world, tile.ty);
+                let Some(s) = frames.get(tile.index as usize).copied().flatten() else {
+                    return;
+                };
+                let (x, y) = world_to_px(*pos);
+                let quad = Quad::sprite(
+                    s.rect,
+                    x + s.offset[0] - s.rect.w as f32 / 2.0,
+                    y + s.offset[1] - s.rect.h as f32 / 2.0,
+                    self.palettes.named("terrain"),
+                );
+                if on_camera(&quad, cam) {
+                    out.push((key, quad));
+                }
+            }
             Renderable::Group { items, .. } => {
                 for item in items {
-                    self.add_renderable(renderer, item, key, cam, out);
+                    self.add_renderable(renderer, world, item, key, cam, out);
                 }
             }
         }
@@ -248,7 +272,7 @@ impl Scene {
         for e in world.effects() {
             e.render(viewer, &mut renderables);
         }
-        self.add_renderables(renderer, &renderables, cam, &mut quads);
+        self.add_renderables(renderer, world, &renderables, cam, &mut quads);
 
         if let Some(v) = viewer {
             self.add_shroud(renderer, world, v, cam, &mut quads);
@@ -257,7 +281,7 @@ impl Scene {
         for e in world.effects() {
             e.render_above_shroud(viewer, &mut above);
         }
-        self.add_renderables(renderer, &above, cam, &mut quads);
+        self.add_renderables(renderer, world, &above, cam, &mut quads);
         quads
     }
 

@@ -6,9 +6,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use rustora_core::world_types::WPos;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::traits::IDisabledTrait;
 use rustora_game::settings::MouseScrollType;
+use rustora_mods_common::cosmetic::ScreenShaker;
 use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
 use rustora_mods_common::tooltip::{Tooltip, TooltipInfo};
 
@@ -137,6 +139,22 @@ impl Default for ViewportControllerWidget {
 }
 
 impl ViewportControllerWidget {
+    /// The `Viewport.Scroll` of `ScreenShaker.Tick`.
+    fn apply_screen_shake(&self, ui: &Ui) {
+        let (Some(viewport), Some(ingame)) = (self.viewport.as_ref(), services(ui).ingame.borrow().clone()) else {
+            return;
+        };
+        let Some(shaker) = ingame.world.world_actor().trait_or_default::<ScreenShaker>() else {
+            return;
+        };
+        let (x, y) = viewport.borrow().center;
+        let center = WPos::new(x * 1024 / 24, y * 1024 / 24, 0);
+        let scroll = shaker.take_scroll(center);
+        if scroll != (0.0, 0.0) {
+            viewport.borrow_mut().scroll(scroll);
+        }
+    }
+
     /// `UpdateMouseover`.
     fn update_mouseover(&self, ui: &Ui) -> WorldTooltip {
         let Some(ingame) = &self.ingame else {
@@ -272,6 +290,7 @@ impl WidgetKind for ViewportControllerWidget {
 
     fn tick(&mut self, ui: &mut Ui, _id: WidgetId) {
         *self.tooltip.borrow_mut() = self.update_mouseover(ui);
+        self.apply_screen_shake(ui);
     }
 
     fn draw(&mut self, ui: &mut Ui, _id: WidgetId, _dc: &mut DrawContext) {

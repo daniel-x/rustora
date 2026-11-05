@@ -254,6 +254,7 @@ fn force_move_observer<T: 'static>(this: &Rc<T>, e: &Option<BooleanExpression>, 
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct RepairableInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(require)]
@@ -267,6 +268,7 @@ pub struct RepairableInfo {
 impl Default for RepairableInfo {
     fn default() -> Self {
         RepairableInfo {
+            voice: "Action".into(),
             instance_name: None,
             repair_actors: IndexSet::new(),
             hp_per_step: -1,
@@ -284,7 +286,7 @@ pub struct Repairable {
     is_aircraft: Cell<bool>,
 }
 
-register_traits!(Repairable: IResolveOrder, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables);
+register_traits!(Repairable: rustora_engine::sound::IOrderVoice, IResolveOrder, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables);
 info_impl!(RepairableInfo => |info, _init| Some(Rc::new(Repairable {
     info,
     rearmable: OnceCell::new(),
@@ -382,6 +384,7 @@ fn find_repair_building(self_: &ActorRef, repair_actors: &IndexSet<String>) -> O
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct RepairableNearInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(require)]
@@ -393,6 +396,7 @@ pub struct RepairableNearInfo {
 impl Default for RepairableNearInfo {
     fn default() -> Self {
         RepairableNearInfo {
+            voice: "Action".into(),
             instance_name: None,
             repair_actors: IndexSet::new(),
             close_enough: WDist::from_cells(4),
@@ -406,7 +410,7 @@ pub struct RepairableNear {
     require_force_move: Cell<bool>,
 }
 
-register_traits!(RepairableNear: IResolveOrder, IObservesVariables);
+register_traits!(RepairableNear: rustora_engine::sound::IOrderVoice, IResolveOrder, IObservesVariables);
 info_impl!(RepairableNearInfo => |info, _init| Some(Rc::new(RepairableNear { info, require_force_move: Cell::new(false) })));
 
 impl IObservesVariables for RepairableNear {
@@ -788,5 +792,17 @@ impl Activity for Resupply {
 
     fn get_targets(&self, _self_: &ActorRef) -> Vec<Target> {
         vec![self.host.clone()]
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for Repairable {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        (order.order_string == "Repair" && (has_damage(self_) || self.can_rearm())).then(|| self.info.voice.clone())
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for RepairableNear {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        (order.order_string == "RepairNear" && has_damage(self_)).then(|| self.info.voice.clone())
     }
 }

@@ -58,6 +58,7 @@ rustora_core::field_enum!(IdleBehaviorType, [None, Land, ReturnToBase, LeaveMap,
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct AircraftInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -111,6 +112,7 @@ pub struct AircraftInfo {
 impl Default for AircraftInfo {
     fn default() -> Self {
         AircraftInfo {
+            voice: "Action".into(),
             instance_name: None,
             base: PausableConditionalTraitInfo::default(),
             idle_behavior: IdleBehaviorType::None,
@@ -244,6 +246,7 @@ register_traits!(
     ICreationActivity,
     IDeathActorInitModifier,
     IResolveOrder,
+    rustora_engine::sound::IOrderVoice,
     INotifyCreated,
     IObservesVariables,
     IDisabledTrait
@@ -2433,5 +2436,20 @@ impl crate::orders::IOrderTargeter for AircraftMoveOrderTargeter {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for Aircraft {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        if self.is_trait_disabled() {
+            return None;
+        }
+        let allowed = match order.order_string.as_str() {
+            "Land" | "Move" => crate::util::voice_allows_target(self_, order, self.info.move_into_shroud),
+            "Enter" | "ForceEnter" | "Stop" | "Scatter" => true,
+            "ReturnToBase" => self.rearmable().is_some_and(|r| !r.info.rearm_actors.is_empty()),
+            _ => false,
+        };
+        allowed.then(|| self.info.voice.clone())
     }
 }

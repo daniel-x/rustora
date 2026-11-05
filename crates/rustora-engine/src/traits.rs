@@ -189,6 +189,15 @@ pub trait IDefaultVisibility {
     fn is_visible(&self, self_: &ActorRef, by_player: Option<&PlayerRef>) -> bool;
 }
 
+/// `ISelectionBar`. `viewer` is the render player.
+pub trait ISelectionBar {
+    fn value(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> f32;
+    fn color(&self) -> rustora_core::fieldloader::Color;
+    fn display_when_empty(&self) -> bool {
+        false
+    }
+}
+
 pub trait IVisibilityModifier {
     fn is_visible(&self, self_: &ActorRef, by_player: Option<&PlayerRef>) -> bool;
 }

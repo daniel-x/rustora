@@ -560,6 +560,7 @@ fn load_attack(node: &TraitNode, kind: AttackKind) -> Result<Rc<dyn TraitInfo>, 
 /// Union of `AttackBaseInfo` and the info fields of its subclasses.
 #[derive(Clone, Debug, FieldLoad)]
 pub struct AttackBaseInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(ignore)]
@@ -600,6 +601,7 @@ pub struct AttackBaseInfo {
 impl Default for AttackBaseInfo {
     fn default() -> Self {
         AttackBaseInfo {
+            voice: "Action".into(),
             instance_name: None,
             kind: AttackKind::Frontal,
             base: PausableConditionalTraitInfo::default(),
@@ -683,6 +685,7 @@ impl TraitObject for AttackBase {
         dict.add::<AttackBase>(actor, self.clone());
         dict.add::<dyn ITick>(actor, self.clone());
         dict.add::<dyn IResolveOrder>(actor, self.clone());
+        dict.add::<dyn sound::IOrderVoice>(actor, self.clone());
         dict.add::<dyn crate::orders::IIssueOrder>(actor, self.clone());
         dict.add::<dyn INotifyCreated>(actor, self.clone());
         dict.add::<dyn IObservesVariables>(actor, self.clone());
@@ -1359,6 +1362,12 @@ impl AttackBase {
         if self.leap_token.get() != INVALID_CONDITION_TOKEN {
             self.leap_token.set(self_.revoke_condition(self.leap_token.get()));
         }
+    }
+}
+
+impl sound::IOrderVoice for AttackBase {
+    fn voice_phrase_for_order(&self, _self_: &ActorRef, order: &Order) -> Option<String> {
+        matches!(order.order_string.as_str(), "Attack" | "ForceAttack").then(|| self.info.voice.clone())
     }
 }
 

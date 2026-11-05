@@ -525,18 +525,35 @@ info_impl!(AutoTargetPriorityInfo => |info, _init| {
 });
 conditional_simple!(AutoTargetPriority);
 
-#[derive(Clone, Debug, Default, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad)]
 pub struct GuardInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub voice: String,
+}
+
+impl Default for GuardInfo {
+    fn default() -> Self {
+        GuardInfo {
+            instance_name: None,
+            voice: "Action".into(),
+        }
+    }
 }
 
 pub struct Guard {
+    info: Rc<GuardInfo>,
     mv: OnceCell<Rc<dyn IMove>>,
 }
 
-register_traits!(Guard: IResolveOrder, INotifyCreated);
-info_impl!(GuardInfo => |_info, _init| Some(Rc::new(Guard { mv: OnceCell::new() })));
+register_traits!(Guard: IResolveOrder, INotifyCreated, rustora_engine::sound::IOrderVoice);
+info_impl!(GuardInfo => |info, _init| Some(Rc::new(Guard { info, mv: OnceCell::new() })));
+
+impl rustora_engine::sound::IOrderVoice for Guard {
+    fn voice_phrase_for_order(&self, _self_: &ActorRef, order: &Order) -> Option<String> {
+        (order.order_string == "Guard").then(|| self.info.voice.clone())
+    }
+}
 
 impl INotifyCreated for Guard {
     fn created(&self, self_: &ActorRef) {

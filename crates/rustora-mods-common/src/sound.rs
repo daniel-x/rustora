@@ -3,7 +3,8 @@
 
 //! Ports of `Voiced.cs`, `MusicPlaylist.cs` (its info) and the traits in `Traits/Sound`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -25,6 +26,8 @@ use rustora_engine::traits::*;
 use rustora_engine::{conditional_simple, info_impl, load_info, register_traits};
 
 pub fn register(r: &mut TraitRegistry) {
+    r.register("EnemyWatcher", |n| load_info!(EnemyWatcherInfo, n));
+    r.register("AnnounceOnSeen", |n| load_info!(AnnounceOnSeenInfo, n));
     r.register("Voiced", |n| load_info!(VoicedInfo, n));
     r.register("MusicPlaylist", |n| load_info!(MusicPlaylistInfo, n));
     r.register("ActorLostNotification", |n| load_info!(ActorLostNotificationInfo, n));
@@ -753,5 +756,132 @@ impl ITick for ResourceStorageWarning {
             );
         }
         self.last_advice.restart();
+    }
+}
+
+/// `INotifyDiscovered`.
+pub trait INotifyDiscovered {
+    fn on_discovered(&self, self_: &ActorRef, discoverer: &PlayerRef, play_notification: bool);
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct EnemyWatcherInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub scan_interval: i32,
+    pub notification_interval: i32,
+}
+
+impl Default for EnemyWatcherInfo {
+    fn default() -> Self {
+        EnemyWatcherInfo {
+            instance_name: None,
+            scan_interval: 25,
+            notification_interval: 750,
+        }
+    }
+}
+
+pub struct EnemyWatcher {
+    info: Rc<EnemyWatcherInfo>,
+    discovered_players: RefCell<Vec<PlayerRef>>,
+    rescan_interval: Cell<i32>,
+    ticks_before_next_notification: Cell<i32>,
+    last_known_actor_ids: RefCell<HashSet<u32>>,
+}
+
+register_traits!(EnemyWatcher: ITick);
+info_impl!(EnemyWatcherInfo => |info, _init| Some(Rc::new(EnemyWatcher {
+    info,
+    discovered_players: RefCell::new(Vec::new()),
+    rescan_interval: Cell::new(0),
+    ticks_before_next_notification: Cell::new(0),
+    last_known_actor_ids: RefCell::new(HashSet::new()),
+})));
+
+impl ITick for EnemyWatcher {
+    fn tick(&self, self_: &ActorRef) {
+        let owner = self_.owner();
+        if owner.shroud().disabled() || owner.is_bot || !owner.playable || owner.spectating() {
+            return;
+        }
+        self.rescan_interval.set(self.rescan_interval.get() - 1);
+        self.ticks_before_next_notification
+            .set(self.ticks_before_next_notification.get() - 1);
+        if self.rescan_interval.get() > 0 {
+            return;
+        }
+        self.rescan_interval.set(self.info.scan_interval);
+        let mut announced_any = false;
+        let mut visible = HashSet::new();
+        let mut played = HashSet::new();
+        for (actor, announce) in self_.world().actors_with_trait::<AnnounceOnSeen>() {
+            if crate::util::appears_friendly_to(&actor, self_)
+                || actor.is_dead()
+                || !actor.is_in_world()
+                || !actor.can_be_viewed_by_player(Some(&owner))
+            {
+                continue;
+            }
+            visible.insert(actor.id);
+            if self.last_known_actor_ids.borrow().contains(&actor.id) {
+                continue;
+            }
+            let id = (announce.info.notification.clone(), announce.info.text_notification.clone());
+            let play = !played.contains(&id) && self.ticks_before_next_notification.get() <= 0;
+            for t in actor.traits_implementing::<dyn INotifyDiscovered>() {
+                t.on_discovered(&actor, &owner, play);
+            }
+            let discovered = actor.owner();
+            if !self.discovered_players.borrow().iter().any(|p| Rc::ptr_eq(p, &discovered)) {
+                for t in discovered.player_actor().traits_implementing::<dyn INotifyDiscovered>() {
+                    t.on_discovered(&actor, &owner, false);
+                }
+                self.discovered_players.borrow_mut().push(discovered);
+            }
+            if play {
+                played.insert(id);
+                announced_any = true;
+            }
+        }
+        if announced_any {
+            self.ticks_before_next_notification.set(self.info.notification_interval);
+        }
+        *self.last_known_actor_ids.borrow_mut() = visible;
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct AnnounceOnSeenInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub notification: Option<String>,
+    pub text_notification: Option<String>,
+    pub announce_neutrals: bool,
+}
+
+pub struct AnnounceOnSeen {
+    info: Rc<AnnounceOnSeenInfo>,
+}
+
+register_traits!(AnnounceOnSeen: INotifyDiscovered);
+info_impl!(AnnounceOnSeenInfo => |info, _init| Some(Rc::new(AnnounceOnSeen { info })));
+
+impl INotifyDiscovered for AnnounceOnSeen {
+    fn on_discovered(&self, self_: &ActorRef, discoverer: &PlayerRef, play_notification: bool) {
+        let world = self_.world();
+        let is_render_player = world.sound.local_player().is_some_and(|p| Rc::ptr_eq(&p, discoverer));
+        if !play_notification || !is_render_player {
+            return;
+        }
+        if !self.info.announce_neutrals && !crate::util::appears_hostile_to(self_, discoverer.player_actor()) {
+            return;
+        }
+        if let Some(n) = self.info.notification.as_deref() {
+            sound::play_notification(&world, Some(discoverer), "Speech", n, Some(&discoverer.faction));
+        }
+        world
+            .sound
+            .add_transient_line(Some(discoverer), self.info.text_notification.as_deref());
     }
 }

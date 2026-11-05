@@ -478,6 +478,7 @@ impl ITick for CashTrickler {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct DockClientManagerInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -492,6 +493,7 @@ pub struct DockClientManagerInfo {
 impl Default for DockClientManagerInfo {
     fn default() -> Self {
         DockClientManagerInfo {
+            voice: "Action".into(),
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             search_for_dock_delay: 125,
@@ -515,7 +517,7 @@ pub struct DockClientManager {
     last_reserved_dock_host: RefCell<Option<Rc<DockHost>>>,
 }
 
-register_traits!(DockClientManager: IResolveOrder, crate::orders::IIssueOrder, INotifyKilled, INotifyActorDisposing, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(DockClientManager: rustora_engine::sound::IOrderVoice, IResolveOrder, crate::orders::IIssueOrder, INotifyKilled, INotifyActorDisposing, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(DockClientManagerInfo => |info, init| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new_cyclic(|me| DockClientManager {
@@ -1123,6 +1125,7 @@ impl INotifyActorDisposing for DockHost {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct HarvesterInfo {
+    pub harvest_voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -1149,6 +1152,7 @@ pub struct HarvesterInfo {
 impl Default for HarvesterInfo {
     fn default() -> Self {
         HarvesterInfo {
+            harvest_voice: "Action".into(),
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             ty: BitSet::new(&["Unload"]),
@@ -1185,7 +1189,7 @@ pub struct Harvester {
     accept_resources: RefCell<Option<Rc<dyn IAcceptResources>>>,
 }
 
-register_traits!(Harvester: IResolveOrder, crate::orders::IIssueOrder, ISpeedModifier, IDockClient, ISync, INotifyCreated, IObservesVariables, IDisabledTrait);
+register_traits!(Harvester: rustora_engine::sound::IOrderVoice, IResolveOrder, crate::orders::IIssueOrder, ISpeedModifier, IDockClient, ISync, INotifyCreated, IObservesVariables, IDisabledTrait);
 info_impl!(HarvesterInfo => |info, init| {
     let self_ = init.self_.clone();
     let w = init.world();
@@ -1976,5 +1980,26 @@ impl Activity for GenericDockSequence {
 
     fn get_targets(&self, _self_: &ActorRef) -> Vec<Target> {
         vec![Target::from_actor(Some(&self.dock_host_actor))]
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for Harvester {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        (order.order_string == "Harvest" && self_.info.has_trait_info::<crate::mobile::MobileInfo>())
+            .then(|| self.info.harvest_voice.clone())
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for DockClientManager {
+    fn voice_phrase_for_order(&self, _self_: &ActorRef, order: &Order) -> Option<String> {
+        if order.target.target_type() != TargetType::Actor || self.is_trait_disabled() {
+            return None;
+        }
+        if order.order_string != "Dock" && order.order_string != "ForceDock" {
+            return None;
+        }
+        let target = order.target.actor()?;
+        self.can_queue_dock_at(target, order.order_string == "ForceDock", order.queued)
+            .then(|| self.info.voice.clone())
     }
 }

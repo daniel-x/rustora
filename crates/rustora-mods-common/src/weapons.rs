@@ -84,6 +84,7 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
         .insert("HealthPercentageDamage", |y| load_damage(y, DamageKind::HealthPercentage));
     r.warheads.insert("CreateEffect", warhead_loader!(CreateEffectWarhead));
     r.warheads.insert("LeaveSmudge", warhead_loader!(LeaveSmudgeWarhead));
+    r.warheads.insert("ShakeScreen", warhead_loader!(ShakeScreenWarhead));
     r.warheads.insert("CreateResource", warhead_loader!(CreateResourceWarhead));
     r.warheads.insert("DestroyResource", warhead_loader!(DestroyResourceWarhead));
     r.warheads.insert("FireCluster", warhead_loader!(FireClusterWarhead));
@@ -635,6 +636,33 @@ impl IWarhead for CreateEffectWarhead {
             && w.local_random.borrow_mut().next_range(0, 100) < self.impact_sound_chance
         {
             rustora_engine::sound::play_at(&w, rustora_engine::sound::SoundType::World, sound, pos, 1.0);
+        }
+    }
+}
+
+/// `Warheads/ShakeScreenWarhead.cs`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ShakeScreenWarhead {
+    #[field(flatten)]
+    pub base: WarheadBase,
+    pub duration: i32,
+    pub intensity: i32,
+    pub multiplier: Vec<f32>,
+}
+
+impl IWarhead for ShakeScreenWarhead {
+    fn delay(&self) -> i32 {
+        self.base.delay
+    }
+
+    fn do_impact(&self, target: &Target, args: &WarheadArgs) {
+        let world = args.source_actor.world();
+        if let Some(shaker) = world.world_actor().trait_or_default::<crate::cosmetic::ScreenShaker>() {
+            let multiplier = (
+                self.multiplier.first().copied().unwrap_or(0.0),
+                self.multiplier.get(1).copied().unwrap_or(0.0),
+            );
+            shaker.add_effect(self.duration, target.center_position(), self.intensity, multiplier);
         }
     }
 }

@@ -8,6 +8,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
+use indexmap::IndexMap;
 use rustora_core::field_enum;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -20,9 +21,10 @@ use rustora_engine::traits::*;
 use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
-use crate::base::MapOptions;
+use crate::base::{MapOptions, PlayerExperience};
 
 pub fn register(r: &mut TraitRegistry) {
+    r.register("TimeLimitManager", |n| load_info!(TimeLimitManagerInfo, n));
     r.register("MissionObjectives", |n| load_info!(MissionObjectivesInfo, n));
     r.register("ConquestVictoryConditions", |n| load_info!(ConquestVictoryConditionsInfo, n));
     r.register("OwnerLostAction", |n| load_info!(OwnerLostActionInfo, n));
@@ -310,7 +312,7 @@ pub struct ConquestVictoryConditions {
     objective_id: Cell<Option<usize>>,
 }
 
-register_traits!(ConquestVictoryConditions: ITick, INotifyWinStateChanged);
+register_traits!(ConquestVictoryConditions: ITick, INotifyWinStateChanged, INotifyTimeLimit);
 info_impl!(ConquestVictoryConditionsInfo => |info, init| {
     let short_game = init.world().world_actor().trait_::<MapOptions>().short_game();
     Some(Rc::new(ConquestVictoryConditions {
@@ -361,6 +363,42 @@ impl ITick for ConquestVictoryConditions {
             return;
         }
         self.mo.mark_completed(&owner, id);
+    }
+}
+
+impl INotifyTimeLimit for ConquestVictoryConditions {
+    fn notify_timer_expired(&self, self_: &ActorRef) {
+        let Some(id) = self.objective_id.get() else {
+            return;
+        };
+        let owner = self_.owner();
+        let w = self_.world();
+        let team_of = |p: &PlayerRef| w.lobby_info.client_with_index(p.client_index).map_or(0, |c| c.team);
+        let experience = |p: &PlayerRef| {
+            p.player_actor()
+                .trait_or_default::<PlayerExperience>()
+                .map_or(0, |e| e.experience())
+        };
+        let mut players: Vec<PlayerRef> = w.players().into_iter().filter(|p| !p.non_combatant && p.playable).collect();
+        players.sort_by_key(|p| std::cmp::Reverse(experience(p)));
+        let mut teams: Vec<(i32, Vec<PlayerRef>)> = Vec::new();
+        for p in players {
+            let team = team_of(&p);
+            match teams.iter_mut().find(|t| t.0 == team) {
+                Some(t) => t.1.push(p),
+                None => teams.push((team, vec![p])),
+            }
+        }
+        teams.sort_by_key(|t| std::cmp::Reverse(t.1.iter().map(&experience).sum::<i32>()));
+        let my_team = team_of(&owner);
+        let won = teams
+            .first()
+            .is_some_and(|(team, members)| *team == my_team && (my_team != 0 || Rc::ptr_eq(&members[0], &owner)));
+        if won {
+            self.mo.mark_completed(&owner, id);
+        } else {
+            self.mo.mark_failed(&owner, id);
+        }
     }
 }
 
@@ -492,3 +530,104 @@ pub struct MustBeDestroyed {
 
 register_traits!(MustBeDestroyed);
 info_impl!(MustBeDestroyedInfo => |info, _| Some(Rc::new(MustBeDestroyed { info })));
+
+/// `INotifyTimeLimit`.
+pub trait INotifyTimeLimit {
+    fn notify_timer_expired(&self, self_: &ActorRef);
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct TimeLimitManagerInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub time_limit_default: i32,
+    pub time_limit_warnings: IndexMap<i32, Option<String>>,
+    pub notification: String,
+    pub skip_time_remaining_notifications: bool,
+    pub skip_timer_expired_notification: bool,
+}
+
+impl Default for TimeLimitManagerInfo {
+    fn default() -> Self {
+        TimeLimitManagerInfo {
+            instance_name: None,
+            time_limit_default: 0,
+            time_limit_warnings: [1, 2, 3, 4, 5, 10].into_iter().map(|m| (m, None)).collect(),
+            notification: "{0} minute{1} remaining.".into(),
+            skip_time_remaining_notifications: false,
+            skip_timer_expired_notification: false,
+        }
+    }
+}
+
+pub struct TimeLimitManager {
+    info: Rc<TimeLimitManagerInfo>,
+    ticks_per_second: i32,
+    time_limit: i32,
+}
+
+register_traits!(TimeLimitManager: ITick, INotifyTimeLimit);
+info_impl!(TimeLimitManagerInfo => |info, init| {
+    let world = init.world();
+    let ticks_per_second = 1000 / world.timestep;
+    let minutes = world
+        .lobby_info
+        .global_settings
+        .option_str("timelimit", &info.time_limit_default.to_string())
+        .parse()
+        .unwrap_or(info.time_limit_default);
+    Some(Rc::new(TimeLimitManager {
+        ticks_per_second,
+        time_limit: minutes * 60 * ticks_per_second,
+        info,
+    }))
+});
+
+impl ITick for TimeLimitManager {
+    fn tick(&self, self_: &ActorRef) {
+        if self.time_limit <= 0 {
+            return;
+        }
+        let world = self_.world();
+        let remaining = self.time_limit - world.world_tick();
+        if remaining == 0 {
+            for t in self_.traits_implementing::<dyn INotifyTimeLimit>() {
+                t.notify_timer_expired(self_);
+            }
+            for p in world.players() {
+                let actor = p.player_actor();
+                for t in actor.traits_implementing::<dyn INotifyTimeLimit>() {
+                    t.notify_timer_expired(actor);
+                }
+            }
+            return;
+        }
+        if remaining < 0 || self.info.skip_time_remaining_notifications {
+            return;
+        }
+        for (&m, speech) in &self.info.time_limit_warnings {
+            if remaining != m * 60 * self.ticks_per_second {
+                continue;
+            }
+            let text = self
+                .info
+                .notification
+                .replace("{0}", &m.to_string())
+                .replace("{1}", if m > 1 { "s" } else { "" });
+            world.sound.add_player_system_line(&text, "");
+            if let Some(speech) = speech.as_deref() {
+                let local = world.sound.local_player();
+                let faction = local.as_ref().map(|p| p.faction.clone());
+                rustora_engine::sound::play_notification(&world, local.as_ref(), "Speech", speech, faction.as_deref());
+            }
+        }
+    }
+}
+
+impl INotifyTimeLimit for TimeLimitManager {
+    fn notify_timer_expired(&self, self_: &ActorRef) {
+        if !self.info.skip_timer_expired_notification {
+            self_.world().sound.add_player_system_line("notification-time-limit-expired", "");
+        }
+    }
+}

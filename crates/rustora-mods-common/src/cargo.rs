@@ -39,6 +39,7 @@ pub fn register(r: &mut TraitRegistry) {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct CargoInfo {
+    pub unload_voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -64,6 +65,7 @@ pub struct CargoInfo {
 impl Default for CargoInfo {
     fn default() -> Self {
         CargoInfo {
+            unload_voice: "Action".into(),
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             max_weight: 0,
@@ -142,6 +144,7 @@ pub struct Cargo {
 
 register_traits!(
     Cargo: IResolveOrder,
+    rustora_engine::sound::IOrderVoice,
     crate::orders::IIssueOrder,
     crate::orders::IIssueDeployOrder,
     INotifyOwnerChanged,
@@ -539,6 +542,7 @@ impl ITransformActorInitModifier for Cargo {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct PassengerInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     pub cargo_type: Option<String>,
@@ -553,6 +557,7 @@ pub struct PassengerInfo {
 impl Default for PassengerInfo {
     fn default() -> Self {
         PassengerInfo {
+            voice: "Action".into(),
             instance_name: None,
             cargo_type: None,
             weight: 1,
@@ -574,7 +579,7 @@ pub struct Passenger {
     reserved_cargo: RefCell<Option<Rc<Cargo>>>,
 }
 
-register_traits!(Passenger: IResolveOrder, crate::orders::IIssueOrder, INotifyRemovedFromWorld, INotifyEnteredCargo, INotifyExitedCargo, INotifyKilled, IObservesVariables);
+register_traits!(Passenger: rustora_engine::sound::IOrderVoice, IResolveOrder, crate::orders::IIssueOrder, INotifyRemovedFromWorld, INotifyEnteredCargo, INotifyExitedCargo, INotifyKilled, IObservesVariables);
 info_impl!(PassengerInfo => |info, _init| Some(Rc::new(Passenger {
     info,
     transport: RefCell::new(None),
@@ -1255,5 +1260,21 @@ impl crate::orders::IIssueDeployOrder for Cargo {
 
     fn can_issue_deploy_order(&self, _self_: &ActorRef, _queued: bool) -> bool {
         true
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for Cargo {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        (order.order_string == "Unload" && !self.is_empty() && rustora_engine::sound::has_voice(self_, &self.info.unload_voice))
+            .then(|| self.info.unload_voice.clone())
+    }
+}
+
+impl rustora_engine::sound::IOrderVoice for Passenger {
+    fn voice_phrase_for_order(&self, _self_: &ActorRef, order: &Order) -> Option<String> {
+        if order.order_string != "EnterTransport" || order.target.target_type() != TargetType::Actor {
+            return None;
+        }
+        self.can_enter(order.target.actor()?).then(|| self.info.voice.clone())
     }
 }

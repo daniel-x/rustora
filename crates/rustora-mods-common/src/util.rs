@@ -5,8 +5,9 @@
 
 use rustora_core::world_types::{CPos, CVec, MersenneTwister, WAngle, WDist, WPos, WRot, WVec};
 use rustora_engine::actor::ActorRef;
+use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRelationship;
-use rustora_engine::target::Target;
+use rustora_engine::target::{Target, TargetType};
 use rustora_engine::world::World;
 
 pub fn tick_facing(facing: WAngle, desired: WAngle, step: WAngle) -> WAngle {
@@ -93,6 +94,15 @@ pub fn adjacent_cells(w: &World, target: &Target) -> Vec<CPos> {
         cells.insert(w.map().cell_containing(p));
     }
     expand_footprint(&cells.into_iter().collect::<Vec<_>>(), true)
+}
+
+/// Whether an order voice may play for a move order: `moves_into_shroud` or the target cell is explored.
+pub fn voice_allows_target(self_: &ActorRef, order: &Order, moves_into_shroud: bool) -> bool {
+    if moves_into_shroud || order.target.target_type() == TargetType::Invalid {
+        return true;
+    }
+    let cell = self_.world().map().cell_containing(order.target.center_position());
+    self_.owner().shroud().is_explored(cell)
 }
 
 /// `ApplyPercentageModifiers`: exact product truncated toward zero, like C# `decimal`.

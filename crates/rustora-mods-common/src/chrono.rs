@@ -83,6 +83,7 @@ impl ActorInit for ChronoshiftReturnInit {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct ChronoshiftableInfo {
+    pub time_bar_color: rustora_core::fieldloader::Color,
     #[field(ignore)]
     pub instance_name: Option<String>,
     #[field(flatten)]
@@ -96,6 +97,7 @@ pub struct ChronoshiftableInfo {
 impl Default for ChronoshiftableInfo {
     fn default() -> Self {
         ChronoshiftableInfo {
+            time_bar_color: rustora_core::fieldloader::Color::from_argb(255, 255, 255, 255),
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             explode_instead: false,
@@ -118,7 +120,7 @@ pub struct Chronoshiftable {
     return_ticks: Cell<i32>,
 }
 
-register_traits!(Chronoshiftable: ITick, IDeathActorInitModifier, ITransformActorInitModifier, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(Chronoshiftable: ISelectionBar, ITick, IDeathActorInitModifier, ITransformActorInitModifier, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(ChronoshiftableInfo => |info, init| {
     let return_init = init.inits.get::<ChronoshiftReturnInit>();
     Some(Rc::new(Chronoshiftable {
@@ -383,6 +385,7 @@ impl Activity for Teleport {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct ConyardChronoReturnInfo {
+    pub time_bar_color: rustora_core::fieldloader::Color,
     #[field(ignore)]
     pub instance_name: Option<String>,
     pub condition: Option<String>,
@@ -397,6 +400,7 @@ pub struct ConyardChronoReturnInfo {
 impl Default for ConyardChronoReturnInfo {
     fn default() -> Self {
         ConyardChronoReturnInfo {
+            time_bar_color: rustora_core::fieldloader::Color::from_argb(255, 255, 255, 255),
             instance_name: None,
             condition: None,
             damage: 1000,
@@ -424,7 +428,7 @@ pub struct ConyardChronoReturn {
     triggered: Cell<bool>,
 }
 
-register_traits!(ConyardChronoReturn: ITick, ISync, IObservesVariables, INotifySold, IDeathActorInitModifier, ITransformActorInitModifier);
+register_traits!(ConyardChronoReturn: ISelectionBar, ITick, ISync, IObservesVariables, INotifySold, IDeathActorInitModifier, ITransformActorInitModifier);
 info_impl!(ConyardChronoReturnInfo => |info, init| {
     let return_init = init.inits.get::<ChronoshiftReturnInit>();
     Some(Rc::new_cyclic(|me| ConyardChronoReturn {
@@ -699,7 +703,7 @@ pub struct PortableChrono {
     charge_tick: Cell<i32>,
 }
 
-register_traits!(PortableChrono: IIssueOrder, IResolveOrder, ITick, IOrderVoice, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(PortableChrono: ISelectionBar, IIssueOrder, IResolveOrder, ITick, IOrderVoice, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(PortableChronoInfo => |info, init| Some(Rc::new(PortableChrono {
     state: ConditionalState::new_pausable(&info.base),
     info,
@@ -1063,5 +1067,50 @@ impl Activity for DetonationSequence {
             }
             kill_actor(&a, Some(&a), &info.damage_types);
         }));
+    }
+}
+
+impl ISelectionBar for Chronoshiftable {
+    fn value(&self, self_: &ActorRef, viewer: Option<&rustora_engine::player::PlayerRef>) -> f32 {
+        let ticks = self.return_ticks.get();
+        if self.state.is_trait_disabled()
+            || !self.info.return_to_origin
+            || ticks == 0
+            || !self_.owner().is_allied_with(viewer.map(|v| &**v))
+        {
+            return 0.0;
+        }
+        ticks as f32 / self.duration.get() as f32
+    }
+
+    fn color(&self) -> rustora_core::fieldloader::Color {
+        self.info.time_bar_color
+    }
+}
+
+impl ISelectionBar for ConyardChronoReturn {
+    fn value(&self, self_: &ActorRef, viewer: Option<&rustora_engine::player::PlayerRef>) -> f32 {
+        let ticks = self.return_ticks.get();
+        if ticks == 0 || !self_.owner().is_allied_with(viewer.map(|v| &**v)) {
+            return 0.0;
+        }
+        ticks as f32 / self.duration as f32
+    }
+
+    fn color(&self) -> rustora_core::fieldloader::Color {
+        self.info.time_bar_color
+    }
+}
+
+impl ISelectionBar for PortableChrono {
+    fn value(&self, _self_: &ActorRef, _viewer: Option<&rustora_engine::player::PlayerRef>) -> f32 {
+        if self.state.is_trait_disabled() {
+            return 0.0;
+        }
+        (self.info.charge_delay - self.charge_tick.get()) as f32 / self.info.charge_delay as f32
+    }
+
+    fn color(&self) -> rustora_core::fieldloader::Color {
+        crate::cosmetic::magenta()
     }
 }

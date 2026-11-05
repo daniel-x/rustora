@@ -25,6 +25,7 @@ pub fn register(r: &mut TraitRegistry) {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct AttackMoveInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     pub attack_move_condition: Option<String>,
@@ -39,6 +40,7 @@ pub struct AttackMoveInfo {
 impl Default for AttackMoveInfo {
     fn default() -> Self {
         AttackMoveInfo {
+            voice: "Action".into(),
             instance_name: None,
             attack_move_condition: None,
             assault_move_condition: None,
@@ -56,7 +58,16 @@ pub struct AttackMove {
     mv: Rc<dyn IMove>,
 }
 
-register_traits!(AttackMove: IResolveOrder);
+register_traits!(AttackMove: IResolveOrder, rustora_engine::sound::IOrderVoice);
+
+impl rustora_engine::sound::IOrderVoice for AttackMove {
+    fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
+        if !crate::util::voice_allows_target(self_, order, self.info.move_into_shroud) {
+            return None;
+        }
+        matches!(order.order_string.as_str(), "AttackMove" | "AssaultMove").then(|| self.info.voice.clone())
+    }
+}
 info_impl!(AttackMoveInfo => |info, init| Some(Rc::new(AttackMove { info, mv: init.self_.trait_::<dyn IMove>() })));
 
 impl IResolveOrder for AttackMove {

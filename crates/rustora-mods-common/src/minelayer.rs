@@ -37,6 +37,7 @@ pub fn register(r: &mut TraitRegistry) {
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct MinelayerInfo {
+    pub voice: String,
     #[field(ignore)]
     pub instance_name: Option<String>,
     pub mine: String,
@@ -51,6 +52,7 @@ pub struct MinelayerInfo {
 impl Default for MinelayerInfo {
     fn default() -> Self {
         MinelayerInfo {
+            voice: "Action".into(),
             instance_name: None,
             mine: "minv".into(),
             ammo_pool_name: "primary".into(),
@@ -68,7 +70,7 @@ pub struct Minelayer {
     minefield_start: Cell<CPos>,
 }
 
-register_traits!(Minelayer: IResolveOrder, ISync, ITick);
+register_traits!(Minelayer: rustora_engine::sound::IOrderVoice, IResolveOrder, ISync, ITick);
 info_impl!(MinelayerInfo => |info, _| Some(Rc::new(Minelayer { info, minefield_start: Cell::new(CPos::ZERO) })));
 
 impl ISync for Minelayer {
@@ -430,3 +432,9 @@ pub struct MineImmuneInfo {
 }
 
 info_impl!(MineImmuneInfo => |_, _| None);
+
+impl rustora_engine::sound::IOrderVoice for Minelayer {
+    fn voice_phrase_for_order(&self, _self_: &ActorRef, order: &Order) -> Option<String> {
+        matches!(order.order_string.as_str(), "PlaceMine" | "PlaceMinefield").then(|| self.info.voice.clone())
+    }
+}

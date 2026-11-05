@@ -6,8 +6,10 @@
 
 use rustora_core::fieldloader::Color;
 use rustora_core::world_types::{WAngle, WPos, WRot, WVec};
+use rustora_engine::actor::ActorRef;
 use rustora_engine::damage::DamageState;
-use rustora_engine::traits::IHealth;
+use rustora_engine::player::PlayerRef;
+use rustora_engine::traits::{IHealth, ISelectionBar};
 use rustora_engine::world::WorldType;
 use rustora_game::settings::{Settings, StatusBarsType};
 use rustora_mods_common::decorations::{AnnotationCircle, IDecoration, IRenderCircles};
@@ -39,6 +41,39 @@ fn selection_box(dc: &mut DrawContext, tl: (f32, f32), br: (f32, f32), c: Color)
 
 fn half(c: Color) -> Color {
     Color::from_argb(255, c.r() / 2, c.g() / 2, c.b() / 2)
+}
+
+/// `DrawExtraBars`.
+fn extra_bars(dc: &mut DrawContext, a: &ActorRef, viewer: Option<&PlayerRef>, start: (f32, f32), end: (f32, f32)) {
+    let (mut start, mut end) = (start, end);
+    let rows = [(-4.0, true), (-3.0, false), (-2.0, true)];
+    for bar in a.traits_implementing::<dyn ISelectionBar>() {
+        let value = bar.value(a, viewer);
+        if value == 0.0 && !bar.display_when_empty() {
+            continue;
+        }
+        start.1 += 4.0;
+        end.1 += 4.0;
+        let z = start.0 + (end.0 - start.0) * value;
+        let color = bar.color();
+        for (dy, outer) in rows {
+            let background = Color::from_argb(
+                128,
+                if outer { 30 } else { 10 },
+                if outer { 30 } else { 10 },
+                if outer { 30 } else { 10 },
+            );
+            line(dc, (start.0, start.1 + dy), (end.0, end.1 + dy), background);
+        }
+        for (dy, outer) in rows {
+            line(
+                dc,
+                (start.0, start.1 + dy),
+                (z, end.1 + dy),
+                if outer { half(color) } else { color },
+            );
+        }
+    }
 }
 
 /// `DrawHealthBar`.
@@ -204,6 +239,9 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
             && let Some(h) = &health
         {
             health_bar(dc, &**h, view(b.x + 1, b.y), view(b.right() - 1, b.y));
+        }
+        if (selected || (regular && status_bars != StatusBarsType::Standard)) && a.info.has_trait_info::<SelectableInfo>() {
+            extra_bars(dc, a, ingame.render_player.as_ref(), view(b.x + 1, b.y), view(b.right() - 1, b.y));
         }
         draw_decorations(dc, ingame, &viewport, a, b, selected);
     }

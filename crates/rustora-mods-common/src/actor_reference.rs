@@ -12,6 +12,15 @@ use rustora_engine::actor_init::*;
 use rustora_engine::value_init;
 
 value_init!(HealthInit, i32);
+
+/// The `allowZero` argument of `HealthInit`: a value of 0 creates a dead actor instead of one with 1%.
+pub struct AllowZeroHealthInit;
+
+impl ActorInit for AllowZeroHealthInit {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 value_init!(TurretFacingInit, WAngle);
 
 /// `SkipMakeAnimsInit`.
