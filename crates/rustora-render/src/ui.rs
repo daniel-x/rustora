@@ -18,6 +18,8 @@ pub struct UiQuad {
     pub dst: [f32; 4],
     pub src: [f32; 4],
     pub color: [f32; 4],
+    /// Premultiplied colors of the top left, top right, bottom right and bottom left corners, replacing `color`.
+    pub gradient: Option<[[f32; 4]; 4]>,
     /// Corners of a solid rotated quad, replacing `dst`.
     pub corners: Option<[[f32; 2]; 4]>,
 }
@@ -47,6 +49,20 @@ impl UiList {
             dst,
             src: [0.0, 0.0, 1.0, 1.0],
             color,
+            gradient: None,
+            corners: None,
+        });
+    }
+
+    /// Adds a rectangle filled with a gradient between premultiplied corner colors, as `FillRectWithColor` with four
+    /// colors. The corner order is top left, top right, bottom right, bottom left.
+    pub fn gradient(&mut self, dst: [f32; 4], colors: [[f32; 4]; 4]) {
+        self.quads.push(UiQuad {
+            texture: UiTexture(0),
+            dst,
+            src: [0.0, 0.0, 1.0, 1.0],
+            color: colors[0],
+            gradient: Some(colors),
             corners: None,
         });
     }
@@ -61,6 +77,7 @@ impl UiList {
             dst: [0.0; 4],
             src: [0.0, 0.0, 1.0, 1.0],
             color,
+            gradient: None,
             corners: Some([
                 [from[0] - n[0], from[1] - n[1]],
                 [from[0] + n[0], from[1] + n[1]],
@@ -296,10 +313,16 @@ impl UiPass {
             let [x, y, w, h] = q.dst;
             let [sx, sy, sw, sh] = q.src;
             let (u0, v0, u1, v1) = (sx / tw, sy / th, (sx + sw) / tw, (sy + sh) / th);
+            let corner = |i: usize| q.gradient.map_or(q.color, |g| g[i]);
             let v = |px: f32, py: f32, u: f32, t: f32| UiVertex {
                 pos: [px, py],
                 uv: [u, t],
-                color: q.color,
+                color: corner(match (u == u1, t == v1) {
+                    (false, false) => 0,
+                    (true, false) => 1,
+                    (true, true) => 2,
+                    (false, true) => 3,
+                }),
             };
             if let Some([a, b, c, d]) = q.corners {
                 vertices.extend_from_slice(&[

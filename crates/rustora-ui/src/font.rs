@@ -264,6 +264,7 @@ impl SpriteFont {
                         dst: [(pen + g.left - r) as f32, (base + g.top - r) as f32, g.w as f32, g.h as f32],
                         src: [g.x as f32, g.y as f32, g.w as f32, g.h as f32],
                         color: tint,
+                        gradient: None,
                         corners: None,
                     });
                 }
@@ -296,6 +297,7 @@ impl SpriteFont {
                         dst: [(pen + g.left) as f32, (base + g.top) as f32, g.w as f32, g.h as f32],
                         src: [g.x as f32, g.y as f32, g.w as f32, g.h as f32],
                         color: tint,
+                        gradient: None,
                         corners: None,
                     });
                 }

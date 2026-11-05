@@ -23,6 +23,7 @@ mod image;
 mod label;
 mod map_preview;
 pub mod menu_button;
+pub mod observer;
 pub mod production;
 mod progress_bar;
 pub mod radar;
@@ -49,7 +50,7 @@ pub use label::{LabelWidget, LabelWithTooltipWidget, TextAlign, TextVAlign};
 pub use map_preview::{MapPreviewWidget, SpawnOccupant};
 pub use progress_bar::ProgressBarWidget;
 pub use scroll_item::ScrollItemWidget;
-pub use scroll_panel::ScrollPanelWidget;
+pub use scroll_panel::{ScrollBar, ScrollPanelWidget};
 pub use slider::SliderWidget;
 pub use text_field::{TextFieldType, TextFieldWidget};
 pub use tooltip::TooltipContainerWidget;
@@ -83,6 +84,11 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
             ..LabelWidget::new(assets)
         }),
         "ColorBlock" => cell(ColorBlockWidget::default()),
+        "GradientColorBlock" => cell(observer::GradientColorBlockWidget::default()),
+        "LineGraph" => cell(observer::LineGraphWidget::new(assets)),
+        "ObserverProductionIcons" => cell(observer::ObserverProductionIconsWidget::default()),
+        "ObserverSupportPowerIcons" => cell(observer::ObserverSupportPowerIconsWidget::default()),
+        "ObserverArmyIcons" => cell(observer::ObserverArmyIconsWidget::default()),
         "ClientTooltipRegion" => cell(ClientTooltipRegionWidget::default()),
         "LabelWithTooltip" => cell(LabelWithTooltipWidget::new(assets)),
         "MapPreview" => cell(MapPreviewWidget::new(assets)),

@@ -16,6 +16,7 @@ use crate::widget::{Getter, Ui, WidgetArgs, WidgetId, WidgetKind};
 /// Port of `ColorBlockWidget`.
 #[derive(Clone, Default)]
 pub struct ColorBlockWidget {
+    pub color: Color,
     pub get_color: Option<Getter<Color>>,
     pub on_mouse_down: Option<Rc<dyn Fn(&mut Ui, &MouseInput)>>,
     pub on_mouse_up: Option<Rc<dyn Fn(&mut Ui, &MouseInput)>>,
@@ -24,12 +25,17 @@ pub struct ColorBlockWidget {
 impl WidgetKind for ColorBlockWidget {
     impl_as_any!();
 
-    fn set_field(&mut self, key: &str, _value: &str) -> bool {
-        key == "ClickSound"
+    fn set_field(&mut self, key: &str, value: &str) -> bool {
+        match key {
+            "Color" => self.color = Color::parse(value).unwrap_or(self.color),
+            "ClickSound" => {}
+            _ => return false,
+        }
+        true
     }
 
     fn draw(&mut self, ui: &mut Ui, id: WidgetId, dc: &mut DrawContext) {
-        let color = self.get_color.as_ref().map_or_else(Color::default, |f| f());
+        let color = self.get_color.as_ref().map_or(self.color, |f| f());
         dc.fill_rect_with_color(ui.render_bounds(id), color);
     }
 

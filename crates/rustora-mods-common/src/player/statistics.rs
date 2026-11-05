@@ -27,7 +27,18 @@ use crate::production::ValuedInfo;
 pub fn register(r: &mut TraitRegistry) {
     r.register("PlayerStatistics", |n| load_info!(PlayerStatisticsInfo, n));
     r.register("UpdatesPlayerStatistics", |n| load_info!(UpdatesPlayerStatisticsInfo, n));
+    r.register("UpdatesDerrickCount", |n| load_info!(UpdatesDerrickCountInfo, n));
 }
+
+/// `UpdatesDerrickCountInfo`. The observer economy stats count the actors that have it; the trait itself only
+/// updates the derrick count of the Tiberian Sun map hacks.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct UpdatesDerrickCountInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+info_impl!(UpdatesDerrickCountInfo => |_info, _init| None);
 
 const SAMPLE_INTERVAL_MS: i32 = 30000;
 const INCOME_INTERVAL_MS: i32 = 1000;

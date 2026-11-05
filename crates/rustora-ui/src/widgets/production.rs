@@ -201,7 +201,7 @@ pub struct ProductionPaletteWidget {
 
 impl ProductionPaletteWidget {
     /// `IProductionIconOverlay` of the queue owner that are active for the actor `name`.
-    fn active_overlays(&self, queue: &ProductionQueue, name: &str) -> Vec<Rc<ProductionIconOverlayManagerInfo>> {
+    pub(crate) fn active_overlays(queue: &ProductionQueue, name: &str) -> Vec<Rc<ProductionIconOverlayManagerInfo>> {
         let owner = queue.actor.owner();
         let player = owner.player_actor();
         let world = queue.actor.world();
@@ -752,7 +752,7 @@ impl WidgetKind for ProductionPaletteWidget {
             if let Some(f) = sprites.frame(dc.renderer, &icon.image, &icon.sequence, 0, &icon.palette) {
                 dc.draw_frame_centered(f, pos);
             }
-            for overlay in self.active_overlays(&queue, &icon.name) {
+            for overlay in Self::active_overlays(&queue, &icon.name) {
                 let Some(sequence) = overlay.sequence.as_deref() else {
                     continue;
                 };

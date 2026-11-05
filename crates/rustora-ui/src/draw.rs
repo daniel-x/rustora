@@ -116,6 +116,7 @@ impl<'a> DrawContext<'a> {
             dst: [x, y, w, h],
             src: [s.x as f32, s.y as f32, s.w as f32, s.h as f32],
             color: WHITE,
+            gradient: None,
             corners: None,
         });
     }
@@ -280,6 +281,28 @@ impl<'a> DrawContext<'a> {
     /// Port of `WidgetUtils.WrapText`.
     pub fn wrap_text(&mut self, font: &str, text: &str, width: i32) -> String {
         self.assets.wrap_text(font, text, width)
+    }
+
+    /// Port of `DrawTextWithShadow` with an angle of a quarter turn: the text reads from the bottom to the top and
+    /// turns around `(x, y)`.
+    pub fn draw_text_rotated(&mut self, font: &str, text: &str, x: i32, y: i32, color: Color, style: TextStyle) {
+        if let TextStyle::Shadow { dark, light, offset } = style {
+            let bg = contrast_color(color, dark, light);
+            self.draw_text_turned(font, text, x + offset, y + offset, bg);
+        }
+        self.draw_text_turned(font, text, x, y, color);
+    }
+
+    fn draw_text_turned(&mut self, font: &str, text: &str, x: i32, y: i32, color: Color) {
+        let start = self.list.quads.len();
+        self.draw_text(font, text, x, y, color, TextStyle::Plain);
+        let (cx, cy) = (x as f32, y as f32);
+        let turn = |p: [f32; 2]| [cx + (p[1] - cy), cy - (p[0] - cx)];
+        for q in &mut self.list.quads[start..] {
+            let [qx, qy, w, h] = q.dst;
+            let corners = q.corners.unwrap_or([[qx, qy], [qx + w, qy], [qx + w, qy + h], [qx, qy + h]]);
+            q.corners = Some(corners.map(turn));
+        }
     }
 
     /// Port of `DrawText`, `DrawTextWithContrast` and `DrawTextWithShadow`.
