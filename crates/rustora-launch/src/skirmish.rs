@@ -178,10 +178,10 @@ impl SkirmishDriver {
 
     /// Advances the world by one tick if the orders for it are available.
     pub fn step(&mut self) -> Step {
+        self.orders.tick_immediate();
         if self.world.is_game_over() {
             return Step::Ended;
         }
-        self.orders.tick_immediate();
         if !self.orders.try_tick() {
             return if self.orders.connection.is_connected() {
                 Step::Waiting

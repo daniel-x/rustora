@@ -32,6 +32,7 @@ pub enum TextNotificationPool {
     System,
     Mission,
     Feedback,
+    Transients,
 }
 
 /// `TextNotification`.

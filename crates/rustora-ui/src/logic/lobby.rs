@@ -429,7 +429,7 @@ pub fn setup_text_notification(ui: &mut Ui, widget: WidgetId, notification: &Tex
 }
 
 /// `TabCompletionLogic.Complete`.
-fn complete_name(text: &str, names: &[String]) -> String {
+pub(crate) fn complete_name(text: &str, names: &[String]) -> String {
     let start = text.rfind(' ').map_or(0, |i| i + 1);
     let word = &text[start..];
     if word.is_empty() {
@@ -507,7 +507,7 @@ impl ChromeLogic for LobbyHandle {
 
 struct LobbyHandle(Rc<Lobby>);
 
-fn pool_from_name(name: &str) -> Option<TextNotificationPool> {
+pub(crate) fn pool_from_name(name: &str) -> Option<TextNotificationPool> {
     match name {
         "Chat" => Some(TextNotificationPool::Chat),
         "Join" => Some(TextNotificationPool::Join),

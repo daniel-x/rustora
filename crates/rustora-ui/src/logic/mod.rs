@@ -23,6 +23,7 @@ pub mod color_picker;
 pub mod command_bar;
 pub mod connection;
 pub mod ingame;
+pub mod ingame_chat;
 pub mod ingame_menu;
 pub mod lobby;
 pub mod lobby_options;
@@ -266,6 +267,9 @@ pub fn create(
         "SupportPowerBinLogic" => sidebar::support_power_bin(ui, id),
         "IngameRadarDisplayLogic" => sidebar::radar_display(ui, id),
         "MenuButtonsChromeLogic" => ingame_menu::menu_buttons(ui, id),
+        "LoadIngameChatLogic" => ingame_chat::load_ingame_chat(ui, id),
+        "IngameChatLogic" => ingame_chat::ingame_chat(ui, id, args, logic_args),
+        "GameTimerLogic" => ingame_chat::game_timer(ui, id),
         "WorldTooltipLogic" => sidebar::world_tooltip(ui, id, args),
         "CommandBarLogic" => command_bar::command_bar(ui, id, logic_args),
         "IngameMenuLogic" => ingame_menu::ingame_menu(ui, id, args, logic_args),

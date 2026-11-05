@@ -29,6 +29,7 @@ mod scroll_panel;
 mod slider;
 pub mod support_powers;
 mod text_field;
+pub mod text_notifications;
 pub mod tooltip;
 pub mod viewport_controller;
 pub mod world_interaction;
@@ -59,6 +60,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
     Some(match type_name {
         "Container" => container(),
         "LogicKeyListener" => cell(production::LogicKeyListenerWidget::default()),
+        "TextNotificationsDisplay" => cell(text_notifications::TextNotificationsDisplayWidget::default()),
         "LogicTicker" => cell(production::LogicTickerWidget::default()),
         "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
         "SupportPowers" => cell(support_powers::SupportPowersWidget::default()),

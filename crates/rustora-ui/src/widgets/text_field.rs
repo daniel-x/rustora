@@ -132,7 +132,7 @@ impl TextFieldWidget {
         }
     }
 
-    fn disabled_now(&self) -> bool {
+    pub fn disabled_now(&self) -> bool {
         self.is_disabled.as_ref().map_or(self.disabled, |f| f())
     }
 

@@ -366,6 +366,35 @@ fn process_order(
     name: &str,
     color: Color,
 ) -> Result<bool, String> {
+    if client_id == 0 {
+        match order.order_string.as_str() {
+            "HandshakeRequest" => {
+                let options = JoinOptions {
+                    name: name.to_string(),
+                    color,
+                    password: net.password.clone(),
+                    ..Default::default()
+                };
+                let text = order.target_string.as_deref().unwrap_or("");
+                connection.send_immediate(vec![handshake_response(mod_data, text, &options)?]);
+                return Ok(false);
+            }
+            "StartGame" => return Ok(true),
+            _ => {}
+        }
+    }
+    process_client_order(messages, net, client_id, order, run_time)?;
+    Ok(false)
+}
+
+/// The orders of `UnitOrders.ProcessOrder` that concern the user interface, in the lobby and in the game.
+pub fn process_client_order(
+    messages: &Messages,
+    net: &mut NetState,
+    client_id: i32,
+    order: &RawOrder,
+    run_time: i64,
+) -> Result<(), String> {
     let text = order.target_string.as_deref().unwrap_or("");
     let parse = |t: &str| Session::deserialize(t, &order.order_string).map_err(|e| e.to_string());
     match order.order_string.as_str() {
@@ -373,18 +402,9 @@ fn process_order(
             if let Some(line) = chat_notification(net, client_id, order) {
                 net.notifications.push(line);
             }
-            return Ok(false);
+            return Ok(());
         }
-        _ if client_id != 0 => return Ok(false),
-        "HandshakeRequest" => {
-            let options = JoinOptions {
-                name: name.to_string(),
-                color,
-                password: net.password.clone(),
-                ..Default::default()
-            };
-            connection.send_immediate(vec![handshake_response(mod_data, text, &options)?]);
-        }
+        _ if client_id != 0 => return Ok(()),
         "ServerError" => net.server_error = Some(text.to_string()),
         "AuthenticationError" => {
             net.server_error = Some(text.to_string());
@@ -421,8 +441,7 @@ fn process_order(
                 run_time + order.extra_data as i64
             };
         }
-        "StartGame" => return Ok(true),
         _ => {}
     }
-    Ok(false)
+    Ok(())
 }

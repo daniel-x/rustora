@@ -127,6 +127,10 @@ pub struct OrderManager {
     pub out_of_sync: Option<i32>,
     /// The timestep multiplier the server requests so that this client does not run ahead of slower ones.
     pub tick_scale: f32,
+    /// Collects the orders that concern the client user interface in `client_orders`.
+    pub collect_client_orders: bool,
+    /// Orders for the client user interface with the client they came from.
+    pub client_orders: Vec<(i32, RawOrder)>,
 }
 
 impl OrderManager {
@@ -143,6 +147,8 @@ impl OrderManager {
             local_orders: Vec::new(),
             local_immediate_orders: Vec::new(),
             net_frame_interval,
+            collect_client_orders: false,
+            client_orders: Vec::new(),
             out_of_sync: None,
             tick_scale: 1.0,
         }
@@ -281,7 +287,11 @@ impl OrderManager {
             | "SyncConnectionQuality"
             | "SyncMapPool"
             | "GameSaved"
-            | "Kick" => {}
+            | "Kick" => {
+                if self.collect_client_orders {
+                    self.client_orders.push((client_id, raw.clone()));
+                }
+            }
             "SaveTraitData" => self.add_save_trait_data(raw),
             "PauseGame" => {
                 if self.world.lobby_info.client_with_index(client_id).is_some() {

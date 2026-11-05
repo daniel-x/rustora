@@ -26,6 +26,7 @@ use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::assets::Assets;
 use rustora_ui::cursor::{CursorState, Cursors};
 use rustora_ui::draw::{DrawContext, Rect};
+use rustora_ui::fluent::Messages;
 use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
@@ -146,6 +147,21 @@ impl ShellWorld {
         }
     }
 
+    /// Feeds the user interface with the orders that the world ignores, and sends the chat lines it wrote.
+    fn exchange_client_orders(&mut self, messages: &Messages, net: &rustora_ui::net::Net, run_time: i64) {
+        let orders = &mut self.driver.orders;
+        orders.collect_client_orders = true;
+        let mut state = net.borrow_mut();
+        for (client_id, order) in std::mem::take(&mut orders.client_orders) {
+            if let Err(e) = crate::net::process_client_order(messages, &mut state, client_id, &order, run_time) {
+                log::warn!("{e}");
+            }
+        }
+        for order in std::mem::take(&mut state.outgoing) {
+            orders.issue_order(order);
+        }
+    }
+
     fn camera(&self, size: (u32, u32)) -> Camera {
         let viewport = self.viewport.borrow();
         let (x, y) = viewport.top_left();
@@ -244,6 +260,11 @@ impl Client {
         self.pump_network();
         if let Some(shell) = &mut self.shell {
             shell.tick();
+            if shell.ingame.is_some() {
+                let run_time = self.ui.run_time();
+                let assets = self.ui.assets.clone();
+                shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, run_time);
+            }
         }
         self.cursor.tick(&self.cursors);
         self.ui.tick();
