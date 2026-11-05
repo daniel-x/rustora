@@ -40,6 +40,8 @@ fn cursor_palette(rules: &[MiniYamlNode], name: &str, fs: &dyn ReadFs) -> Option
     rustora_formats::palette::load(&data, &[transparent], &[])
 }
 
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
 /// `CursorSequence`: selects the frames of a sequence.
 fn sequence_frames<'a>(frames: &'a [SpriteFrame], info: &MiniYaml) -> &'a [SpriteFrame] {
     let start: usize = field(info, "Start").and_then(|v| v.parse().ok()).unwrap_or(0).min(frames.len());
@@ -65,7 +67,11 @@ fn straight(c: [u8; 4]) -> [u8; 4] {
 }
 
 /// `CursorManager`: pads every frame of a sequence to one size, a multiple of 8, with the hotspot inside it.
-fn build_images(frames: &[SpriteFrame], palette: &Palette, sequence_hotspot: (i32, i32)) -> Vec<CursorImage> {
+fn build_images(
+    frames: &[SpriteFrame],
+    pixel: &dyn Fn(&SpriteFrame, usize, usize) -> [u8; 4],
+    sequence_hotspot: (i32, i32),
+) -> Vec<CursorImage> {
     let hotspots: Vec<(i32, i32)> = frames
         .iter()
         .map(|f| {
@@ -93,7 +99,7 @@ fn build_images(frames: &[SpriteFrame], palette: &Palette, sequence_hotspot: (i3
             for j in 0..f.height {
                 for i in 0..f.width {
                     let dest = 4 * ((j + pad_y) * width as usize + i + pad_x);
-                    rgba[dest..dest + 4].copy_from_slice(&straight(palette[f.data[j * f.width + i] as usize]));
+                    rgba[dest..dest + 4].copy_from_slice(&pixel(f, i, j));
                 }
             }
             CursorImage {
@@ -116,13 +122,37 @@ impl Cursors {
         };
         for source in &root.value.nodes {
             let data = fs.open(&source.key).map_err(|e| GameError::Data(e.to_string()))?;
+            if data.starts_with(PNG_SIGNATURE) {
+                let (width, height, rgba) =
+                    crate::chrome::decode_png(&data).map_err(|e| GameError::Data(format!("{}: {e}", source.key)))?;
+                let (width, height) = (width as usize, height as usize);
+                let frame = SpriteFrame {
+                    width,
+                    height,
+                    frame_width: width,
+                    frame_height: height,
+                    offset: (0.0, 0.0),
+                    data: Vec::new(),
+                };
+                let pixel = |_: &SpriteFrame, i: usize, j: usize| {
+                    let at = 4 * (j * width + i);
+                    straight([rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]])
+                };
+                for sequence in &source.value.nodes {
+                    let hotspot = |key| field(&sequence.value, key).and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let images = build_images(std::slice::from_ref(&frame), &pixel, (hotspot("X"), hotspot("Y")));
+                    sequences.insert(sequence.key.clone(), images);
+                }
+                continue;
+            }
             let frames = sprite::decode(&data).ok_or_else(|| GameError::Data(format!("cursor file {}", source.key)))?;
             let palette_name = source.value.value_str();
             let palette =
                 cursor_palette(&rules, palette_name, fs).ok_or_else(|| GameError::Data(format!("cursor palette {palette_name}")))?;
             for sequence in &source.value.nodes {
                 let hotspot = |key| field(&sequence.value, key).and_then(|v| v.parse().ok()).unwrap_or(0);
-                let images = build_images(sequence_frames(&frames, &sequence.value), &palette, (hotspot("X"), hotspot("Y")));
+                let pixel = |f: &SpriteFrame, i: usize, j: usize| straight(palette[f.data[j * f.width + i] as usize]);
+                let images = build_images(sequence_frames(&frames, &sequence.value), &pixel, (hotspot("X"), hotspot("Y")));
                 sequences.insert(sequence.key.clone(), images);
             }
         }
@@ -203,14 +233,22 @@ mod tests {
 
     #[test]
     fn pads_to_a_multiple_of_8_with_the_hotspot_inside() {
-        let images = build_images(&[frame(29, 24, (0.0, 0.0))], &palette(), (0, 0));
+        let images = build_images(
+            &[frame(29, 24, (0.0, 0.0))],
+            &|f: &SpriteFrame, i, j| straight(palette()[f.data[j * f.width + i] as usize]),
+            (0, 0),
+        );
         assert_eq!((images[0].width, images[0].height), (32, 24));
         assert_eq!(images[0].hotspot, (14, 12));
     }
 
     #[test]
     fn sequence_hotspot_moves_the_frame() {
-        let images = build_images(&[frame(10, 10, (0.0, 0.0))], &palette(), (0, -7));
+        let images = build_images(
+            &[frame(10, 10, (0.0, 0.0))],
+            &|f: &SpriteFrame, i, j| straight(palette()[f.data[j * f.width + i] as usize]),
+            (0, -7),
+        );
         assert_eq!(images[0].hotspot, (5, 0));
         let row_start = |row: usize| 4 * row * images[0].width as usize;
         assert_eq!(images[0].rgba[row_start(1) + 3], 0);
@@ -219,7 +257,11 @@ mod tests {
 
     #[test]
     fn frames_of_a_sequence_share_one_size_and_hotspot() {
-        let images = build_images(&[frame(4, 4, (0.0, 0.0)), frame(8, 8, (2.0, 2.0))], &palette(), (0, 0));
+        let images = build_images(
+            &[frame(4, 4, (0.0, 0.0)), frame(8, 8, (2.0, 2.0))],
+            &|f: &SpriteFrame, i, j| straight(palette()[f.data[j * f.width + i] as usize]),
+            (0, 0),
+        );
         assert_eq!((images[0].width, images[0].height), (8, 8));
         assert_eq!((images[1].width, images[1].height), (8, 8));
         assert_eq!(images[0].hotspot, images[1].hotspot);

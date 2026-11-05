@@ -2564,12 +2564,14 @@ dependencies = [
 name = "rustora-game"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "indexmap",
  "log",
  "rustora-core",
  "rustora-fs",
  "sha1 0.11.0",
  "thiserror 2.0.21",
+ "zip",
 ]
 
 [[package]]

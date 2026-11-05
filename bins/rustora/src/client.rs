@@ -15,6 +15,7 @@ use rustora_engine::sequence::ReadFile;
 use rustora_engine::sound::{AudioDevice, AudioRules, NullAudioDevice, Sound};
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Package, Platform, ReadFs};
+use rustora_game::installer::ModContent;
 use rustora_game::map::MapPackage;
 use rustora_game::map_cache::MapCache;
 use rustora_game::moddata::ModData;
@@ -34,6 +35,7 @@ use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
 use rustora_ui::logic::ingame::Ingame;
+use rustora_ui::logic::installer::InstallerContext;
 use rustora_ui::music::MusicPlaylist;
 use rustora_ui::viewport::Viewport;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
@@ -324,9 +326,29 @@ pub struct Client {
 
 impl Client {
     pub fn new(engine: &Path, support: &str, resolution: (i32, i32), args: &[String]) -> Client {
+        Client::initialize_mod(engine, support, resolution, args, "ra")
+    }
+
+    pub fn mod_id(&self) -> &str {
+        &self.mod_data.manifest.id
+    }
+
+    /// Port of `Game.InitializeMod`: a mod with missing content opens its content installer mod instead.
+    fn initialize_mod(engine: &Path, support: &str, resolution: (i32, i32), args: &[String], mod_id: &str) -> Client {
         let settings = Settings::load(Path::new(support).join("settings.yaml"), args);
         let platform = Platform::new(engine.to_path_buf(), support);
-        let mod_data = Rc::new(ModData::load(platform, "ra").expect("load mod"));
+        let mut mod_data = ModData::load(platform.clone(), mod_id).expect("load mod");
+        let installer_mod = mod_data.content_installer_mod();
+        if !mod_data.content_available
+            && let Some(installer) = &installer_mod
+        {
+            mod_data = ModData::load(platform.clone(), installer).expect("load content installer mod");
+        }
+        let content = mod_data
+            .content_installer_mod()
+            .is_none()
+            .then(|| ModContent::load(&mod_data).expect("load mod content"));
+        let mod_data = Rc::new(mod_data);
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
         let mut assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
         assets.hotkeys.apply_settings(&settings.keys);
@@ -338,6 +360,7 @@ impl Client {
         sound.load_music_files(&mod_audio);
         let services = Services {
             mod_version: mod_data.manifest.metadata.version.clone(),
+            content_installer_mod: installer_mod,
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
             settings: Rc::new(RefCell::new(settings)),
             net: Rc::default(),
@@ -353,7 +376,7 @@ impl Client {
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
         let distance = services.settings.borrow().graphics.viewport_distance;
-        let shell = if mod_data.content_available {
+        let shell = if mod_data.content_available && content.is_none() {
             ShellWorld::load(engine, support, resolution, distance)
         } else {
             None
@@ -369,7 +392,19 @@ impl Client {
         if let Some(target) = args.iter().find_map(|a| a.strip_prefix("Launch.Connect=")) {
             menu_args = menu_args.with_value("directConnect", target.to_string());
         }
-        ui.load_widget("MAINMENU", Some(ui.root), &menu_args);
+        match content {
+            Some(content) => {
+                let context = Rc::new(InstallerContext {
+                    content: Arc::new(content),
+                    platform,
+                });
+                let args = WidgetArgs::default().with_value("content", context);
+                ui.load_widget("MODCONTENT_BACKGROUND", Some(ui.root), &args);
+            }
+            None => {
+                ui.load_widget("MAINMENU", Some(ui.root), &menu_args);
+            }
+        }
         Client {
             ui,
             cursors,
@@ -406,6 +441,7 @@ impl Client {
     fn pump_network(&mut self) {
         let requests = std::mem::take(&mut self.ui.requests);
         let mut leave = false;
+        let mut reload = None;
         for request in requests {
             match request {
                 AppRequest::LeaveGame => leave = true,
@@ -420,10 +456,15 @@ impl Client {
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
+                AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
             }
         }
         if leave {
             self.leave_game();
+        }
+        if let Some(mod_id) = reload {
+            self.replace_mod(&mod_id);
+            return;
         }
         let (name, color) = {
             let settings = self.services.settings.borrow();
@@ -458,6 +499,18 @@ impl Client {
         }
         start_music(&self.services, self.shell.as_ref());
         self.ui.load_widget("MAINMENU", Some(self.ui.root), &WidgetArgs::default());
+    }
+
+    /// The rest of `Game.InitializeMod`: drops everything of the running mod and starts `mod_id`.
+    fn replace_mod(&mut self, mod_id: &str) {
+        self.net.disconnect();
+        self.ui.reset_all();
+        *self.services.ingame.borrow_mut() = None;
+        self.dispose_world();
+        let clipboard = self.ui.clipboard.clone();
+        let (engine, support, resolution) = (self.engine.clone(), self.support.clone(), self.ui.resolution);
+        *self = Client::initialize_mod(&engine, &support, resolution, &[], mod_id);
+        self.ui.clipboard = clipboard;
     }
 
     /// `World.Dispose`: the audio of the old world ends with it.

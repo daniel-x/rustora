@@ -26,6 +26,7 @@ pub mod ingame;
 pub mod ingame_chat;
 pub mod ingame_hotkeys;
 pub mod ingame_menu;
+pub mod installer;
 pub mod lobby;
 pub mod lobby_options;
 pub mod lobby_utils;
@@ -42,6 +43,8 @@ use crate::music::MusicPlaylist;
 /// The application state that logic classes read.
 pub struct Services {
     pub mod_version: String,
+    /// `ContentInstallerFileSystemLoader.ContentInstallerMod`.
+    pub content_installer_mod: Option<String>,
     pub settings: Rc<RefCell<Settings>>,
     pub maps: Rc<RefCell<MapCache>>,
     pub net: Net,
@@ -69,6 +72,7 @@ impl Default for Services {
     fn default() -> Services {
         Services {
             mod_version: String::new(),
+            content_installer_mod: None,
             settings: Rc::new(RefCell::new(Settings::load("", &[]))),
             maps: Rc::default(),
             net: Rc::default(),
@@ -322,6 +326,12 @@ pub fn create(
         "MultiplayerLogic" => multiplayer::create(ui, id, args),
         "DirectConnectLogic" => multiplayer::create_direct_connect(ui, id, args),
         "ServerCreationLogic" => multiplayer::create_server_creation(ui, id, args),
+        "ModContentLogic" => installer::create_mod_content(ui, id, args),
+        "ModContentPromptLogic" => installer::create_prompt(ui, id, args),
+        "ModContentInstallerLogic" => installer::create_package_list(ui, id, args),
+        "ModContentSourceTooltipLogic" => installer::create_source_tooltip(ui, id, args),
+        "DownloadPackageLogic" => installer::create_download(ui, id, args),
+        "InstallFromSourceLogic" => installer::create_install_from_source(ui, id, args),
         "MapPreviewLogic" => map_preview::create(ui, id, args),
         "LobbyOptionsLogic" => lobby_options::create(ui, id, args),
         "LatencyTooltipLogic" => lobby_utils::latency_tooltip(ui, id, args),

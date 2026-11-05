@@ -188,6 +188,21 @@ impl<'a> DrawContext<'a> {
     }
 
     /// Port of `DrawPanel`.
+    /// `ChromeProvider.GetMinimumPanelSize`.
+    pub fn minimum_panel_size(&mut self, collection: &str) -> (i32, i32) {
+        let assets = &mut *self.assets;
+        let Some(sprites) = assets.chrome.panel(collection, &*assets.fs, self.renderer) else {
+            return (0, 0);
+        };
+        if sprites.len() != 9 {
+            return (0, 0);
+        }
+        (
+            sprites[3].map_or(0, |s| s.w) + sprites[5].map_or(0, |s| s.w),
+            sprites[1].map_or(0, |s| s.h) + sprites[7].map_or(0, |s| s.h),
+        )
+    }
+
     pub fn draw_panel(&mut self, collection: &str, bounds: Rect) {
         let assets = &mut *self.assets;
         let Some(sprites) = assets.chrome.panel(collection, &*assets.fs, self.renderer) else {

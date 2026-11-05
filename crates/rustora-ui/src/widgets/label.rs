@@ -52,6 +52,27 @@ pub struct LabelWidget {
 }
 
 impl LabelWidget {
+    /// Port of `IncreaseHeightToFitCurrentText`.
+    pub fn increase_height_to_fit_current_text(ui: &mut Ui, id: WidgetId) {
+        let width = ui.node(id).bounds.w;
+        let (get_text, key, font, word_wrap) = {
+            let label = ui.label(id);
+            (label.get_text.clone(), label.text.clone(), label.font.clone(), label.word_wrap)
+        };
+        let text = match get_text {
+            Some(f) => f(),
+            None => ui.assets.borrow().messages.get(key.as_deref().unwrap_or_default()),
+        };
+        let line = if word_wrap {
+            ui.assets.borrow_mut().wrap_text(&font, &text, width)
+        } else {
+            text
+        };
+        let height = ui.measure(&font, &line).1;
+        let bounds = &mut ui.node_mut(id).bounds;
+        bounds.h = bounds.h.max(height);
+    }
+
     pub fn new(assets: &Assets) -> LabelWidget {
         let m = &assets.metrics;
         LabelWidget {

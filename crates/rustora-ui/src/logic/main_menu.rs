@@ -105,6 +105,15 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         let to_main = multiplayer_menu.clone();
         crate::logic::multiplayer::open_multiplayer_panel(ui, Rc::new(|_| {}), Rc::new(move |_| to_main.set(MenuType::Main)));
     });
+    if let Some(content_button) = ui.find(main_menu, "CONTENT_BUTTON") {
+        let installer_mod = services(ui).content_installer_mod.clone();
+        ui.button(content_button).disabled = installer_mod.is_none();
+        ui.button(content_button).on_click = Some(Rc::new(move |ui| {
+            if let Some(installer) = &installer_mod {
+                ui.requests.push(AppRequest::InitializeMod(installer.clone()));
+            }
+        }));
+    }
     on_click(ui, main_menu, "QUIT_BUTTON", |ui| ui.requests.push(AppRequest::Quit));
 
     let singleplayer = panel(ui, "SINGLEPLAYER_MENU", MenuType::Singleplayer);

@@ -48,6 +48,8 @@ struct App {
     scroll_remainder: f64,
     mouse_taps: HashMap<WinitButton, TapHistory>,
     key_taps: HashMap<(String, [bool; 4]), TapHistory>,
+    /// The mod whose cursors `hardware_cursors` holds.
+    cursor_mod: String,
     hardware_cursors: HashMap<(String, usize), CustomCursor>,
     shown_cursor: Option<(String, usize)>,
     suspended: bool,
@@ -78,6 +80,7 @@ pub fn run(engine: &Path, support: &str, size: (u32, u32), args: &[String]) {
     client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
     client.logic_tick();
     let now = Instant::now();
+    let client_mod = client.mod_id().to_string();
     let mut app = App {
         client,
         size,
@@ -89,6 +92,7 @@ pub fn run(engine: &Path, support: &str, size: (u32, u32), args: &[String]) {
         scroll_remainder: 0.0,
         mouse_taps: HashMap::new(),
         key_taps: HashMap::new(),
+        cursor_mod: client_mod,
         hardware_cursors: HashMap::new(),
         shown_cursor: None,
         suspended: false,
@@ -327,6 +331,11 @@ impl App {
     }
 
     fn apply_cursor(&mut self, el: &ActiveEventLoop) {
+        if self.cursor_mod != self.client.mod_id() {
+            self.cursor_mod = self.client.mod_id().to_string();
+            self.hardware_cursors.clear();
+            self.shown_cursor = None;
+        }
         let Some(gpu) = &self.gpu else { return };
         self.client.update_cursor(self.mouse);
         let wanted = self.client.cursor.current(&self.client.cursors).map(|(n, f)| (n.to_string(), f));

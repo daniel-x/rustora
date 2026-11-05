@@ -3,7 +3,9 @@
 
 //! Mod data: manifest, mounted file system, maps and rule sets.
 
+pub mod cab;
 pub mod color_picker;
+pub mod installer;
 pub mod manifest;
 pub mod map;
 pub mod map_cache;

@@ -64,6 +64,16 @@ impl ModData {
         })
     }
 
+    /// `ContentInstallerFileSystemLoader.ContentInstallerMod`.
+    pub fn content_installer_mod(&self) -> Option<String> {
+        self.manifest
+            .file_system
+            .nodes
+            .iter()
+            .find(|n| n.key == "ContentInstallerMod")
+            .and_then(|n| n.value.value.clone())
+    }
+
     /// Port of `MiniYaml.Load`: parses `files` (plus files listed in the map rule value), appends
     /// inline map rules and merges everything.
     pub fn load_yaml(fs: &dyn ReadFs, files: &[String], map_rules: Option<&MiniYaml>) -> Result<Vec<MiniYamlNode>, GameError> {

@@ -23,6 +23,7 @@ mod label;
 mod map_preview;
 pub mod menu_button;
 pub mod production;
+mod progress_bar;
 pub mod radar;
 mod scroll_item;
 mod scroll_panel;
@@ -44,6 +45,7 @@ pub use dropdown::{DropDownButtonWidget, MaskWidget};
 pub use image::ImageWidget;
 pub use label::{LabelWidget, LabelWithTooltipWidget, TextAlign, TextVAlign};
 pub use map_preview::{MapPreviewWidget, SpawnOccupant};
+pub use progress_bar::ProgressBarWidget;
 pub use scroll_item::ScrollItemWidget;
 pub use scroll_panel::ScrollPanelWidget;
 pub use slider::SliderWidget;
@@ -82,6 +84,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "Checkbox" => cell(CheckboxWidget::new(assets)),
         "ViewportController" => cell(ViewportControllerWidget::default()),
         "WorldInteractionController" => cell(world_interaction::WorldInteractionControllerWidget::new(assets)),
+        "ProgressBar" => cell(ProgressBarWidget::default()),
         "Slider" => cell(SliderWidget::default()),
         "HueSlider" => cell(HueSliderWidget::default()),
         "ColorMixer" => cell(ColorMixerWidget::default()),

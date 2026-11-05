@@ -231,6 +231,8 @@ impl WidgetArgs {
 /// Requests that the application carries out after the current frame.
 pub enum AppRequest {
     Quit,
+    /// `Game.InitializeMod`: replaces the running mod.
+    InitializeMod(String),
     /// `Game.CreateLocalServer` for a map. The connection follows with `JoinServer`, whose target `{local}` stands for
     /// the local server.
     CreateLocalServer {
