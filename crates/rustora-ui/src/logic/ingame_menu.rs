@@ -252,6 +252,36 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
                     );
                 }));
             }
+            "LOAD_GAME" | "SAVE_GAME"
+                if world.world_type == WorldType::Regular && world.lobby_info.global_settings.game_saves_enabled && !world.is_replay() =>
+            {
+                let is_save = name == "SAVE_GAME";
+                let label = if is_save {
+                    "menu-ingame.save-game"
+                } else {
+                    "menu-ingame.load-game"
+                };
+                let button = add_button(ui, name, label);
+                let enabled = if is_save {
+                    super::game_save_browser::can_save(&world)
+                } else {
+                    super::game_save_browser::is_load_panel_enabled(ui)
+                };
+                let l = leaving.clone();
+                ui.button(button).is_disabled = Some(Rc::new(move || l.get() || !enabled));
+                let (h, close, w) = (hide_menu.clone(), close_menu.clone(), world.clone());
+                ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
+                    h.set(true);
+                    let h = h.clone();
+                    let mut args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| h.set(false)));
+                    args = if is_save {
+                        args.with_action("onStart", Rc::new(|_| {})).with_value("world", w.clone())
+                    } else {
+                        args.with_action("onStart", close.clone())
+                    };
+                    ui.open_window("GAMESAVE_BROWSER_PANEL", args);
+                }));
+            }
             "MUSIC" => {
                 let button = add_button(ui, name, "menu-ingame.music");
                 let h = hide_menu.clone();

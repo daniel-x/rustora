@@ -149,7 +149,9 @@ pub struct NetClient {
     connecting: Option<Receiver<Result<NetworkConnection, String>>>,
     connection: Option<NetworkConnection>,
     /// The orders of `Game.CreateAndStartLocalServer`, sent once the first lobby information arrived.
-    setup_commands: Vec<String>,
+    setup_orders: Vec<RawOrder>,
+    /// The `SaveLastOrdersFrame` and `SaveSyncFrame` of the `StartGame` order of a game save.
+    game_save_frames: Option<(i32, i32)>,
 }
 
 impl NetClient {
@@ -161,7 +163,8 @@ impl NetClient {
             local_port: None,
             connecting: None,
             connection: None,
-            setup_commands: Vec::new(),
+            setup_orders: Vec::new(),
+            game_save_frames: None,
         }
     }
 
@@ -192,9 +195,14 @@ impl NetClient {
         self.local_port = create_local_server(self.engine.clone(), self.support.clone(), map, skirmish);
     }
 
-    /// Sets the commands that the next connection sends when its lobby information is ready.
-    pub fn set_setup_commands(&mut self, commands: Vec<String>) {
-        self.setup_commands = commands;
+    /// Sets the orders that the next connection sends when its lobby information is ready.
+    pub fn set_setup_orders(&mut self, orders: Vec<RawOrder>) {
+        self.setup_orders = orders;
+    }
+
+    /// The game save frames of the last `StartGame` order, if it started a game save.
+    pub fn take_game_save_frames(&mut self) -> Option<(i32, i32)> {
+        self.game_save_frames.take()
     }
 
     /// `Game.JoinServer`.
@@ -234,7 +242,7 @@ impl NetClient {
         self.connection = None;
         self.connecting = None;
         self.local_port = None;
-        self.setup_commands.clear();
+        self.setup_orders.clear();
         let mut net = self.net.borrow_mut();
         net.connection_state = ConnectionState::NotConnected;
         net.session = Session::default();
@@ -285,7 +293,10 @@ impl NetClient {
                 for order in &orders.orders {
                     let mut net = self.net.borrow_mut();
                     match process_order(mod_data, messages, connection, &mut net, client_id, order, run_time, name, color) {
-                        Ok(true) => started = true,
+                        Ok(true) => {
+                            started = true;
+                            self.game_save_frames = rustora_launch::net_client::parse_game_save_frames(order);
+                        }
                         Ok(false) => {}
                         Err(e) => net.error_message = Some(e),
                     }
@@ -295,12 +306,10 @@ impl NetClient {
                 return true;
             }
         }
-        if !self.setup_commands.is_empty() {
+        if !self.setup_orders.is_empty() {
             let mut net = self.net.borrow_mut();
             if net.local_client().is_some() {
-                for command in std::mem::take(&mut self.setup_commands) {
-                    net.command(&command);
-                }
+                net.outgoing.extend(std::mem::take(&mut self.setup_orders));
             }
         }
         let outgoing = std::mem::take(&mut self.net.borrow_mut().outgoing);

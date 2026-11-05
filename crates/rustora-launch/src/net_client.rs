@@ -358,7 +358,7 @@ pub fn handshake_response(md: &ModData, request: &str, options: &JoinOptions) ->
 }
 
 /// The `SaveLastOrdersFrame` and `SaveSyncFrame` of a `StartGame` order, if it starts a game save.
-fn parse_game_save_frames(order: &RawOrder) -> Option<(i32, i32)> {
+pub fn parse_game_save_frames(order: &RawOrder) -> Option<(i32, i32)> {
     let text = order.target_string.as_deref().filter(|t| !t.is_empty())?;
     let nodes = MiniYaml::from_str(text, &order.order_string, true).ok()?;
     let frame = |key: &str| nodes.iter().find(|n| n.key == key)?.value.value_str().parse().ok();

@@ -26,6 +26,7 @@ use rustora_launch::{Step, load_world_with_sound, open_map, shellmaps};
 use rustora_mods_common::sound::StartGameNotificationInfo;
 use rustora_mods_common::world::create_game_information;
 use rustora_net::game_information::ReplayMetadata;
+use rustora_net::order::RawOrder;
 use rustora_net::replay::Replay;
 use rustora_net::session::Session;
 use rustora_render::ui::UiList;
@@ -146,9 +147,12 @@ fn load_mod_audio(mod_data: &ModData) -> Rc<AudioRules> {
     ))
 }
 
-/// `IPostWorldLoaded.PostWorldLoaded` of `MusicPlaylist`.
+/// `MusicPlaylist.WorldLoaded` and `StartGameNotification.PostWorldLoaded`, or `GameLoaded` for a loaded game save.
 fn start_music(services: &Rc<Services>, shell: Option<&ShellWorld>) {
     let Some(shell) = shell else { return };
+    if shell.world.is_loading_game_save() {
+        return;
+    }
     services.sound.load_music_files(shell.world.rules().audio());
     let music = MusicPlaylist::new(&shell.world, services.sound.clone(), services.settings.clone());
     if let Some(music) = &music {
@@ -156,11 +160,20 @@ fn start_music(services: &Rc<Services>, shell: Option<&ShellWorld>) {
     }
     *services.music.borrow_mut() = music;
     if let Some(info) = shell.world.world_actor().info.trait_info::<StartGameNotificationInfo>() {
+        let loaded = shell.world.game_save_last_frame() >= 0;
+        if loaded && shell.world.is_replay() {
+            return;
+        }
+        let (notification, text) = if loaded {
+            (&info.loaded_notification, info.loaded_text_notification.as_deref())
+        } else {
+            (&info.notification, info.text_notification.as_deref())
+        };
         let faction = shell.viewer.as_ref().map(|p| p.faction.as_str());
         services
             .sound
-            .play_notification(shell.world.rules().audio(), "Speech", &info.notification, faction);
-        shell.world.sound.add_transient_line(None, info.text_notification.as_deref());
+            .play_notification(shell.world.rules().audio(), "Speech", notification, faction);
+        shell.world.sound.add_transient_line(None, text);
     }
 }
 
@@ -273,7 +286,9 @@ impl ShellWorld {
     /// `OrderManager.SuggestedTimestep`.
     fn suggested_timestep(&self) -> i32 {
         let world = &self.world;
-        if world.is_replay() {
+        if world.is_loading_game_save() {
+            1
+        } else if world.is_replay() {
             world.replay_timestep.get()
         } else if self.driver.orders.tick_scale != 1.0 {
             ((self.driver.orders.tick_scale * world.timestep as f32) as i32).max(1)
@@ -302,14 +317,19 @@ impl ShellWorld {
 
     /// Feeds the user interface with the orders that the world ignores, and sends the chat lines it wrote.
     fn exchange_client_orders(&mut self, messages: &Messages, net: &rustora_ui::net::Net, run_time: i64) {
-        let orders = &mut self.driver.orders;
-        orders.collect_client_orders = true;
+        self.driver.orders.collect_client_orders = true;
+        let client_orders = std::mem::take(&mut self.driver.orders.client_orders);
         let mut state = net.borrow_mut();
-        for (client_id, order) in std::mem::take(&mut orders.client_orders) {
+        for (client_id, order) in client_orders {
+            if order.order_string == "GameSaved" {
+                self.game_saved(messages, &mut state);
+                continue;
+            }
             if let Err(e) = crate::net::process_client_order(messages, &mut state, client_id, &order, run_time) {
                 log::warn!("{e}");
             }
         }
+        let orders = &mut self.driver.orders;
         for order in std::mem::take(&mut state.outgoing) {
             orders.issue_order(order);
         }
@@ -318,8 +338,35 @@ impl ShellWorld {
         }
     }
 
+    /// `UnitOrders.ProcessOrder` of `GameSaved` and `StartGameNotification.GameSaved`.
+    fn game_saved(&self, messages: &Messages, net: &mut rustora_ui::net::NetState) {
+        if self.world.is_replay() {
+            return;
+        }
+        net.notifications.push(rustora_ui::net::TextNotification {
+            pool: rustora_ui::net::TextNotificationPool::System,
+            client_id: rustora_ui::net::SYSTEM_CLIENT_ID,
+            prefix: Some("Battlefield Control".to_string()),
+            text: messages.get("notification-game-saved"),
+            prefix_color: None,
+            text_color: None,
+            time: rustora_ui::net::local_time(),
+        });
+        if let Some(info) = self.world.world_actor().info.trait_info::<StartGameNotificationInfo>() {
+            let faction = self.viewer.as_ref().map(|p| p.faction.as_str());
+            rustora_engine::sound::play_notification(&self.world, None, "Speech", &info.saved_notification, faction);
+            self.world.sound.add_transient_line(None, info.saved_text_notification.as_deref());
+        }
+    }
+
     /// Hands the sound calls of the last tick to the audio system, and what else `Game.InnerLogicTick` tells it.
     fn update_audio(&mut self, services: &Services, messages: &Messages) {
+        if self.world.is_loading_game_save() {
+            self.world.sound.take();
+            self.world.sound.take_transient_lines();
+            self.world.sound.take_system_lines();
+            return;
+        }
         let local_player = self.ingame.as_ref().and_then(|i| i.local_player.clone());
         let selection = self.ingame.as_ref().map(|i| i.selection.clone());
         let is_selected = |a: &rustora_engine::actor::ActorRef| selection.as_ref().is_some_and(|s| s.contains(a));
@@ -402,6 +449,8 @@ pub struct Client {
     net: NetClient,
     /// The replay file of the running replay, for `Game.RestartGame`.
     replay_path: Option<String>,
+    /// The hidden in-game root while a game save loads.
+    loading_root: Option<rustora_ui::widget::WidgetId>,
     ui_tick_time: TickTime,
     world_tick_time: TickTime,
 }
@@ -448,6 +497,7 @@ impl Client {
                 .join("Replays")
                 .join(&mod_data.manifest.id)
                 .join(&mod_data.manifest.metadata.version),
+            save_dir: rustora_net::game_save::saves_dir(Path::new(support), &mod_data.manifest.id, &mod_data.manifest.metadata.version),
             content_installer_mod: installer_mod,
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
             map_repository: Rc::default(),
@@ -512,6 +562,7 @@ impl Client {
             services,
             net,
             replay_path: None,
+            loading_root: None,
             ui_tick_time: TickTime {
                 value: -(UI_TIMESTEP as i64),
             },
@@ -536,7 +587,9 @@ impl Client {
 
     /// True while a world other than a replay runs: `Game.Loop` renders at least once per logic tick then.
     pub fn renders_every_tick(&self) -> bool {
-        self.shell.as_ref().is_some_and(|s| !s.world.is_replay())
+        self.shell
+            .as_ref()
+            .is_some_and(|s| !s.world.is_replay() && !s.world.is_loading_game_save())
     }
 
     /// Port of `Game.InnerLogicTick`: the user interface ticks at `Ui.Timestep`, the world at its own timestep.
@@ -559,6 +612,7 @@ impl Client {
                 let assets = self.ui.assets.clone();
                 shell.update_audio(&self.services, &assets.borrow().messages);
             }
+            self.finish_loading_game_save();
             self.services.sound.tick();
         }
         if ui_due {
@@ -589,6 +643,7 @@ impl Client {
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
                 AppRequest::JoinReplay(path) => replay = Some(path),
                 AppRequest::RestartGame => restart = true,
+                AppRequest::CreateAndStartLocalServer { map, orders } => self.create_and_start_local_server(map, orders),
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
@@ -623,6 +678,33 @@ impl Client {
         let started = self.net.pump(&self.mod_data, &assets.borrow().messages, run_time, &name, color);
         if started {
             self.start_game();
+        }
+    }
+
+    /// `LoadWidgetAtGameStart.GameLoaded` and the rest of `INotifyGameLoaded`, once the orders of a game save ran.
+    fn finish_loading_game_save(&mut self) {
+        let Some(root) = self.loading_root else { return };
+        let Some(world) = self.shell.as_ref().map(|s| s.world.clone()) else {
+            self.loading_root = None;
+            return;
+        };
+        if world.is_loading_game_save() {
+            return;
+        }
+        self.loading_root = None;
+        self.ui.close_window();
+        self.ui.set_visible_fn(root, || true);
+        start_music(&self.services, self.shell.as_ref());
+        if !world.is_replay() {
+            let mut unpause = rustora_engine::order::Order::new("PauseGame", None, rustora_engine::target::Target::Invalid, false);
+            unpause.target_string = Some("UnPause".to_string());
+            world.issue_order(unpause);
+            if let Some(options) = self.ui.find(root, "OPTIONS_BUTTON") {
+                let action = self.ui.button(options).on_click.clone();
+                if let Some(action) = action {
+                    action(&mut self.ui);
+                }
+            }
         }
     }
 
@@ -669,10 +751,18 @@ impl Client {
         self.ui.reset_all();
         *self.services.ingame.borrow_mut() = None;
         self.dispose_world();
+        let orders = vec![
+            RawOrder::command(&format!("sync_lobby {}", lobby.serialize())),
+            RawOrder::command("startgame"),
+        ];
+        self.create_and_start_local_server(map, orders);
+    }
+
+    /// `Game.CreateAndStartLocalServer`.
+    fn create_and_start_local_server(&mut self, map: String, orders: Vec<RawOrder>) {
         self.net.create_local_server(map, true);
         self.net.join(rustora_ui::net::LOCAL_SERVER_TARGET, "");
-        self.net
-            .set_setup_commands(vec![format!("sync_lobby {}", lobby.serialize()), "startgame".to_string()]);
+        self.net.set_setup_orders(orders);
     }
 
     /// The rest of `Game.InitializeMod`: drops everything of the running mod and starts `mod_id`.
@@ -689,6 +779,7 @@ impl Client {
 
     /// `World.Dispose`: the audio of the old world ends with it.
     fn dispose_world(&mut self) {
+        self.loading_root = None;
         if let Some(music) = self.services.music.borrow_mut().take() {
             music.dispose();
         }
@@ -727,6 +818,9 @@ impl Client {
             self.ui.resolution,
             distance,
         );
+        if let Some((last_frame, last_sync_frame)) = self.net.take_game_save_frames() {
+            shell.world.begin_loading_game_save(last_frame, last_sync_frame);
+        }
         self.enter_game(shell, None);
     }
 
@@ -809,7 +903,14 @@ impl Client {
         *self.services.ingame.borrow_mut() = Some(ingame);
         self.shell = Some(shell);
         start_music(&self.services, self.shell.as_ref());
-        self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
+        let root = self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
+        let world = self.shell.as_ref().map(|s| s.world.clone());
+        if let Some(world) = world.filter(|w| w.is_loading_game_save()) {
+            self.ui.set_visible_fn(root, || false);
+            self.ui
+                .open_window("GAMESAVE_LOADING_SCREEN", WidgetArgs::default().with_value("world", world));
+            self.loading_root = Some(root);
+        }
         for (what, count) in self.ui.loader.missing.borrow().iter() {
             log::info!("not ported: {what} ({count})");
         }
@@ -823,13 +924,14 @@ impl Client {
 
     /// Fills the draw list of the current frame.
     pub fn prepare(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
-        if let Some(shell) = &mut self.shell {
+        let loading = self.shell.as_ref().is_some_and(|s| s.world.is_loading_game_save());
+        if let Some(shell) = self.shell.as_mut().filter(|_| !loading) {
             shell.prepare(renderer, size);
         }
         self.list.clear();
         let assets = self.ui.assets.clone();
         let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
-        if let Some(ingame) = self.shell.as_ref().and_then(|s| s.ingame.as_ref()) {
+        if let Some(ingame) = self.shell.as_ref().and_then(|s| s.ingame.as_ref()).filter(|_| !loading) {
             rustora_ui::annotations::draw_selection_annotations(&mut dc, ingame, &self.services.settings.borrow(), self.ui.modifiers.shift);
         }
         self.ui.draw(&mut dc);

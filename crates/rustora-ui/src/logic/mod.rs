@@ -24,6 +24,7 @@ pub mod color_picker;
 pub mod command_bar;
 pub mod connection;
 pub mod game_info;
+pub mod game_save_browser;
 pub mod ingame;
 pub mod ingame_chat;
 pub mod ingame_hotkeys;
@@ -56,6 +57,8 @@ pub struct Services {
     pub installed_mods: std::collections::HashMap<String, std::sync::Arc<dyn rustora_fs::Package>>,
     /// `Platform.SupportDir/Replays/<mod>/<version>`: where the replays of this mod version are recorded.
     pub replay_dir: std::path::PathBuf,
+    /// `Platform.SupportDir/Saves/<mod>/<version>`: where the game saves of this mod version are written.
+    pub save_dir: std::path::PathBuf,
     /// `ContentInstallerFileSystemLoader.ContentInstallerMod`.
     pub content_installer_mod: Option<String>,
     pub settings: Rc<RefCell<Settings>>,
@@ -90,6 +93,7 @@ impl Default for Services {
             mod_version: String::new(),
             installed_mods: Default::default(),
             replay_dir: std::path::PathBuf::new(),
+            save_dir: std::path::PathBuf::new(),
             content_installer_mod: None,
             settings: Rc::new(RefCell::new(Settings::load("", &[]))),
             maps: Rc::default(),
@@ -434,6 +438,8 @@ pub fn create(
         "IngameChatLogic" => ingame_chat::ingame_chat(ui, id, args, logic_args),
         "GameTimerLogic" => ingame_chat::game_timer(ui, id),
         "ReplayBrowserLogic" => replay_browser::create(ui, id, args),
+        "GameSaveBrowserLogic" => game_save_browser::create(ui, id, args),
+        "GameSaveLoadingLogic" => game_save_browser::loading(ui, id, args),
         "ReplayControlBarLogic" => replay_control::replay_control_bar(ui, id),
         "WorldTooltipLogic" => sidebar::world_tooltip(ui, id, args),
         "CommandBarLogic" => command_bar::command_bar(ui, id, logic_args),

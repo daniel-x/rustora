@@ -263,6 +263,11 @@ pub enum AppRequest {
     LeaveGame,
     /// `Game.JoinReplay` for the replay file at this path.
     JoinReplay(String),
+    /// `Game.CreateAndStartLocalServer`: a local server for `map`, and these orders once the lobby is ready.
+    CreateAndStartLocalServer {
+        map: String,
+        orders: Vec<rustora_net::order::RawOrder>,
+    },
     /// `Game.RestartGame`: the same replay again, or a new local server with the lobby of the current game.
     RestartGame,
 }

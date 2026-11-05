@@ -29,6 +29,7 @@ enum MenuPanel {
     Skirmish,
     Multiplayer,
     Replays,
+    GameSaves,
 }
 
 thread_local! {
@@ -87,6 +88,16 @@ fn start_skirmish_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
     connection::connect(ui, LOCAL_SERVER_TARGET, "", on_connect, on_abort);
 }
 
+/// Port of `OpenGameSaveBrowserPanel`.
+fn open_game_save_browser_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
+    menu.set(MenuType::None);
+    let to_singleplayer = menu.clone();
+    let args = WidgetArgs::default()
+        .with_action("onExit", Rc::new(move |_| to_singleplayer.set(MenuType::Singleplayer)))
+        .with_action("onStart", remember_panel(MenuPanel::GameSaves));
+    ui.open_window("GAMESAVE_BROWSER_PANEL", args);
+}
+
 /// Port of `OpenMultiplayerPanel`.
 fn open_multiplayer_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
     menu.set(MenuType::None);
@@ -112,6 +123,7 @@ fn open_replay_browser_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
 fn open_menu_based_on_last_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
     match LAST_GAME_STATE.with(|s| s.replace(MenuPanel::None)) {
         MenuPanel::Replays => open_replay_browser_panel(ui, menu),
+        MenuPanel::GameSaves => open_game_save_browser_panel(ui, menu),
         MenuPanel::Skirmish => start_skirmish_game(ui, menu),
         MenuPanel::Multiplayer => open_multiplayer_panel(ui, menu),
         MenuPanel::None => {}
@@ -145,7 +157,6 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     };
 
     let main_menu = panel(ui, "MAIN_MENU", MenuType::Main);
-    on_click(ui, main_menu, "SINGLEPLAYER_BUTTON", switch(MenuType::Singleplayer));
     on_click(ui, main_menu, "EXTRAS_BUTTON", switch(MenuType::Extras));
     let settings_menu = menu.clone();
     on_click(ui, main_menu, "SETTINGS_BUTTON", move |ui| {
@@ -173,6 +184,19 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let skirmish_menu = menu.clone();
     on_click(ui, singleplayer, "SKIRMISH_BUTTON", move |ui| {
         start_skirmish_game(ui, &skirmish_menu)
+    });
+    let load_button = ui.child(singleplayer, "LOAD_BUTTON");
+    let load_enabled = Rc::new(Cell::new(super::game_save_browser::is_load_panel_enabled(ui)));
+    {
+        let (e, m) = (load_enabled.clone(), menu.clone());
+        let mut b = ui.button(load_button);
+        b.is_disabled = Some(Rc::new(move || !e.get()));
+        b.on_click = Some(Rc::new(move |ui| open_game_save_browser_panel(ui, &m)));
+    }
+    let refresh_menu = menu.clone();
+    on_click(ui, main_menu, "SINGLEPLAYER_BUTTON", move |ui| {
+        load_enabled.set(super::game_save_browser::is_load_panel_enabled(ui));
+        refresh_menu.set(MenuType::Singleplayer);
     });
     on_click(ui, singleplayer, "BACK_BUTTON", switch(MenuType::Main));
 
