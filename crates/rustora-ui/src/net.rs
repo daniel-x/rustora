@@ -35,10 +35,15 @@ pub enum TextNotificationPool {
     Transients,
 }
 
+/// `TextNotificationsManager.SystemClientId`.
+pub const SYSTEM_CLIENT_ID: i32 = -1;
+
 /// `TextNotification`.
 #[derive(Clone, Debug)]
 pub struct TextNotification {
     pub pool: TextNotificationPool,
+    /// The sending client, or `SYSTEM_CLIENT_ID`.
+    pub client_id: i32,
     pub prefix: Option<String>,
     pub text: String,
     pub prefix_color: Option<Color>,

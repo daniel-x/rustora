@@ -331,6 +331,7 @@ impl ShellWorld {
             if for_local_player {
                 services.net.borrow_mut().notifications.push(rustora_ui::net::TextNotification {
                     pool: rustora_ui::net::TextNotificationPool::Transients,
+                    client_id: -1,
                     prefix: None,
                     text: messages.get(&key),
                     prefix_color: None,
@@ -343,6 +344,7 @@ impl ShellWorld {
             let text = messages.get_with(&key, &[("player", rustora_ui::fluent::MessageArg::Text(&player))]);
             services.net.borrow_mut().notifications.push(rustora_ui::net::TextNotification {
                 pool: rustora_ui::net::TextNotificationPool::System,
+                client_id: -1,
                 prefix: Some("Battlefield Control".to_string()),
                 text,
                 prefix_color: None,

@@ -203,6 +203,7 @@ fn select_actors_in_world(ingame: &Ingame, classes: &[String], players: &[rustor
 fn add_feedback_line(ui: &mut Ui, text: String) {
     services(ui).net.borrow_mut().notifications.push(TextNotification {
         pool: TextNotificationPool::Feedback,
+        client_id: -1,
         prefix: None,
         text,
         prefix_color: None,

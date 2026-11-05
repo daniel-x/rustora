@@ -613,7 +613,8 @@ impl Default for TimeLimitManagerInfo {
 pub struct TimeLimitManager {
     info: Rc<TimeLimitManagerInfo>,
     ticks_per_second: i32,
-    time_limit: i32,
+    /// The time limit in ticks, zero for none.
+    pub time_limit: i32,
 }
 
 register_traits!(TimeLimitManager: ITick, INotifyTimeLimit);

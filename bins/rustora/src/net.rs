@@ -302,6 +302,7 @@ fn notification(pool: TextNotificationPool, prefix: Option<String>, text: String
     let now = chrono::Local::now();
     TextNotification {
         pool,
+        client_id: rustora_ui::net::SYSTEM_CLIENT_ID,
         prefix,
         text,
         prefix_color,
@@ -382,7 +383,9 @@ fn chat_notification(net: &NetState, client_id: i32, order: &RawOrder) -> Option
         let tag = if order.extra_data == u32::MAX { "[Spectators] " } else { "[Team] " };
         format!("{tag}{name}")
     };
-    Some(notification(TextNotificationPool::Chat, Some(prefix), message, Some(client.color)))
+    let mut line = notification(TextNotificationPool::Chat, Some(prefix), message, Some(client.color));
+    line.client_id = client_id;
+    Some(line)
 }
 
 /// Applies an immediate order of the lobby. Returns true on `StartGame`.

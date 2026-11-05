@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `LoadIngameChatLogic.cs`, `IngameChatLogic.cs` and `GameTimerLogic.cs`. Chat commands, muting, the chat
-//! line sound and the time limit of the game timer are not ported.
+//! Ports of `LoadIngameChatLogic.cs`, `IngameChatLogic.cs` and `GameTimerLogic.cs`. Chat commands are not ported.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -17,7 +16,7 @@ use super::{NoLogic, message, message_with, services};
 use crate::fluent::MessageArg;
 use crate::input::{KeyEvent, KeyInput};
 use crate::loader::cell;
-use crate::net::{Net, TextNotification, TextNotificationPool};
+use crate::net::{Net, SYSTEM_CLIENT_ID, TextNotification, TextNotificationPool};
 use crate::widget::{ChromeLogic, Ui, WidgetArgs, WidgetId};
 use crate::widgets::TextFieldWidget;
 use crate::widgets::production::{LogicKeyListenerWidget, format_time};
@@ -52,6 +51,9 @@ struct IngameChatLogic {
     chat_enabled: Rc<Cell<bool>>,
     chat_disabled: String,
     notifications_seen: usize,
+    world: Rc<rustora_engine::world::World>,
+    chat_line_sound: String,
+    hide_replay_chat: Cell<bool>,
 }
 
 /// `OpenChat`.
@@ -79,7 +81,7 @@ fn close_chat(ui: &mut Ui, chrome: WidgetId, text: WidgetId, overlay: Option<Wid
 
 impl IngameChatLogic {
     /// `AddNotification`.
-    fn add_notification(&self, ui: &mut Ui, notification: &TextNotification) {
+    fn add_notification(&self, ui: &mut Ui, notification: &TextNotification, suppress_sound: bool) {
         let Some(&template) = self.templates.get(&notification.pool) else {
             return;
         };
@@ -91,6 +93,14 @@ impl IngameChatLogic {
         if at_bottom {
             ui.scroll_to_bottom(self.scroll_panel, true);
         }
+        if !suppress_sound && !self.is_muted(notification) {
+            rustora_engine::sound::play_notification(&self.world, None, "Sounds", &self.chat_line_sound, None);
+        }
+    }
+
+    /// `IsNotificationMuted`.
+    fn is_muted(&self, notification: &TextNotification) -> bool {
+        self.is_replay && notification.client_id != SYSTEM_CLIENT_ID && self.hide_replay_chat.get()
     }
 }
 
@@ -102,11 +112,12 @@ impl ChromeLogic for IngameChatLogic {
             (net.notifications[start..].to_vec(), net.chat_disabled_until)
         };
         self.notifications_seen += fresh.len();
+        self.hide_replay_chat.set(services(ui).settings.borrow().game.hide_replay_chat);
         for notification in fresh.iter().filter(|n| is_notification_eligible(n)) {
-            if let Some(display) = self.overlay_display {
+            if let Some(display) = self.overlay_display.filter(|_| !self.is_muted(notification)) {
                 TextNotificationsDisplayWidget::add_notification(ui, display, notification);
             }
-            self.add_notification(ui, notification);
+            self.add_notification(ui, notification, self.overlay_display.is_none());
         }
 
         let run_time = ui.run_time();
@@ -343,9 +354,12 @@ pub fn ingame_chat(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
         chat_enabled,
         chat_disabled,
         notifications_seen: existing.len(),
+        world: world.clone(),
+        chat_line_sound: ui.assets.borrow().metrics.string("ChatLineSound"),
+        hide_replay_chat: Cell::new(services(ui).settings.borrow().game.hide_replay_chat),
     };
     for notification in existing.iter().filter(|n| is_notification_eligible(n)) {
-        logic.add_notification(ui, notification);
+        logic.add_notification(ui, notification, true);
     }
     if !is_menu_chat {
         close_chat(ui, chrome, text, overlay);
@@ -366,7 +380,7 @@ pub fn ingame_chat(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
     cell(logic)
 }
 
-/// `GameTimerLogic`, showing the elapsed time. The time limit and the replay speed status are not ported.
+/// `GameTimerLogic`, showing the elapsed time or the time left of the time limit. The RA chrome has no status label.
 pub fn game_timer(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let Some(ingame) = services(ui).ingame.borrow().clone() else {
         return cell(NoLogic);
@@ -377,13 +391,22 @@ pub fn game_timer(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let paused_text = message(ui, "label-paused");
     let world = ingame.world.clone();
     let start = Instant::now();
+    let time_limit = world
+        .world_actor()
+        .trait_or_default::<rustora_mods_common::player::objectives::TimeLimitManager>()
+        .map_or(0, |t| t.time_limit);
     ui.label(timer).get_text = Some(Rc::new(move || {
         let paused = world.paused() || world.replay_timestep.get() == 0;
         let show_status = (world.paused() || world.replay_timestep.get() != world.timestep) && start.elapsed().as_secs() % 2 == 0;
         if paused && show_status {
             return paused_text.clone();
         }
-        format_time(world.world_tick().max(0), world.timestep)
+        let display_tick = if time_limit > 0 {
+            time_limit - world.world_tick()
+        } else {
+            world.world_tick()
+        };
+        format_time(display_tick.max(0), world.timestep)
     }));
     let is_tooltip_label = ui.kind(timer).borrow_mut().as_any().is::<crate::widgets::LabelWithTooltipWidget>();
     if is_tooltip_label {
