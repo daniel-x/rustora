@@ -102,7 +102,7 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
         height: h,
     };
     let viewer = args.player.map(|i| world.players()[i].clone());
-    let quads = scene.build(&mut renderer, &world, viewer.as_ref(), &cam);
+    let quads = scene.build(&mut renderer, &world, viewer.as_ref(), &cam, &[]);
     let rgba = rustora_render::render_to_rgba(&mut renderer, cam, &quads);
     let file = std::fs::File::create(out).expect("create screenshot");
     image_webp::WebPEncoder::new(std::io::BufWriter::new(file))

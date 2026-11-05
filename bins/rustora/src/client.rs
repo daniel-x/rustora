@@ -300,7 +300,8 @@ impl ShellWorld {
         let read_file = self.read_file.clone();
         let world = &self.world;
         let scene = self.scene.get_or_insert_with(|| Scene::new(renderer, world, read_file));
-        self.quads = scene.build(renderer, world, self.viewer.as_ref(), &cam);
+        let overlay = self.ingame.as_ref().map_or_else(Vec::new, |i| i.order_generator_renderables());
+        self.quads = scene.build(renderer, world, self.viewer.as_ref(), &cam, &overlay);
         if let Some(ingame) = &self.ingame {
             ingame.screen_map.borrow_mut().set(scene.mouse_bounds(renderer, world));
         }
@@ -409,6 +410,13 @@ impl Client {
             match request {
                 AppRequest::LeaveGame => leave = true,
                 AppRequest::CreateLocalServer { map, skirmish } => self.net.create_local_server(map, skirmish),
+                AppRequest::CreateServer {
+                    name,
+                    port,
+                    password,
+                    advertise_online,
+                    map,
+                } => self.net.create_server(name, port, password, advertise_online, map),
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
@@ -530,7 +538,7 @@ impl Client {
         let assets = self.ui.assets.clone();
         let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
         if let Some(ingame) = self.shell.as_ref().and_then(|s| s.ingame.as_ref()) {
-            rustora_ui::annotations::draw_selection_annotations(&mut dc, ingame, &self.services.settings.borrow());
+            rustora_ui::annotations::draw_selection_annotations(&mut dc, ingame, &self.services.settings.borrow(), self.ui.modifiers.shift);
         }
         self.ui.draw(&mut dc);
         drop(dc);

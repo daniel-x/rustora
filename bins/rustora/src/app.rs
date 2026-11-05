@@ -141,7 +141,7 @@ impl App {
             height: h,
         };
         let viewer = self.viewer.map(|i| self.world.players()[i].clone());
-        let quads = gpu.scene.build(&mut gpu.renderer, &self.world, viewer.as_ref(), &cam);
+        let quads = gpu.scene.build(&mut gpu.renderer, &self.world, viewer.as_ref(), &cam, &[]);
         let view = frame.texture.create_view(&Default::default());
         gpu.renderer.render(&view, cam, &quads);
         gpu.renderer.queue.present(frame);

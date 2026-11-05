@@ -14,6 +14,7 @@ use std::rc::{Rc, Weak};
 use indexmap::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos};
 use rustora_derive::FieldLoad;
+use rustora_engine::activity::TargetLineNode;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::actor_init::{ActorInits, LocationInit, OwnerInit};
@@ -449,6 +450,10 @@ impl DeployForGrantedCondition {
 
 impl Activity for DeployForGrantedCondition {
     activity_common!("DeployForGrantedCondition");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        self.base.next_activity().map_or_else(Vec::new, |n| n.target_line_nodes(self_))
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if self.deploy.deploy_state() == DeployState::Undeployed

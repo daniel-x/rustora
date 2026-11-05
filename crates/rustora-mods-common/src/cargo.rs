@@ -689,7 +689,11 @@ impl IResolveOrder for Passenger {
         if !self.can_enter(target_actor) || !self.is_correct_cargo_type(target_actor) {
             return;
         }
-        self_.queue_activity_queued(order.queued, RideTransport::new(self_, &order.target));
+        self_.queue_activity_queued(
+            order.queued,
+            rustora_engine::activity::with_line_color(RideTransport::new(self_, &order.target), rustora_engine::activity::LINE_GREEN),
+        );
+        crate::target_lines::show_target_lines(self_);
     }
 }
 
@@ -888,6 +892,15 @@ impl Enter {
 impl Activity for Enter {
     fn base(&self) -> &ActivityBase {
         &self.base
+    }
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        let t = if self.use_last_visible_target.get() {
+            &self.last_visible_target
+        } else {
+            &self.target
+        };
+        Some(t.borrow().clone())
     }
 
     fn type_name(&self) -> &'static str {

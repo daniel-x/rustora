@@ -23,6 +23,8 @@ pub struct Order {
     pub extra_data: u32,
     pub grouped_actors: Option<Vec<Option<ActorRef>>>,
     pub is_immediate: bool,
+    /// `SuppressVisualFeedback`: no order flash in the client. Never sent over the network.
+    pub suppress_visual_feedback: bool,
 }
 
 impl Order {
@@ -39,6 +41,7 @@ impl Order {
             extra_data: 0,
             grouped_actors: None,
             is_immediate: false,
+            suppress_visual_feedback: false,
         }
     }
 
@@ -99,6 +102,7 @@ impl Order {
             extra_data: raw.extra_data,
             grouped_actors: ids(&raw.grouped_actors),
             is_immediate: raw.is_immediate,
+            suppress_visual_feedback: false,
         })
     }
 }

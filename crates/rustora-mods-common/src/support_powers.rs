@@ -104,6 +104,8 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
 pub struct SupportPowerInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub display_radar_ping: bool,
+    pub radar_ping_duration: i32,
     pub detected_sound: Option<String>,
     pub detected_speech_notification: Option<String>,
     pub detected_text_notification: Option<String>,
@@ -204,6 +206,8 @@ pub struct SupportPowerInfo {
 impl Default for SupportPowerInfo {
     fn default() -> Self {
         SupportPowerInfo {
+            display_radar_ping: false,
+            radar_ping_duration: 125,
             detected_sound: None,
             detected_speech_notification: None,
             detected_text_notification: None,
@@ -558,6 +562,17 @@ impl SupportPower {
             && !self.validate_spawn(&self_.world(), cell)
         {
             return;
+        }
+        if self.info.display_radar_ping
+            && let Some(player) = order.player()
+        {
+            crate::radar::add_radar_ping(
+                &self_.world(),
+                crate::radar::PingVisibility::AlliesOf(player.clone()),
+                order.target.center_position(),
+                player.color,
+                self.info.radar_ping_duration,
+            );
         }
         for n in self_.traits_implementing::<dyn INotifySupportPower>() {
             n.activated(self_);

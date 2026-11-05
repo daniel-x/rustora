@@ -3,17 +3,19 @@
 
 //! Cosmetic world effects: `SpriteEffect`, `ContrailRenderable`, and `ContrailFader`.
 
+use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use rustora_core::fieldloader::Color;
-use rustora_core::world_types::{WAngle, WDist, WPos};
+use rustora_core::world_types::{WAngle, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::effect::{Effect, EffectRef};
 use rustora_engine::player::PlayerRef;
-use rustora_engine::render::{PaletteRef, Renderable, fog_obscures, render_animation};
+use rustora_engine::render::{PaletteRef, Renderable, fog_obscures, render_actor, render_animation};
 use rustora_engine::sequence::Animation;
+use rustora_engine::target::{Target, TargetType};
 use rustora_engine::world::World;
 
 /// `Effects/SpriteEffect.cs`.
@@ -350,5 +352,188 @@ impl Effect for ContrailFader {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+/// `OrderEffectsInfo`: how the client confirms an order. The tint flash type is not ported, RA uses the overlay.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct OrderEffectsInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub terrain_flash_image: String,
+    pub terrain_flash_sequence: String,
+    pub terrain_flash_palette: Option<String>,
+    pub actor_flash_overlay_color: Color,
+    pub actor_flash_overlay_alpha: f32,
+    pub actor_flash_count: i32,
+    pub actor_flash_interval: i32,
+}
+
+impl Default for OrderEffectsInfo {
+    fn default() -> Self {
+        OrderEffectsInfo {
+            instance_name: None,
+            terrain_flash_image: String::new(),
+            terrain_flash_sequence: String::new(),
+            terrain_flash_palette: None,
+            actor_flash_overlay_color: Color::from_argb(255, 255, 255, 255),
+            actor_flash_overlay_alpha: 0.5,
+            actor_flash_count: 2,
+            actor_flash_interval: 2,
+        }
+    }
+}
+
+rustora_engine::info_impl!(OrderEffectsInfo => |_info, _init| None);
+
+/// `OrderEffects.OrderIssued`: returns whether the target type has a flash.
+pub fn order_issued(world: &Rc<World>, target: &Target) -> bool {
+    let Some(info) = world.world_actor().info.trait_info::<OrderEffectsInfo>() else {
+        return false;
+    };
+    match target.target_type() {
+        TargetType::Actor => {
+            let Some(actor) = target.actor().cloned() else {
+                return false;
+            };
+            let info = info.clone();
+            world.add_frame_end_task(Box::new(move |w: &Rc<World>| {
+                w.add_effect(FlashTarget::new(
+                    w,
+                    actor,
+                    info.actor_flash_overlay_color,
+                    info.actor_flash_overlay_alpha,
+                    info.actor_flash_count,
+                    info.actor_flash_interval,
+                    0,
+                ));
+            }));
+            true
+        }
+        TargetType::FrozenActor => true,
+        TargetType::Terrain => {
+            let pos = target.center_position();
+            world.add_frame_end_task(Box::new(move |w: &Rc<World>| {
+                let effect = SpriteAnnotation::new(
+                    w,
+                    pos,
+                    &info.terrain_flash_image,
+                    &info.terrain_flash_sequence,
+                    info.terrain_flash_palette.as_deref().unwrap_or("effect"),
+                );
+                w.add_effect(effect);
+            }));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// `FlashTarget` with a color overlay.
+pub struct FlashTarget {
+    me: Weak<FlashTarget>,
+    target: ActorRef,
+    color: Color,
+    alpha: f32,
+    count: i32,
+    interval: i32,
+    tick: Cell<i32>,
+}
+
+impl FlashTarget {
+    pub fn new(world: &Rc<World>, target: ActorRef, color: Color, alpha: f32, count: i32, interval: i32, delay: i32) -> Rc<FlashTarget> {
+        for e in world.effects() {
+            if e.as_any().downcast_ref::<FlashTarget>().is_some_and(|f| f.target.id == target.id) {
+                world.remove_effect(&e);
+            }
+        }
+        Rc::new_cyclic(|me| FlashTarget {
+            me: me.clone(),
+            target,
+            color,
+            alpha,
+            count,
+            interval,
+            tick: Cell::new(-delay),
+        })
+    }
+}
+
+impl Effect for FlashTarget {
+    fn tick(&self, world: &Rc<World>) {
+        self.tick.set(self.tick.get() + 1);
+        if self.tick.get() >= self.count * self.interval || !self.target.is_in_world() {
+            let me = self.me.upgrade().expect("live effect");
+            world.add_frame_end_task(Box::new(move |w: &Rc<World>| w.remove_effect(&(me as EffectRef))));
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn render(&self, _viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        if !self.target.is_in_world() || self.tick.get() < 0 || self.tick.get() % self.interval != 0 {
+            return;
+        }
+        let mut own = Vec::new();
+        render_actor(&self.target, &mut own);
+        let replace = [
+            self.color.r() as f32 / 255.0,
+            self.color.g() as f32 / 255.0,
+            self.color.b() as f32 / 255.0,
+        ];
+        for r in own {
+            if let Renderable::Sprite(mut s) = r
+                && !s.is_decoration
+            {
+                s.replace_color = Some(replace);
+                s.alpha = self.alpha;
+                out.push(Renderable::Sprite(s));
+            }
+        }
+    }
+}
+
+/// `SpriteAnnotation`, drawn above the shroud instead of in the annotation pass.
+pub struct SpriteAnnotation {
+    pos: WPos,
+    palette: PaletteRef,
+    animation: Rc<Animation>,
+}
+
+impl SpriteAnnotation {
+    pub fn new(world: &Rc<World>, pos: WPos, image: &str, sequence: &str, palette: &str) -> Rc<SpriteAnnotation> {
+        let animation = Animation::new(world.map().sequences().clone(), image, None, None);
+        Rc::new_cyclic(|me: &Weak<SpriteAnnotation>| {
+            let (me, w) = (me.clone(), Rc::downgrade(world));
+            animation.play_then(
+                sequence,
+                Some(Rc::new(move || {
+                    if let (Some(me), Some(w)) = (me.upgrade(), w.upgrade()) {
+                        w.add_frame_end_task(Box::new(move |w: &Rc<World>| w.remove_effect(&(me as EffectRef))));
+                    }
+                })),
+            );
+            SpriteAnnotation {
+                pos,
+                palette: PaletteRef::named(palette),
+                animation,
+            }
+        })
+    }
+}
+
+impl Effect for SpriteAnnotation {
+    fn tick(&self, _world: &Rc<World>) {
+        self.animation.tick();
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn render_above_shroud(&self, _viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        render_animation(&self.animation, self.pos, WVec::ZERO, 0, &self.palette, out);
     }
 }

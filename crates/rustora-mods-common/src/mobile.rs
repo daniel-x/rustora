@@ -10,6 +10,7 @@ use rustora_core::expression::BooleanExpression;
 use rustora_core::world_types::{CPos, CVec, WAngle, WDist, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity::{LINE_GREEN, TargetLineNode, chain_target_line_nodes, with_line_color};
 use rustora_engine::actor::{ActorRef, ConditionCache};
 use rustora_engine::actor_init::{CenterPositionInit, FacingInit, LocationInit, SubCellInit};
 use rustora_engine::conditional::*;
@@ -561,11 +562,18 @@ impl IResolveOrder for Mobile {
                 }
                 self_.queue_activity_queued(
                     order.queued,
-                    self.wrap_move(Move::new_near(self_, cell, WDist::from_cells(8), None, true)),
+                    with_line_color(
+                        self.wrap_move(Move::new_near(self_, cell, WDist::from_cells(8), None, true)),
+                        LINE_GREEN,
+                    ),
                 );
+                crate::target_lines::show_target_lines(self_);
             }
             "Stop" => self_.cancel_activity(),
-            "Scatter" => self_.queue_activity_queued(order.queued, Nudge::new(self_)),
+            "Scatter" => {
+                self_.queue_activity_queued(order.queued, Nudge::new(self_));
+                crate::target_lines::show_target_lines(self_);
+            }
             _ => {}
         }
     }
@@ -1017,6 +1025,10 @@ impl ReturnToCellActivity {
 impl Activity for ReturnToCellActivity {
     activity_common!("ReturnToCellActivity");
 
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        chain_target_line_nodes(self.base.child_activity(), self_)
+    }
+
     fn on_first_run(&self, self_: &ActorRef) {
         let w = self_.world();
         if w.map().distance_above_terrain(self_.center_position()).length > 0 && self_.info.has_trait_info_named("Parachutable") {
@@ -1069,6 +1081,10 @@ pub struct LeaveProductionActivity {
 
 impl Activity for LeaveProductionActivity {
     activity_common!("LeaveProductionActivity");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        chain_target_line_nodes(self.base.child_activity(), self_)
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if let Some(r) = &self.return_to_cell {

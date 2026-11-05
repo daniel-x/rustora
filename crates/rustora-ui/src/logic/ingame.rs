@@ -31,6 +31,8 @@ pub struct Ingame {
     pub selection: Rc<Selection>,
     pub world_sprites: Rc<dyn WorldSprites>,
     order_generator: RefCell<Rc<dyn OrderGenerator>>,
+    /// The selected actor ids of the previous frame, to notice newly selected actors for their target lines.
+    pub target_line_selection: RefCell<std::collections::HashSet<u32>>,
     world_default_cursor: String,
     default_order_generator: Rc<dyn OrderGenerator>,
     unit_order_generator: UnitOrderGenerator,
@@ -66,6 +68,7 @@ impl Ingame {
             selection,
             world_sprites,
             order_generator: RefCell::new(default_order_generator.clone()),
+            target_line_selection: RefCell::new(std::collections::HashSet::new()),
             world_default_cursor,
             default_order_generator,
             unit_order_generator,
@@ -93,8 +96,20 @@ impl Ingame {
         old.deactivate();
     }
 
+    /// `IOrderGenerator.RenderAboveShroud` of the active order generator.
+    pub fn order_generator_renderables(&self) -> Vec<rustora_engine::render::Renderable> {
+        let generator = self.order_generator();
+        let mut out = Vec::new();
+        self.order_context(false, 0, |ctx| generator.render_above_shroud(ctx, &mut out));
+        out
+    }
+
     /// Runs `f` with the state that order generators read.
     pub fn with_order_context<R>(&self, settings: &Settings, f: impl FnOnce(&OrderContext) -> R) -> R {
+        self.order_context(settings.game.use_classic_mouse_style, settings.game.selection_deadzone, f)
+    }
+
+    fn order_context<R>(&self, use_classic_mouse_style: bool, selection_deadzone: i32, f: impl FnOnce(&OrderContext) -> R) -> R {
         let screen_map = self.screen_map.borrow();
         let cancel = || self.cancel_input_mode();
         let ctx = OrderContext {
@@ -103,8 +118,8 @@ impl Ingame {
             selection: &self.selection,
             local_player: self.local_player.as_ref(),
             render_player: self.render_player.as_ref(),
-            use_classic_mouse_style: settings.game.use_classic_mouse_style,
-            selection_deadzone: settings.game.selection_deadzone,
+            use_classic_mouse_style,
+            selection_deadzone,
             world_default_cursor: self.world_default_cursor.clone(),
             cancel_input_mode: &cancel,
         };

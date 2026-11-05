@@ -2,7 +2,6 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `LogicTickerWidget.cs`, `ProductionTypeButtonWidget.cs` and `ProductionPaletteWidget.cs`.
-//! Without production icon overlays.
 
 use std::rc::Rc;
 
@@ -11,6 +10,7 @@ use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::order::Order;
 use rustora_engine::target::Target;
 use rustora_mods_common::player::PlayerResources;
+use rustora_mods_common::previews::{ProductionIconOverlayManagerInfo, WithProductionIconOverlayInfo};
 use rustora_mods_common::production::{BuildableInfo, ProductionItem, ProductionQueue};
 use rustora_mods_common::render::RenderSpritesInfo;
 
@@ -200,6 +200,33 @@ pub struct ProductionPaletteWidget {
 }
 
 impl ProductionPaletteWidget {
+    /// `IProductionIconOverlay` of the queue owner that are active for the actor `name`.
+    fn active_overlays(&self, queue: &ProductionQueue, name: &str) -> Vec<Rc<ProductionIconOverlayManagerInfo>> {
+        let owner = queue.actor.owner();
+        let player = owner.player_actor();
+        let world = queue.actor.world();
+        let Some(ai) = world.rules().actor(name) else {
+            return Vec::new();
+        };
+        let overlays = ai.trait_infos::<WithProductionIconOverlayInfo>();
+        if overlays.is_empty() {
+            return Vec::new();
+        }
+        let Some(tech_tree) = player.trait_or_default::<rustora_mods_common::production::TechTree>() else {
+            return Vec::new();
+        };
+        player
+            .info
+            .trait_infos::<ProductionIconOverlayManagerInfo>()
+            .into_iter()
+            .filter(|m| {
+                overlays
+                    .iter()
+                    .any(|o| o.types.contains(&m.ty) && tech_tree.has_prerequisites(&o.prerequisites))
+            })
+            .collect()
+    }
+
     pub fn new(assets: &Assets) -> ProductionPaletteWidget {
         let _ = assets;
         ProductionPaletteWidget {
@@ -724,6 +751,16 @@ impl WidgetKind for ProductionPaletteWidget {
             let pos = (icon.pos.0 as f32 + self.icon_offset.0, icon.pos.1 as f32 + self.icon_offset.1);
             if let Some(f) = sprites.frame(dc.renderer, &icon.image, &icon.sequence, 0, &icon.palette) {
                 dc.draw_frame_centered(f, pos);
+            }
+            for overlay in self.active_overlays(&queue, &icon.name) {
+                let Some(sequence) = overlay.sequence.as_deref() else {
+                    continue;
+                };
+                if let Some(f) = sprites.frame(dc.renderer, &overlay.image, sequence, 0, &overlay.palette) {
+                    let (w, h) = (f.sprite.w as f32, f.sprite.h as f32);
+                    let offset = ((w - self.icon_size.0 as f32) / 2.0, (h - self.icon_size.1 as f32) / 2.0);
+                    dc.draw_frame_centered(f, (pos.0 + offset.0, pos.1 + offset.1));
+                }
             }
             if let Some(first) = icon.queued.first() {
                 let total = first.total_time.get().max(1);

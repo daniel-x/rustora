@@ -973,6 +973,10 @@ impl IssueOrderAfterTransform {
 
 impl Activity for IssueOrderAfterTransform {
     activity_common!("IssueOrderAfterTransform");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.clone())
+    }
 }
 
 #[derive(Clone, Debug, FieldLoad)]

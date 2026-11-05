@@ -13,6 +13,7 @@ use rustora_core::expression::BooleanExpression;
 use rustora_core::world_types::{CPos, CVec, WAngle, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity::{LINE_CRIMSON, LINE_GREEN, TargetLineNode};
 use rustora_engine::actor::{ActorRef, ConditionCache, INVALID_CONDITION_TOKEN};
 use rustora_engine::bitset::BitSet;
 use rustora_engine::conditional::*;
@@ -1452,6 +1453,7 @@ impl IResolveOrder for Harvester {
             self_.location()
         };
         self_.queue_activity_queued(order.queued, FindAndDeliverResources::new(self_, Some(loc)));
+        crate::target_lines::show_target_lines(self_);
     }
 }
 
@@ -1569,6 +1571,22 @@ impl FindAndDeliverResources {
 impl Activity for FindAndDeliverResources {
     activity_common!("FindAndDeliverResources");
 
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        let mut out = self.base.child_activity().map_or_else(Vec::new, |c| c.target_line_nodes(self_));
+        if let Some(location) = self.order_location.get() {
+            out.push(TargetLineNode {
+                target: Target::from_cell(&self_.world(), location, 0),
+                color: LINE_CRIMSON,
+            });
+        } else if let Some(host) = self_.trait_or_default::<DockClientManager>().and_then(|m| m.reserved_host_actor()) {
+            out.push(TargetLineNode {
+                target: Target::from_actor(Some(&host)),
+                color: LINE_GREEN,
+            });
+        }
+        out
+    }
+
     fn on_first_run(&self, self_: &ActorRef) {
         if let Some(o) = self.order_location.get() {
             self.last_harvested_cell.set(Some(o));
@@ -1678,6 +1696,13 @@ impl HarvestResource {
 impl Activity for HarvestResource {
     activity_common!("HarvestResource");
 
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        vec![TargetLineNode {
+            target: Target::from_cell(&self_.world(), self.target_cell, 0),
+            color: LINE_CRIMSON,
+        }]
+    }
+
     fn on_first_run(&self, self_: &ActorRef) {
         self.claim_layer.try_claim_cell(self_, self.target_cell);
     }
@@ -1775,6 +1800,21 @@ impl MoveToDock {
 
 impl Activity for MoveToDock {
     activity_common!("MoveToDock");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        let _ = self_;
+        let host = self
+            .dock_host_actor
+            .borrow()
+            .clone()
+            .or_else(|| self.dock_client.reserved_host_actor());
+        host.iter()
+            .map(|h| TargetLineNode {
+                target: Target::from_actor(Some(h)),
+                color: LINE_GREEN,
+            })
+            .collect()
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if self.dock_client.is_trait_disabled() {
@@ -1901,6 +1941,14 @@ impl GenericDockSequence {
 
 impl Activity for GenericDockSequence {
     activity_common!("GenericDockSequence");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        let _ = self_;
+        vec![TargetLineNode {
+            target: Target::from_actor(Some(&self.dock_host_actor)),
+            color: LINE_GREEN,
+        }]
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         let state = self.docking_state.clone();

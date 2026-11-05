@@ -12,6 +12,7 @@ use rustora_core::expression::BooleanExpression;
 use rustora_core::world_types::{WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef, for_each_activity};
+use rustora_engine::activity::{LINE_GREEN, TargetLineNode, chain_target_line_nodes};
 use rustora_engine::actor::{ActorRef, ConditionCache};
 use rustora_engine::conditional::*;
 use rustora_engine::damage::{Damage, DamageState, DamageTypes};
@@ -361,6 +362,7 @@ impl IResolveOrder for Repairable {
             return;
         }
         self_.queue_activity_queued(order.queued, Resupply::new(self_, host, WDist::new(512), false));
+        crate::target_lines::show_target_lines(self_);
     }
 }
 
@@ -436,6 +438,7 @@ impl IResolveOrder for RepairableNear {
             return;
         }
         self_.queue_activity_queued(order.queued, Resupply::new(self_, host, self.info.close_enough, false));
+        crate::target_lines::show_target_lines(self_);
     }
 }
 
@@ -705,6 +708,16 @@ impl Resupply {
 
 impl Activity for Resupply {
     activity_common!("Resupply");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        if self.base.child_activity().is_some() {
+            return chain_target_line_nodes(self.base.child_activity(), self_);
+        }
+        vec![TargetLineNode {
+            target: self.host.clone(),
+            color: LINE_GREEN,
+        }]
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         if self.base.is_canceling() && self.remaining_ticks.get() > 0 {

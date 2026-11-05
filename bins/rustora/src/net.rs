@@ -161,6 +161,29 @@ impl NetClient {
         }
     }
 
+    /// `Game.CreateServer`.
+    pub fn create_server(&mut self, name: String, port: u16, password: String, advertise_online: bool, map: String) {
+        let (engine, support) = (self.engine.clone(), self.support.clone());
+        std::thread::spawn(move || {
+            let settings = ServerSettings {
+                server_type: ServerType::Multiplayer,
+                name,
+                listen_port: port,
+                password,
+                map: Some(map),
+                advertise_online,
+                support_dir: PathBuf::from(&support),
+                ..Default::default()
+            };
+            let result = ServerMod::load(&engine, &support, "ra")
+                .and_then(|game_mod| Server::new(settings, game_mod))
+                .map(|mut server| server.run());
+            if let Err(e) = result {
+                log::error!("The server failed: {e}");
+            }
+        });
+    }
+
     pub fn create_local_server(&mut self, map: String, skirmish: bool) {
         self.local_port = create_local_server(self.engine.clone(), self.support.clone(), map, skirmish);
     }

@@ -99,6 +99,12 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let main_menu = panel(ui, "MAIN_MENU", MenuType::Main);
     on_click(ui, main_menu, "SINGLEPLAYER_BUTTON", switch(MenuType::Singleplayer));
     on_click(ui, main_menu, "EXTRAS_BUTTON", switch(MenuType::Extras));
+    let multiplayer_menu = menu.clone();
+    on_click(ui, main_menu, "MULTIPLAYER_BUTTON", move |ui| {
+        multiplayer_menu.set(MenuType::None);
+        let to_main = multiplayer_menu.clone();
+        crate::logic::multiplayer::open_multiplayer_panel(ui, Rc::new(|_| {}), Rc::new(move |_| to_main.set(MenuType::Main)));
+    });
     on_click(ui, main_menu, "QUIT_BUTTON", |ui| ui.requests.push(AppRequest::Quit));
 
     let singleplayer = panel(ui, "SINGLEPLAYER_MENU", MenuType::Singleplayer);

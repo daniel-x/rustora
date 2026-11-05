@@ -4,6 +4,8 @@
 //! The selection annotations of `SelectionDecorationsBase.cs`: `SelectionBoxAnnotationRenderable` and the health
 //! bar of `SelectionBarsAnnotationRenderable`. Extra bars and path debugging are not ported.
 
+use std::collections::HashSet;
+
 use rustora_core::fieldloader::Color;
 use rustora_core::world_types::{WAngle, WPos, WRot, WVec};
 use rustora_engine::actor::ActorRef;
@@ -11,9 +13,10 @@ use rustora_engine::damage::DamageState;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::traits::{IHealth, ISelectionBar};
 use rustora_engine::world::WorldType;
-use rustora_game::settings::{Settings, StatusBarsType};
+use rustora_game::settings::{Settings, StatusBarsType, TargetLinesType};
 use rustora_mods_common::decorations::{AnnotationCircle, IDecoration, IRenderCircles};
 use rustora_mods_common::selection::SelectableInfo;
+use rustora_mods_common::target_lines::DrawLineToTarget;
 
 use crate::draw::{DrawContext, Rect};
 use crate::logic::ingame::Ingame;
@@ -28,6 +31,45 @@ fn line(dc: &mut DrawContext, a: (f32, f32), b: (f32, f32), c: Color) {
     } else {
         dc.list.solid([l - 0.5, t, 1.0, bt - t], crate::font::premultiplied(c));
     }
+}
+
+/// `DrawLineToTarget.RenderAnnotations` of the selected actors, with `INotifySelected.Selected`.
+fn draw_target_lines(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings, shift: bool) {
+    let selected = ingame.selection.actors();
+    let mut previous = ingame.target_line_selection.borrow_mut();
+    let lines_enabled = settings.game.target_lines != TargetLinesType::Disabled;
+    let automatic = settings.game.target_lines == TargetLinesType::Automatic;
+    let force = shift || ingame.order_generator().is_force_modifiers();
+    let viewport = ingame.viewport.borrow();
+    let view = |p: WPos| {
+        let world_px = (p.x * 24 / 1024, (p.y - p.z) * 24 / 1024);
+        let (x, y) = viewport.world_to_view_px(world_px);
+        (x as f32, y as f32)
+    };
+    let mut current = HashSet::with_capacity(selected.len());
+    for a in &selected {
+        current.insert(a.id);
+        let Some(line) = a.trait_or_default::<DrawLineToTarget>() else {
+            continue;
+        };
+        if automatic && !previous.contains(&a.id) {
+            line.show(a);
+        }
+        let allied = a.owner().is_allied_with(ingame.world.sound.local_player().as_deref());
+        if !lines_enabled || !allied || !(force || (automatic && line.within_lifetime())) {
+            continue;
+        }
+        for l in line.lines(a) {
+            let (from, to) = (view(l.from), view(l.to));
+            let color = crate::font::premultiplied(l.color);
+            dc.list.line([from.0, from.1], [to.0, to.1], l.line_width as f32, color);
+            for (x, y) in [to, from] {
+                let m = l.marker_width as f32;
+                dc.list.solid([x - m, y - m, 2.0 * m, 2.0 * m], color);
+            }
+        }
+    }
+    *previous = current;
 }
 
 /// `SelectionBoxAnnotationRenderable.Render`.
@@ -192,7 +234,8 @@ fn draw_decorations(
 }
 
 /// Draws the selection boxes and health bars of all actors in the screen map, in screen pixels.
-pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings) {
+pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings, shift: bool) {
+    draw_target_lines(dc, ingame, settings, shift);
     {
         let viewport = ingame.viewport.borrow();
         let generator = ingame.order_generator();

@@ -237,6 +237,14 @@ pub enum AppRequest {
         map: String,
         skirmish: bool,
     },
+    /// `Game.CreateServer` for `ServerCreationLogic`.
+    CreateServer {
+        name: String,
+        port: u16,
+        password: String,
+        advertise_online: bool,
+        map: String,
+    },
     /// `Game.JoinServer`.
     JoinServer {
         target: String,

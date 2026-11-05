@@ -14,6 +14,7 @@ use rustora_core::expression::BooleanExpression;
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity::{LINE_GREEN, TargetLineNode, chain_target_line_nodes, with_line_color};
 use rustora_engine::actor::{ActorRef, ConditionCache, INVALID_CONDITION_TOKEN};
 use rustora_engine::actor_init::{CenterPositionInit, FacingInit, LocationInit};
 use rustora_engine::bitset::BitSet;
@@ -1148,7 +1149,8 @@ impl IResolveOrder for Aircraft {
                         },
                     )
                 };
-                self_.queue_activity_queued(queued, activity);
+                self_.queue_activity_queued(queued, with_line_color(activity, LINE_GREEN));
+                crate::target_lines::show_target_lines(self_);
             }
             "Enter" | "ForceEnter" | "Repair" => {
                 if order.target.target_type() != TargetType::Actor {
@@ -1228,6 +1230,10 @@ impl AssociateWithAirfieldActivity {
 
 impl Activity for AssociateWithAirfieldActivity {
     activity_common!("AssociateWithAirfieldActivity");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        chain_target_line_nodes(self.base.child_activity(), self_)
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         let w = self_.world();
@@ -1540,6 +1546,15 @@ impl Fly {
 
 impl Activity for Fly {
     activity_common!("Fly");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        let t = if self.use_last_visible_target.get() {
+            &self.last_visible_target
+        } else {
+            &self.target
+        };
+        Some(t.borrow().clone())
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         let aircraft = &self.aircraft;
@@ -1868,6 +1883,10 @@ impl FlyFollow {
 impl Activity for FlyFollow {
     activity_common!("FlyFollow");
 
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.borrow().clone())
+    }
+
     fn tick(&self, self_: &ActorRef) -> bool {
         let aircraft = &self.aircraft;
         if aircraft.force_landing() {
@@ -1978,6 +1997,10 @@ impl Land {
 
 impl Activity for Land {
     activity_common!("Land");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.borrow().clone())
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if self.assign_target_on_first_run {
@@ -2241,6 +2264,20 @@ impl ReturnToBase {
 
 impl Activity for ReturnToBase {
     activity_common!("ReturnToBase");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        if self.base.child_activity().is_some() {
+            return chain_target_line_nodes(self.base.child_activity(), self_);
+        }
+        self.dest
+            .borrow()
+            .iter()
+            .map(|d| TargetLineNode {
+                target: Target::from_actor(Some(d)),
+                color: LINE_GREEN,
+            })
+            .collect()
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         let aircraft = &self.aircraft;

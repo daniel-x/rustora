@@ -10,8 +10,10 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
 use indexmap::{IndexMap, IndexSet};
+use rustora_core::fieldloader::Color;
 use rustora_core::world_types::{WAngle, WDist, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
+use rustora_engine::activity::LINE_CRIMSON;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::actor_ext::enabled_target_types;
@@ -1325,12 +1327,21 @@ impl AttackBase {
             .collect()
     }
 
-    pub fn attack_target(&self, target: &Target, source: AttackSource, queued: bool, allow_move: bool, force_attack: bool) {
+    pub fn attack_target(
+        &self,
+        target: &Target,
+        source: AttackSource,
+        queued: bool,
+        allow_move: bool,
+        force_attack: bool,
+        line_color: Option<Color>,
+    ) {
         let self_ = self.self_.clone();
         if self.is_trait_disabled() || !target.is_valid_for(&self_) {
             return;
         }
         let activity = self.get_attack_activity(&self_, source, target, allow_move, force_attack);
+        activity.base().target_line_color.set(line_color);
         self_.queue_activity_queued(queued, activity.clone());
         if self.info.kind.is_follow() && !queued {
             self.set_requested_target(target, force_attack, Some(activity));
@@ -1376,7 +1387,15 @@ impl IResolveOrder for AttackBase {
         let force_attack = order.order_string == "ForceAttack";
         if force_attack || order.order_string == "Attack" {
             if order.target.is_valid_for(self_) {
-                self.attack_target(&order.target, AttackSource::Default, order.queued, true, force_attack);
+                self.attack_target(
+                    &order.target,
+                    AttackSource::Default,
+                    order.queued,
+                    true,
+                    force_attack,
+                    Some(LINE_CRIMSON),
+                );
+                crate::target_lines::show_target_lines(&self.self_);
             }
         } else if order.order_string == "Stop" {
             self.on_stop_order(self_);
@@ -1738,6 +1757,15 @@ impl Attack {
 impl Activity for Attack {
     activity_common!("Attack");
 
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        let t = if self.use_last_visible_target.get() {
+            &self.last_visible.target
+        } else {
+            &self.target
+        };
+        Some(t.borrow().clone())
+    }
+
     fn tick(&self, self_: &ActorRef) -> bool {
         if self.base.is_canceling() {
             return true;
@@ -1841,6 +1869,10 @@ impl AttackActivity {
 
 impl Activity for AttackActivity {
     activity_common!("AttackActivity");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.borrow().clone())
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         if self.base.is_canceling() {
@@ -1972,6 +2004,10 @@ pub struct SetTarget {
 impl Activity for SetTarget {
     activity_common!("SetTarget");
 
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.borrow().clone())
+    }
+
     fn tick(&self, self_: &ActorRef) -> bool {
         let t = self.target.borrow().recalculate_invalidating_hidden(&self_.owner());
         *self.target.borrow_mut() = t.clone();
@@ -1993,6 +2029,10 @@ pub struct ChargeAttack {
 
 impl Activity for ChargeAttack {
     activity_common!("ChargeAttack");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.clone())
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         if self.base.is_canceling() || !self.attack.can_attack(self_, &self.target) {
@@ -2072,6 +2112,10 @@ impl FlyAttack {
 
 impl Activity for FlyAttack {
     activity_common!("FlyAttack");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.borrow().clone())
+    }
 
     fn tick(&self, self_: &ActorRef) -> bool {
         let (aircraft, attack) = (&self.aircraft, &self.attack);
@@ -2431,6 +2475,15 @@ impl LeapAttack {
 
 impl Activity for LeapAttack {
     activity_common!("LeapAttack");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        let t = if self.use_last_visible_target.get() {
+            &self.last_visible.target
+        } else {
+            &self.target
+        };
+        Some(t.borrow().clone())
+    }
 
     fn on_first_run(&self, _self_: &ActorRef) {
         self.attack.set_is_aiming(true);

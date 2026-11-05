@@ -226,7 +226,15 @@ impl Scene {
     }
 
     /// Builds the quads of one frame as seen by `viewer` (everything if `None`).
-    pub fn build(&mut self, renderer: &mut Renderer, world: &World, viewer: Option<&PlayerRef>, cam: &Camera) -> Vec<Quad> {
+    /// `overlay` holds the unsorted renderables of the order generator, drawn last.
+    pub fn build(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &World,
+        viewer: Option<&PlayerRef>,
+        cam: &Camera,
+        overlay: &[Renderable],
+    ) -> Vec<Quad> {
         self.palettes.update(renderer, world.world_tick());
         let terrain_row = self.palettes.named("terrain");
         let mut quads = Vec::new();
@@ -282,6 +290,11 @@ impl Scene {
             e.render_above_shroud(viewer, &mut above);
         }
         self.add_renderables(renderer, world, &above, cam, &mut quads);
+        let mut unsorted = Vec::new();
+        for r in overlay {
+            self.add_renderable(renderer, world, r, 0, cam, &mut unsorted);
+        }
+        quads.extend(unsorted.into_iter().map(|(_, q)| q));
         quads
     }
 

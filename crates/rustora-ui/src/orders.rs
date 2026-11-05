@@ -71,6 +71,12 @@ pub trait OrderGenerator {
     fn selection_changed(&self, _ctx: &OrderContext) {}
     /// `Render`, `RenderAboveShroud` and `RenderAnnotations`, drawn in screen pixels over the world.
     fn draw(&self, _ctx: &OrderContext, _dc: &mut crate::draw::DrawContext, _viewport: &crate::viewport::Viewport) {}
+    /// `RenderAboveShroud`, in the order given: the scene does not sort these.
+    fn render_above_shroud(&self, _ctx: &OrderContext, _out: &mut Vec<rustora_engine::render::Renderable>) {}
+    /// Whether this is `ForceModifiersOrderGenerator`, which shows target lines like the shift key.
+    fn is_force_modifiers(&self) -> bool {
+        false
+    }
     /// Which order button made this generator, for `ToggleInputMode` and the button highlights.
     fn button_order(&self) -> Option<crate::button_orders::ButtonOrder> {
         None

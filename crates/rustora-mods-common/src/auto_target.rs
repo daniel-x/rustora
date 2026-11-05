@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use rustora_core::world_types::WDist;
 use rustora_derive::FieldLoad;
+use rustora_engine::activity::{LINE_ORANGE_RED, with_line_color};
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN, hash_actor};
 use rustora_engine::actor_ext::enabled_target_types;
 use rustora_engine::bitset::BitSet;
@@ -271,7 +272,7 @@ impl AutoTarget {
 
     fn attack(&self, target: &Target, allow_move: bool) {
         for ab in self.active_attack_bases() {
-            ab.attack_target(target, AttackSource::AutoTarget, false, allow_move, false);
+            ab.attack_target(target, AttackSource::AutoTarget, false, allow_move, false, None);
         }
     }
 
@@ -570,8 +571,13 @@ impl Guard {
         let (mv, me, t) = (self.mv.get().unwrap().clone(), self_.clone(), target.clone());
         self_.queue_activity_queued(
             queued,
-            AttackMoveActivity::new(self_, Rc::new(move || mv.move_follow(&me, &t, WDist::ZERO, range, None)), false),
+            AttackMoveActivity::new(
+                self_,
+                Rc::new(move || with_line_color(mv.move_follow(&me, &t, WDist::ZERO, range, None), LINE_ORANGE_RED)),
+                false,
+            ),
         );
+        crate::target_lines::show_target_lines(self_);
     }
 }
 

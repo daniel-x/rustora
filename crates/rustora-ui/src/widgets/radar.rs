@@ -3,13 +3,13 @@
 
 //! Port of `RadarWidget.cs` for rectangular maps without height. The three layers are composed into one texture
 //! on the CPU. Terrain colors come from the current map and resources instead of `PlayerRadarTerrain`, which keeps
-//! the colors seen last under fog; radar pings and the radar sounds are not ported.
+//! the colors seen last under fog; the radar sounds are not ported.
 
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Color;
 use rustora_core::world_types::{CPos, MersenneTwister};
-use rustora_mods_common::radar::AppearsOnRadar;
+use rustora_mods_common::radar::{AppearsOnRadar, RadarPings};
 use rustora_mods_common::resources::ResourceLayer;
 use rustora_render::ui::UiTexture;
 
@@ -172,6 +172,23 @@ impl RadarWidget {
         self.dirty = true;
     }
 
+    /// `DrawRadarPings`.
+    fn draw_radar_pings(&self, ingame: &Ingame, dc: &mut DrawContext) {
+        let Some(pings) = ingame.world.world_actor().trait_or_default::<RadarPings>() else {
+            return;
+        };
+        let map = ingame.world.map();
+        for ping in pings.pings.borrow().iter().filter(|p| p.is_visible(ingame.render_player.as_ref())) {
+            let (x, y) = self.cell_to_minimap_pixel(map.cell_containing(ping.position));
+            let points = ping.points((x as f32, y as f32));
+            let color = crate::font::premultiplied(ping.color);
+            for i in 0..points.len() {
+                let (a, b) = (points[i], points[(i + 1) % points.len()]);
+                dc.list.line([a.0, a.1], [b.0, b.1], 2.0, color);
+            }
+        }
+    }
+
     fn cell_to_minimap_pixel(&self, c: CPos) -> (i32, i32) {
         let dx = (self.preview_scale * (c.x() - self.bounds.x) as f32) as i32;
         let dy = (self.preview_scale * (c.y() - self.bounds.y) as f32) as i32;
@@ -287,6 +304,7 @@ impl WidgetKind for RadarWidget {
             dc.push_clip(self.map_rect);
             dc.draw_rect(tl, br, 1.0, Color::from_argb(255, 255, 255, 255));
             dc.pop_clip();
+            self.draw_radar_pings(&ingame, dc);
         }
         self.cursor = None;
         let mouse = ui.last_mouse;

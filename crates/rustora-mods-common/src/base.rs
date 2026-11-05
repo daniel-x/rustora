@@ -1226,6 +1226,48 @@ pub fn can_place_building(world: &World, cell: CPos, bi: &BuildingInfo, to_ignor
     })
 }
 
+/// `AIUtils.ClearBlockersOrders`: move orders for idle units of `owner` standing on `tiles`.
+pub fn clear_blockers_orders(world: &Rc<World>, tiles: &[CPos], owner: &PlayerRef, ignore_actor: Option<&ActorRef>) -> Vec<Order> {
+    let map = world.map();
+    let adjacent: Vec<CPos> = crate::util::expand_footprint(tiles, true)
+        .into_iter()
+        .filter(|c| !tiles.contains(c) && map.contains(*c))
+        .collect();
+    let mut out = Vec::new();
+    for &tile in tiles {
+        for a in world.actor_map().get_actors_at(tile) {
+            if !Rc::ptr_eq(&a.owner(), owner) || !a.is_idle() || ignore_actor.is_some_and(|i| i.id == a.id) {
+                continue;
+            }
+            let move_cell = if let Some(mobile) = a.trait_or_default::<crate::mobile::Mobile>() {
+                let location = a.location();
+                let closest = adjacent
+                    .iter()
+                    .copied()
+                    .filter(|t| mobile.can_enter_cell(*t, None, crate::locomotor::BlockedByActor::All))
+                    .min_by_key(|t| (location - *t).length_squared());
+                let Some(closest) = closest else {
+                    continue;
+                };
+                closest
+            } else if a.trait_or_default::<crate::aircraft::Aircraft>().is_some() {
+                a.location()
+            } else {
+                continue;
+            };
+            let mut order = Order::new(
+                "Move",
+                Some(a.clone()),
+                Target::from_cell(world, move_cell, rustora_engine::traits::subcell::FULL_CELL),
+                false,
+            );
+            order.suppress_visual_feedback = true;
+            out.push(order);
+        }
+    }
+    out
+}
+
 /// `BuildingUtils.GetLineBuildCells`.
 pub fn get_line_build_cells(
     world: &World,

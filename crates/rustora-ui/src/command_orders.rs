@@ -58,6 +58,10 @@ impl OrderGenerator for ForceModifiersOrderGenerator {
         Some(CommandMode::ForceModifiers(self.modifiers))
     }
 
+    fn is_force_modifiers(&self) -> bool {
+        true
+    }
+
     fn is_unit_order_generator(&self) -> bool {
         true
     }

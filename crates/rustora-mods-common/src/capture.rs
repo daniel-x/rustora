@@ -534,7 +534,14 @@ impl IResolveOrder for Captures {
             enter_actor: RefCell::new(None),
             enter_manager: RefCell::new(None),
         };
-        self_.queue_activity_queued(order.queued, Enter::new(self_, &order.target, Box::new(hooks)));
+        self_.queue_activity_queued(
+            order.queued,
+            rustora_engine::activity::with_line_color(
+                Enter::new(self_, &order.target, Box::new(hooks)),
+                rustora_engine::activity::LINE_CRIMSON,
+            ),
+        );
+        crate::target_lines::show_target_lines(self_);
     }
 }
 

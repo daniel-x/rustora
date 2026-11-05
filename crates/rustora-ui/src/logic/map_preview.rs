@@ -15,7 +15,7 @@ use crate::logic::message_with;
 use crate::widget::{ChromeLogic, Getter, Ui, WidgetArgs, WidgetId};
 use crate::widgets::{LabelWithTooltipWidget, MapPreviewWidget, SpawnOccupant};
 
-const MAP_STATUS_PLAYABLE: i32 = 2;
+pub(crate) const MAP_STATUS_PLAYABLE: i32 = 2;
 const MAP_STATUS_INCOMPATIBLE: i32 = 4;
 const MAP_STATUS_VALIDATING: i32 = 1;
 

@@ -8,6 +8,7 @@ use std::rc::{Rc, Weak};
 
 use rustora_core::world_types::{CPos, CVec, Int2, WAngle, WDist, WPos, WRot, WVec};
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity::{LINE_GREEN, TargetLineNode, chain_target_line_nodes};
 use rustora_engine::activity_common;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::target::{Target, TargetType};
@@ -177,6 +178,14 @@ impl Drag {
 
 impl Activity for Drag {
     activity_common!("Drag");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        let _ = self_;
+        vec![TargetLineNode {
+            target: Target::from_pos(self.end),
+            color: LINE_GREEN,
+        }]
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if let Some(f) = self.desired_facing {
@@ -454,6 +463,11 @@ impl Move {
 
 impl Activity for Move {
     activity_common!("Move");
+
+    fn target_line_target(&self, self_: &ActorRef) -> Option<Target> {
+        let world = self_.world();
+        self.destination.get().map(|d| Target::from_cell(&world, d, 0))
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         self.start_ticks.set(self_.world().world_tick());
@@ -885,6 +899,15 @@ impl Follow {
 impl Activity for Follow {
     activity_common!("Follow");
 
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        let t = if self.use_last_visible_target.get() {
+            &self.last_visible_target
+        } else {
+            &self.target
+        };
+        Some(t.borrow().clone())
+    }
+
     fn tick(&self, self_: &ActorRef) -> bool {
         if self.base.is_canceling() {
             return true;
@@ -938,6 +961,10 @@ impl LocalMoveIntoTarget {
 
 impl Activity for LocalMoveIntoTarget {
     activity_common!("LocalMoveIntoTarget");
+
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        Some(self.target.clone())
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         self.target_start_pos
@@ -1242,6 +1269,15 @@ impl MoveAdjacentTo {
 impl Activity for MoveAdjacentTo {
     activity_common!("MoveAdjacentTo");
 
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        let t = if self.use_last_visible_target.get() {
+            &self.last_visible_target
+        } else {
+            &self.target
+        };
+        Some(t.borrow().clone())
+    }
+
     fn on_first_run(&self, _self_: &ActorRef) {
         self.queue_move();
     }
@@ -1286,6 +1322,10 @@ impl Nudge {
 
 impl Activity for Nudge {
     activity_common!("Nudge");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        chain_target_line_nodes(self.base.child_activity(), self_)
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if let Some(m) = self_.trait_or_default::<Mobile>() {

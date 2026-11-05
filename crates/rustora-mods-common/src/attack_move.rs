@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity::{LINE_ORANGE_RED, TargetLineNode, with_line_color};
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::order::Order;
 use rustora_engine::rules::TraitRegistry;
@@ -88,8 +89,13 @@ impl IResolveOrder for AttackMove {
         let mv = self.mv.clone();
         self_.queue_activity_queued(
             order.queued,
-            AttackMoveActivity::new(self_, Rc::new(move || mv.move_to(target_location, 8, None, false)), assault),
+            AttackMoveActivity::new(
+                self_,
+                Rc::new(move || with_line_color(mv.move_to(target_location, 8, None, false), LINE_ORANGE_RED)),
+                assault,
+            ),
         );
+        crate::target_lines::show_target_lines(self_);
     }
 }
 
@@ -123,6 +129,10 @@ impl AttackMoveActivity {
 
 impl Activity for AttackMoveActivity {
     activity_common!("AttackMoveActivity");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        (self.get_move)().target_line_nodes(self_)
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         let (Some(attack_move), true) = (&self.attack_move, self.auto_target.is_some()) else {

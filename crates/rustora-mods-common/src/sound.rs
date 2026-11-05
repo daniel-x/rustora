@@ -8,6 +8,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::radar::{PingVisibility, add_radar_ping};
+use rustora_core::fieldloader::Color;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{Actor, ActorRef};
 use rustora_engine::bitset::BitSet;
@@ -593,6 +595,8 @@ pub struct BaseAttackNotifierInfo {
     pub text_notification: Option<String>,
     pub ally_notification: Option<String>,
     pub ally_text_notification: Option<String>,
+    pub radar_ping_color: Color,
+    pub radar_ping_duration: i32,
 }
 
 impl Default for BaseAttackNotifierInfo {
@@ -604,11 +608,13 @@ impl Default for BaseAttackNotifierInfo {
             text_notification: None,
             ally_notification: None,
             ally_text_notification: None,
+            radar_ping_color: Color::from_argb(255, 255, 0, 0),
+            radar_ping_duration: 250,
         }
     }
 }
 
-/// `BaseAttackNotifier`, without the radar ping.
+/// `BaseAttackNotifier`.
 pub struct BaseAttackNotifier {
     info: Rc<BaseAttackNotifierInfo>,
     last_attack: AdviceTimer,
@@ -652,6 +658,13 @@ impl INotifyDamage for BaseAttackNotifier {
                 .sound
                 .add_transient_line(Some(&local_player), self.info.ally_text_notification.as_deref());
         }
+        add_radar_ping(
+            &world,
+            PingVisibility::AlliesOf(owner.clone()),
+            self_.center_position(),
+            self.info.radar_ping_color,
+            self.info.radar_ping_duration,
+        );
         self.last_attack.restart();
     }
 }
@@ -665,6 +678,8 @@ pub struct HarvesterAttackNotifierInfo {
     pub exclude_damage_types: BitSet<DamageType>,
     pub notification: Option<String>,
     pub text_notification: Option<String>,
+    pub radar_ping_color: Color,
+    pub radar_ping_duration: i32,
 }
 
 impl Default for HarvesterAttackNotifierInfo {
@@ -675,6 +690,8 @@ impl Default for HarvesterAttackNotifierInfo {
             exclude_damage_types: BitSet::default(),
             notification: Some("HarvesterAttack".into()),
             text_notification: None,
+            radar_ping_color: Color::from_argb(255, 255, 0, 0),
+            radar_ping_duration: 250,
         }
     }
 }
@@ -704,6 +721,13 @@ impl INotifyDamage for HarvesterAttackNotifier {
             "Speech",
             self.info.notification.as_deref(),
             self.info.text_notification.as_deref(),
+        );
+        add_radar_ping(
+            &self_.world(),
+            PingVisibility::AlliesOf(self_.owner()),
+            self_.center_position(),
+            self.info.radar_ping_color,
+            self.info.radar_ping_duration,
         );
         self.last_attack.restart();
     }
@@ -858,6 +882,7 @@ pub struct AnnounceOnSeenInfo {
     pub notification: Option<String>,
     pub text_notification: Option<String>,
     pub announce_neutrals: bool,
+    pub ping_radar: bool,
 }
 
 pub struct AnnounceOnSeen {
@@ -883,5 +908,14 @@ impl INotifyDiscovered for AnnounceOnSeen {
         world
             .sound
             .add_transient_line(Some(discoverer), self.info.text_notification.as_deref());
+        if self.info.ping_radar {
+            add_radar_ping(
+                &world,
+                PingVisibility::All,
+                self_.center_position(),
+                Color::from_argb(255, 255, 0, 0),
+                50,
+            );
+        }
     }
 }

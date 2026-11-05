@@ -540,7 +540,7 @@ impl ServerMod {
                         .map(|c| (c.to_string(), format!("${c}")))
                         .collect();
                     if !values.is_empty() {
-                        let label = field(t, "DefaultCashDropdownLabel").unwrap_or("dropdown-starting-cash.label");
+                        let label = field(t, "DefaultCashDropdownLabel").unwrap_or("Starting Cash");
                         out.push(
                             self.dropdown_option(
                                 "startingcash",

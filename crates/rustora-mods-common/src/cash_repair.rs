@@ -156,7 +156,14 @@ impl IResolveOrder for DeliversCash {
             payload: self.info.payload,
             player_experience: self.info.player_experience,
         };
-        self_.queue_activity_queued(order.queued, Enter::new(self_, &order.target, Box::new(hooks)));
+        self_.queue_activity_queued(
+            order.queued,
+            rustora_engine::activity::with_line_color(
+                Enter::new(self_, &order.target, Box::new(hooks)),
+                rustora_engine::activity::LINE_YELLOW,
+            ),
+        );
+        crate::target_lines::show_target_lines(self_);
     }
 }
 
@@ -382,7 +389,14 @@ impl IResolveOrder for InstantlyRepairs {
             return;
         }
         let hooks = InstantRepairHooks { info: self.info.clone() };
-        self_.queue_activity_queued(order.queued, Enter::new(self_, &order.target, Box::new(hooks)));
+        self_.queue_activity_queued(
+            order.queued,
+            rustora_engine::activity::with_line_color(
+                Enter::new(self_, &order.target, Box::new(hooks)),
+                rustora_engine::activity::LINE_YELLOW,
+            ),
+        );
+        crate::target_lines::show_target_lines(self_);
     }
 }
 

@@ -1175,13 +1175,20 @@ impl TraitInfo for ClassicFacingBodyOrientationInfo {
     }
 }
 
+impl BodyOrientationInfo {
+    /// `LocalToWorld`.
+    pub fn local_to_world(&self, vec: WVec) -> WVec {
+        if !self.use_classic_perspective_fudge {
+            return WVec::new(vec.y, -vec.x, vec.z);
+        }
+        WVec::new(vec.y, (-self.camera_pitch.sin()).wrapping_mul(vec.x) / 1024, vec.z)
+    }
+}
+
 impl BodyOrientation {
     /// `LocalToWorld`.
     pub fn local_to_world(&self, vec: WVec) -> WVec {
-        if !self.info.use_classic_perspective_fudge {
-            return WVec::new(vec.y, -vec.x, vec.z);
-        }
-        WVec::new(vec.y, (-self.info.camera_pitch.sin()).wrapping_mul(vec.x) / 1024, vec.z)
+        self.info.local_to_world(vec)
     }
 
     pub fn quantize_orientation(&self, orientation: WRot) -> WRot {

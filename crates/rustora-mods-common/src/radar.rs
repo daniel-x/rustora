@@ -4,19 +4,22 @@
 //! `Traits/Radar/AppearsOnRadar.cs`. The trait keeps the sync shape of a `ConditionalTrait`; radar color
 //! modifiers are not ported.
 
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Color;
-use rustora_core::world_types::CPos;
+use rustora_core::world_types::{CPos, WPos};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::conditional::*;
 use rustora_engine::player::{PlayerRef, PlayerRelationship};
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::*;
+use rustora_engine::world::World;
 use rustora_engine::{conditional_simple, info_impl, load_info, register_traits};
 
 pub fn register(r: &mut TraitRegistry) {
+    r.register("RadarPings", |n| load_info!(RadarPingsInfo, n));
     r.register("AppearsOnRadar", |n| load_info!(AppearsOnRadarInfo, n));
 }
 
@@ -73,5 +76,125 @@ impl AppearsOnRadar {
         if let Some(os) = self_.trait_or_default::<dyn IOccupySpace>() {
             out.extend(os.occupied_cells().into_iter().map(|(c, _)| (c, color)));
         }
+    }
+}
+
+/// Who sees a radar ping (`RadarPing.IsVisible`).
+pub enum PingVisibility {
+    All,
+    AlliesOf(PlayerRef),
+}
+
+/// `RadarPing`.
+pub struct RadarPing {
+    pub visibility: PingVisibility,
+    pub position: WPos,
+    pub color: Color,
+    duration: i32,
+    to_radius: i32,
+    shrink_speed: i32,
+    rotation_speed: f32,
+    radius: Cell<i32>,
+    angle: Cell<f32>,
+    tick: Cell<i32>,
+}
+
+impl RadarPing {
+    pub fn is_visible(&self, viewer: Option<&PlayerRef>) -> bool {
+        match &self.visibility {
+            PingVisibility::All => true,
+            PingVisibility::AlliesOf(p) => p.is_allied_with(viewer.map(|v| &**v)),
+        }
+    }
+
+    fn tick(&self) -> bool {
+        self.tick.set(self.tick.get() + 1);
+        if self.tick.get() == self.duration {
+            return false;
+        }
+        self.radius.set((self.radius.get() - self.shrink_speed).max(self.to_radius));
+        self.angle.set(self.angle.get() - self.rotation_speed);
+        true
+    }
+
+    /// `Points`: the corners of the triangle around `center`.
+    pub fn points(&self, center: (f32, f32)) -> [(f32, f32); 3] {
+        let r = self.radius.get() as f32;
+        [0.0, 2.0, 4.0].map(|k| {
+            let a = self.angle.get() + k * std::f32::consts::PI / 3.0;
+            (center.0 + r * a.cos(), center.1 + r * a.sin())
+        })
+    }
+}
+
+/// `RadarPingsInfo`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct RadarPingsInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub from_radius: i32,
+    pub to_radius: i32,
+    pub shrink_speed: i32,
+    pub rotation_speed: f32,
+}
+
+impl Default for RadarPingsInfo {
+    fn default() -> Self {
+        RadarPingsInfo {
+            instance_name: None,
+            from_radius: 200,
+            to_radius: 15,
+            shrink_speed: 4,
+            rotation_speed: 0.12,
+        }
+    }
+}
+
+/// `RadarPings`: cosmetic state, not part of the sync hash.
+pub struct RadarPings {
+    info: Rc<RadarPingsInfo>,
+    pub pings: RefCell<Vec<Rc<RadarPing>>>,
+    pub last_ping_position: Cell<Option<WPos>>,
+}
+
+register_traits!(RadarPings: ITick);
+info_impl!(RadarPingsInfo => |info, _init| Some(Rc::new(RadarPings {
+    info,
+    pings: RefCell::new(Vec::new()),
+    last_ping_position: Cell::new(None),
+})));
+
+impl ITick for RadarPings {
+    fn tick(&self, _self_: &ActorRef) {
+        self.pings.borrow_mut().retain(|p| p.tick());
+    }
+}
+
+impl RadarPings {
+    pub fn add(&self, visibility: PingVisibility, viewer: Option<&PlayerRef>, position: WPos, color: Color, duration: i32) {
+        let ping = Rc::new(RadarPing {
+            visibility,
+            position,
+            color,
+            duration,
+            to_radius: self.info.to_radius,
+            shrink_speed: self.info.shrink_speed,
+            rotation_speed: self.info.rotation_speed,
+            radius: Cell::new(self.info.from_radius),
+            angle: Cell::new(0.0),
+            tick: Cell::new(0),
+        });
+        if ping.is_visible(viewer) {
+            self.last_ping_position.set(Some(position));
+        }
+        self.pings.borrow_mut().push(ping);
+    }
+}
+
+/// `RadarPings.Add` on the world actor, seen from the local player.
+pub fn add_radar_ping(world: &World, visibility: PingVisibility, position: WPos, color: Color, duration: i32) {
+    if let Some(pings) = world.world_actor().trait_or_default::<RadarPings>() {
+        let viewer = world.sound.local_player();
+        pings.add(visibility, viewer.as_ref(), position, color, duration);
     }
 }

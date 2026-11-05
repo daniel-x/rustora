@@ -3,6 +3,7 @@
 
 //! Port of `Activities/Activity.cs` and `ActivityUtils`.
 
+use rustora_core::fieldloader::Color;
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -30,6 +31,8 @@ pub struct ActivityBase {
     finishing: Cell<bool>,
     first_run_completed: Cell<bool>,
     last_run: Cell<bool>,
+    /// The `targetLineColor` constructor argument of the C# activities.
+    pub target_line_color: Cell<Option<Color>>,
 }
 
 impl Default for ActivityBase {
@@ -43,6 +46,7 @@ impl Default for ActivityBase {
             finishing: Cell::new(false),
             first_run_completed: Cell::new(false),
             last_run: Cell::new(false),
+            target_line_color: Cell::new(None),
         }
     }
 }
@@ -110,6 +114,36 @@ impl ActivityBase {
 }
 
 /// An actor activity. Override the hooks; `base()` returns the embedded [`ActivityBase`].
+/// `TargetLineNode`, without the tile of a planned minefield.
+pub struct TargetLineNode {
+    pub target: Target,
+    pub color: Color,
+}
+
+pub const LINE_GREEN: Color = Color::from_argb(255, 0x00, 0x80, 0x00);
+pub const LINE_CRIMSON: Color = Color::from_argb(255, 0xDC, 0x14, 0x3C);
+pub const LINE_ORANGE_RED: Color = Color::from_argb(255, 0xFF, 0x45, 0x00);
+pub const LINE_YELLOW: Color = Color::from_argb(255, 0xFF, 0xFF, 0x00);
+
+/// Sets the `targetLineColor` of `activity`.
+pub fn with_line_color<A: Activity + ?Sized>(activity: Rc<A>, color: Color) -> Rc<A> {
+    activity.base().target_line_color.set(Some(color));
+    activity
+}
+
+/// The nodes of `first` and of the activities queued after it that are not being canceled.
+pub fn chain_target_line_nodes(first: Option<ActivityRef>, self_: &ActorRef) -> Vec<TargetLineNode> {
+    let mut out = Vec::new();
+    let mut a = first;
+    while let Some(activity) = a {
+        if !activity.base().is_canceling() {
+            out.extend(activity.target_line_nodes(self_));
+        }
+        a = activity.base().next_activity();
+    }
+    out
+}
+
 pub trait Activity: Any {
     fn base(&self) -> &ActivityBase;
 
@@ -130,6 +164,19 @@ pub trait Activity: Any {
 
     fn get_targets(&self, _self_: &ActorRef) -> Vec<Target> {
         Vec::new()
+    }
+
+    /// The target of the single node that `target_line_nodes` returns by default.
+    fn target_line_target(&self, _self_: &ActorRef) -> Option<Target> {
+        None
+    }
+
+    /// `TargetLineNodes`.
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        match (self.base().target_line_color.get(), self.target_line_target(self_)) {
+            (Some(color), Some(target)) => vec![TargetLineNode { target, color }],
+            _ => Vec::new(),
+        }
     }
 
     fn type_name(&self) -> &'static str;

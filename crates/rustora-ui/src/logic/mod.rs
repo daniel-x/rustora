@@ -32,6 +32,7 @@ pub mod lobby_utils;
 pub mod main_menu;
 pub mod map_chooser;
 pub mod map_preview;
+pub mod multiplayer;
 pub mod sidebar;
 
 use rustora_engine::sound::{AudioRules, Sound};
@@ -140,9 +141,10 @@ pub(crate) fn button_prompt_with_cancel(
     bounds.h += header_height;
     bounds.y -= header_height / 2;
 
+    let show_confirm = !confirm_text.is_empty();
     let confirm_text = message(ui, confirm_text);
     let confirm = ui.child(prompt, "CONFIRM_BUTTON");
-    ui.node_mut(confirm).visible = true;
+    ui.node_mut(confirm).visible = show_confirm;
     ui.node_mut(confirm).bounds.y += header_height;
     ui.button(confirm).on_click = Some(Rc::new(move |ui| {
         ui.close_window();
@@ -317,6 +319,9 @@ pub fn create(
         "ConnectionLogic" => connection::create_connection(ui, id, args),
         "ConnectionFailedLogic" => connection::create_connection_failed(ui, id, args),
         "LobbyLogic" => lobby::create(ui, id, args, logic_args),
+        "MultiplayerLogic" => multiplayer::create(ui, id, args),
+        "DirectConnectLogic" => multiplayer::create_direct_connect(ui, id, args),
+        "ServerCreationLogic" => multiplayer::create_server_creation(ui, id, args),
         "MapPreviewLogic" => map_preview::create(ui, id, args),
         "LobbyOptionsLogic" => lobby_options::create(ui, id, args),
         "LatencyTooltipLogic" => lobby_utils::latency_tooltip(ui, id, args),

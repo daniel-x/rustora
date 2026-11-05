@@ -13,6 +13,7 @@ use rustora_core::expression::BooleanExpression;
 use rustora_core::world_types::{CPos, WAngle, WDist};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
+use rustora_engine::activity::{LINE_CRIMSON, TargetLineNode};
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::actor_init::{ActorInit, ActorInits, FacingInit, FactionInit, LocationInit, OwnerInit};
 use rustora_engine::bitset::BitSet;
@@ -997,6 +998,14 @@ impl DetonationSequence {
 
 impl Activity for DetonationSequence {
     activity_common!("DetonationSequence");
+
+    fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
+        let _ = self_;
+        vec![TargetLineNode {
+            target: self.target.borrow().clone(),
+            color: LINE_CRIMSON,
+        }]
+    }
 
     fn on_first_run(&self, self_: &ActorRef) {
         if self.assign_target_on_first_run {

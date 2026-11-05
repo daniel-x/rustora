@@ -77,7 +77,11 @@ impl WorldInteractionControllerWidget {
         let cell = view_to_world(world_px);
         let orders = ingame.order_generator().order(ctx, cell, world_px, mi);
         rustora_engine::sound::play_voice_for_orders(&orders);
+        let mut flashed = false;
         for o in orders {
+            if !flashed && !o.suppress_visual_feedback {
+                flashed = rustora_mods_common::effects::order_issued(&ingame.world, &o.target);
+            }
             ingame.world.issue_order(o);
         }
     }
