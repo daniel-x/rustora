@@ -20,6 +20,7 @@ use crate::widget::{Action, ChromeLogic, Getter, Ui, WidgetArgs, WidgetId};
 use crate::widgets::LabelWidget;
 
 pub mod color_picker;
+pub mod command_bar;
 pub mod connection;
 pub mod ingame;
 pub mod ingame_menu;
@@ -265,6 +266,7 @@ pub fn create(
         "SupportPowerBinLogic" => sidebar::support_power_bin(ui, id),
         "IngameRadarDisplayLogic" => sidebar::radar_display(ui, id),
         "MenuButtonsChromeLogic" => ingame_menu::menu_buttons(ui, id),
+        "CommandBarLogic" => command_bar::command_bar(ui, id),
         "IngameMenuLogic" => ingame_menu::ingame_menu(ui, id, args, logic_args),
         "ProductionTooltipLogic" => sidebar::production_tooltip(ui, id, args),
         "SellOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Sell, "sell"),

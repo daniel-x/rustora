@@ -143,6 +143,7 @@ pub struct Cargo {
 register_traits!(
     Cargo: IResolveOrder,
     crate::orders::IIssueOrder,
+    crate::orders::IIssueDeployOrder,
     INotifyOwnerChanged,
     INotifySold,
     INotifyActorDisposing,
@@ -1228,5 +1229,15 @@ impl crate::orders::IIssueOrder for Passenger {
 
     fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
         (order.order_id() == "EnterTransport").then(|| Order::new("EnterTransport", Some(self_.clone()), target.clone(), queued))
+    }
+}
+
+impl crate::orders::IIssueDeployOrder for Cargo {
+    fn issue_deploy_order(&self, self_: &ActorRef, queued: bool) -> Option<Order> {
+        Some(Order::new("Unload", Some(self_.clone()), Target::Invalid, queued))
+    }
+
+    fn can_issue_deploy_order(&self, _self_: &ActorRef, _queued: bool) -> bool {
+        true
     }
 }

@@ -67,7 +67,7 @@ pub struct Transforms {
     faction: String,
 }
 
-register_traits!(Transforms: IResolveOrder, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(Transforms: IResolveOrder, crate::orders::IIssueOrder, crate::orders::IIssueDeployOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(TransformsInfo => |info, init| {
     let w = init.world();
     let actor_info = w.rules().actor(&info.into_actor.to_lowercase()).unwrap_or_else(|| panic!("unknown actor {}", info.into_actor));
@@ -141,6 +141,16 @@ impl crate::orders::IIssueOrder for Transforms {
 
     fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, _target: &Target, queued: bool) -> Option<Order> {
         (order.order_id() == "DeployTransform").then(|| Order::new("DeployTransform", Some(self_.clone()), Target::Invalid, queued))
+    }
+}
+
+impl crate::orders::IIssueDeployOrder for Transforms {
+    fn issue_deploy_order(&self, self_: &ActorRef, queued: bool) -> Option<Order> {
+        Some(Order::new("DeployTransform", Some(self_.clone()), Target::Invalid, queued))
+    }
+
+    fn can_issue_deploy_order(&self, _self_: &ActorRef, _queued: bool) -> bool {
+        !self.is_trait_paused() && !self.is_trait_disabled()
     }
 }
 

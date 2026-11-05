@@ -59,6 +59,11 @@ pub trait IIssueOrder {
     fn issue_order(&self, self_: &ActorRef, order: &dyn IOrderTargeter, target: &Target, queued: bool) -> Option<Order>;
 }
 
+pub trait IIssueDeployOrder {
+    fn issue_deploy_order(&self, self_: &ActorRef, queued: bool) -> Option<Order>;
+    fn can_issue_deploy_order(&self, self_: &ActorRef, queued: bool) -> bool;
+}
+
 /// `DeployOrderTargeter`: targets the actor itself.
 pub struct DeployOrderTargeter {
     pub order_id: String,
