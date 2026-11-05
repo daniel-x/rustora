@@ -126,6 +126,12 @@ impl Viewport {
     }
 
     /// `AdjustZoom` without a center.
+    /// `ToggleZoom`.
+    pub fn toggle_zoom(&mut self) {
+        let zoom = if self.zoom > self.min_zoom { self.min_zoom } else { self.max_zoom };
+        self.set_zoom(zoom);
+    }
+
     pub fn adjust_zoom(&mut self, dz: f32) {
         self.set_zoom((self.zoom * dz.exp()).clamp(self.min_zoom, self.max_zoom));
     }

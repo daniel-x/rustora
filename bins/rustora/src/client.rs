@@ -160,6 +160,9 @@ impl ShellWorld {
         for order in std::mem::take(&mut state.outgoing) {
             orders.issue_order(order);
         }
+        if !orders.connection.is_connected() {
+            state.connection_state = rustora_ui::net::ConnectionState::NotConnected;
+        }
     }
 
     fn camera(&self, size: (u32, u32)) -> Camera {

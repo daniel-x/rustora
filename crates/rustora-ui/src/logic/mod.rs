@@ -24,6 +24,7 @@ pub mod command_bar;
 pub mod connection;
 pub mod ingame;
 pub mod ingame_chat;
+pub mod ingame_hotkeys;
 pub mod ingame_menu;
 pub mod lobby;
 pub mod lobby_options;
@@ -258,7 +259,14 @@ pub fn create(
     args: &WidgetArgs,
     logic_args: &[MiniYamlNode],
 ) -> Option<Rc<RefCell<dyn ChromeLogic>>> {
+    if let Some(logic) = ingame_hotkeys::create(name, ui, id, logic_args) {
+        return Some(logic);
+    }
     Some(match name {
+        "StanceSelectorLogic" => ingame_hotkeys::stance_selector(ui, id),
+        "IngameTransientNotificationsLogic" => ingame_hotkeys::transient_notifications(ui, id),
+        "DisconnectWatcherLogic" => ingame_hotkeys::disconnect_watcher(ui, id),
+        "MuteIndicatorLogic" => ingame_hotkeys::mute_indicator(ui, id),
         "MainMenuLogic" => main_menu::create(ui, id, args),
         "AddFactionSuffixLogic" => sidebar::add_faction_suffix(ui, id),
         "ClassicProductionLogic" => sidebar::classic_production(ui, id),

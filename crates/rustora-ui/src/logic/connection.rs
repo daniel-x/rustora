@@ -46,6 +46,15 @@ pub fn open_connection_failed(ui: &mut Ui, password: &str, on_abort: Action, on_
     ui.open_window("CONNECTIONFAILED_PANEL", args);
 }
 
+/// The panel of `DisconnectWatcherLogic`: the connection of the running game is gone, and only quitting is left.
+pub fn open_disconnected(ui: &mut Ui, password: &str) {
+    let on_quit: Action = Rc::new(|ui: &mut Ui| ui.requests.push(AppRequest::LeaveGame));
+    let args = WidgetArgs::default()
+        .with_value("password", password.to_string())
+        .with_value("onQuit", on_quit);
+    ui.open_window("CONNECTIONFAILED_PANEL", args);
+}
+
 struct ConnectionLogic {
     net: Net,
     on_connect: Action,
@@ -138,13 +147,18 @@ impl ChromeLogic for ConnectionFailedLogic {
 pub fn create_connection_failed(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let net = services(ui).net.clone();
     let on_abort = args.action("onAbort");
+    let on_quit = args.value::<Action>("onQuit");
     let on_retry: Option<OnRetry> = args.value("onRetry");
     let password: String = args.value("password").unwrap_or_default();
 
     let abort = ui.child(widget, "ABORT_BUTTON");
     let quit = ui.child(widget, "QUIT_BUTTON");
     let retry = ui.child(widget, "RETRY_BUTTON");
-    ui.node_mut(quit).visible = false;
+    ui.node_mut(abort).visible = on_quit.is_none();
+    ui.node_mut(quit).visible = on_quit.is_some();
+    if let Some(on_quit) = on_quit {
+        ui.button(quit).on_click = Some(on_quit);
+    }
     ui.node_mut(retry).visible = on_retry.is_some();
     let abort_click: Action = Rc::new(move |ui| {
         ui.close_window();

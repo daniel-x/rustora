@@ -77,6 +77,21 @@ impl TextNotificationsDisplayWidget {
         }
     }
 
+    /// `RemoveMostRecentNotification`.
+    pub fn remove_most_recent(ui: &mut Ui, id: WidgetId) {
+        let children = ui.node(id).children.clone();
+        let Some(&last) = children.last() else {
+            return;
+        };
+        let height = ui.node(last).bounds.h;
+        let spacing = ui.get::<TextNotificationsDisplayWidget>(id).item_spacing;
+        ui.remove_child(id, last);
+        ui.get::<TextNotificationsDisplayWidget>(id).expirations.pop();
+        for &c in &children[..children.len() - 1] {
+            ui.node_mut(c).bounds.y += height + spacing;
+        }
+    }
+
     /// `RemoveNotification`.
     fn remove_oldest(ui: &mut Ui, id: WidgetId) {
         if let Some(&first) = ui.node(id).children.first() {
