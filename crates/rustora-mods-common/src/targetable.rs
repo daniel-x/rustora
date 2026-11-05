@@ -243,3 +243,12 @@ impl INotifyCrushed for Crushable {
         kill_actor(self_, Some(crusher), &types);
     }
 }
+
+/// `ActorInfo.GetAllTargetTypes`.
+pub fn info_all_target_types(info: &rustora_engine::actor_info::ActorInfo) -> BitSet<TargetableType> {
+    let mut t = BitSet::default();
+    for tg in info.trait_infos::<TargetableInfo>() {
+        t = t.union(&tg.target_types);
+    }
+    t
+}

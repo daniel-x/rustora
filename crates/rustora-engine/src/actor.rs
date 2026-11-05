@@ -226,6 +226,11 @@ impl Actor {
         activity::skip_done(self.current_activity.borrow().clone())
     }
 
+    /// Drops the current activity without running its last tick, as `Chronoshiftable` does through reflection in C#.
+    pub fn clear_current_activity(&self) {
+        self.set_current_activity(None);
+    }
+
     fn set_current_activity(&self, a: Option<ActivityRef>) {
         *self.current_activity.borrow_mut() = a;
     }

@@ -31,6 +31,13 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("RejectsOrders", |n| load_info!(RejectsOrdersInfo, n));
     r.register("ValidateOrder", |n| load_info!(ValidateOrderInfo, n));
     r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
+    r.register("WithDisguisingInfantryBody", |n| {
+        let mut info = WithInfantryBodyInfo::default();
+        rustora_core::fieldloader::FieldLoad::load(&mut info, &n.yaml).map_err(|e| format!("Trait name {}: {}", n.display_name(), e))?;
+        info.instance_name = n.instance_name.clone();
+        info.disguising = true;
+        Ok(Rc::new(info))
+    });
     r.register("WithSpriteTurret", |n| load_info!(WithSpriteTurretInfo, n));
 }
 
@@ -155,6 +162,8 @@ pub struct WithInfantryBodyInfo {
     pub instance_name: Option<String>,
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
+    #[field(ignore)]
+    pub disguising: bool,
     pub min_idle_delay: i32,
     pub max_idle_delay: i32,
     pub move_sequence: String,
@@ -171,6 +180,7 @@ impl Default for WithInfantryBodyInfo {
         WithInfantryBodyInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
+            disguising: false,
             min_idle_delay: 30,
             max_idle_delay: 110,
             move_sequence: "run".into(),
@@ -206,6 +216,10 @@ pub struct WithInfantryBody {
     idle_delay: Cell<i32>,
     anim_state: Cell<AnimationState>,
     cosmetic_random: RefCell<MersenneTwister>,
+    disguise: OnceCell<Option<Rc<crate::infiltrate::Disguise>>>,
+    disguise_actor: RefCell<Option<Rc<rustora_engine::actor_info::ActorInfo>>>,
+    disguise_player: RefCell<Option<rustora_engine::player::PlayerRef>>,
+    disguise_body: RefCell<Option<Rc<WithInfantryBodyInfo>>>,
 }
 
 register_traits!(WithInfantryBody: ITick, INotifyAttack, INotifyIdle, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
@@ -227,6 +241,10 @@ info_impl!(WithInfantryBodyInfo => |info, init| {
         idle_delay: Cell::new(0),
         anim_state: Cell::new(AnimationState::Waiting),
         cosmetic_random: RefCell::new(MersenneTwister::new(0)),
+        disguise: OnceCell::new(),
+        disguise_actor: RefCell::new(None),
+        disguise_player: RefCell::new(None),
+        disguise_body: RefCell::new(None),
         info,
     });
     let weak = Rc::downgrade(&body);
@@ -267,11 +285,60 @@ impl INotifyCreated for WithInfantryBody {
 }
 
 impl WithInfantryBody {
+    /// `GetDisplayInfo`: a disguised body uses the infantry body of its disguise.
+    fn display_info(&self) -> Rc<WithInfantryBodyInfo> {
+        self.disguise_body.borrow().clone().unwrap_or_else(|| self.info.clone())
+    }
+
+    /// The part of `WithDisguisingInfantryBody.Tick` that follows a changed disguise.
+    fn update_disguise(&self, self_: &ActorRef) {
+        let Some(disguise) = self
+            .disguise
+            .get_or_init(|| self.info.disguising.then(|| self_.trait_::<crate::infiltrate::Disguise>()))
+        else {
+            return;
+        };
+        let (as_actor, as_player) = (disguise.as_actor(), disguise.as_player());
+        let same_actor = self.disguise_actor.borrow().as_ref().is_some_and(|a| Rc::ptr_eq(a, &as_actor));
+        let same_player = match (&*self.disguise_player.borrow(), &as_player) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if same_actor && same_player {
+            return;
+        }
+        self.play_stand_animation();
+        *self.disguise_body.borrow_mut() = None;
+        let mut image = None;
+        if let Some(player) = &as_player {
+            let renders = as_actor.trait_info::<crate::render::RenderSpritesInfo>();
+            let body = as_actor
+                .trait_infos::<WithInfantryBodyInfo>()
+                .into_iter()
+                .find(|b| b.base.enabled_by_default());
+            if let (Some(renders), Some(body)) = (renders, body) {
+                image = Some(renders.get_image(&as_actor, &player.faction));
+                *self.disguise_body.borrow_mut() = Some(body);
+            }
+        }
+        *self.disguise_actor.borrow_mut() = Some(as_actor);
+        *self.disguise_player.borrow_mut() = as_player;
+        let stand = self.display_info().stand_sequences.clone();
+        let sequence = self
+            .default_animation
+            .get_random_existing_sequence(&stand, &mut self.cosmetic_random.borrow_mut());
+        if let Some(s) = sequence {
+            let image = image.unwrap_or_else(|| self_.trait_::<RenderSprites>().get_image(self_));
+            self.default_animation.change_image(&image, &s);
+        }
+    }
+
     fn play_stand_animation(&self) {
         self.anim_state.set(AnimationState::Waiting);
         let sequence = self
             .default_animation
-            .get_random_existing_sequence(&self.info.stand_sequences, &mut self.cosmetic_random.borrow_mut());
+            .get_random_existing_sequence(&self.display_info().stand_sequences, &mut self.cosmetic_random.borrow_mut());
         if let Some(s) = sequence {
             self.default_animation.play_repeating(&self.normalize_infantry_sequence(&s));
         }
@@ -309,8 +376,9 @@ impl WithInfantryBody {
     }
 
     fn attacking(&self, a: &Armament, barrel: &Barrel) {
-        let mut sequence = self.info.default_attack_sequence.clone();
-        if let Some(list) = self.info.attack_sequences.get(&a.info.name).filter(|l| !l.is_empty()) {
+        let info = self.display_info();
+        let mut sequence = info.default_attack_sequence.clone();
+        if let Some(list) = info.attack_sequences.get(&a.info.name).filter(|l| !l.is_empty()) {
             sequence = Some(list[0].clone());
             if list.len() > 1 {
                 for (i, s) in list.iter().enumerate() {
@@ -343,6 +411,7 @@ impl INotifyAttack for WithInfantryBody {
 
 impl ITick for WithInfantryBody {
     fn tick(&self, self_: &ActorRef) {
+        self.update_disguise(self_);
         if let Some(r) = self.rsm() {
             let m = r.is_modifying_sequence();
             if self.was_modifying.get() != m {
@@ -355,7 +424,7 @@ impl ITick for WithInfantryBody {
         if (s != AnimationState::Moving || self.dirty.get()) && moving {
             self.anim_state.set(AnimationState::Moving);
             self.default_animation
-                .play_repeating(&self.normalize_infantry_sequence(&self.info.move_sequence));
+                .play_repeating(&self.normalize_infantry_sequence(&self.display_info().move_sequence));
         } else if ((s == AnimationState::Moving || self.dirty.get()) && !moving)
             || ((s == AnimationState::Idle || s == AnimationState::IdleAnimating) && !self_.is_idle())
         {
@@ -367,20 +436,18 @@ impl ITick for WithInfantryBody {
 
 impl INotifyIdle for WithInfantryBody {
     fn tick_idle(&self, self_: &ActorRef) {
-        if self.info.idle_sequences.is_empty() || self.is_modifying_sequence() {
+        let info = self.display_info();
+        if info.idle_sequences.is_empty() || self.is_modifying_sequence() {
             return;
         }
         let s = self.anim_state.get();
         if s == AnimationState::Waiting {
             self.anim_state.set(AnimationState::Idle);
             let w = self_.world();
-            let i = w.shared_random.borrow_mut().next_max(self.info.idle_sequences.len() as i32) as usize;
-            *self.idle_sequence.borrow_mut() = self.info.idle_sequences[i].clone();
-            self.idle_delay.set(
-                w.shared_random
-                    .borrow_mut()
-                    .next_range(self.info.min_idle_delay, self.info.max_idle_delay),
-            );
+            let i = w.shared_random.borrow_mut().next_max(info.idle_sequences.len() as i32) as usize;
+            *self.idle_sequence.borrow_mut() = info.idle_sequences[i].clone();
+            self.idle_delay
+                .set(w.shared_random.borrow_mut().next_range(info.min_idle_delay, info.max_idle_delay));
         } else if s == AnimationState::Idle && self.idle_delay.get() > 0 {
             self.idle_delay.set(self.idle_delay.get() - 1);
             if self.idle_delay.get() == 0 {

@@ -129,7 +129,13 @@ impl rustora_engine::render::IRender for RenderSprites {
         if self.info.editor_only {
             return;
         }
-        let owner = self_.owner();
+        let owner = self_
+            .cache()
+            .effective_owner
+            .as_ref()
+            .filter(|e| e.disguised())
+            .and_then(|e| e.owner())
+            .unwrap_or_else(|| self_.owner());
         for a in self.anims.borrow().iter() {
             if a.animation.disable_func.as_ref().is_some_and(|f| f()) {
                 continue;

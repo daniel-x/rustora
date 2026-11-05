@@ -172,6 +172,28 @@ pub trait INotifyOtherProduction {
     );
 }
 
+pub trait INotifyProximityOwnerChanged {
+    fn on_proximity_owner_changed(
+        &self,
+        self_: &ActorRef,
+        actor: &ActorRef,
+        old_owner: &rustora_engine::player::PlayerRef,
+        new_owner: &rustora_engine::player::PlayerRef,
+    );
+}
+
+pub trait INotifyDemolition {
+    fn demolishing(&self, self_: &ActorRef);
+}
+
+pub trait INotifyInfiltration {
+    fn infiltrating(&self, self_: &ActorRef);
+}
+
+pub trait INotifyInfiltrated {
+    fn infiltrated(&self, self_: &ActorRef, infiltrator: &ActorRef, types: BitSet<rustora_engine::terrain::TargetableType>);
+}
+
 pub trait INotifyBuildingPlaced {
     fn building_placed(&self, self_: &ActorRef);
 }

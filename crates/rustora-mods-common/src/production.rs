@@ -230,6 +230,10 @@ fn gather_owned_prerequisites(player: &PlayerRef, world: &World) -> HashMap<Stri
 }
 
 impl TechTree {
+    pub fn owner(&self) -> &PlayerRef {
+        &self.owner
+    }
+
     fn world(&self) -> Rc<World> {
         self.world.upgrade().expect("world alive")
     }

@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Port of `Traits/Cloak.cs` and `Traits/DetectCloaked.cs`. Rendering, sounds and cloak effects are left out.
-//! `INotifyDemolition`, `INotifyInfiltration` and `INotifySupportPower` are not wired yet.
+//! `INotifySupportPower` is not wired yet.
 
 use std::cell::{Cell, OnceCell};
 use std::rc::Rc;
@@ -148,6 +148,8 @@ register_traits!(
     INotifyDamage,
     INotifyUnloadCargo,
     INotifyLoadCargo,
+    INotifyDemolition,
+    INotifyInfiltration,
     INotifyAttack,
     rustora_engine::render::IRenderModifier,
     IVisibilityModifier,
@@ -427,6 +429,22 @@ impl INotifyDockHost for Cloak {
     fn undocked(&self, _self_: &ActorRef, _client: &ActorRef) {
         if self.info.uncloak_on.has(UncloakType::Dock) {
             self.is_docking.set(false);
+        }
+    }
+}
+
+impl INotifyDemolition for Cloak {
+    fn demolishing(&self, _self_: &ActorRef) {
+        if self.info.uncloak_on.has(UncloakType::Demolish) {
+            self.uncloak();
+        }
+    }
+}
+
+impl INotifyInfiltration for Cloak {
+    fn infiltrating(&self, _self_: &ActorRef) {
+        if self.info.uncloak_on.has(UncloakType::Infiltrate) {
+            self.uncloak();
         }
     }
 }

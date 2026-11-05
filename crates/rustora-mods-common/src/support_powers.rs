@@ -8,7 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use rustora_core::world_types::{WAngle, WDist, WRot, WVec};
+use rustora_core::world_types::{CPos, CVec, WAngle, WDist, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_info::TraitNode;
@@ -25,6 +25,7 @@ use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 use crate::activities::Wait;
+use crate::actor_map::WorldExt;
 use crate::aircraft::{AircraftInfo, Fly, RemoveSelf};
 use crate::attack::AttackBase;
 use crate::base::DeveloperMode;
@@ -39,6 +40,9 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("ParatroopersPower", |n| load_power(n, PowerKind::Paratroopers));
     r.register("GpsPower", |n| load_power(n, PowerKind::Gps));
     r.register("NukePower", |n| load_power(n, PowerKind::Nuke));
+    r.register("GrantExternalConditionPower", |n| load_power(n, PowerKind::GrantExternalCondition));
+    r.register("SpawnActorPower", |n| load_power(n, PowerKind::SpawnActor));
+    r.register("ChronoshiftPower", |n| load_power(n, PowerKind::Chronoshift));
 }
 
 pub trait INotifySupportPower {
@@ -53,6 +57,9 @@ pub enum PowerKind {
     Paratroopers,
     Gps,
     Nuke,
+    GrantExternalCondition,
+    SpawnActor,
+    Chronoshift,
 }
 
 impl PowerKind {
@@ -62,6 +69,9 @@ impl PowerKind {
             PowerKind::Paratroopers => "ParatroopersPower",
             PowerKind::Gps => "GpsPower",
             PowerKind::Nuke => "NukePower",
+            PowerKind::GrantExternalCondition => "GrantExternalConditionPower",
+            PowerKind::SpawnActor => "SpawnActorPower",
+            PowerKind::Chronoshift => "ChronoshiftPower",
         }
     }
 }
@@ -79,6 +89,8 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
         }
         PowerKind::Gps => {}
         PowerKind::Nuke => info.camera_remove_delay = 25,
+        PowerKind::GrantExternalCondition | PowerKind::SpawnActor => {}
+        PowerKind::Chronoshift => info.duration = 750,
     }
     info.order_name = format!("{}InfoOrder", kind.class_name());
     rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(|e| format!("Trait name {}: {}", node.display_name(), e))?;
@@ -161,6 +173,32 @@ pub struct SupportPowerInfo {
     pub trail_sequences: Vec<String>,
     pub trail_interval: i32,
     pub trail_delay: i32,
+    pub condition: Option<String>,
+    pub duration: i32,
+    pub dimensions: CVec,
+    pub footprint: String,
+    pub on_fire_sound: Option<String>,
+    pub valid_relationships: rustora_engine::player::PlayerRelationship,
+    pub sequence: String,
+    pub footprint_image: String,
+    pub footprint_sequence: String,
+    pub actor: Option<String>,
+    pub life_time: i32,
+    pub terrain: Option<Vec<String>>,
+    pub allow_under_shroud: bool,
+    pub deploy_sound: Option<String>,
+    pub effect_image: Option<String>,
+    pub effect_sequence: Option<String>,
+    pub effect_palette: Option<String>,
+    pub effect_palette_is_player_palette: bool,
+    pub target_overlay_palette: String,
+    pub valid_footprint_sequence: String,
+    pub invalid_footprint_sequence: String,
+    pub source_footprint_sequence: String,
+    pub kill_cargo: bool,
+    pub selection_cursor: String,
+    pub target_cursor: String,
+    pub target_blocked_cursor: String,
 }
 
 impl Default for SupportPowerInfo {
@@ -229,6 +267,32 @@ impl Default for SupportPowerInfo {
             trail_sequences: Vec::new(),
             trail_interval: 1,
             trail_delay: 1,
+            condition: None,
+            duration: 0,
+            dimensions: CVec::ZERO,
+            footprint: String::new(),
+            on_fire_sound: None,
+            valid_relationships: rustora_engine::player::PlayerRelationship::ALLY,
+            sequence: "active".into(),
+            footprint_image: "overlay".into(),
+            footprint_sequence: "target-select".into(),
+            actor: None,
+            life_time: 250,
+            terrain: None,
+            allow_under_shroud: true,
+            deploy_sound: None,
+            effect_image: None,
+            effect_sequence: None,
+            effect_palette: None,
+            effect_palette_is_player_palette: false,
+            target_overlay_palette: "terrain".into(),
+            valid_footprint_sequence: "target-valid".into(),
+            invalid_footprint_sequence: "target-invalid".into(),
+            source_footprint_sequence: "target-select".into(),
+            kill_cargo: true,
+            selection_cursor: "chrono-select".into(),
+            target_cursor: "chrono-target".into(),
+            target_blocked_cursor: "move-blocked".into(),
         }
     }
 }
@@ -345,7 +409,156 @@ impl SupportPower {
         }
     }
 
+    /// `SupportPower.CellsMatching` for this power's footprint.
+    pub fn cells_matching(&self, location: CPos) -> Vec<CPos> {
+        let dimensions = self.info.dimensions;
+        let footprint: Vec<char> = self.info.footprint.chars().filter(|c| !c.is_whitespace()).collect();
+        let (x, y) = (location.x() - (dimensions.x - 1) / 2, location.y() - (dimensions.y - 1) / 2);
+        let mut cells = Vec::new();
+        let mut index = 0;
+        for j in 0..dimensions.y {
+            for i in 0..dimensions.x {
+                if footprint[index] == 'x' {
+                    cells.push(CPos::new(x + i, y + j));
+                }
+                index += 1;
+            }
+        }
+        cells
+    }
+
+    fn can_grant(&self, a: &ActorRef) -> bool {
+        let source = self.self_.id as usize;
+        a.traits_implementing::<crate::experience::ExternalCondition>()
+            .iter()
+            .any(|t| Some(&t.info.condition) == self.info.condition.as_ref() && t.can_grant_condition(source))
+    }
+
+    /// `GrantExternalConditionPower.UnitsInRange`.
+    pub fn units_in_range(&self, xy: CPos) -> Vec<ActorRef> {
+        let world = self.self_.world();
+        let mut units: Vec<ActorRef> = Vec::new();
+        for t in self.cells_matching(xy) {
+            for a in world.actor_map().get_actors_at(t) {
+                if !units.iter().any(|u| u.id == a.id) {
+                    units.push(a);
+                }
+            }
+        }
+        let owner = self.self_.owner();
+        units.retain(|a| {
+            self.info
+                .valid_relationships
+                .has_relationship(owner.relationship_with(Some(&a.owner())))
+                && self.can_grant(a)
+        });
+        units
+    }
+
+    fn grant_external_condition(&self, self_: &ActorRef, order: &Order) {
+        if let Some(wsb) = self_.trait_or_default::<crate::render::WithSpriteBody>()
+            && wsb.default_animation.has_sequence(&self.info.sequence)
+        {
+            wsb.play_custom_animation(self_, &self.info.sequence, None);
+        }
+        let world = self_.world();
+        let pos = order.target.center_position();
+        if let Some(s) = &self.info.on_fire_sound {
+            sound::play_at(&world, SoundType::World, s, pos, 1.0);
+        }
+        let source = self_.id as usize;
+        for a in self.units_in_range(world.map().cell_containing(pos)) {
+            let external = a
+                .traits_implementing::<crate::experience::ExternalCondition>()
+                .into_iter()
+                .find(|t| Some(&t.info.condition) == self.info.condition.as_ref() && t.can_grant_condition(source));
+            if let Some(e) = external {
+                e.grant_condition(&a, source, self.info.duration, 0);
+            }
+        }
+    }
+
+    /// `ChronoshiftPower.UnitsInRange`.
+    pub fn chronoshift_units_in_range(&self, xy: CPos) -> Vec<ActorRef> {
+        let world = self.self_.world();
+        let mut units: Vec<ActorRef> = Vec::new();
+        for t in self.cells_matching(xy) {
+            for a in world.actor_map().get_actors_at(t) {
+                if !units.iter().any(|u| u.id == a.id) {
+                    units.push(a);
+                }
+            }
+        }
+        units.retain(|a| {
+            a.traits_implementing::<crate::chrono::Chronoshiftable>()
+                .iter()
+                .any(|c| !c.is_trait_disabled())
+        });
+        units
+    }
+
+    fn chronoshift(&self, self_: &ActorRef, order: &Order) {
+        let world = self_.world();
+        let target_delta = world.map().cell_containing(order.target.center_position()) - order.extra_location;
+        let shroud = self_.owner().shroud();
+        for target in self.chronoshift_units_in_range(order.extra_location) {
+            let cs = target
+                .traits_implementing::<crate::chrono::Chronoshiftable>()
+                .into_iter()
+                .find(|c| !c.is_trait_disabled());
+            let Some(cs) = cs else {
+                continue;
+            };
+            let target_cell = target.location() + target_delta;
+            if shroud.is_explored(target_cell) && cs.can_chronoshift_to(target_cell) {
+                cs.teleport(target_cell, self.info.duration, self.info.kill_cargo, self_);
+            }
+        }
+    }
+
+    /// `SpawnActorPower.Validate`; the shroud check of C# looks at the render player, so it can't affect the simulation.
+    pub fn validate_spawn(&self, world: &World, cell: CPos) -> bool {
+        world.map().contains(cell)
+            && self
+                .info
+                .terrain
+                .as_ref()
+                .is_none_or(|t| t.contains(&world.map().terrain_type_info(cell).ty))
+    }
+
+    fn spawn_actor(&self, self_: &ActorRef, pos: rustora_core::world_types::WPos, cell: CPos) {
+        let (info, owner) = (self.info.clone(), self_.owner());
+        self_.world().add_frame_end_task(Box::new(move |w| {
+            if let Some(s) = &info.deploy_sound {
+                sound::play_at(w, SoundType::World, s, pos, 1.0);
+            }
+            if let (Some(sequence), Some(palette)) = (info.effect_sequence.as_deref(), info.effect_palette.as_deref())
+                && !sequence.is_empty()
+                && !palette.is_empty()
+            {
+                let palette = rustora_engine::render::PaletteRef::resolve(Some(palette), info.effect_palette_is_player_palette, &owner);
+                let image = info.effect_image.as_deref().unwrap_or_default();
+                w.add_effect(crate::effects::SpriteEffect::at(w, pos, WAngle::ZERO, image, sequence, palette));
+            }
+            let actor = w.create_actor(
+                info.actor.as_deref().expect("SpawnActorPower requires Actor"),
+                ActorInits::new().with(LocationInit::new(cell)).with(OwnerInit::from_player(&owner)),
+            );
+            if info.life_time > -1 {
+                actor.queue_activity(Wait::new(info.life_time));
+                actor.queue_activity(RemoveSelf::new());
+            }
+        }));
+    }
+
     fn activate(&self, self_: &ActorRef, order: &Order) {
+        let spawn_at = (self.info.kind == PowerKind::SpawnActor).then(|| order.target.center_position());
+        let spawn_cell = spawn_at.map(|p| self_.world().map().cell_containing(p));
+        if let Some(cell) = spawn_cell
+            && !self.validate_spawn(&self_.world(), cell)
+        {
+            return;
+        }
         for n in self_.traits_implementing::<dyn INotifySupportPower>() {
             n.activated(self_);
         }
@@ -360,6 +573,9 @@ impl SupportPower {
                 self.send_paratroopers(self_, order.target.center_position(), facing);
             }
             PowerKind::Nuke => self.launch_nuke(self_, order.target.center_position()),
+            PowerKind::GrantExternalCondition => self.grant_external_condition(self_, order),
+            PowerKind::Chronoshift => self.chronoshift(self_, order),
+            PowerKind::SpawnActor => self.spawn_actor(self_, spawn_at.expect("set for this kind"), spawn_cell.expect("set for this kind")),
             PowerKind::Gps => {
                 let (a, info) = (self_.clone(), self.info.clone());
                 self_.world().add_frame_end_task(Box::new(move |w| {
@@ -622,6 +838,11 @@ pub struct SupportPowerInstance {
 }
 
 impl SupportPowerInstance {
+    /// `ResetTimer`.
+    pub fn reset_timer(&self) {
+        self.remaining_sub_ticks.set(self.total_ticks * 100);
+    }
+
     fn new(key: String, info: &SupportPowerInfo, manager: Weak<SupportPowerManager>) -> Rc<Self> {
         Rc::new(SupportPowerInstance {
             manager,
@@ -785,6 +1006,18 @@ info_impl!(SupportPowerManagerInfo => |_, init| {
 });
 
 impl SupportPowerManager {
+    /// `GetPowersForActor`.
+    pub fn get_powers_for_actor(&self, a: &ActorRef) -> Vec<Rc<SupportPowerInstance>> {
+        if !Rc::ptr_eq(&a.owner(), &self.self_.owner()) {
+            return Vec::new();
+        }
+        let powers = self.powers.borrow();
+        a.traits_implementing::<SupportPower>()
+            .iter()
+            .filter_map(|t| powers.get(&t.key()).cloned())
+            .collect()
+    }
+
     fn owns(&self, a: &ActorRef) -> bool {
         a.owner_opt().is_some_and(|o| Rc::ptr_eq(&o, &self.self_.owner()))
     }

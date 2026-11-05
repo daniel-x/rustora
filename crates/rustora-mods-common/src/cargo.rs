@@ -835,6 +835,7 @@ pub trait EnterHooks {
     fn on_enter_complete(&self, _self_: &ActorRef, _target_actor: &ActorRef) {}
     fn on_last_run(&self, _self_: &ActorRef) {}
     fn on_cancel(&self, _self_: &ActorRef) {}
+    fn on_actor_dispose(&self, _self_: &ActorRef) {}
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -965,6 +966,10 @@ impl Activity for Enter {
 
     fn on_last_run(&self, self_: &ActorRef) {
         self.hooks.on_last_run(self_);
+    }
+
+    fn on_actor_dispose(&self, self_: &ActorRef) {
+        self.hooks.on_actor_dispose(self_);
     }
 
     fn cancel(&self, self_: &ActorRef, keep_queue: bool) {

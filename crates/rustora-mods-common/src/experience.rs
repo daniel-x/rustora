@@ -607,10 +607,19 @@ pub struct ExternalCondition {
     pub info: Rc<ExternalConditionInfo>,
     permanent_tokens: RefCell<IndexMap<usize, IndexSet<i32>>>,
     timed_tokens: RefCell<Vec<TimedToken>>,
+    watchers: RefCell<Vec<Rc<dyn IConditionTimerWatcher>>>,
+    duration: Cell<i32>,
+    expires: Cell<i32>,
 }
 
-register_traits!(ExternalCondition: ITick);
-info_impl!(ExternalConditionInfo => |info, _init| Some(Rc::new(ExternalCondition { info, permanent_tokens: RefCell::new(IndexMap::new()), timed_tokens: RefCell::new(Vec::new()) })));
+/// `IConditionTimerWatcher`.
+pub trait IConditionTimerWatcher {
+    fn update(&self, duration: i32, remaining: i32);
+    fn condition(&self) -> &str;
+}
+
+register_traits!(ExternalCondition: ITick, INotifyOwnerChanged, INotifyCreated);
+info_impl!(ExternalConditionInfo => |info, _init| Some(Rc::new(ExternalCondition { info, permanent_tokens: RefCell::new(IndexMap::new()), timed_tokens: RefCell::new(Vec::new()), watchers: RefCell::new(Vec::new()), duration: Cell::new(0), expires: Cell::new(0) })));
 
 impl ExternalCondition {
     fn permanent_count(&self) -> i32 {
@@ -670,7 +679,11 @@ impl ExternalCondition {
             };
             match timed.iter().position(|t| t.expires >= new.expires) {
                 Some(i) => timed.insert(i, new),
-                None => timed.push(new),
+                None => {
+                    self.expires.set(new.expires);
+                    self.duration.set(duration);
+                    timed.push(new);
+                }
             }
         } else {
             self.permanent_tokens.borrow_mut().entry(source).or_default().insert(token);
@@ -700,6 +713,24 @@ impl ExternalCondition {
     }
 }
 
+impl INotifyCreated for ExternalCondition {
+    fn created(&self, self_: &ActorRef) {
+        *self.watchers.borrow_mut() = self_
+            .traits_implementing::<dyn IConditionTimerWatcher>()
+            .into_iter()
+            .filter(|w| w.condition() == self.info.condition)
+            .collect();
+    }
+}
+
+impl INotifyOwnerChanged for ExternalCondition {
+    fn on_owner_changed(&self, self_: &ActorRef, old: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef) {
+        for (a, t) in self_.world().actors_with_trait::<dyn INotifyProximityOwnerChanged>() {
+            t.on_proximity_owner_changed(&a, self_, old, new_owner);
+        }
+    }
+}
+
 impl ITick for ExternalCondition {
     fn tick(&self, self_: &ActorRef) {
         let mut timed = self.timed_tokens.borrow_mut();
@@ -715,6 +746,19 @@ impl ITick for ExternalCondition {
             count += 1;
         }
         timed.drain(..count);
+        let watchers = self.watchers.borrow();
+        if count > 0 && timed.is_empty() {
+            for w in watchers.iter() {
+                w.update(0, 0);
+            }
+            return;
+        }
+        if !timed.is_empty() {
+            let remaining = self.expires.get() - world_tick;
+            for w in watchers.iter() {
+                w.update(self.duration.get(), remaining);
+            }
+        }
     }
 }
 
