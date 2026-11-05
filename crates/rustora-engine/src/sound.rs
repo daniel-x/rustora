@@ -1009,6 +1009,14 @@ impl Sound {
         self.repeat.set(repeat);
     }
 
+    /// `Sound.SetMusicLooped`, without the settings update that the caller makes.
+    pub fn set_music_looped(&self, looped: bool) {
+        self.repeat.set(looped);
+        if let Some(music) = self.music.get() {
+            self.device.set_looping(music, looped);
+        }
+    }
+
     /// `Sound.PlayMusicThen`.
     pub fn play_music_then(&self, m: &Rc<MusicInfo>, then: MusicCallback) {
         if !m.exists.get() {

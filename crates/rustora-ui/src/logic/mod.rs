@@ -35,6 +35,7 @@ pub mod main_menu;
 pub mod map_chooser;
 pub mod map_preview;
 pub mod multiplayer;
+pub mod music_player;
 pub mod settings;
 pub mod sidebar;
 
@@ -370,6 +371,7 @@ pub fn create(
         "GameInfoObjectivesLogic" => game_info::objectives(ui, id),
         "GameInfoStatsLogic" => game_info::stats(ui, id, args),
         "DebugMenuLogic" => game_info::debug_menu(ui, id),
+        "MusicPlayerLogic" => music_player::create(ui, id, args),
         "SettingsLogic" => settings::create(ui, id, args, logic_args),
         "DisplaySettingsLogic" => settings::display(ui, id, args),
         "AudioSettingsLogic" => settings::audio(ui, id, args),

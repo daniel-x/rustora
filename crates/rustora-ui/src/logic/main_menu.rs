@@ -132,6 +132,13 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
 
     let extras = panel(ui, "EXTRAS_MENU", MenuType::Extras);
     on_click(ui, extras, "MAP_EDITOR_BUTTON", switch(MenuType::MapEditor));
+    let music_menu = menu.clone();
+    on_click(ui, extras, "MUSIC_BUTTON", move |ui| {
+        music_menu.set(MenuType::None);
+        let to_extras = music_menu.clone();
+        let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| to_extras.set(MenuType::Extras)));
+        ui.open_window("MUSIC_PANEL", args);
+    });
     on_click(ui, extras, "BACK_BUTTON", switch(MenuType::Main));
 
     let editor = panel(ui, "MAP_EDITOR_MENU", MenuType::MapEditor);

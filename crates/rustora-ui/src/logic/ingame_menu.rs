@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `MenuButtonsChromeLogic.cs` and `IngameMenuLogic.cs`. The menu has the abort, surrender and resume
-//! buttons; restart, load, save, music, settings and the editor buttons, the menu fade effect
+//! buttons; restart, load, save and the editor buttons, the menu fade effect
 //! and the leave notification are not ported.
 
 use std::cell::{Cell, RefCell};
@@ -228,6 +228,16 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
                         Some(show.clone()),
                         Some("dialog-surrender.cancel"),
                     );
+                }));
+            }
+            "MUSIC" => {
+                let button = add_button(ui, name, "menu-ingame.music");
+                let h = hide_menu.clone();
+                ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
+                    h.set(true);
+                    let h = h.clone();
+                    let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| h.set(false)));
+                    ui.open_window("MUSIC_PANEL", args);
                 }));
             }
             "SETTINGS" => {
