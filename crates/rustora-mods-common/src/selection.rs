@@ -24,6 +24,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Interactable", |n| load_info!(InteractableInfo, n));
     r.register("Selectable", |n| load_info!(SelectableInfo, n));
     r.register("Selection", |n| load_info!(SelectionInfo, n));
+    r.register("ControlGroups", |n| load_info!(ControlGroupsInfo, n));
 }
 
 /// `SelectionPriorityModifiers`.
@@ -287,5 +288,152 @@ impl IGameSaveTraitData for Selection {
             .filter_map(|id| world.get_actor_by_id(id))
             .collect();
         self.combine(&selected, false, false);
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ControlGroupsInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub groups: Vec<String>,
+}
+
+impl Default for ControlGroupsInfo {
+    fn default() -> Self {
+        ControlGroupsInfo {
+            instance_name: None,
+            groups: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"].map(String::from).to_vec(),
+        }
+    }
+}
+
+/// `Traits/World/ControlGroups.cs`: client state like [`Selection`]; the client sets the local player and calls
+/// [`ControlGroups::tick`] after each world tick.
+pub struct ControlGroups {
+    pub info: Rc<ControlGroupsInfo>,
+    groups: RefCell<Vec<Vec<ActorRef>>>,
+    local_player: RefCell<Option<PlayerRef>>,
+}
+
+register_traits!(ControlGroups: IGameSaveTraitData);
+info_impl!(ControlGroupsInfo => |info, _init| {
+    let groups = RefCell::new(vec![Vec::new(); info.groups.len()]);
+    Some(Rc::new(ControlGroups { info, groups, local_player: RefCell::new(None) }))
+});
+
+impl ControlGroups {
+    pub fn of(world: &World) -> Option<Rc<ControlGroups>> {
+        world.world_actor().trait_or_default::<ControlGroups>()
+    }
+
+    pub fn set_local_player(&self, p: Option<PlayerRef>) {
+        *self.local_player.borrow_mut() = p;
+    }
+
+    fn is_local(&self, a: &ActorRef) -> bool {
+        self.local_player.borrow().as_ref().is_some_and(|p| Rc::ptr_eq(p, &a.owner()))
+    }
+
+    pub fn count(&self) -> usize {
+        self.groups.borrow().len()
+    }
+
+    /// `SelectControlGroup`.
+    pub fn select_control_group(&self, selection: &Selection, group: usize) {
+        selection.combine(&self.actors_in_control_group(group), false, false);
+    }
+
+    /// `CreateControlGroup`.
+    pub fn create_control_group(&self, selection: &Selection, group: usize) {
+        let selected = selection.actors();
+        if selected.is_empty() {
+            return;
+        }
+        self.groups.borrow_mut()[group].clear();
+        self.add_selection_to_control_group(selection, group);
+    }
+
+    /// `AddSelectionToControlGroup`.
+    pub fn add_selection_to_control_group(&self, selection: &Selection, group: usize) {
+        let selected = selection.actors();
+        if selected.is_empty() {
+            return;
+        }
+        let mut groups = self.groups.borrow_mut();
+        for g in groups.iter_mut() {
+            g.retain(|a| !contains(&selected, a));
+        }
+        groups[group].extend(selected.into_iter().filter(|a| self.is_local(a)));
+    }
+
+    /// `CombineSelectionWithControlGroup`.
+    pub fn combine_selection_with_control_group(&self, selection: &Selection, group: usize) {
+        selection.combine(&self.actors_in_control_group(group), true, false);
+    }
+
+    /// `RemoveFromControlGroup`.
+    pub fn remove_from_control_group(&self, a: &ActorRef) {
+        for g in self.groups.borrow_mut().iter_mut() {
+            if let Some(i) = g.iter().position(|b| Rc::ptr_eq(a, b)) {
+                g.remove(i);
+                return;
+            }
+        }
+    }
+
+    /// `GetControlGroupForActor`.
+    pub fn control_group_for_actor(&self, a: &ActorRef) -> Option<usize> {
+        self.groups.borrow().iter().position(|g| contains(g, a))
+    }
+
+    /// `GetActorsInControlGroup`.
+    pub fn actors_in_control_group(&self, group: usize) -> Vec<ActorRef> {
+        self.groups.borrow()[group].iter().filter(|a| a.is_in_world()).cloned().collect()
+    }
+
+    /// `ITick.Tick`: keeps actors in transports, which are not in the world.
+    pub fn tick(&self) {
+        let mut groups = self.groups.borrow_mut();
+        for g in groups.iter_mut() {
+            g.retain(|a| !a.disposed() && self.is_local(a));
+        }
+    }
+}
+
+impl IGameSaveTraitData for ControlGroups {
+    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
+        let groups: Vec<MiniYamlNode> = self
+            .groups
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| !g.is_empty())
+            .map(|(i, g)| {
+                let ids: Vec<String> = g.iter().map(|a| a.id.to_string()).collect();
+                MiniYamlNode::with_value_str(i.to_string(), ids.join(", "))
+            })
+            .collect();
+        Some(vec![MiniYamlNode::new("Groups", MiniYaml::new(Some(String::new()), groups))])
+    }
+
+    fn resolve_trait_data(&self, self_: &ActorRef, data: &MiniYaml) {
+        let Some(node) = data.nodes.iter().find(|n| n.key == "Groups") else {
+            return;
+        };
+        let world = self_.world();
+        let mut groups = self.groups.borrow_mut();
+        for n in &node.value.nodes {
+            let Ok(i) = n.key.parse::<usize>() else { continue };
+            let Some(g) = groups.get_mut(i) else { continue };
+            g.extend(
+                n.value
+                    .value
+                    .as_deref()
+                    .unwrap_or("")
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<u32>().ok())
+                    .filter_map(|id| world.get_actor_by_id(id)),
+            );
+        }
     }
 }

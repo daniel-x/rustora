@@ -140,6 +140,9 @@ impl ShellWorld {
         }
         if let Some(ingame) = &self.ingame {
             ingame.selection.tick(ingame.render_player.as_ref());
+            if let Some(groups) = rustora_mods_common::selection::ControlGroups::of(&ingame.world) {
+                groups.tick();
+            }
         }
     }
 

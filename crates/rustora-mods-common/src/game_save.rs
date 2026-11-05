@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The client side `IGameSaveTraitData` traits. `World.RequestGameSave` numbers traits by their position in the list
-//! of all implementers, so `Selection` (in `selection.rs`), `ControlGroups` and `GameSaveViewportManager` must exist for the bot modules to
+//! of all implementers, so `Selection` (in `selection.rs`), `ControlGroups` (in `selection.rs`) and `GameSaveViewportManager` must exist for the bot modules to
 //! get the same numbers as in C# saves. Without a user interface yet they save empty state and ignore loaded state.
 
 use std::rc::Rc;
@@ -15,26 +15,7 @@ use rustora_engine::traits::IGameSaveTraitData;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 pub fn register(r: &mut TraitRegistry) {
-    r.register("ControlGroups", |n| load_info!(ControlGroupsInfo, n));
     r.register("GameSaveViewportManager", |n| load_info!(GameSaveViewportManagerInfo, n));
-}
-
-#[derive(Clone, Debug, Default, FieldLoad)]
-pub struct ControlGroupsInfo {
-    #[field(ignore)]
-    pub instance_name: Option<String>,
-}
-
-pub struct ControlGroups;
-register_traits!(ControlGroups: IGameSaveTraitData);
-info_impl!(ControlGroupsInfo => |_info, _init| Some(Rc::new(ControlGroups)));
-
-impl IGameSaveTraitData for ControlGroups {
-    fn issue_trait_data(&self, _actor: &ActorRef) -> Option<Vec<MiniYamlNode>> {
-        Some(vec![MiniYamlNode::new("Groups", MiniYaml::new(Some(String::new()), Vec::new()))])
-    }
-
-    fn resolve_trait_data(&self, _actor: &ActorRef, _data: &MiniYaml) {}
 }
 
 #[derive(Clone, Debug, Default, FieldLoad)]

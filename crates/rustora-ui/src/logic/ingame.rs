@@ -47,6 +47,9 @@ impl Ingame {
         world_default_cursor: String,
     ) -> Ingame {
         let selection = Selection::of(&world).unwrap_or_default();
+        if let Some(groups) = rustora_mods_common::selection::ControlGroups::of(&world) {
+            groups.set_local_player(local_player.clone());
+        }
         let default_order_generator: Rc<dyn OrderGenerator> = Rc::new(UnitOrderGenerator {
             world_select_cursor,
             world_default_cursor: world_default_cursor.clone(),
