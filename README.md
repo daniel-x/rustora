@@ -1,8 +1,8 @@
 # rustora
 
-A port of [OpenRA](https://www.openra.net) to Rust, aiming at full compatibility with OpenRA
-release-20250330 (data, replays, network play and save games). The first target is the Red Alert
-mod.
+A portvibe (a vibecoded port) of [OpenRA](https://www.openra.net) to Rust, aiming at full
+compatibility with OpenRA release-20250330 (data, replays, network play and save games). The first
+target is the Red Alert mod.
 
 The original game content is not part of this repository. It is installed by the content
 installer, like in OpenRA.
