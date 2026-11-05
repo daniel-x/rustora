@@ -22,6 +22,8 @@ pub struct UiQuad {
     pub gradient: Option<[[f32; 4]; 4]>,
     /// Corners of a solid rotated quad, replacing `dst`.
     pub corners: Option<[[f32; 2]; 4]>,
+    /// Samples with the pixel art scaling filter, which `Renderer.EnableAntialiasingFilter` turns on.
+    pub pixel_art: bool,
 }
 
 /// Quads in draw order with the clip rectangles that apply from a quad index on.
@@ -51,6 +53,7 @@ impl UiList {
             color,
             gradient: None,
             corners: None,
+            pixel_art: false,
         });
     }
 
@@ -64,6 +67,7 @@ impl UiList {
             color: colors[0],
             gradient: Some(colors),
             corners: None,
+            pixel_art: false,
         });
     }
 
@@ -78,6 +82,7 @@ impl UiList {
             src: [0.0, 0.0, 1.0, 1.0],
             color,
             gradient: None,
+            pixel_art: false,
             corners: Some([
                 [from[0] - n[0], from[1] - n[1]],
                 [from[0] + n[0], from[1] + n[1]],
@@ -94,6 +99,7 @@ struct UiVertex {
     pos: [f32; 2],
     uv: [f32; 2],
     color: [f32; 4],
+    pixel_art: f32,
 }
 
 struct Texture {
@@ -175,7 +181,7 @@ impl UiPass {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<UiVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32],
                 })],
             },
             fragment: Some(wgpu::FragmentState {
@@ -323,6 +329,7 @@ impl UiPass {
                     (true, true) => 2,
                     (false, true) => 3,
                 }),
+                pixel_art: if q.pixel_art { 1.0 } else { 0.0 },
             };
             if let Some([a, b, c, d]) = q.corners {
                 vertices.extend_from_slice(&[

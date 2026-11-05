@@ -35,11 +35,13 @@ const CONTRAST: TextStyle = TextStyle::Contrast {
 };
 
 impl DrawContext<'_> {
-    /// `WidgetUtils.DrawSpriteCentered` with a scale.
+    /// `WidgetUtils.DrawSpriteCentered` with a scale, inside `EnableAntialiasingFilter`.
     pub fn draw_frame_centered_scaled(&mut self, f: UiFrame, pos: (f32, f32), scale: f32) {
         let s = f.sprite;
         let (w, h) = (s.w as f32 * scale, s.h as f32 * scale);
+        self.antialiasing = true;
         self.draw_sprite_sized(s, pos.0 - w / 2.0 + f.offset.0 * scale, pos.1 - h / 2.0 + f.offset.1 * scale, w, h);
+        self.antialiasing = false;
     }
 }
 

@@ -74,6 +74,8 @@ pub struct DrawContext<'a> {
     pub renderer: &'a mut Renderer,
     pub list: &'a mut UiList,
     pub assets: RefMut<'a, Assets>,
+    /// `Renderer.EnableAntialiasingFilter`: sprites sample with the pixel art scaling filter.
+    pub antialiasing: bool,
     clips: Vec<Rect>,
 }
 
@@ -85,6 +87,7 @@ impl<'a> DrawContext<'a> {
             renderer,
             list,
             assets,
+            antialiasing: false,
             clips: Vec::new(),
         }
     }
@@ -118,6 +121,7 @@ impl<'a> DrawContext<'a> {
             color: WHITE,
             gradient: None,
             corners: None,
+            pixel_art: self.antialiasing,
         });
     }
 

@@ -266,6 +266,7 @@ impl SpriteFont {
                         color: tint,
                         gradient: None,
                         corners: None,
+                        pixel_art: false,
                     });
                 }
                 pen += source.advance;
@@ -299,6 +300,7 @@ impl SpriteFont {
                         color: tint,
                         gradient: None,
                         corners: None,
+                        pixel_art: false,
                     });
                 }
                 pen += g.advance;
