@@ -448,6 +448,7 @@ impl Client {
                 .join(&mod_data.manifest.metadata.version),
             content_installer_mod: installer_mod,
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
+            map_repository: Rc::default(),
             settings: Rc::new(RefCell::new(settings)),
             net: Rc::default(),
             lobby_rules: RefCell::new(Some(lobby_rules_lookup(server_mod.clone()))),
@@ -559,6 +560,7 @@ impl Client {
         }
         if ui_due {
             self.cursor.tick(&self.cursors);
+            rustora_ui::map_repository::MapRepository::poll(&mut self.ui);
             self.ui.tick();
         }
     }

@@ -100,15 +100,25 @@ impl Lobby {
         let Some(uid) = uid else {
             return;
         };
-        if self.map.borrow().as_ref().is_some_and(|m| m.uid == uid) {
+        let service = services(ui);
+        let map = service.maps.borrow_mut().entry(&uid);
+        let previous = self.map.borrow().clone();
+        if previous.as_ref().is_some_and(|m| Rc::ptr_eq(m, &map)) {
             return;
         }
-        let service = services(ui);
-        let map = service.maps.borrow().get(&uid);
-        if map.as_ref().is_some_and(|m| m.status == MapStatus::Available) {
-            self.net.borrow_mut().command("state NotReady");
+        let uid_changed = previous.as_ref().is_none_or(|m| m.uid != uid);
+        let became_available = map.status == MapStatus::Available && previous.is_none_or(|m| m.status != MapStatus::Available);
+        *self.map.borrow_mut() = Some(map.clone());
+        if uid_changed {
+            if map.status == MapStatus::Available {
+                self.net.borrow_mut().command("state NotReady");
+            } else if map.status != MapStatus::DownloadAvailable && service.settings.borrow().game.allow_downloading {
+                service.map_repository.query(&service.maps, [uid.as_str()]);
+            }
         }
-        *self.map.borrow_mut() = map;
+        if !uid_changed && !became_available {
+            return;
+        }
         let lookup = service.lobby_rules.borrow().clone();
         if let Some(rules) = lookup.and_then(|f| f(&uid)) {
             *self.factions.borrow_mut() = Rc::new(rules.factions.clone());
@@ -447,8 +457,9 @@ impl ChromeLogic for LobbyHandle {
     fn tick(&mut self, ui: &mut Ui) {
         let lobby = &self.0;
         let revision = lobby.net.borrow().revision;
-        if lobby.revision.replace(revision) != revision {
-            lobby.update_current_map(ui);
+        let lobby_changed = lobby.revision.replace(revision) != revision;
+        lobby.update_current_map(ui);
+        if lobby_changed {
             lobby.update_player_list(ui);
             lobby.update_spawn_occupants(ui);
             lobby.update_options();

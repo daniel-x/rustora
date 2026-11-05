@@ -2,8 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `MultiplayerLogic.cs`, `ServerListLogic.cs`, `DirectConnectLogic.cs` and `ServerCreationLogic.cs`.
-//! The mod version notices stay hidden, unknown maps are not downloaded and show as unavailable, and server
-//! creation reports UPnP as not supported.
+//! The mod version notices stay hidden, and server creation reports UPnP as not supported.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -11,6 +10,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
 
 use rustora_core::fieldloader::Color;
+use rustora_game::map_cache::MapStatus;
 use rustora_game::settings::MpGameFilters;
 use rustora_net::beacon::{BeaconLocation, Probe};
 use rustora_net::game_server::{GameServer, parse_game_list, parse_lan_game, server_list_url};
@@ -51,7 +51,12 @@ impl ServerEntry {
     fn new(ui: &Ui, game: GameServer) -> ServerEntry {
         let service = services(ui);
         let is_compatible = game.mod_id.as_deref() == Some(MOD_ID) && game.version.as_deref() == Some(service.mod_version.as_str());
-        let map_available = game.map.as_deref().and_then(|m| service.maps.borrow().get(m)).is_some();
+        let map_available = service.settings.borrow().game.allow_downloading
+            || game
+                .map
+                .as_deref()
+                .and_then(|m| service.maps.borrow().get(m))
+                .is_some_and(|m| m.status == MapStatus::Available);
         let title = game
             .mod_title
             .clone()
@@ -191,6 +196,15 @@ impl ServerList {
             return;
         }
         self.status.set(SearchStatus::Hidden);
+        let service = services(ui);
+        if service.settings.borrow().game.allow_downloading {
+            let filters = service.settings.borrow().game.mp_game_filters;
+            let uids = entries
+                .iter()
+                .filter(|e| !e.filtered(filters))
+                .filter_map(|e| e.game.map.as_deref());
+            service.map_repository.query(&service.maps, uids);
+        }
         for row in rows {
             ui.add_child(self.server_list, row);
         }

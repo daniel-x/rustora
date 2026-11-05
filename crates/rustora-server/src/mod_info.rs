@@ -14,7 +14,7 @@ use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::MiniYaml;
 use rustora_engine::actor_info::{TraitNode, parse_trait_nodes};
 use rustora_engine::terrain::TerrainInfo;
-use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
+use rustora_fs::{MapFs, Package, Platform};
 use rustora_game::color_picker::ColorPicker;
 use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
@@ -225,12 +225,25 @@ fn parse_fluent(text: &str, out: &mut HashMap<String, String>) {
     }
 }
 
-fn open_package(path: &Path) -> Option<Arc<dyn Package>> {
-    if path.is_dir() {
-        Some(Arc::new(Folder::new(path)))
-    } else {
-        Some(Arc::new(ZipPackage::open_file(path)?))
+/// The maps of the `MapFolders` of the manifest, as `MapCache.LoadMaps` finds them.
+fn scan_maps(data: &ModData) -> IndexMap<String, MapEntry> {
+    let mut maps = IndexMap::new();
+    let fs = &data.file_system;
+    for (name, _) in &data.manifest.map_folders {
+        let Some(folder) = fs.open_package(name.strip_prefix('~').unwrap_or(name)) else {
+            continue;
+        };
+        let mut entries = folder.contents();
+        entries.sort();
+        for entry in entries {
+            if let Some(package) = folder.open_package(&entry, fs)
+                && let Ok(map) = MapPackage::load(package.clone())
+            {
+                maps.entry(map.uid.clone()).or_insert(MapEntry { package, map });
+            }
+        }
     }
+    maps
 }
 
 impl ServerMod {
@@ -279,22 +292,7 @@ impl ServerMod {
             restricted_colors.insert(info.id, colors);
         }
 
-        let mut maps = IndexMap::new();
-        let dir = engine.join("mods").join(mod_id).join("maps");
-        let mut paths: Vec<_> = std::fs::read_dir(&dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?
-            .flatten()
-            .map(|e| e.path())
-            .collect();
-        paths.sort();
-        for p in paths {
-            if let Some(package) = open_package(&p)
-                && let Ok(map) = MapPackage::load(package.clone())
-            {
-                maps.insert(map.uid.clone(), MapEntry { package, map });
-            }
-        }
-
+        let maps = scan_maps(&data);
         Ok(ServerMod {
             data,
             default_speed,
@@ -336,6 +334,13 @@ impl ServerMod {
             .map(|(uid, _)| uid.clone())
     }
 
+    /// Adds the maps that were added to the map folders since the last scan.
+    pub fn rescan_maps(&mut self) {
+        for (uid, entry) in scan_maps(&self.data) {
+            self.maps.entry(uid).or_insert(entry);
+        }
+    }
+
     pub fn map_exists(&self, uid: &str) -> bool {
         self.maps.contains_key(uid)
     }
@@ -361,6 +366,9 @@ impl ServerMod {
     pub fn map_info(&mut self, uid: &str) -> Result<Rc<MapInfo>, String> {
         if let Some(i) = self.infos.get(uid) {
             return Ok(i.clone());
+        }
+        if !self.maps.contains_key(uid) {
+            self.rescan_maps();
         }
         let info = Rc::new(self.load_map_info(uid)?);
         self.infos.insert(uid.to_string(), info.clone());

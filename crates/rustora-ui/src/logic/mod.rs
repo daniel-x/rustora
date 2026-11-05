@@ -59,6 +59,8 @@ pub struct Services {
     pub content_installer_mod: Option<String>,
     pub settings: Rc<RefCell<Settings>>,
     pub maps: Rc<RefCell<MapCache>>,
+    /// `WebServices.MapRepository`.
+    pub map_repository: Rc<crate::map_repository::MapRepository>,
     pub net: Net,
     /// Reads the lobby rules of a map. The client binary sets it.
     pub lobby_rules: RefCell<Option<LobbyRulesLookup>>,
@@ -90,6 +92,7 @@ impl Default for Services {
             content_installer_mod: None,
             settings: Rc::new(RefCell::new(Settings::load("", &[]))),
             maps: Rc::default(),
+            map_repository: Rc::default(),
             net: Rc::default(),
             lobby_rules: RefCell::new(None),
             color_rules: RefCell::new(None),

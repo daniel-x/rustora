@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Port of `MapCache.cs` and the local part of `MapPreview.cs`.
+//! Port of `MapCache.cs` and `MapPreview.cs`. The HTTP requests of the remote map queries and downloads are made by
+//! the client; this module applies their results.
 //!
-//! Not ported: remote map queries and downloads, minimap generation for maps without `map.png`, and the directory
+//! Not ported: the custom rules of remote maps, minimap generation for maps without `map.png`, and the directory
 //! watcher.
 
 use std::rc::Rc;
@@ -47,6 +48,9 @@ pub enum MapStatus {
     Available,
     Unavailable,
     Searching,
+    DownloadAvailable,
+    Downloading,
+    DownloadError,
 }
 
 /// `MapVisibility` as flags.
@@ -93,7 +97,8 @@ pub struct MapPlayer {
     pub allow_bots: bool,
 }
 
-/// Port of `MapPreview` for a map on disk.
+/// Port of `MapPreview`. A map that is not on disk has no parent package.
+#[derive(Clone)]
 pub struct MapPreview {
     pub uid: String,
     pub map_format: i32,
@@ -112,15 +117,85 @@ pub struct MapPreview {
     pub visibility: MapVisibility,
     pub modified_date: SystemTime,
     pub package_name: String,
-    parent: Arc<dyn Package>,
+    /// The size of a running download in bytes, zero before the server sent it.
+    pub download_bytes: i64,
+    pub download_percentage: i32,
+    parent: Option<Arc<dyn Package>>,
     /// The name of the map package inside the parent package.
     entry: String,
 }
 
 impl MapPreview {
+    /// The `MapPreview` constructor for a uid that is not known locally.
+    pub fn unknown(uid: &str, grid_type: MapGridType) -> MapPreview {
+        MapPreview {
+            uid: uid.to_string(),
+            map_format: 0,
+            title: "Unknown Map".into(),
+            categories: vec!["Unknown".into()],
+            author: "Unknown Author".into(),
+            tile_set: "unknown".into(),
+            players: Vec::new(),
+            player_count: 0,
+            spawn_points: Vec::new(),
+            grid_type,
+            bounds: Rectangle::default(),
+            minimap_png: None,
+            status: MapStatus::Unavailable,
+            class: MapClassification::Unknown,
+            visibility: MapVisibility::LOBBY,
+            modified_date: SystemTime::UNIX_EPOCH,
+            package_name: String::new(),
+            download_bytes: 0,
+            download_percentage: 0,
+            parent: None,
+            entry: String::new(),
+        }
+    }
+
     /// Port of `MapPreview.Package`.
     pub fn open_package(&self, fs: &FileSystem) -> Option<Arc<dyn Package>> {
-        self.parent.open_package(&self.entry, fs)
+        self.parent.as_ref()?.open_package(&self.entry, fs)
+    }
+
+    /// Port of `UpdateRemoteSearch` for the `DownloadAvailable` status, with `yaml` as the `RemoteMapData` of the map.
+    fn apply_remote_data(&mut self, yaml: &MiniYaml, compatibility: &[String]) -> Result<(), GameError> {
+        use base64::Engine;
+        let get = |key: &str| yaml.nodes.iter().find(|n| n.key == key).map(|n| n.value.value_str());
+        let base64 = |key: &str| -> Result<Vec<u8>, GameError> {
+            base64::engine::general_purpose::STANDARD
+                .decode(get(key).unwrap_or_default().trim())
+                .map_err(|e| GameError::Data(format!("{key}: {e}")))
+        };
+        if !get("downloading").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) {
+            self.status = MapStatus::Unavailable;
+            return Ok(());
+        }
+        self.title = get("title").unwrap_or_default().to_string();
+        self.categories = get("categories").map_or_else(Vec::new, |v| {
+            v.split(',').map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect()
+        });
+        self.author = get("author").unwrap_or_default().to_string();
+        self.player_count = get("players").map_or(Ok(0), |v| field("players", v))?;
+        self.bounds = get("bounds").map_or(Ok(Rectangle::default()), |v| field("bounds", v))?;
+        self.tile_set = get("tileset").unwrap_or_default().to_string();
+        self.map_format = get("mapformat").map_or(Ok(0), |v| field("mapformat", v))?;
+        let spawns: Vec<i32> = get("spawnpoints").map_or(Ok(Vec::new()), |v| field("spawnpoints", v))?;
+        self.spawn_points = spawns.as_chunks::<2>().0.iter().map(|[x, y]| CPos::new(*x, *y)).collect();
+        if get("map_grid_type").is_some_and(|v| v.trim() == "RectangularIsometric") {
+            self.grid_type = MapGridType::RectangularIsometric;
+        }
+        self.minimap_png = base64("minimap").ok();
+        let players = String::from_utf8_lossy(&base64("players_block")?).into_owned();
+        let players = MiniYaml::from_str(&players, "players_block", true)?;
+        self.players = players
+            .iter()
+            .find(|n| n.key == "Players")
+            .map_or_else(|| map_players(&players), |n| map_players(&n.value.nodes));
+        if !compatibility.iter().any(|c| Some(c.as_str()) == get("game_mod")) {
+            self.status = MapStatus::Unavailable;
+        }
+        Ok(())
     }
 
     /// Port of `IsSuitableInitialMap`.
@@ -234,26 +309,46 @@ fn preview_from_package(
         visibility: text("Visibility").map_or(MapVisibility::LOBBY, |v| MapVisibility::parse(&v)),
         modified_date,
         package_name: name,
-        parent: parent.clone(),
+        download_bytes: 0,
+        download_percentage: 0,
+        parent: Some(parent.clone()),
         entry: entry.to_string(),
     })
 }
 
 /// Port of `MapCache`.
-#[derive(Default)]
 pub struct MapCache {
     pub previews: IndexMap<String, Rc<MapPreview>>,
+    grid_type: MapGridType,
+    compatibility: Vec<String>,
+    /// The first `User` map folder with its path on disk, where downloaded maps go.
+    user_folder: Option<(Arc<dyn Package>, std::path::PathBuf)>,
+}
+
+impl Default for MapCache {
+    fn default() -> Self {
+        MapCache {
+            previews: IndexMap::new(),
+            grid_type: MapGridType::Rectangular,
+            compatibility: Vec::new(),
+            user_folder: None,
+        }
+    }
 }
 
 impl MapCache {
     /// Port of `LoadMaps`. A map that fails to load is skipped with a log line.
     pub fn load(mod_data: &ModData) -> MapCache {
-        let mut cache = MapCache::default();
         let manifest = &mod_data.manifest;
         let compatibility = &manifest.map_compatibility;
         let grid_type = match manifest.section("MapGrid").and_then(|g| g.nodes.iter().find(|n| n.key == "Type")) {
             Some(node) if node.value.value_str() == "RectangularIsometric" => MapGridType::RectangularIsometric,
             _ => MapGridType::Rectangular,
+        };
+        let mut cache = MapCache {
+            grid_type,
+            compatibility: compatibility.clone(),
+            ..MapCache::default()
         };
         let fs = &mod_data.file_system;
         for (name, class) in &manifest.map_folders {
@@ -269,6 +364,9 @@ impl MapCache {
             let Some(folder) = fs.open_package(name) else {
                 continue;
             };
+            if class == MapClassification::User && cache.user_folder.is_none() && std::path::Path::new(&resolved).is_dir() {
+                cache.user_folder = Some((folder.clone(), resolved.clone().into()));
+            }
             for entry in folder.contents() {
                 let Some(package) = folder.open_package(&entry, fs) else {
                     continue;
@@ -286,6 +384,67 @@ impl MapCache {
 
     pub fn get(&self, uid: &str) -> Option<Rc<MapPreview>> {
         self.previews.get(uid).cloned()
+    }
+
+    /// The `MapCache` indexer: the preview of `uid`, added as an unknown map when the cache lacks it.
+    pub fn entry(&mut self, uid: &str) -> Rc<MapPreview> {
+        let grid_type = self.grid_type;
+        self.previews
+            .entry(uid.to_string())
+            .or_insert_with(|| Rc::new(MapPreview::unknown(uid, grid_type)))
+            .clone()
+    }
+
+    /// Replaces the preview of `uid` with a changed copy. Holders of the old `Rc` keep the old state.
+    pub fn update(&mut self, uid: &str, change: impl FnOnce(&mut MapPreview)) {
+        let mut preview = (*self.entry(uid)).clone();
+        change(&mut preview);
+        self.previews.insert(uid.to_string(), Rc::new(preview));
+    }
+
+    /// Port of `UpdateRemoteSearch`. `yaml` is the `RemoteMapData` for the `DownloadAvailable` status.
+    pub fn update_remote_search(&mut self, uid: &str, status: MapStatus, yaml: Option<&MiniYaml>) {
+        let compatibility = self.compatibility.clone();
+        self.update(uid, |preview| {
+            preview.status = status;
+            preview.class = MapClassification::Remote;
+            if let (MapStatus::DownloadAvailable, Some(yaml)) = (status, yaml)
+                && let Err(e) = preview.apply_remote_data(yaml, &compatibility)
+            {
+                log::debug!("Failed parsing mapserver response: {e}");
+            }
+        });
+    }
+
+    /// The install part of `MapPreview.Install`: writes the downloaded `data` as `filename` into the user map folder
+    /// and loads it in place of the remote preview.
+    pub fn install(&mut self, uid: &str, filename: &str, data: &[u8]) -> Result<(), GameError> {
+        let (folder, path) = self
+            .user_folder
+            .clone()
+            .ok_or_else(|| GameError::Data("Map install directory not found".into()))?;
+        let filename = std::path::Path::new(filename)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .ok_or_else(|| GameError::Data(format!("invalid map file name {filename}")))?;
+        std::fs::write(path.join(filename), data).map_err(|e| GameError::Data(e.to_string()))?;
+        log::debug!("Downloaded map to '{filename}'");
+        let package: Arc<dyn Package> = Arc::new(
+            rustora_fs::ZipPackage::open_file(&path.join(filename)).ok_or_else(|| GameError::Data(format!("cannot open {filename}")))?,
+        );
+        let preview = preview_from_package(
+            &package,
+            &folder,
+            filename,
+            MapClassification::User,
+            &self.compatibility,
+            self.grid_type,
+        )?;
+        if preview.uid != uid {
+            log::warn!("Downloaded map {filename} has the uid {} instead of {uid}", preview.uid);
+        }
+        self.previews.insert(preview.uid.clone(), Rc::new(preview));
+        Ok(())
     }
 
     /// Port of `MapPreview.Delete` and the cache update after it.
@@ -317,5 +476,37 @@ impl MapCache {
             .values()
             .find(|m| usable(m))
             .map_or_else(String::new, |m| m.uid.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn applies_remote_map_data() {
+        let players = "PlayerReference@Multi0:\n\tName: Multi0\n\tPlayable: True\n";
+        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, players);
+        let text = format!(
+            "abc:\n\ttitle: Freezer\n\tauthor: Upps\n\tplayers: 2\n\tgame_mod: ra\n\tbounds: 1,1,100,90\n\tspawnpoints: 85,74, 16,17\n\ttileset: SNOW\n\tdownloading: True\n\tmapformat: 12\n\tmap_grid_type: Rectangular\n\tcategories: RAGL-17\n\tplayers_block: {encoded}\n\tminimap: iVBO\n"
+        );
+        let nodes = MiniYaml::from_str(&text, "test", true).unwrap();
+        let mut cache = MapCache {
+            compatibility: vec!["ra".into()],
+            ..MapCache::default()
+        };
+        cache.update_remote_search("abc", MapStatus::DownloadAvailable, Some(&nodes[0].value));
+        let map = cache.get("abc").unwrap();
+        assert_eq!(map.status, MapStatus::DownloadAvailable);
+        assert_eq!(map.class, MapClassification::Remote);
+        assert_eq!((map.title.as_str(), map.author.as_str(), map.player_count), ("Freezer", "Upps", 2));
+        assert_eq!(map.spawn_points, vec![CPos::new(85, 74), CPos::new(16, 17)]);
+        assert_eq!(map.categories, vec!["RAGL-17".to_string()]);
+        assert_eq!(map.players.len(), 1);
+        assert!(map.players[0].playable);
+
+        cache.compatibility = vec!["cnc".into()];
+        cache.update_remote_search("cnc", MapStatus::DownloadAvailable, Some(&nodes[0].value));
+        assert_eq!(cache.get("cnc").unwrap().status, MapStatus::Unavailable);
     }
 }

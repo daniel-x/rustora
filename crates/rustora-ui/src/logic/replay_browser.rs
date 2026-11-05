@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use rustora_game::map_cache::{MapPreview, MapStatus};
+use rustora_game::map_cache::{MapCache, MapPreview, MapStatus};
 use rustora_net::game_information::{GameInformation, GamePlayer, ReplayMetadata, WinState};
 
 use super::map_preview::{GetMap, MAP_STATUS_PLAYABLE};
@@ -263,7 +263,7 @@ pub fn prompt_confirm_replay_compatibility(ui: &mut Ui, meta: Option<&ReplayMeta
 }
 
 fn map_preview(ui: &Ui, uid: Option<&str>) -> Option<Rc<MapPreview>> {
-    uid.and_then(|uid| services(ui).maps.borrow().get(uid))
+    uid.map(|uid| services(ui).maps.borrow_mut().entry(uid))
 }
 
 fn map_available(ui: &Ui, uid: Option<&str>) -> bool {
@@ -308,6 +308,12 @@ impl Browser {
         self.select(ui, first);
     }
 
+    /// The map of the selected replay as the map cache has it now.
+    fn current_map(&self, maps: &RefCell<MapCache>) -> Option<Rc<MapPreview>> {
+        let map = self.map.borrow();
+        map.as_ref().map(|m| maps.borrow().get(&m.uid).unwrap_or_else(|| m.clone()))
+    }
+
     /// `SelectReplay`.
     fn select(self: &Rc<Self>, ui: &mut Ui, entry: Option<Rc<ReplayEntry>>) {
         *self.selected.borrow_mut() = entry.clone();
@@ -316,6 +322,13 @@ impl Browser {
         let Some(info) = info else {
             return;
         };
+        let service = services(ui);
+        if let Some(uid) = info.root.map_uid.as_deref()
+            && service.settings.borrow().game.allow_downloading
+            && self.map.borrow().as_ref().is_none_or(|m| m.status == MapStatus::Unavailable)
+        {
+            service.map_repository.query(&service.maps, [uid]);
+        }
         let time = format_time(info.duration_seconds() as i32, 1000);
         *self.duration.borrow_mut() = message_with(ui, "label-duration", &[("time", MessageArg::Text(&time))]);
         *self.occupants.borrow_mut() = info
@@ -911,10 +924,10 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
 
     let watch = ui.child(widget, "WATCH_BUTTON");
     {
-        let b = Rc::downgrade(&browser);
+        let (b, maps) = (Rc::downgrade(&browser), services(ui).maps.clone());
         ui.button(watch).is_disabled = Some(Rc::new(move || {
             b.upgrade()
-                .is_none_or(|b| b.selected.borrow().is_none() || b.map.borrow().as_ref().is_none_or(|m| m.status != MapStatus::Available))
+                .is_none_or(|b| b.selected.borrow().is_none() || b.current_map(&maps).is_none_or(|m| m.status != MapStatus::Available))
         }));
         let b = Rc::downgrade(&browser);
         ui.button(watch).on_click = Some(Rc::new(move |ui| {
@@ -931,8 +944,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         ui.set_visible_fn(id, move || b.upgrade().is_some_and(|b| b.selected.borrow().is_some()));
     }
     let get_map: GetMap = {
-        let b = Rc::downgrade(&browser);
-        Rc::new(move || (b.upgrade().and_then(|b| b.map.borrow().clone()), MAP_STATUS_PLAYABLE))
+        let (b, maps) = (Rc::downgrade(&browser), services(ui).maps.clone());
+        Rc::new(move || (b.upgrade().and_then(|b| b.current_map(&maps)), MAP_STATUS_PLAYABLE))
     };
     let get_occupants: Getter<HashMap<i32, SpawnOccupant>> = {
         let b = Rc::downgrade(&browser);
