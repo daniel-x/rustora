@@ -296,7 +296,7 @@ pub fn objectives(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>>
     };
     let panel = ui.child(widget, "OBJECTIVES_PANEL");
     let template = ui.child(panel, "OBJECTIVE_TEMPLATE");
-    let player = ingame.render_player.clone().or_else(|| ingame.local_player.clone());
+    let player = ingame.render_player().clone().or_else(|| ingame.local_player.clone());
     let Some((player, mo)) = player.and_then(|p| {
         let mo = p.player_actor().trait_or_default::<MissionObjectives>()?;
         Some((p, mo))
@@ -493,6 +493,23 @@ fn bind_row_actions(ui: &mut Ui, item: WidgetId, ctx: &KickContext, client: &Cli
     });
 }
 
+/// The text getter of `WidgetUtils.BindPlayerNameAndStatus`, where `name` is `ResolvedPlayerName`.
+pub(crate) fn player_name_and_status(ui: &Ui, label: WidgetId, world: &World, player: &PlayerRef, name: &str, net: &Net) -> Getter<String> {
+    let variants = player_name_variants(ui, label, name);
+    let (p, n, index) = (player.clone(), net.clone(), player.client_index);
+    let has_client = world.lobby_info.client_with_index(index).is_some();
+    Rc::new(move || {
+        if has_client && client_state(&n, index) == Some(ClientState::Disconnected) {
+            return variants[3].clone();
+        }
+        match p.win_state.get() {
+            WinState::Won => variants[1].clone(),
+            WinState::Lost => variants[2].clone(),
+            WinState::Undefined => variants[0].clone(),
+        }
+    })
+}
+
 /// The text of `WidgetUtils.BindPlayerNameAndStatus` for each status, truncated to the label.
 fn player_name_variants(ui: &Ui, label: WidgetId, name: &str) -> [String; 4] {
     let font = ui.label(label).font.clone();
@@ -637,21 +654,10 @@ pub fn stats(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn
 
             let name_label = ui.child(item, "NAME");
             let name = resolved_player_name(ui, &world, &pp);
-            let variants = player_name_variants(ui, name_label, &name);
+            let text = player_name_and_status(ui, name_label, &world, &pp, &name, &net);
             {
-                let (p, n, index) = (pp.clone(), net.clone(), pp.client_index);
-                let has_client = world.lobby_info.client_with_index(index).is_some();
                 let mut l = ui.label(name_label);
-                l.get_text = Some(Rc::new(move || {
-                    if has_client && client_state(&n, index) == Some(ClientState::Disconnected) {
-                        return variants[3].clone();
-                    }
-                    match p.win_state.get() {
-                        WinState::Won => variants[1].clone(),
-                        WinState::Lost => variants[2].clone(),
-                        WinState::Undefined => variants[0].clone(),
-                    }
-                }));
+                l.get_text = Some(text);
                 let color = pp.color;
                 l.get_color = Some(Rc::new(move || color));
             }

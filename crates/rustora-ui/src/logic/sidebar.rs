@@ -780,14 +780,14 @@ pub fn world_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs
                 if !o.non_combatant && t.info.show_owner_row {
                     owner_player = Some(o.clone());
                 }
-                let stance = o.relationship_with(ingame.render_player.as_deref());
+                let stance = o.relationship_with(ingame.render_player().as_deref());
                 let resolve = |key: &str| message(ui, key);
                 label_string = t.info.tooltip_for_player_stance(stance, &resolve);
                 let sell_mode = ingame.order_generator().button_order() == Some(crate::button_orders::ButtonOrder::Sell);
                 let lines: Vec<String> = actor
                     .traits_implementing::<dyn IProvideTooltipInfo>()
                     .into_iter()
-                    .filter(|i| i.is_tooltip_visible(actor, ingame.render_player.as_ref(), sell_mode))
+                    .filter(|i| i.is_tooltip_visible(actor, ingame.render_player().as_ref(), sell_mode))
                     .map(|i| i.tooltip_text(actor, &resolve))
                     .collect();
                 extra = lines.join("\n");

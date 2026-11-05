@@ -137,11 +137,12 @@ impl RadarWidget {
         let b = self.bounds;
         let mut px = self.terrain_with_resources(ingame);
         let world = &ingame.world;
-        let viewer = ingame.render_player.as_ref().or(ingame.local_player.as_ref());
+        let render_player = ingame.render_player();
+        let viewer = render_player.as_ref().or(ingame.local_player.as_ref());
         if self.is_enabled.as_ref().is_none_or(|f| f()) {
             let mut cells = Vec::new();
             for (a, t) in world.actors_with_trait::<AppearsOnRadar>() {
-                let obscured = ingame.render_player.is_some() && !a.can_be_viewed_by_player(ingame.render_player.as_ref());
+                let obscured = render_player.is_some() && !a.can_be_viewed_by_player(render_player.as_ref());
                 if !a.is_in_world() || obscured {
                     continue;
                 }
@@ -154,7 +155,7 @@ impl RadarWidget {
                 }
             }
         }
-        if let Some(player) = &ingame.render_player {
+        if let Some(player) = &render_player {
             let shroud = player.shroud();
             for y in b.y..b.bottom() {
                 for x in b.x..b.right() {
@@ -178,7 +179,12 @@ impl RadarWidget {
             return;
         };
         let map = ingame.world.map();
-        for ping in pings.pings.borrow().iter().filter(|p| p.is_visible(ingame.render_player.as_ref())) {
+        for ping in pings
+            .pings
+            .borrow()
+            .iter()
+            .filter(|p| p.is_visible(ingame.render_player().as_ref()))
+        {
             let (x, y) = self.cell_to_minimap_pixel(map.cell_containing(ping.position));
             let points = ping.points((x as f32, y as f32));
             let color = crate::font::premultiplied(ping.color);

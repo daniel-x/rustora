@@ -26,7 +26,7 @@ pub struct Ingame {
     /// `World.LocalPlayer`.
     pub local_player: Option<PlayerRef>,
     /// `World.RenderPlayer`.
-    pub render_player: Option<PlayerRef>,
+    render_player: RefCell<Option<PlayerRef>>,
     pub screen_map: RefCell<ScreenMap>,
     pub selection: Rc<Selection>,
     pub world_sprites: Rc<dyn WorldSprites>,
@@ -39,6 +39,18 @@ pub struct Ingame {
 }
 
 impl Ingame {
+    /// `World.RenderPlayer`.
+    pub fn render_player(&self) -> Option<PlayerRef> {
+        self.render_player.borrow().clone()
+    }
+
+    /// The `World.RenderPlayer` setter: only observers and players with an unlocked render player can change it.
+    pub fn set_render_player(&self, player: Option<PlayerRef>) {
+        if self.local_player.as_ref().is_none_or(|p| p.unlocked_render_player()) {
+            *self.render_player.borrow_mut() = player;
+        }
+    }
+
     /// `world_select_cursor` and `world_default_cursor` are the chrome metrics `WorldSelectCursor` and
     /// `WorldDefaultCursor`.
     pub fn new(
@@ -62,7 +74,7 @@ impl Ingame {
         Ingame {
             world,
             viewport,
-            render_player: local_player.clone(),
+            render_player: RefCell::new(local_player.clone()),
             local_player,
             screen_map: RefCell::default(),
             selection,
@@ -111,13 +123,14 @@ impl Ingame {
 
     fn order_context<R>(&self, use_classic_mouse_style: bool, selection_deadzone: i32, f: impl FnOnce(&OrderContext) -> R) -> R {
         let screen_map = self.screen_map.borrow();
+        let render_player = self.render_player();
         let cancel = || self.cancel_input_mode();
         let ctx = OrderContext {
             world: &self.world,
             screen_map: &screen_map,
             selection: &self.selection,
             local_player: self.local_player.as_ref(),
-            render_player: self.render_player.as_ref(),
+            render_player: render_player.as_ref(),
             use_classic_mouse_style,
             selection_deadzone,
             world_default_cursor: self.world_default_cursor.clone(),

@@ -65,7 +65,7 @@ fn single_hotkey(
 /// `World.RenderPlayer ?? World.LocalPlayer`, as the owner test of the cycle hotkeys.
 fn is_viewed(ingame: &Ingame, a: &ActorRef) -> bool {
     ingame
-        .render_player
+        .render_player()
         .as_ref()
         .or(ingame.local_player.as_ref())
         .is_some_and(|p| Rc::ptr_eq(p, &a.owner()))
@@ -234,7 +234,7 @@ fn select_all_units(ui: &mut Ui, ingame: &Rc<Ingame>, e: &KeyInput) -> bool {
         return false;
     }
     let (players, on_screen) = eligible_on_screen(ui, ingame, &[]);
-    let viewer = priority_viewer(ingame.local_player.as_ref(), ingame.render_player.as_ref());
+    let viewer = priority_viewer(ingame.local_player.as_ref(), ingame.render_player().as_ref());
     let subset = |actors| subset_with_highest_selection_priority(actors, viewer.as_ref(), e.modifiers);
     let mut new_selection = subset(on_screen);
     if new_selection.len() > ingame.selection.actors().len() {

@@ -218,7 +218,7 @@ impl ShellWorld {
             self.ended = true;
         }
         if let Some(ingame) = &self.ingame {
-            ingame.selection.tick(ingame.render_player.as_ref());
+            ingame.selection.tick(ingame.render_player().as_ref());
             if let Some(groups) = rustora_mods_common::selection::ControlGroups::of(&ingame.world) {
                 groups.tick();
             }
@@ -303,7 +303,8 @@ impl ShellWorld {
         let world = &self.world;
         let scene = self.scene.get_or_insert_with(|| Scene::new(renderer, world, read_file));
         let overlay = self.ingame.as_ref().map_or_else(Vec::new, |i| i.order_generator_renderables());
-        self.quads = scene.build(renderer, world, self.viewer.as_ref(), &cam, &overlay);
+        let viewer = self.ingame.as_ref().map_or_else(|| self.viewer.clone(), |i| i.render_player());
+        self.quads = scene.build(renderer, world, viewer.as_ref(), &cam, &overlay);
         if let Some(ingame) = &self.ingame {
             ingame.screen_map.borrow_mut().set(scene.mouse_bounds(renderer, world));
         }

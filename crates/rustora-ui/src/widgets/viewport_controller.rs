@@ -165,7 +165,7 @@ impl ViewportControllerWidget {
         if !ingame.world.map().contains(cell) {
             return WorldTooltip::None;
         }
-        if ingame.render_player.as_ref().is_some_and(|p| !p.shroud().is_explored(cell)) {
+        if ingame.render_player().as_ref().is_some_and(|p| !p.shroud().is_explored(cell)) {
             return WorldTooltip::Unexplored;
         }
         let settings = services(ui).settings.clone();

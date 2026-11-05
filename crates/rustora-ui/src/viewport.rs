@@ -86,6 +86,8 @@ pub struct Viewport {
     zoom: f32,
     pub min_zoom: f32,
     pub max_zoom: f32,
+    /// `unlockedMinZoom` once `UnlockMinimumZoom` was called.
+    unlocked_min_zoom: Option<f32>,
     size: (i32, i32),
 }
 
@@ -98,6 +100,7 @@ impl Viewport {
             zoom: 1.0,
             min_zoom: 1.0,
             max_zoom: 2.0,
+            unlocked_min_zoom: None,
             size: resolution,
         };
         viewport.update_zooms(distance);
@@ -115,6 +118,11 @@ impl Viewport {
         };
         self.max_zoom = (self.min_zoom * MAX_ZOOM_SCALE).min(height * DEFAULT_SCALE / MAX_ZOOM_WINDOW_HEIGHT as f32);
         self.set_zoom(self.min_zoom);
+    }
+
+    /// `UnlockMinimumZoom`: spectators may zoom out further by `scale`.
+    pub fn unlock_minimum_zoom(&mut self, scale: f32) {
+        self.unlocked_min_zoom = Some(self.min_zoom * scale);
     }
 
     pub fn zoom(&self) -> f32 {
@@ -143,7 +151,8 @@ impl Viewport {
     }
 
     pub fn adjust_zoom(&mut self, dz: f32) {
-        self.set_zoom((self.zoom * dz.exp()).clamp(self.min_zoom, self.max_zoom));
+        let min_zoom = self.unlocked_min_zoom.unwrap_or(self.min_zoom);
+        self.set_zoom((self.zoom * dz.exp()).clamp(min_zoom, self.max_zoom));
     }
 
     /// `AdjustZoom` that keeps the world position under `view` in place.

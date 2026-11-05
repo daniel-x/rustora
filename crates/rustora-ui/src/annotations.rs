@@ -205,7 +205,7 @@ fn draw_decorations(
         if d.requires_selection() && !selected {
             continue;
         }
-        let Some(deco) = d.render_decoration(a, ingame.render_player.as_ref()) else {
+        let Some(deco) = d.render_decoration(a, ingame.render_player().as_ref()) else {
             continue;
         };
         let (anchor, margin) = match deco.position.as_str() {
@@ -243,11 +243,12 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
     }
     let screen_map = ingame.screen_map.borrow();
     let viewport = ingame.viewport.borrow();
+    let render_player = ingame.render_player();
     let sel = SelectionContext {
         world: &ingame.world,
         screen_map: &screen_map,
         local_player: ingame.local_player.as_ref(),
-        render_player: ingame.render_player.as_ref(),
+        render_player: render_player.as_ref(),
         deadzone: 0,
     };
     let regular = ingame.world.world_type == WorldType::Regular;
@@ -284,7 +285,7 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
             health_bar(dc, &**h, view(b.x + 1, b.y), view(b.right() - 1, b.y));
         }
         if (selected || (regular && status_bars != StatusBarsType::Standard)) && a.info.has_trait_info::<SelectableInfo>() {
-            extra_bars(dc, a, ingame.render_player.as_ref(), view(b.x + 1, b.y), view(b.right() - 1, b.y));
+            extra_bars(dc, a, ingame.render_player().as_ref(), view(b.x + 1, b.y), view(b.right() - 1, b.y));
         }
         draw_decorations(dc, ingame, &viewport, a, b, selected);
     }
@@ -299,9 +300,9 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
         }
         let selected = ingame.selection.contains(&a);
         for r in renderers {
-            r.circles(&a, ingame.render_player.as_ref(), false, &mut circles);
+            r.circles(&a, ingame.render_player().as_ref(), false, &mut circles);
             if selected {
-                r.circles(&a, ingame.render_player.as_ref(), true, &mut circles);
+                r.circles(&a, ingame.render_player().as_ref(), true, &mut circles);
             }
         }
     }
