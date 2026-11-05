@@ -97,6 +97,10 @@ struct WeaponFields {
     burst_delays: Vec<i32>,
     min_range: WDist,
     target_actor_center: bool,
+    report: Vec<String>,
+    start_burst_report: Vec<String>,
+    after_fire_sound: Vec<String>,
+    after_fire_sound_delay: i32,
 }
 
 impl Default for WeaponFields {
@@ -114,6 +118,10 @@ impl Default for WeaponFields {
             burst_delays: vec![5],
             min_range: WDist::ZERO,
             target_actor_center: false,
+            report: Vec::new(),
+            start_burst_report: Vec::new(),
+            after_fire_sound: Vec::new(),
+            after_fire_sound_delay: 0,
         }
     }
 }
@@ -133,6 +141,10 @@ pub struct WeaponInfo {
     pub target_actor_center: bool,
     pub projectile: Option<Rc<dyn IProjectileInfo>>,
     pub warheads: Vec<Rc<dyn IWarhead>>,
+    pub report: Vec<String>,
+    pub start_burst_report: Vec<String>,
+    pub after_fire_sound: Vec<String>,
+    pub after_fire_sound_delay: i32,
 }
 
 impl WeaponInfo {
@@ -152,6 +164,10 @@ impl WeaponInfo {
             }
         }
         Ok(WeaponInfo {
+            report: f.report,
+            start_burst_report: f.start_burst_report,
+            after_fire_sound: f.after_fire_sound,
+            after_fire_sound_delay: f.after_fire_sound_delay,
             range: f.range,
             first_burst_target_offset: f.first_burst_target_offset,
             following_burst_target_offset: f.following_burst_target_offset,

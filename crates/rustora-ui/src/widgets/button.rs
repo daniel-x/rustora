@@ -60,6 +60,9 @@ pub struct ButtonWidget {
     pub on_key_press: Option<Action>,
     pub disable_key_repeat: bool,
     pub on_mouse_down: Option<Rc<dyn Fn(&mut Ui, &MouseInput)>>,
+    pub disable_key_sound: bool,
+    pub click_sound: String,
+    pub click_disabled_sound: String,
     pub tooltip_container: Option<String>,
     pub tooltip_template: String,
     pub tooltip_text: String,
@@ -72,6 +75,9 @@ impl ButtonWidget {
     pub fn new(assets: &Assets) -> ButtonWidget {
         let m = &assets.metrics;
         ButtonWidget {
+            disable_key_sound: false,
+            click_sound: m.string("ClickSound"),
+            click_disabled_sound: m.string("ClickDisabledSound"),
             key: None,
             text: String::new(),
             resolved: None,
@@ -164,7 +170,9 @@ impl ButtonWidget {
             "TooltipText" => self.tooltip_text = value.to_string(),
             "TooltipDesc" => self.tooltip_desc = value.to_string(),
             "DisableKeyRepeat" => self.disable_key_repeat = parse_bool(value),
-            "DisableKeySound" | "ClickSound" | "ClickDisabledSound" => {}
+            "DisableKeySound" => self.disable_key_sound = value.eq_ignore_ascii_case("true"),
+            "ClickSound" => self.click_sound = value.to_string(),
+            "ClickDisabledSound" => self.click_disabled_sound = value.to_string(),
             _ => return false,
         }
         true
@@ -263,8 +271,10 @@ impl ButtonWidget {
                     ui.defer(move |ui| action(ui, &mi));
                 }
                 self.depressed = true;
+                crate::logic::play_ui_sound(ui, &self.click_sound);
             } else {
                 self.yield_mouse_focus(ui, id, Some(mi));
+                crate::logic::play_ui_sound(ui, &self.click_disabled_sound);
             }
         } else if mi.event == MouseEvent::Move && ui.has_mouse_focus(id) {
             self.depressed = ui.render_bounds(id).contains(mi.x, mi.y);
@@ -352,10 +362,13 @@ impl WidgetKind for ButtonWidget {
         if e.event != KeyEvent::Down || !activated || (self.disable_key_repeat && e.repeat) {
             return false;
         }
-        if !self.disabled_now()
-            && let Some(action) = self.on_key_press.clone().or_else(|| self.on_click.clone())
-        {
+        let disabled = self.disabled_now();
+        if !disabled && let Some(action) = self.on_key_press.clone().or_else(|| self.on_click.clone()) {
             ui.defer(move |ui| action(ui));
+        }
+        if !self.disable_key_sound {
+            let sound = if disabled { &self.click_disabled_sound } else { &self.click_sound };
+            crate::logic::play_ui_sound(ui, sound);
         }
         true
     }

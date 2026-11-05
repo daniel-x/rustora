@@ -50,6 +50,7 @@ pub fn has_damage(a: &ActorRef) -> bool {
 pub struct AmmoPoolInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub rearm_sound: Option<String>,
     pub name: String,
     pub armaments: Vec<String>,
     pub ammo: i32,
@@ -62,6 +63,7 @@ pub struct AmmoPoolInfo {
 impl Default for AmmoPoolInfo {
     fn default() -> Self {
         AmmoPoolInfo {
+            rearm_sound: None,
             instance_name: None,
             name: "primary".to_string(),
             armaments: vec!["primary".to_string(), "secondary".to_string()],
@@ -217,6 +219,15 @@ impl Rearmable {
                 pool.remaining_ticks.set(pool.remaining_ticks.get() - 1);
                 if pool.remaining_ticks.get() <= 0 {
                     pool.remaining_ticks.set(pool.info.reload_delay);
+                    if let Some(s) = &pool.info.rearm_sound {
+                        rustora_engine::sound::play_to_player_at(
+                            &self_.world(),
+                            rustora_engine::sound::SoundType::World,
+                            &self_.owner(),
+                            s,
+                            self_.center_position(),
+                        );
+                    }
                     pool.give_ammo(self_, pool.info.reload_count);
                 }
                 rearm_complete = false;
@@ -428,6 +439,10 @@ impl IResolveOrder for RepairableNear {
 pub struct RepairsUnitsInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub start_repairing_notification: Option<String>,
+    pub start_repairing_text_notification: Option<String>,
+    pub finish_repairing_notification: Option<String>,
+    pub finish_repairing_text_notification: Option<String>,
     #[field(flatten)]
     pub base: PausableConditionalTraitInfo,
     pub value_percentage: i32,
@@ -440,6 +455,10 @@ pub struct RepairsUnitsInfo {
 impl Default for RepairsUnitsInfo {
     fn default() -> Self {
         RepairsUnitsInfo {
+            start_repairing_notification: None,
+            start_repairing_text_notification: None,
+            finish_repairing_notification: None,
+            finish_repairing_text_notification: None,
             instance_name: None,
             base: PausableConditionalTraitInfo::default(),
             value_percentage: 20,
@@ -474,6 +493,7 @@ pub trait INotifyResupply {
 
 pub struct Resupply {
     base: ActivityBase,
+    played: Cell<bool>,
     health: Option<Rc<dyn IHealth>>,
     all_repairs_units: Vec<Rc<RepairsUnits>>,
     host: Target,
@@ -521,6 +541,7 @@ impl Resupply {
             active |= RESUPPLY_REARM;
         }
         Rc::new(Resupply {
+            played: Cell::new(false),
             base: ActivityBase::default(),
             health,
             all_repairs_units,
@@ -633,6 +654,12 @@ impl Resupply {
             {
                 xp.give_experience(repairs_units.info.player_experience);
             }
+            rustora_engine::sound::notify_owner(
+                self_,
+                "Speech",
+                repairs_units.info.finish_repairing_notification.as_deref(),
+                repairs_units.info.finish_repairing_text_notification.as_deref(),
+            );
             self.active_resupply_types.set(self.active_resupply_types.get() & !RESUPPLY_REPAIR);
             return;
         }
@@ -650,6 +677,14 @@ impl Resupply {
             if !self.player_resources.take_cash(cost, true) {
                 self.remaining_ticks.set(1);
                 return;
+            }
+            if !self.played.replace(true) {
+                rustora_engine::sound::notify_owner(
+                    self_,
+                    "Speech",
+                    repairs_units.info.start_repairing_notification.as_deref(),
+                    repairs_units.info.start_repairing_text_notification.as_deref(),
+                );
             }
             health.inflict_damage(
                 self_,

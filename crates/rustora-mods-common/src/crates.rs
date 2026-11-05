@@ -569,6 +569,9 @@ fn load_action(node: &TraitNode, kind: ActionKind) -> Result<Rc<dyn TraitInfo>, 
 pub struct CrateActionInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub sound: Option<String>,
+    pub notification: Option<String>,
+    pub text_notification: Option<String>,
     #[field(ignore)]
     pub kind: ActionKind,
     #[field(flatten)]
@@ -601,6 +604,9 @@ pub struct CrateActionInfo {
 impl Default for CrateActionInfo {
     fn default() -> Self {
         CrateActionInfo {
+            sound: None,
+            notification: None,
+            text_notification: None,
             instance_name: None,
             kind: ActionKind::Plain,
             base: ConditionalTraitInfo::default(),
@@ -831,6 +837,10 @@ impl CrateAction {
     pub fn activate(&self, collector: &ActorRef) {
         let info = self.info.clone();
         let w = collector.world();
+        if let Some(s) = &info.sound {
+            rustora_engine::sound::play_at(&w, rustora_engine::sound::SoundType::World, s, self.self_.center_position(), 1.0);
+        }
+        rustora_engine::sound::notify_owner(collector, "Speech", info.notification.as_deref(), info.text_notification.as_deref());
         match info.kind {
             ActionKind::Plain => {}
             ActionKind::GiveCash => {

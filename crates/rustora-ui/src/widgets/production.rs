@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `LogicTickerWidget.cs`, `ProductionTypeButtonWidget.cs` and `ProductionPaletteWidget.cs`, without click
+//! Ports of `LogicTickerWidget.cs`, `ProductionTypeButtonWidget.cs` and `ProductionPaletteWidget.cs`.
 //! sounds, speech notifications, transient text lines and production icon overlays.
 
 use std::rc::Rc;
@@ -178,6 +178,8 @@ pub struct ProductionPaletteWidget {
     ready_text: String,
     hold_text: String,
     infinite_symbol: String,
+    click_sound: String,
+    click_disabled_sound: String,
     pub displayed_icon_count: i32,
     pub total_icon_count: i32,
     pub on_icon_count_changed: Option<Rc<dyn Fn(&mut Ui, i32, i32)>>,
@@ -201,6 +203,8 @@ impl ProductionPaletteWidget {
     pub fn new(assets: &Assets) -> ProductionPaletteWidget {
         let _ = assets;
         ProductionPaletteWidget {
+            click_sound: assets.metrics.string("ClickSound"),
+            click_disabled_sound: assets.metrics.string("ClickDisabledSound"),
             ready_text_style: ReadyTextStyle::AlternatingColor,
             text_color: Color::from_argb(255, 255, 255, 255),
             ready_text_alt_color: Color::from_argb(255, 255, 215, 0),
@@ -333,12 +337,15 @@ impl ProductionPaletteWidget {
 
     fn handle_left_click(&self, item: Option<&Rc<ProductionItem>>, icon: &ProductionIcon, count: u32, m: Modifiers) -> bool {
         if self.pick_up_completed_building_icon(item) {
+            self.click_sound(&self.click_sound);
             return true;
         }
         let Some(queue) = &self.current_queue else {
             return false;
         };
         if item.is_some_and(|i| i.paused.get()) {
+            self.click_sound(&self.click_sound);
+            self.speech(&queue.info.queued_audio, &queue.info.queued_text_notification);
             self.issue_opt(self.production_order("PauseProduction", &icon.name, 0, false));
             return true;
         }
@@ -356,11 +363,37 @@ impl ProductionPaletteWidget {
                 return false;
             }
         }
-        if queue.can_queue(&icon.actor) {
+        self.click_sound(&self.click_sound);
+        let can_queue = queue.can_queue(&icon.actor);
+        if queue.all_queued().is_empty() {
+            if can_queue {
+                self.speech(&queue.info.queued_audio, &queue.info.queued_text_notification);
+            } else {
+                self.speech(&queue.info.limited_audio, &queue.info.limited_text_notification);
+            }
+        }
+        if can_queue {
             self.issue_opt(self.production_order("StartProduction", &icon.name, count, !m.ctrl));
             return true;
         }
         false
+    }
+
+    /// `Game.Sound.PlayNotification(World.Map.Rules, World.LocalPlayer, "Sounds", name, null)`.
+    fn click_sound(&self, name: &str) {
+        if let Some(ingame) = &self.ingame {
+            rustora_engine::sound::play_notification(&ingame.world, ingame.local_player.as_ref(), "Sounds", name, None);
+        }
+    }
+
+    /// The `PlayNotification` with the faction of the local player and the `AddTransientLine` that follow an action.
+    fn speech(&self, notification: &Option<String>, text: &Option<String>) {
+        let Some(ingame) = &self.ingame else { return };
+        let Some(player) = ingame.local_player.as_ref() else { return };
+        if let Some(n) = notification {
+            rustora_engine::sound::play_notification(&ingame.world, Some(player), "Speech", n, Some(&player.faction));
+        }
+        ingame.world.sound.add_transient_line(Some(player), text.as_deref());
     }
 
     fn issue_opt(&self, order: Option<Order>) {
@@ -373,23 +406,28 @@ impl ProductionPaletteWidget {
         let (Some(item), Some(queue)) = (item, &self.current_queue) else {
             return false;
         };
+        self.click_sound(&self.click_sound);
         let cancel = queue.info.disallow_paused
             || item.paused.get()
             || item.done.get()
             || item.total_cost == item.remaining_cost.get()
             || !item.started.get();
         if cancel {
+            self.speech(&queue.info.cancelled_audio, &queue.info.cancelled_text_notification);
             self.issue_opt(self.production_order("CancelProduction", &icon.name, count, false));
         } else {
+            self.speech(&queue.info.on_hold_audio, &queue.info.on_hold_text_notification);
             self.issue_opt(self.production_order("PauseProduction", &icon.name, 1, false));
         }
         true
     }
 
     fn handle_middle_click(&self, item: Option<&Rc<ProductionItem>>, icon: &ProductionIcon, count: u32) -> bool {
-        if item.is_none() {
+        let (Some(_), Some(queue)) = (item, &self.current_queue) else {
             return false;
-        }
+        };
+        self.click_sound(&self.click_sound);
+        self.speech(&queue.info.cancelled_audio, &queue.info.cancelled_text_notification);
         self.issue_opt(self.production_order("CancelProduction", &icon.name, count, false));
         true
     }
@@ -402,12 +440,15 @@ impl ProductionPaletteWidget {
             _ => start_count,
         };
         let item = icon.queued.first();
-        match button {
+        let handled = match button {
             MouseButton::Left => self.handle_left_click(item, icon, start_count, m),
             MouseButton::Right => self.handle_right_click(item, icon, cancel_count),
             MouseButton::Middle => self.handle_middle_click(item, icon, cancel_count),
             MouseButton::None => false,
         };
+        if !handled {
+            self.click_sound(&self.click_disabled_sound);
+        }
         true
     }
 
@@ -428,6 +469,7 @@ impl ProductionPaletteWidget {
         } else {
             selection.combine(&[facility], false, true);
         }
+        self.click_sound(&self.click_sound);
         true
     }
 
@@ -631,9 +673,11 @@ impl WidgetKind for ProductionPaletteWidget {
         if mi.event == MouseEvent::Scroll {
             if mi.scroll_delta < 0 && self.can_scroll_down() {
                 self.scroll_down();
+                self.click_sound(&self.click_sound);
                 ui.reset_tooltips();
             } else if mi.scroll_delta > 0 && self.can_scroll_up() {
                 self.scroll_up();
+                self.click_sound(&self.click_sound);
                 ui.reset_tooltips();
             }
         }

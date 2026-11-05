@@ -16,6 +16,7 @@ use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::player::{PlayerRef, PlayerRelationship};
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sound::{has_voice, play_voice};
 use rustora_engine::traits::IGameSaveTraitData;
 use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
@@ -206,7 +207,7 @@ impl Selection {
         }
     }
 
-    /// `Combine` without the selection voice.
+    /// `Combine`.
     pub fn combine(&self, new_selection: &[ActorRef], is_combine: bool, is_click: bool) {
         let mut actors = self.actors.borrow_mut();
         let take = if is_click {
@@ -234,6 +235,33 @@ impl Selection {
         }
         drop(actors);
         self.update_hash();
+        self.play_selection_voice();
+    }
+
+    /// The end of `Combine`: one of the selected actors of the local player speaks.
+    fn play_selection_voice(&self) {
+        let actors = self.actors.borrow().clone();
+        let Some(world) = actors.first().map(|a| a.world()) else {
+            return;
+        };
+        let Some(local_player) = world.sound.local_player() else {
+            return;
+        };
+        if world.is_game_over() {
+            return;
+        }
+        for actor in &actors {
+            if !Rc::ptr_eq(&actor.owner(), &local_player) || !actor.is_in_world() {
+                continue;
+            }
+            let Some(info) = actor.info.trait_info::<SelectableInfo>() else {
+                continue;
+            };
+            if has_voice(actor, &info.voice) {
+                play_voice(actor, &info.voice);
+                break;
+            }
+        }
     }
 
     pub fn clear(&self) {

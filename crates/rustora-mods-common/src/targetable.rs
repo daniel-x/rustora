@@ -110,6 +110,7 @@ impl ITargetable for Targetable {
 pub struct CrushableInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub crush_sound: Option<String>,
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
     pub crush_classes: BitSet<CrushClass>,
@@ -120,6 +121,7 @@ pub struct CrushableInfo {
 impl Default for CrushableInfo {
     fn default() -> Self {
         CrushableInfo {
+            crush_sound: None,
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             crush_classes: BitSet::new(&["infantry"]),
@@ -231,6 +233,9 @@ impl INotifyCrushed for Crushable {
             return;
         }
         let w = self_.world();
+        if let Some(s) = &self.info.crush_sound {
+            rustora_engine::sound::play_at(&w, rustora_engine::sound::SoundType::World, s, crusher.center_position(), 1.0);
+        }
         let types = crusher
             .trait_or_default::<Mobile>()
             .map(|m| m.info.locomotor_info(&w).crush_damage_types)

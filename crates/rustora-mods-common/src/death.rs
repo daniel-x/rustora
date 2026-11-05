@@ -821,6 +821,7 @@ impl Activity for FallToEarth {
 pub struct EjectOnDeathInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub chute_sound: Option<String>,
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
     pub pilot_actor: String,
@@ -833,6 +834,7 @@ pub struct EjectOnDeathInfo {
 impl Default for EjectOnDeathInfo {
     fn default() -> Self {
         EjectOnDeathInfo {
+            chute_sound: None,
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             pilot_actor: "E1".into(),
@@ -897,6 +899,8 @@ impl INotifyKilled for EjectOnDeath {
             let pilot = w.create_actor(&pilot_name, td);
             if !in_air {
                 pilot.queue_activity_queued(false, crate::activities::Nudge::new(&pilot));
+            } else if let Some(s) = &info.chute_sound {
+                rustora_engine::sound::play_at(w, rustora_engine::sound::SoundType::World, s, cp, 1.0);
             }
         }));
     }

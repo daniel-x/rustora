@@ -42,6 +42,8 @@ pub struct World {
     pub local_random: RefCell<MersenneTwister>,
     /// `World.BotRandom` of the reference harness: the random numbers of bot modules, seeded by [`bot_seed`].
     pub bot_random: RefCell<MersenneTwister>,
+    /// The `Game.Sound` calls of this world, drained by the client.
+    pub sound: crate::sound::SoundQueue,
     /// Orders issued by this client (bots) with the world tick they were issued in, drained by the order manager.
     issued_orders: RefCell<Vec<(i32, crate::order::Order)>>,
     /// Called with every issued order at issue time, for order dumps.
@@ -119,6 +121,7 @@ impl World {
             shared_random: RefCell::new(MersenneTwister::new(seed)),
             local_random: RefCell::new(MersenneTwister::new(0)),
             bot_random: RefCell::new(MersenneTwister::new(bot_seed(seed))),
+            sound: Default::default(),
             issued_orders: RefCell::new(Vec::new()),
             order_observer: RefCell::new(None),
             players: RefCell::new(Vec::new()),

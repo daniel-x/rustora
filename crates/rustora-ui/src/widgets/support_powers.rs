@@ -217,6 +217,11 @@ impl SupportPowersWidget {
         let Some(instance) = icon.power.target_instance() else {
             return;
         };
+        instance.notify_power_event(
+            &instance.info.select_target_sound,
+            &instance.info.select_target_speech_notification,
+            &instance.info.select_target_text_notification,
+        );
         ingame.set_order_generator(Rc::new(SelectGenericPowerTarget {
             manager: manager.clone(),
             order_key: icon.power.key.clone(),

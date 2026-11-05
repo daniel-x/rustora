@@ -19,6 +19,7 @@ use rustora_engine::damage::AttackInfo;
 use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sound::SoundType;
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
@@ -585,6 +586,12 @@ fn can_use_exit(self_: &ActorRef, producee: &ActorInfo, s: &ExitInfo) -> bool {
 pub struct ProductionQueueInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub queued_text_notification: Option<String>,
+    pub limited_text_notification: Option<String>,
+    pub on_hold_text_notification: Option<String>,
+    pub cancelled_text_notification: Option<String>,
+    pub ready_text_notification: Option<String>,
+    pub blocked_text_notification: Option<String>,
     #[field(require)]
     #[field(name = "Type")]
     pub ty: String,
@@ -610,6 +617,12 @@ pub struct ProductionQueueInfo {
 impl Default for ProductionQueueInfo {
     fn default() -> Self {
         ProductionQueueInfo {
+            queued_text_notification: None,
+            limited_text_notification: None,
+            on_hold_text_notification: None,
+            cancelled_text_notification: None,
+            ready_text_notification: None,
+            blocked_text_notification: None,
             instance_name: None,
             ty: String::new(),
             display_order: 0,
@@ -1458,16 +1471,29 @@ impl IResolveOrder for ProductionQueue {
                         return;
                     }
                     let (weak, u, world) = (self.me.clone(), unit.clone(), Rc::downgrade(&w));
+                    let has_played_sound = Rc::new(Cell::new(false));
+                    let time = self.get_build_time(&unit, &unit.trait_info::<BuildableInfo>().expect("Buildable"));
                     let on_complete: Rc<dyn Fn()> = Rc::new(move || {
-                        let (weak, u) = (weak.clone(), u.clone());
+                        let (weak, u, has_played_sound) = (weak.clone(), u.clone(), has_played_sound.clone());
                         let Some(world) = world.upgrade() else { return };
                         world.add_frame_end_task(Box::new(move |_| {
                             let Some(q) = weak.upgrade() else { return };
                             if !q.queue.borrow().iter().any(|i| i.done.get() && i.item == u.name) {
                                 return;
                             }
-                            if !u.has_trait_info::<BuildingInfo>() {
-                                q.build_unit(&u);
+                            let (owner, info) = (q.actor.clone(), q.info.clone());
+                            let notify = |notification: &Option<String>, text: &Option<String>| {
+                                rustora_engine::sound::notify_owner(&owner, "Speech", notification.as_deref(), text.as_deref());
+                            };
+                            let ready = || notify(&info.ready_audio, &info.ready_text_notification);
+                            if u.has_trait_info::<BuildingInfo>() {
+                                if !has_played_sound.replace(true) {
+                                    ready();
+                                }
+                            } else if q.build_unit(&u) {
+                                ready();
+                            } else if time > 0 && !has_played_sound.replace(true) {
+                                notify(&info.blocked_audio, &info.blocked_text_notification);
                             }
                         }));
                     });
@@ -1792,6 +1818,8 @@ impl ITechTreeElement for GrantConditionOnPrerequisiteManager {
 pub struct PrimaryBuildingInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub selection_notification: Option<String>,
+    pub selection_text_notification: Option<String>,
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
     pub primary_condition: Option<String>,
@@ -1802,6 +1830,8 @@ pub struct PrimaryBuildingInfo {
 impl Default for PrimaryBuildingInfo {
     fn default() -> Self {
         PrimaryBuildingInfo {
+            selection_notification: None,
+            selection_text_notification: None,
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             primary_condition: None,
@@ -1909,6 +1939,12 @@ impl PrimaryBuilding {
                 self.token
                     .set(self_.grant_condition(self.info.primary_condition.as_deref().unwrap_or("")));
             }
+            rustora_engine::sound::notify_owner(
+                self_,
+                "Speech",
+                self.info.selection_notification.as_deref(),
+                self.info.selection_text_notification.as_deref(),
+            );
         } else if self.token.get() != INVALID_CONDITION_TOKEN {
             self.token.set(self_.revoke_condition(self.token.get()));
         }
@@ -1923,6 +1959,8 @@ pub fn is_primary_building(a: &ActorRef) -> bool {
 pub struct RallyPointInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub notification: Option<String>,
+    pub text_notification: Option<String>,
     pub path: Vec<CVec>,
     pub force_set_type: Option<String>,
     pub cursor: String,
@@ -1931,6 +1969,8 @@ pub struct RallyPointInfo {
 impl Default for RallyPointInfo {
     fn default() -> Self {
         RallyPointInfo {
+            notification: None,
+            text_notification: None,
             instance_name: None,
             path: Vec::new(),
             force_set_type: None,
@@ -1966,9 +2006,14 @@ impl crate::orders::IIssueOrder for RallyPoint {
         })]
     }
 
-    /// Without the notification and the transient text line.
     fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
         let rally = order.as_any().downcast_ref::<RallyPointOrderTargeter>()?;
+        rustora_engine::sound::notify_owner(
+            self_,
+            "Speech",
+            self.info.notification.as_deref(),
+            self.info.text_notification.as_deref(),
+        );
         let mut o = Order::new("SetRallyPoint", Some(self_.clone()), target.clone(), queued);
         o.extra_data = if rally.force_set.get() { 1 } else { 0 };
         Some(o)
@@ -2081,16 +2126,76 @@ impl ActorInit for PlaceBuildingInit {
     }
 }
 
-#[derive(Clone, Debug, Default, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad)]
 pub struct PlaceBuildingInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub cannot_place_notification: Option<String>,
+    pub cannot_place_text_notification: Option<String>,
+    pub new_options_notification: Option<String>,
+    pub new_options_text_notification: Option<String>,
+    pub new_options_notification_delay: i32,
 }
 
-pub struct PlaceBuilding;
+impl Default for PlaceBuildingInfo {
+    fn default() -> Self {
+        PlaceBuildingInfo {
+            instance_name: None,
+            cannot_place_notification: None,
+            cannot_place_text_notification: None,
+            new_options_notification: None,
+            new_options_text_notification: None,
+            new_options_notification_delay: 10,
+        }
+    }
+}
 
-register_traits!(PlaceBuilding: IResolveOrder);
-info_impl!(PlaceBuildingInfo => |_, _| Some(Rc::new(PlaceBuilding)));
+pub struct PlaceBuilding {
+    info: Rc<PlaceBuildingInfo>,
+    trigger_notification: Cell<bool>,
+    tick: Cell<i32>,
+}
+
+register_traits!(PlaceBuilding: IResolveOrder, ITick);
+info_impl!(PlaceBuildingInfo => |info, _| Some(Rc::new(PlaceBuilding {
+    info,
+    trigger_notification: Cell::new(false),
+    tick: Cell::new(0),
+})));
+
+impl ITick for PlaceBuilding {
+    fn tick(&self, self_: &ActorRef) {
+        if !self.trigger_notification.get() {
+            return;
+        }
+        let tick = self.tick.get();
+        self.tick.set(tick + 1);
+        if tick >= self.info.new_options_notification_delay {
+            rustora_engine::sound::notify_owner(
+                self_,
+                "Speech",
+                self.info.new_options_notification.as_deref(),
+                self.info.new_options_text_notification.as_deref(),
+            );
+            self.trigger_notification.set(false);
+            self.tick.set(0);
+        }
+    }
+}
+
+/// `PlaceBuilding.GetNumBuildables`: it only matters for the local player of a client.
+fn num_buildables(w: &World, player: &PlayerRef) -> usize {
+    if !w.sound.local_player().is_some_and(|l| Rc::ptr_eq(&l, player)) {
+        return 0;
+    }
+    let mut items = IndexSet::new();
+    for (a, q) in w.actors_with_trait::<ProductionQueue>() {
+        if Rc::ptr_eq(&a.owner(), player) {
+            items.extend(q.buildable_items());
+        }
+    }
+    items.len()
+}
 
 impl IResolveOrder for PlaceBuilding {
     fn resolve_order(&self, self_: &ActorRef, order: &Order) {
@@ -2099,9 +2204,14 @@ impl IResolveOrder for PlaceBuilding {
             return;
         }
         let (me, order) = (self_.clone(), order.clone());
-        self_
-            .world()
-            .add_frame_end_task(Box::new(move |w: &Rc<World>| place_building(&me, &order, w)));
+        self_.world().add_frame_end_task(Box::new(move |w: &Rc<World>| {
+            let owner = me.owner();
+            let previous = num_buildables(w, &owner);
+            place_building(&me, &order, w);
+            if num_buildables(w, &owner) > previous {
+                me.trait_::<PlaceBuilding>().trigger_notification.set(true);
+            }
+        }));
     }
 }
 
@@ -2138,6 +2248,7 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
     };
     if os == "LineBuild" {
         let placed = w.create_actor(&actor_info.name, new_inits(target_location).with(PlaceBuildingInit));
+        rustora_engine::sound::play_all_to_owner(self_, SoundType::World, &building_info.build_sounds, placed.center_position());
         let line = actor_info.trait_info::<LineBuildInfo>().expect("LineBuild");
         let segment_type = line
             .segment_type
@@ -2172,7 +2283,8 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
         {
             return;
         }
-        w.create_actor(&actor_info.name, new_inits(target_location).with(PlaceBuildingInit));
+        let building = w.create_actor(&actor_info.name, new_inits(target_location).with(PlaceBuildingInit));
+        rustora_engine::sound::play_all_to_owner(self_, SoundType::World, &building_info.build_sounds, building.center_position());
     }
     if let Some((a, _)) = &producer {
         for n in a.traits_implementing::<dyn INotifyBuildingPlaced>() {

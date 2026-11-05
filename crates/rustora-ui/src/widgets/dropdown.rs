@@ -97,7 +97,11 @@ impl DropDownButtonWidget {
             (widget.panel_root.clone(), widget.panel_align)
         };
         let mut mask_kind = MaskWidget::default();
-        mask_kind.on_mouse_down.push(Rc::new(move |ui, _| Self::remove_panel(ui, id)));
+        mask_kind.on_mouse_down.push(Rc::new(move |ui, _| {
+            let click_sound = ui.assets.borrow().metrics.string("ClickSound");
+            crate::logic::play_ui_sound(ui, &click_sound);
+            Self::remove_panel(ui, id);
+        }));
         if let Some(on_cancel) = on_cancel {
             mask_kind.on_mouse_down.push(Rc::new(move |ui, _| on_cancel(ui)));
         }

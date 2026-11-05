@@ -2055,6 +2055,13 @@ impl Activity for Land {
             aircraft.add_influence(landing_cell);
             aircraft.entering_cell(self_);
             self.landing_initiated.set(true);
+            rustora_engine::sound::play_random_at(
+                &w,
+                rustora_engine::sound::SoundType::World,
+                &aircraft.info.landing_sounds,
+                aircraft.center_position(),
+                1.0,
+            );
         }
         if aircraft.info.vtol {
             let land_altitude = w.map().distance_above_terrain(target_position) + aircraft.land_altitude();
@@ -2145,11 +2152,18 @@ impl TakeOff {
 impl Activity for TakeOff {
     activity_common!("TakeOff");
 
-    fn on_first_run(&self, _self_: &ActorRef) {
+    fn on_first_run(&self, self_: &ActorRef) {
         if self.aircraft.force_landing() || !self.aircraft.has_influence() {
             return;
         }
         self.aircraft.remove_influence();
+        rustora_engine::sound::play_random_at(
+            &self_.world(),
+            rustora_engine::sound::SoundType::World,
+            &self.aircraft.info.takeoff_sounds,
+            self.aircraft.center_position(),
+            1.0,
+        );
     }
 
     fn tick(&self, self_: &ActorRef) -> bool {

@@ -18,6 +18,7 @@ use rustora_engine::net_collections::NetMap;
 use rustora_engine::order::Order;
 use rustora_engine::player::WinState;
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sound::{self, SoundType};
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
@@ -91,6 +92,24 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
 pub struct SupportPowerInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub detected_sound: Option<String>,
+    pub detected_speech_notification: Option<String>,
+    pub detected_text_notification: Option<String>,
+    pub begin_charge_sound: Option<String>,
+    pub begin_charge_speech_notification: Option<String>,
+    pub begin_charge_text_notification: Option<String>,
+    pub end_charge_sound: Option<String>,
+    pub end_charge_speech_notification: Option<String>,
+    pub end_charge_text_notification: Option<String>,
+    pub select_target_sound: Option<String>,
+    pub select_target_speech_notification: Option<String>,
+    pub select_target_text_notification: Option<String>,
+    pub launch_sound: Option<String>,
+    pub launch_speech_notification: Option<String>,
+    pub launch_text_notification: Option<String>,
+    pub incoming_sound: Option<String>,
+    pub incoming_speech_notification: Option<String>,
+    pub incoming_text_notification: Option<String>,
     #[field(ignore)]
     pub kind: PowerKind,
     #[field(flatten)]
@@ -147,6 +166,24 @@ pub struct SupportPowerInfo {
 impl Default for SupportPowerInfo {
     fn default() -> Self {
         SupportPowerInfo {
+            detected_sound: None,
+            detected_speech_notification: None,
+            detected_text_notification: None,
+            begin_charge_sound: None,
+            begin_charge_speech_notification: None,
+            begin_charge_text_notification: None,
+            end_charge_sound: None,
+            end_charge_speech_notification: None,
+            end_charge_text_notification: None,
+            select_target_sound: None,
+            select_target_speech_notification: None,
+            select_target_text_notification: None,
+            launch_sound: None,
+            launch_speech_notification: None,
+            launch_text_notification: None,
+            incoming_sound: None,
+            incoming_speech_notification: None,
+            incoming_text_notification: None,
             instance_name: None,
             kind: PowerKind::default(),
             base: PausableConditionalTraitInfo::default(),
@@ -256,7 +293,47 @@ impl SupportPower {
         }
     }
 
+    /// The sound, speech and text calls that `Charging`, `Charged` and `SupportPowerInstance.Target` share.
+    pub fn notify_power_event(&self, sound: &Option<String>, speech: &Option<String>, text: &Option<String>) {
+        let world = self.self_.world();
+        if let Some(s) = sound {
+            sound::play_to_player(&world, SoundType::Ui, &self.self_.owner(), s);
+        }
+        sound::notify_owner(&self.self_, "Speech", speech.as_deref(), text.as_deref());
+    }
+
+    /// `PlayLaunchSounds`.
+    fn play_launch_sounds(&self) {
+        let world = self.self_.world();
+        let Some(local_player) = world.sound.local_player().filter(|p| !p.spectating()) else {
+            return;
+        };
+        let info = &self.info;
+        let allied = self.self_.owner().is_allied_with(Some(&local_player));
+        let (launch, speech, text) = if allied {
+            (&info.launch_sound, &info.launch_speech_notification, &info.launch_text_notification)
+        } else {
+            (
+                &info.incoming_sound,
+                &info.incoming_speech_notification,
+                &info.incoming_text_notification,
+            )
+        };
+        if let Some(s) = launch {
+            sound::play(&world, SoundType::Ui, s, 1.0);
+        }
+        if let Some(n) = speech {
+            sound::play_notification(&world, Some(&local_player), "Speech", n, Some(&local_player.faction));
+        }
+        world.sound.add_transient_line(Some(&local_player), text.as_deref());
+    }
+
     fn charged(&self, self_: &ActorRef, key: &str) {
+        self.notify_power_event(
+            &self.info.end_charge_sound,
+            &self.info.end_charge_speech_notification,
+            &self.info.end_charge_text_notification,
+        );
         if self.info.kind == PowerKind::Gps {
             let spm = self_.owner().player_actor().trait_::<SupportPowerManager>();
             let p = spm.powers.borrow().get(&key.to_string()).cloned().expect("power");
@@ -272,6 +349,7 @@ impl SupportPower {
         for n in self_.traits_implementing::<dyn INotifySupportPower>() {
             n.activated(self_);
         }
+        self.play_launch_sounds();
         match self.info.kind {
             PowerKind::Airstrike => {
                 let facing = self.directional_facing(order);
@@ -623,6 +701,11 @@ impl SupportPowerInstance {
                 .set((self.remaining_sub_ticks.get() - 100).clamp(0, self.total_ticks * 100));
         }
         if !self.notified_charging.get() {
+            power.notify_power_event(
+                &power.info.begin_charge_sound,
+                &power.info.begin_charge_speech_notification,
+                &power.info.begin_charge_text_notification,
+            );
             self.notified_charging.set(true);
         }
         if self.remaining_ticks() == 0 && !self.notified_ready.get() {
@@ -974,6 +1057,9 @@ impl rustora_engine::effect::Effect for NukeLaunch {
         self.launch_delay.set(d - 1);
         if d > 0 {
             return;
+        }
+        if d == 0 {
+            sound::play_random_at(world, SoundType::World, &self.weapon.report, self.pos.get(), 1.0);
         }
         let ticks = self.ticks.get();
         let descending = ticks >= self.turn;

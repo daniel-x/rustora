@@ -56,6 +56,10 @@ pub struct MissionObjective {
 pub struct MissionObjectivesInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub win_notification: Option<String>,
+    pub win_text_notification: Option<String>,
+    pub lose_notification: Option<String>,
+    pub lose_text_notification: Option<String>,
     pub cooperative: bool,
     pub early_game_over: bool,
     pub game_over_delay: i32,
@@ -64,6 +68,10 @@ pub struct MissionObjectivesInfo {
 impl Default for MissionObjectivesInfo {
     fn default() -> Self {
         MissionObjectivesInfo {
+            win_notification: None,
+            win_text_notification: None,
+            lose_notification: None,
+            lose_text_notification: None,
             instance_name: None,
             cooperative: false,
             early_game_over: false,
@@ -278,6 +286,8 @@ impl IResolveOrder for MissionObjectives {
 pub struct ConquestVictoryConditionsInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub notification_delay: i32,
+    pub suppress_notifications: bool,
     pub objective: String,
 }
 
@@ -285,6 +295,8 @@ impl Default for ConquestVictoryConditionsInfo {
     fn default() -> Self {
         ConquestVictoryConditionsInfo {
             instance_name: None,
+            notification_delay: 1500,
+            suppress_notifications: false,
             objective: "Destroy all opposition!".into(),
         }
     }
@@ -360,9 +372,39 @@ impl INotifyWinStateChanged for ConquestVictoryConditions {
                 t.on_owner_lost(&a);
             }
         }
+        let info = objectives_of(player).info.clone();
+        self.announce(
+            player,
+            "notification-player-is-defeated",
+            &info.lose_notification,
+            &info.lose_text_notification,
+        );
     }
 
-    fn on_player_won(&self, _player: &PlayerRef) {}
+    fn on_player_won(&self, player: &PlayerRef) {
+        let info = objectives_of(player).info.clone();
+        self.announce(
+            player,
+            "notification-player-is-victorious",
+            &info.win_notification,
+            &info.win_text_notification,
+        );
+    }
+}
+
+impl ConquestVictoryConditions {
+    /// The system line and the delayed speech of `OnPlayerLost` and `OnPlayerWon`.
+    fn announce(&self, player: &PlayerRef, line: &str, speech: &Option<String>, text: &Option<String>) {
+        if self.info.suppress_notifications {
+            return;
+        }
+        let w = player.player_actor().world();
+        w.sound.add_player_system_line(line, &player.player_name);
+        if let Some(n) = speech {
+            rustora_engine::sound::play_notification_after_delay(&w, self.info.notification_delay as u64, player, n);
+        }
+        w.sound.add_transient_line(Some(player), text.as_deref());
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

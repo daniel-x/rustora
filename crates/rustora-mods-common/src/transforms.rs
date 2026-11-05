@@ -36,6 +36,12 @@ pub fn register(r: &mut TraitRegistry) {
 pub struct TransformsInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub transform_sounds: Vec<String>,
+    pub no_transform_sounds: Vec<String>,
+    pub transform_notification: Option<String>,
+    pub no_transform_notification: Option<String>,
+    pub transform_text_notification: Option<String>,
+    pub no_transform_text_notification: Option<String>,
     #[field(flatten)]
     pub base: PausableConditionalTraitInfo,
     #[field(require)]
@@ -49,6 +55,12 @@ pub struct TransformsInfo {
 impl Default for TransformsInfo {
     fn default() -> Self {
         TransformsInfo {
+            transform_sounds: Vec::new(),
+            no_transform_sounds: Vec::new(),
+            transform_notification: None,
+            no_transform_notification: None,
+            transform_text_notification: None,
+            no_transform_text_notification: None,
             instance_name: None,
             base: PausableConditionalTraitInfo::default(),
             into_actor: String::new(),
@@ -108,6 +120,9 @@ impl Transforms {
                 force_health_percentage: 0,
                 skip_make_anims: false,
                 faction: Some(self.faction.clone()),
+                sounds: self.info.transform_sounds.clone(),
+                notification: self.info.transform_notification.clone(),
+                text_notification: self.info.transform_text_notification.clone(),
             },
         )
     }
@@ -115,6 +130,17 @@ impl Transforms {
     pub fn deploy_transform(&self, queued: bool) {
         // Clearing blockers is done by the issuing client through its own orders.
         if !queued && !self.can_deploy() {
+            let world = self.self_.world();
+            let owner = self.self_.owner();
+            for s in &self.info.no_transform_sounds {
+                rustora_engine::sound::play_to_player(&world, rustora_engine::sound::SoundType::World, &owner, s);
+            }
+            rustora_engine::sound::notify_owner(
+                &self.self_,
+                "Speech",
+                self.info.no_transform_notification.as_deref(),
+                self.info.no_transform_text_notification.as_deref(),
+            );
             return;
         }
         self.self_.queue_activity_queued(queued, self.get_transform_activity());
@@ -169,6 +195,9 @@ pub struct TransformArgs {
     pub force_health_percentage: i32,
     pub skip_make_anims: bool,
     pub faction: Option<String>,
+    pub sounds: Vec<String>,
+    pub notification: Option<String>,
+    pub text_notification: Option<String>,
 }
 
 impl Default for TransformArgs {
@@ -179,6 +208,9 @@ impl Default for TransformArgs {
             force_health_percentage: 0,
             skip_make_anims: false,
             faction: None,
+            sounds: Vec::new(),
+            notification: None,
+            text_notification: None,
         }
     }
 }
@@ -232,6 +264,8 @@ impl Transform {
                 nt.on_transform(&a);
             }
             a.dispose();
+            rustora_engine::sound::play_all_to_owner(&a, rustora_engine::sound::SoundType::World, &me.args.sounds, a.center_position());
+            rustora_engine::sound::notify_owner(&a, "Speech", me.args.notification.as_deref(), me.args.text_notification.as_deref());
             let mut init = ActorInits::new()
                 .with(LocationInit::new(a.location() + me.args.offset))
                 .with(OwnerInit::from_player(&a.owner()))
@@ -347,6 +381,9 @@ impl Activity for IssueOrderAfterTransform {
 pub struct SellableInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub sell_sounds: Vec<String>,
+    pub notification: Option<String>,
+    pub text_notification: Option<String>,
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
     pub refund_percent: i32,
@@ -359,6 +396,9 @@ pub struct SellableInfo {
 impl Default for SellableInfo {
     fn default() -> Self {
         SellableInfo {
+            sell_sounds: Vec::new(),
+            notification: None,
+            text_notification: None,
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             refund_percent: 50,
@@ -423,6 +463,12 @@ impl Sellable {
             return;
         }
         self_.cancel_activity();
+        rustora_engine::sound::play_all_to_owner(
+            self_,
+            rustora_engine::sound::SoundType::Ui,
+            &self.info.sell_sounds,
+            self_.center_position(),
+        );
         for ns in self_.traits_implementing::<dyn INotifySold>() {
             ns.selling(self_);
         }
@@ -468,6 +514,12 @@ impl Activity for Sell {
         for ns in self_.traits_implementing::<dyn INotifySold>() {
             ns.sold(self_);
         }
+        rustora_engine::sound::notify_owner(
+            self_,
+            "Speech",
+            self.sellable_info.notification.as_deref(),
+            self.sellable_info.text_notification.as_deref(),
+        );
         self_.dispose();
         false
     }

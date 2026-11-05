@@ -707,6 +707,7 @@ impl INotifyKilled for Passenger {
 pub struct ParaDropInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub chute_sound: Option<String>,
     pub drop_range: WDist,
     pub drop_interval: i32,
 }
@@ -714,6 +715,7 @@ pub struct ParaDropInfo {
 impl Default for ParaDropInfo {
     fn default() -> Self {
         ParaDropInfo {
+            chute_sound: None,
             instance_name: None,
             drop_range: WDist::from_cells(4),
             drop_interval: 5,
@@ -803,6 +805,15 @@ impl ITick for ParaDrop {
             drop_positionable.set_center_position(&drop_actor, drop_position);
             w.add(&drop_actor);
         }));
+        if let Some(s) = &self.info.chute_sound {
+            rustora_engine::sound::play_at(
+                &self_.world(),
+                rustora_engine::sound::SoundType::World,
+                s,
+                self_.center_position(),
+                1.0,
+            );
+        }
         self.drop_delay.set(self.info.drop_interval);
     }
 }

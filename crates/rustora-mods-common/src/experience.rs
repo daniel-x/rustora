@@ -116,6 +116,8 @@ value_init!(ExperienceInit, i32);
 pub struct GainsExperienceInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub level_up_notification: Option<String>,
+    pub level_up_text_notification: Option<String>,
     #[field(require)]
     pub conditions: IndexMap<i32, String>,
     pub experience_modifier: i32,
@@ -124,6 +126,8 @@ pub struct GainsExperienceInfo {
 impl Default for GainsExperienceInfo {
     fn default() -> Self {
         GainsExperienceInfo {
+            level_up_notification: None,
+            level_up_text_notification: None,
             instance_name: None,
             conditions: IndexMap::new(),
             experience_modifier: -1,
@@ -172,7 +176,7 @@ impl INotifyCreated for GainsExperience {
             .map(|(k, v)| (k.wrapping_mul(required), v.clone()))
             .collect();
         if self.initial_experience > 0 {
-            self.give_experience(self.initial_experience);
+            self.give_experience_silently(self.initial_experience, true);
         }
     }
 }
@@ -196,6 +200,11 @@ impl GainsExperience {
     }
 
     pub fn give_experience(&self, amount: i32) {
+        self.give_experience_silently(amount, false);
+    }
+
+    /// `GiveExperience(amount, silent)`.
+    pub fn give_experience_silently(&self, amount: i32, silent: bool) {
         assert!(amount >= 0, "Revoking experience is not implemented.");
         if self.max_level == 0 {
             return;
@@ -206,6 +215,15 @@ impl GainsExperience {
             let condition = self.next_level.borrow()[self.level.get() as usize].1.clone();
             self.self_.grant_condition(&condition);
             self.level.set(self.level.get() + 1);
+            if !silent {
+                let info = self.self_.info.trait_info::<GainsExperienceInfo>().expect("GainsExperience");
+                rustora_engine::sound::notify_owner(
+                    &self.self_,
+                    "Sounds",
+                    info.level_up_notification.as_deref(),
+                    info.level_up_text_notification.as_deref(),
+                );
+            }
         }
     }
 }
@@ -490,11 +508,15 @@ pub struct GrantConditionOnDamageStateInfo {
     pub condition: String,
     pub valid_damage_states: DamageState,
     pub grant_permanently: bool,
+    pub enabled_sounds: Vec<String>,
+    pub disabled_sounds: Vec<String>,
 }
 
 impl Default for GrantConditionOnDamageStateInfo {
     fn default() -> Self {
         GrantConditionOnDamageStateInfo {
+            enabled_sounds: Vec::new(),
+            disabled_sounds: Vec::new(),
             instance_name: None,
             condition: String::new(),
             valid_damage_states: DamageState(DamageState::HEAVY.0 | DamageState::CRITICAL.0),
@@ -526,6 +548,13 @@ impl GrantConditionOnDamageState {
     fn grant_on_valid_state(&self, self_: &ActorRef, state: DamageState) {
         if self.info.valid(state) && self.token.get() == INVALID_CONDITION_TOKEN {
             self.token.set(self_.grant_condition(&self.info.condition));
+            rustora_engine::sound::play_random_at(
+                &self_.world(),
+                rustora_engine::sound::SoundType::World,
+                &self.info.enabled_sounds,
+                self_.center_position(),
+                1.0,
+            );
         }
     }
 }
@@ -546,6 +575,13 @@ impl INotifyDamageStateChanged for GrantConditionOnDamageState {
             self.grant_on_valid_state(self_, self.health.damage_state());
         } else if granted && !self.info.valid(e.damage_state) && self.info.valid(e.previous_damage_state) {
             self.token.set(self_.revoke_condition(self.token.get()));
+            rustora_engine::sound::play_random_at(
+                &self_.world(),
+                rustora_engine::sound::SoundType::World,
+                &self.info.disabled_sounds,
+                self_.center_position(),
+                1.0,
+            );
         }
     }
 }

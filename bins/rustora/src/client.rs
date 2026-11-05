@@ -8,9 +8,11 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use rustora_audio::MixerDevice;
 use rustora_engine::order_manager::Connection;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::sequence::ReadFile;
+use rustora_engine::sound::{AudioDevice, AudioRules, NullAudioDevice, Sound};
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Package, Platform, ReadFs};
 use rustora_game::map::MapPackage;
@@ -19,7 +21,8 @@ use rustora_game::moddata::ModData;
 use rustora_game::settings::{Settings, WorldViewport};
 use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
-use rustora_launch::{Step, load_world, load_world_of_type, open_map, shellmaps};
+use rustora_launch::{Step, load_world_with_sound, open_map, shellmaps};
+use rustora_mods_common::sound::StartGameNotificationInfo;
 use rustora_net::session::Session;
 use rustora_render::ui::UiList;
 use rustora_render::{Camera, Quad, Renderer};
@@ -31,6 +34,7 @@ use rustora_ui::input::{MouseButton, MouseEvent, MouseInput};
 use rustora_ui::loader::WidgetLoader;
 use rustora_ui::logic::Services;
 use rustora_ui::logic::ingame::Ingame;
+use rustora_ui::music::MusicPlaylist;
 use rustora_ui::viewport::Viewport;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
 
@@ -60,6 +64,76 @@ struct ShellWorld {
     viewer: Option<PlayerRef>,
     ingame: Option<Rc<Ingame>>,
     ended: bool,
+    game_over_seen: bool,
+}
+
+/// `WorldRenderer.ProjectedPosition` for a flat map.
+fn px_to_world(x: i32, y: i32) -> rustora_core::world_types::WPos {
+    rustora_core::world_types::WPos::new(
+        x * 1024 / crate::scene::TILE_SIZE as i32,
+        y * 1024 / crate::scene::TILE_SIZE as i32,
+        0,
+    )
+}
+
+/// `Game.Sound` with the device and volumes of `settings`. `RUSTORA_AUDIO_WAV` writes the output to a file.
+fn open_sound(mod_data: &Rc<ModData>, settings: &Settings) -> Rc<Sound> {
+    let device: Box<dyn AudioDevice> = match std::env::var_os("RUSTORA_AUDIO_WAV") {
+        Some(path) => match MixerDevice::open_file(Path::new(&path)) {
+            Ok(d) => Box::new(d),
+            Err(e) => {
+                log::warn!("Cannot write the audio output file: {e}");
+                Box::new(NullAudioDevice)
+            }
+        },
+        None => match MixerDevice::open() {
+            Some(d) => Box::new(d),
+            None => Box::new(NullAudioDevice),
+        },
+    };
+    let fs = mod_data.clone();
+    let read_file: rustora_engine::sequence::ReadFile = Rc::new(move |name: &str| fs.file_system.try_open(name));
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as i32;
+    let sound = Sound::new(device, read_file, seed);
+    sound.set_sound_volume(settings.sound.sound_volume);
+    sound.set_music_volume(settings.sound.music_volume);
+    sound.set_video_volume(settings.sound.video_volume);
+    sound.set_repeat(settings.sound.repeat);
+    if settings.sound.mute {
+        sound.mute_audio();
+    }
+    Rc::new(sound)
+}
+
+/// The `Voices`, `Notifications` and `Music` of `ModRules`.
+fn load_mod_audio(mod_data: &ModData) -> Rc<AudioRules> {
+    let load = |files: &[String]| ModData::load_yaml(&mod_data.file_system, files, None).unwrap_or_default();
+    Rc::new(AudioRules::load(
+        &load(&mod_data.manifest.voices),
+        &load(&mod_data.manifest.notifications),
+        &load(&mod_data.manifest.music),
+    ))
+}
+
+/// `IPostWorldLoaded.PostWorldLoaded` of `MusicPlaylist`.
+fn start_music(services: &Rc<Services>, shell: Option<&ShellWorld>) {
+    let Some(shell) = shell else { return };
+    services.sound.load_music_files(shell.world.rules().audio());
+    let music = MusicPlaylist::new(&shell.world, services.sound.clone(), services.settings.clone());
+    if let Some(music) = &music {
+        music.post_world_loaded();
+    }
+    *services.music.borrow_mut() = music;
+    if let Some(info) = shell.world.world_actor().info.trait_info::<StartGameNotificationInfo>() {
+        let faction = shell.viewer.as_ref().map(|p| p.faction.as_str());
+        services
+            .sound
+            .play_notification(shell.world.rules().audio(), "Speech", &info.notification, faction);
+        shell.world.sound.add_transient_line(None, info.text_notification.as_deref());
+    }
 }
 
 /// The viewport of a world, centered on its map.
@@ -84,7 +158,7 @@ impl ShellWorld {
     ) -> ShellWorld {
         let local_client = connection.local_client_id();
         let is_host = lobby.client_with_index(local_client).is_some_and(|c| c.is_admin);
-        let (world, _, read_file) = load_world(engine, support, package, lobby, false);
+        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true);
         let driver = SkirmishDriver::with_connection(&world, Box::new(connection), is_host);
         let viewport = world_viewport(&world, view, distance);
         let viewer = world
@@ -106,6 +180,7 @@ impl ShellWorld {
             viewer,
             ingame: None,
             ended: false,
+            game_over_seen: false,
         }
     }
 
@@ -119,7 +194,7 @@ impl ShellWorld {
         let package = open_map(engine, name)?;
         let map = MapPackage::load(package.clone()).ok()?;
         let lobby = skirmish_session(&map, &[], now.subsec_nanos() as i32).ok()?;
-        let (world, _, read_file) = load_world_of_type(engine, support, package, lobby, false, WorldType::Shellmap);
+        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Shellmap, true);
         let driver = SkirmishDriver::new(&world);
         let viewport = world_viewport(&world, view, distance);
         Some(ShellWorld {
@@ -132,6 +207,7 @@ impl ShellWorld {
             viewer: None,
             ingame: None,
             ended: false,
+            game_over_seen: false,
         })
     }
 
@@ -162,6 +238,48 @@ impl ShellWorld {
         }
         if !orders.connection.is_connected() {
             state.connection_state = rustora_ui::net::ConnectionState::NotConnected;
+        }
+    }
+
+    /// Hands the sound calls of the last tick to the audio system, and what else `Game.InnerLogicTick` tells it.
+    fn update_audio(&mut self, services: &Services, messages: &Messages) {
+        let local_player = self.ingame.as_ref().and_then(|i| i.local_player.clone());
+        let selection = self.ingame.as_ref().map(|i| i.selection.clone());
+        let is_selected = |a: &rustora_engine::actor::ActorRef| selection.as_ref().is_some_and(|s| s.contains(a));
+        services
+            .sound
+            .process_events(self.world.rules().audio(), &self.world, local_player.as_ref(), &is_selected);
+        for (player, key) in self.world.sound.take_transient_lines() {
+            let for_local_player = player.is_none_or(|p| local_player.as_ref().is_some_and(|l| Rc::ptr_eq(&p, l)));
+            if for_local_player {
+                services.net.borrow_mut().notifications.push(rustora_ui::net::TextNotification {
+                    pool: rustora_ui::net::TextNotificationPool::Transients,
+                    prefix: None,
+                    text: messages.get(&key),
+                    prefix_color: None,
+                    text_color: None,
+                    time: (0, 0),
+                });
+            }
+        }
+        for (key, player) in self.world.sound.take_system_lines() {
+            let text = messages.get_with(&key, &[("player", rustora_ui::fluent::MessageArg::Text(&player))]);
+            services.net.borrow_mut().notifications.push(rustora_ui::net::TextNotification {
+                pool: rustora_ui::net::TextNotificationPool::System,
+                prefix: Some("Battlefield Control".to_string()),
+                text,
+                prefix_color: None,
+                text_color: None,
+                time: (0, 0),
+            });
+        }
+        let (x, y) = self.viewport.borrow().center;
+        services.sound.set_listener_position(px_to_world(x, y));
+        if !self.game_over_seen && self.world.is_game_over() {
+            self.game_over_seen = true;
+            if let Some(music) = services.music.borrow().as_ref() {
+                music.game_over(local_player.as_ref());
+            }
         }
     }
 
@@ -214,6 +332,9 @@ impl Client {
         let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
         let server_mod = LazyServerMod::new(engine, support);
+        let sound = open_sound(&mod_data, &settings);
+        let mod_audio = load_mod_audio(&mod_data);
+        sound.load_music_files(&mod_audio);
         let services = Services {
             mod_version: mod_data.manifest.metadata.version.clone(),
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
@@ -222,6 +343,9 @@ impl Client {
             lobby_rules: RefCell::new(Some(lobby_rules_lookup(server_mod.clone()))),
             color_rules: RefCell::new(Some(color_rules_lookup(server_mod))),
             ingame: RefCell::new(None),
+            sound,
+            mod_audio,
+            music: RefCell::new(None),
         };
         let net = NetClient::new(engine, support, services.net.clone());
         let services = Rc::new(services);
@@ -236,6 +360,7 @@ impl Client {
         if let Some(shell) = &shell {
             shell.world.pause_shellmap.set(pause_shellmap);
         }
+        start_music(&services, shell.as_ref());
         let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, services.clone());
         ui.ui_scroll_speed = ui_scroll_speed;
         ui.cursor_names = Rc::new(cursors.names());
@@ -268,7 +393,10 @@ impl Client {
                 let assets = self.ui.assets.clone();
                 shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, run_time);
             }
+            let assets = self.ui.assets.clone();
+            shell.update_audio(&self.services, &assets.borrow().messages);
         }
+        self.services.sound.tick();
         self.cursor.tick(&self.cursors);
         self.ui.tick();
     }
@@ -307,6 +435,7 @@ impl Client {
         self.net.disconnect();
         self.ui.reset_all();
         *self.services.ingame.borrow_mut() = None;
+        self.dispose_world();
         let (distance, pause_shellmap) = {
             let settings = self.services.settings.borrow();
             (settings.graphics.viewport_distance, settings.game.pause_shellmap)
@@ -319,7 +448,17 @@ impl Client {
         if let Some(shell) = &self.shell {
             shell.world.pause_shellmap.set(pause_shellmap);
         }
+        start_music(&self.services, self.shell.as_ref());
         self.ui.load_widget("MAINMENU", Some(self.ui.root), &WidgetArgs::default());
+    }
+
+    /// `World.Dispose`: the audio of the old world ends with it.
+    fn dispose_world(&mut self) {
+        if let Some(music) = self.services.music.borrow_mut().take() {
+            music.dispose();
+        }
+        self.services.sound.stop_audio();
+        self.shell = None;
     }
 
     /// `Game.StartGame`. The in-game user interface follows with slice 6 of P8.
@@ -340,7 +479,7 @@ impl Client {
             return;
         };
         self.ui.reset_all();
-        self.shell = None;
+        self.dispose_world();
         let distance = self.services.settings.borrow().graphics.viewport_distance;
         let mut shell = ShellWorld::start_game(
             &self.engine,
@@ -369,6 +508,7 @@ impl Client {
         shell.ingame = Some(ingame.clone());
         *self.services.ingame.borrow_mut() = Some(ingame);
         self.shell = Some(shell);
+        start_music(&self.services, self.shell.as_ref());
         self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
         for (what, count) in self.ui.loader.missing.borrow().iter() {
             log::info!("not ported: {what} ({count})");

@@ -23,6 +23,7 @@ pub mod render;
 pub mod rules;
 pub mod sequence;
 pub mod shroud;
+pub mod sound;
 pub mod spatial;
 pub mod stub;
 pub mod target;

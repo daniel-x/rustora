@@ -21,6 +21,7 @@ use rustora_engine::conditional::*;
 use rustora_engine::order::Order;
 use rustora_engine::player::{PlayerRef, PlayerRelationship};
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sound::{self, SoundType};
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::terrain::TargetableType;
 use rustora_engine::traits::*;
@@ -403,12 +404,18 @@ impl Armament {
         self.schedule_delayed_action(
             self.info.fire_delay,
             self.burst.get(),
-            Box::new(move |_burst| {
+            Box::new(move |burst| {
                 let args = make_args();
                 if let Some(p) = &args.weapon.projectile.clone()
                     && let Some(projectile) = p.create(args)
                 {
                     s.world().add_effect(projectile);
+                    let world = s.world();
+                    let center = s.center_position();
+                    sound::play_random_at(&world, SoundType::World, &m.weapon.report, center, 1.0);
+                    if burst == m.weapon.burst {
+                        sound::play_random_at(&world, SoundType::World, &m.weapon.start_burst_report, center, 1.0);
+                    }
                 }
                 m.recoil.set(m.info.recoil);
                 let notifies = m.notify_attacks.borrow().clone();
@@ -435,6 +442,17 @@ impl Armament {
             );
             self.fire_delay.set(if d <= 0 { 1 } else { d });
             self.burst.set(self.weapon.burst);
+            if !self.weapon.after_fire_sound.is_empty() {
+                let s = self_.clone();
+                let weapon = self.weapon.clone();
+                self.schedule_delayed_action(
+                    weapon.after_fire_sound_delay,
+                    self.burst.get(),
+                    Box::new(move |_burst| {
+                        sound::play_random_at(&s.world(), SoundType::World, &weapon.after_fire_sound, s.center_position(), 1.0);
+                    }),
+                );
+            }
             let list = self.notify_burst_complete.borrow().clone();
             for nbc in list {
                 nbc.fired_burst(self_, target, self);

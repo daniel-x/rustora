@@ -75,7 +75,9 @@ impl WorldInteractionControllerWidget {
     fn apply_orders(ingame: &Ingame, ctx: &OrderContext, mi: &MouseInput) {
         let world_px = Self::world_px(ingame, (mi.x, mi.y));
         let cell = view_to_world(world_px);
-        for o in ingame.order_generator().order(ctx, cell, world_px, mi) {
+        let orders = ingame.order_generator().order(ctx, cell, world_px, mi);
+        rustora_engine::sound::play_voice_for_orders(&orders);
+        for o in orders {
             ingame.world.issue_order(o);
         }
     }

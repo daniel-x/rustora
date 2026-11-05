@@ -631,6 +631,11 @@ impl IWarhead for CreateEffectWarhead {
                 w.add_effect(e);
             }));
         }
+        if let Some(sound) = rustora_engine::sound::random_name(&w, &self.impact_sounds)
+            && w.local_random.borrow_mut().next_range(0, 100) < self.impact_sound_chance
+        {
+            rustora_engine::sound::play_at(&w, rustora_engine::sound::SoundType::World, sound, pos, 1.0);
+        }
     }
 }
 
@@ -986,6 +991,7 @@ fn add_contrail_fader(world: &World, pos: WPos, contrail: &Option<SharedContrail
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct BulletInfo {
+    pub bounce_sound: Option<String>,
     #[field(flatten)]
     pub visuals: ProjectileVisuals,
     #[field(flatten)]
@@ -1012,6 +1018,7 @@ pub struct BulletInfo {
 impl Default for BulletInfo {
     fn default() -> Self {
         BulletInfo {
+            bounce_sound: None,
             visuals: ProjectileVisuals::default(),
             contrail: ContrailFields::default(),
             speed: vec![WDist::new(17)],
@@ -1189,6 +1196,9 @@ impl Bullet {
             self.length.set(1.max((target - pos).length() / self.speed.length));
             self.ticks.set(0);
             self.source.set(pos);
+            if let Some(s) = &info.bounce_sound {
+                rustora_engine::sound::play_at(w, rustora_engine::sound::SoundType::World, s, pos, 1.0);
+            }
             self.remaining_bounces.set(self.remaining_bounces.get() - 1);
         }
         if flight_length_reached && !should_bounce {

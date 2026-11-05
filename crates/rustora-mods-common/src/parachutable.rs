@@ -25,6 +25,8 @@ pub fn register(r: &mut TraitRegistry) {
 pub struct ParachutableInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub ground_impact_sound: Option<String>,
+    pub water_impact_sound: Option<String>,
     pub killed_on_impassable_terrain: bool,
     pub damage_types: DamageTypes,
     pub water_terrain_types: IndexSet<String>,
@@ -35,6 +37,8 @@ pub struct ParachutableInfo {
 impl Default for ParachutableInfo {
     fn default() -> Self {
         ParachutableInfo {
+            ground_impact_sound: None,
+            water_impact_sound: None,
             instance_name: None,
             killed_on_impassable_terrain: true,
             damage_types: DamageTypes::default(),
@@ -104,6 +108,15 @@ impl INotifyParachute for Parachutable {
             if !blocked {
                 return;
             }
+        }
+        let on_water = self.info.water_terrain_types.contains(&w.map().terrain_type_info(cell).ty);
+        let sound = if on_water {
+            &self.info.water_impact_sound
+        } else {
+            &self.info.ground_impact_sound
+        };
+        if let Some(s) = sound {
+            rustora_engine::sound::play_at(&w, rustora_engine::sound::SoundType::World, s, self_.center_position(), 1.0);
         }
         crate::health::kill_actor(self_, Some(self_), &self.info.damage_types);
     }

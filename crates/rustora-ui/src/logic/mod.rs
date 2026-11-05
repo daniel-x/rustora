@@ -34,6 +34,10 @@ pub mod map_chooser;
 pub mod map_preview;
 pub mod sidebar;
 
+use rustora_engine::sound::{AudioRules, Sound};
+
+use crate::music::MusicPlaylist;
+
 /// The application state that logic classes read.
 pub struct Services {
     pub mod_version: String,
@@ -46,6 +50,12 @@ pub struct Services {
     pub color_rules: RefCell<Option<ColorRulesLookup>>,
     /// The running game, from `Game.StartGame` on.
     pub ingame: RefCell<Option<Rc<ingame::Ingame>>>,
+    /// `Game.Sound`.
+    pub sound: Rc<Sound>,
+    /// The audio sections of `ModRules`.
+    pub mod_audio: Rc<AudioRules>,
+    /// The `MusicPlaylist` of the current world.
+    pub music: RefCell<Option<Rc<MusicPlaylist>>>,
 }
 
 /// The function behind `Services::lobby_rules`.
@@ -64,8 +74,17 @@ impl Default for Services {
             lobby_rules: RefCell::new(None),
             color_rules: RefCell::new(None),
             ingame: RefCell::new(None),
+            sound: Rc::new(Sound::silent()),
+            mod_audio: Rc::default(),
+            music: RefCell::new(None),
         }
     }
+}
+
+/// `Game.Sound.PlayNotification(ModRules, null, "Sounds", name, null)`.
+pub(crate) fn play_ui_sound(ui: &Ui, name: &str) {
+    let services = services(ui);
+    services.sound.play_notification(&services.mod_audio, "Sounds", name, None);
 }
 
 pub(crate) fn services(ui: &Ui) -> Rc<Services> {

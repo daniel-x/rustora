@@ -55,6 +55,13 @@ impl PlaceBuildingOrderGenerator {
         if !can_place_building(world, top_left, &self.building, None)
             || !is_close_enough_to_base(&self.building, world, &owner, &self.actor, top_left)
         {
+            let place = owner
+                .player_actor()
+                .info
+                .trait_info::<rustora_mods_common::production::PlaceBuildingInfo>();
+            let notification = place.as_ref().and_then(|p| p.cannot_place_notification.as_deref());
+            let text = place.as_ref().and_then(|p| p.cannot_place_text_notification.as_deref());
+            rustora_engine::sound::notify_owner(owner.player_actor(), "Speech", notification, text);
             return Vec::new();
         }
         let order_type = if self.actor.has_trait_info::<LineBuildInfo>() && !mi.modifiers.shift {

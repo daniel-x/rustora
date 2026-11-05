@@ -59,6 +59,8 @@ pub struct PlayerResources {
     pub resource_capacity: Cell<i32>,
     pub earned: Cell<i32>,
     pub spent: Cell<i32>,
+    self_: ActorRef,
+    last_notification_time: Cell<Option<std::time::Instant>>,
 }
 
 register_traits!(PlayerResources: ISync);
@@ -68,6 +70,8 @@ info_impl!(PlayerResourcesInfo => |info, init| {
     let cash = if s.is_empty() { info.default_cash } else { s.parse().unwrap_or(info.default_cash) };
     Some(Rc::new(PlayerResources {
         info,
+        self_: init.self_.clone(),
+        last_notification_time: Cell::new(None),
         cash: Cell::new(cash),
         resources: Cell::new(0),
         resource_capacity: Cell::new(0),
@@ -128,8 +132,18 @@ impl PlayerResources {
     }
 
     /// Spends ore before cash. Low funds notifications are a client feature and not ported here.
-    pub fn take_cash(&self, num: i32, _notify_low_funds: bool) -> bool {
+    pub fn take_cash(&self, num: i32, notify_low_funds: bool) -> bool {
         if self.get_cash_and_resources() < num {
+            let interval = self.info.insufficient_funds_notification_interval as u128;
+            if notify_low_funds && self.last_notification_time.get().is_none_or(|t| t.elapsed().as_millis() > interval) {
+                self.last_notification_time.set(Some(std::time::Instant::now()));
+                rustora_engine::sound::notify_owner(
+                    &self.self_,
+                    "Speech",
+                    self.info.insufficient_funds_notification.as_deref(),
+                    self.info.insufficient_funds_text_notification.as_deref(),
+                );
+            }
             return false;
         }
         self.resources.set(self.resources.get().wrapping_sub(num));

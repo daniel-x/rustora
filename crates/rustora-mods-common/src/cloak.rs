@@ -336,6 +336,15 @@ impl ITick for Cloak {
         if is_cloaked && !self.was_cloaked.get() {
             self.grant_cloaked_condition(self_);
             if show_change {
+                if let Some(s) = &self.info.cloak_sound {
+                    rustora_engine::sound::play_at(
+                        &self_.world(),
+                        rustora_engine::sound::SoundType::World,
+                        s,
+                        self_.center_position(),
+                        1.0,
+                    );
+                }
                 self.spawn_effect(self_, self.info.cloak_effect_sequence.as_deref());
             }
         } else if !is_cloaked && self.was_cloaked.get() {
@@ -343,6 +352,15 @@ impl ITick for Cloak {
                 self.cloaked_token.set(self_.revoke_condition(self.cloaked_token.get()));
             }
             if show_change {
+                if let Some(s) = &self.info.uncloak_sound {
+                    rustora_engine::sound::play_at(
+                        &self_.world(),
+                        rustora_engine::sound::SoundType::World,
+                        s,
+                        self_.center_position(),
+                        1.0,
+                    );
+                }
                 self.spawn_effect(self_, self.info.uncloak_effect_sequence.as_deref());
             }
         }

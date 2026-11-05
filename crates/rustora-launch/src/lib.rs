@@ -14,6 +14,7 @@ use rustora_engine::map::{Map, MapGrid};
 use rustora_engine::order_manager::{OrderManager, ReplayConnection};
 use rustora_engine::rules::{Ruleset, TraitRegistry};
 use rustora_engine::sequence::ReadFile;
+use rustora_engine::sound::AudioRules;
 use rustora_engine::terrain::TerrainInfo;
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
@@ -124,6 +125,19 @@ pub fn load_world_of_type(
     is_replay: bool,
     world_type: WorldType,
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
+    load_world_with_sound(engine, support, pkg, lobby, is_replay, world_type, false)
+}
+
+/// [`load_world_of_type`] with the choice to queue the sound calls of the world for a client, from its creation on.
+pub fn load_world_with_sound(
+    engine: &Path,
+    support: &str,
+    pkg: Arc<dyn Package>,
+    lobby: rustora_net::session::Session,
+    is_replay: bool,
+    world_type: WorldType,
+    sound: bool,
+) -> (Rc<World>, Rc<ModData>, ReadFile) {
     let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
 
@@ -137,7 +151,16 @@ pub fn load_world_of_type(
     let weapons_yaml = ModData::load_yaml(&fs, &md.manifest.weapons, map_package.section("Weapons")).expect("weapons");
     let mut weapon_registry = rustora_engine::weapon::WeaponRegistry::default();
     rustora_mods_common::weapons::register_weapon_parts(&mut weapon_registry);
-    let rules = Rc::new(Ruleset::load(&registry, &weapon_registry, &rules_yaml, &weapons_yaml).expect("ruleset"));
+    let audio = Rc::new(AudioRules::load(
+        &ModData::load_yaml(&fs, &md.manifest.voices, map_package.section("Voices")).expect("voices"),
+        &ModData::load_yaml(&fs, &md.manifest.notifications, map_package.section("Notifications")).expect("notifications"),
+        &ModData::load_yaml(&fs, &md.manifest.music, map_package.section("Music")).expect("music"),
+    ));
+    let rules = Rc::new(
+        Ruleset::load(&registry, &weapon_registry, &rules_yaml, &weapons_yaml)
+            .expect("ruleset")
+            .with_audio(audio),
+    );
     let map_package_sequences = map_package.section("Sequences").cloned();
     let tileset = map_package
         .yaml
@@ -160,6 +183,7 @@ pub fn load_world_of_type(
     )));
     let world = World::new(map, rules, lobby, world_type, 40, 3);
     world.set_is_replay(is_replay);
+    world.sound.set_enabled(sound);
     world.load_complete();
     (world, md, read_file)
 }

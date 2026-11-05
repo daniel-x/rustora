@@ -56,6 +56,7 @@ macro_rules! load_info {
 pub struct Ruleset {
     actors: IndexMap<String, Rc<ActorInfo>>,
     weapons: IndexMap<String, Rc<WeaponInfo>>,
+    audio: Rc<crate::sound::AudioRules>,
 }
 
 impl Ruleset {
@@ -89,7 +90,22 @@ impl Ruleset {
             let w = WeaponInfo::load(weapon_registry, &n.value).map_err(|e| format!("Weapon {name}: {e}"))?;
             weapons.insert(name, Rc::new(w));
         }
-        Ok(Ruleset { actors, weapons })
+        Ok(Ruleset {
+            actors,
+            weapons,
+            audio: Rc::default(),
+        })
+    }
+
+    /// Sets `Ruleset.Voices`, `Notifications` and `Music`.
+    pub fn with_audio(mut self, audio: Rc<crate::sound::AudioRules>) -> Ruleset {
+        self.audio = audio;
+        self
+    }
+
+    /// `Ruleset.Voices`, `Notifications` and `Music`.
+    pub fn audio(&self) -> &Rc<crate::sound::AudioRules> {
+        &self.audio
     }
 
     pub fn actor(&self, name: &str) -> Option<Rc<ActorInfo>> {

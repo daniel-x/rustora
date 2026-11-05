@@ -285,10 +285,16 @@ impl INotifySold for Building {
 }
 
 impl INotifyTransform for Building {
-    fn before_transform(&self, _self_: &ActorRef) {
+    fn before_transform(&self, self_: &ActorRef) {
         if self.info.remove_smudges_on_transform {
             self.remove_smudges();
         }
+        rustora_engine::sound::play_all_to_owner(
+            self_,
+            rustora_engine::sound::SoundType::World,
+            &self.info.undeploy_sounds,
+            self_.center_position(),
+        );
     }
 
     fn on_transform(&self, _self_: &ActorRef) {}

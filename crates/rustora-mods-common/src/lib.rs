@@ -47,6 +47,7 @@ pub mod resources;
 pub mod resupply;
 pub mod selection;
 pub mod smudge;
+pub mod sound;
 pub mod support_powers;
 pub mod targetable;
 pub mod tooltip;
@@ -63,6 +64,7 @@ use rustora_engine::rules::TraitRegistry;
 pub fn register(r: &mut TraitRegistry) {
     actor_map::register(r);
     palettes::register(r);
+    sound::register(r);
     smudge::register(r);
     decorations::register(r);
     render_traits::register(r);

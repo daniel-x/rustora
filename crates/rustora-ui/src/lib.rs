@@ -17,6 +17,7 @@ pub mod hotkeys;
 pub mod input;
 pub mod loader;
 pub mod logic;
+pub mod music;
 pub mod net;
 pub mod orders;
 pub mod place_building;

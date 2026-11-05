@@ -1,0 +1,18 @@
+[package]
+name = "rustora-audio"
+description = "rustora audio output: a software mixer on the system audio device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-engine = { path = "../rustora-engine" }
+cpal = "0.18"
+log = "0.4"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rustora-formats = { path = "../rustora-formats" }

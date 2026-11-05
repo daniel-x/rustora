@@ -380,11 +380,14 @@ field_flags!(PowerState, [Normal, Low, Critical]);
 pub struct PowerManagerInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub speech_notification: Option<String>,
+    pub text_notification: Option<String>,
     pub advice_interval: i32,
 }
 
 pub struct PowerManager {
     self_: ActorRef,
+    last_power_advice: Cell<Option<std::time::Instant>>,
     dev_mode: Rc<DeveloperMode>,
     power_drain: RefCell<NetMap<u32, i32>>,
     power_provided: Cell<i32>,
@@ -400,6 +403,7 @@ register_traits!(PowerManager: INotifyCreated, ITick, ISync, IResolveOrder);
 info_impl!(PowerManagerInfo => |_, init| {
     let dev_mode = init.self_.trait_::<DeveloperMode>();
     Some(Rc::new(PowerManager {
+        last_power_advice: Cell::new(None),
         self_: init.self_.clone(),
         was_hack_enabled: Cell::new(dev_mode.unlimited_power()),
         dev_mode,
@@ -445,6 +449,7 @@ impl ITick for PowerManager {
             self.was_hack_enabled.set(self.dev_mode.unlimited_power());
             self.update_power_state();
         }
+        self.play_low_power_advice();
         let r = self.power_outage_remaining_ticks.get();
         if r > 0 {
             self.power_outage_remaining_ticks.set(r - 1);
@@ -530,10 +535,31 @@ impl PowerManager {
         self.update_power_state();
     }
 
+    /// The notification part of `ITick.Tick`. It speaks once per `AdviceInterval` of real time while power is low.
+    fn play_low_power_advice(&self) {
+        let info = self.self_.info.trait_info::<PowerManagerInfo>().expect("PowerManager");
+        let due = self
+            .last_power_advice
+            .get()
+            .is_none_or(|t| t.elapsed().as_millis() > info.advice_interval as u128);
+        if info.advice_interval > 0 && self.is_low_power.get() && due {
+            rustora_engine::sound::notify_owner(
+                &self.self_,
+                "Speech",
+                info.speech_notification.as_deref(),
+                info.text_notification.as_deref(),
+            );
+            self.last_power_advice.set(Some(std::time::Instant::now()));
+        }
+    }
+
     fn update_power_state(&self) {
         self.is_low_power.set(self.excess_power() < 0);
         if self.is_low_power.get() != self.was_low_power.get() {
             self.update_power_requiring_actors();
+        }
+        if self.is_low_power.get() && !self.was_low_power.get() {
+            self.last_power_advice.set(None);
         }
         self.was_low_power.set(self.is_low_power.get());
     }
@@ -1339,6 +1365,10 @@ pub fn is_close_enough_to_base(bi: &BuildingInfo, world: &World, p: &PlayerRef, 
 pub struct RepairableBuildingInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    pub repairing_notification: Option<String>,
+    pub repairing_text_notification: Option<String>,
+    pub repairing_stopped_notification: Option<String>,
+    pub repairing_stopped_text_notification: Option<String>,
     #[field(flatten)]
     pub base: ConditionalTraitInfo,
     pub repair_percent: i32,
@@ -1354,6 +1384,10 @@ pub struct RepairableBuildingInfo {
 impl Default for RepairableBuildingInfo {
     fn default() -> Self {
         RepairableBuildingInfo {
+            repairing_notification: None,
+            repairing_text_notification: None,
+            repairing_stopped_notification: None,
+            repairing_stopped_text_notification: None,
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             repair_percent: 20,
@@ -1444,13 +1478,35 @@ impl RepairableBuilding {
         if let Some(i) = pos {
             self.repairers.borrow_mut().remove(i);
             self.update_condition(self_);
+            if self.repairers.borrow().is_empty() {
+                self.repair_notification(
+                    self_,
+                    player,
+                    self.info.repairing_stopped_notification.as_deref(),
+                    self.info.repairing_stopped_text_notification.as_deref(),
+                );
+            }
             return;
         }
         if self.repairers.borrow().len() >= self.info.repair_bonuses.len() - 1 {
             return;
         }
         self.repairers.borrow_mut().push(player.clone());
+        self.repair_notification(
+            self_,
+            player,
+            self.info.repairing_notification.as_deref(),
+            self.info.repairing_text_notification.as_deref(),
+        );
         self.update_condition(self_);
+    }
+
+    fn repair_notification(&self, self_: &ActorRef, player: &PlayerRef, notification: Option<&str>, text: Option<&str>) {
+        let world = self_.world();
+        if let Some(n) = notification {
+            rustora_engine::sound::play_notification(&world, Some(player), "Speech", n, Some(&player.faction));
+        }
+        world.sound.add_transient_line(Some(&self_.owner()), text);
     }
 }
 
