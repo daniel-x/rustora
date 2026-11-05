@@ -24,6 +24,7 @@ pub mod production;
 mod scroll_item;
 mod scroll_panel;
 mod slider;
+pub mod support_powers;
 mod text_field;
 mod tooltip;
 mod viewport_controller;
@@ -56,6 +57,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "Container" | "LogicKeyListener" => container(),
         "LogicTicker" => cell(production::LogicTickerWidget::default()),
         "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
+        "SupportPowers" => cell(support_powers::SupportPowersWidget::default()),
         "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
         "Label" | "LabelForInput" => cell(LabelWidget::new(assets)),

@@ -52,11 +52,11 @@ impl rustora_core::fieldloader::FieldValue for PlayerRelationship {
     ) -> Result<Self, rustora_core::fieldloader::LoadError> {
         let mut r = 0;
         for p in value.unwrap_or("").split(',').map(str::trim).filter(|p| !p.is_empty()) {
-            r |= match p {
-                "None" => 0,
-                "Enemy" => 1,
-                "Neutral" => 2,
-                "Ally" => 4,
+            r |= match p.to_ascii_lowercase().as_str() {
+                "none" => 0,
+                "enemy" => 1,
+                "neutral" => 2,
+                "ally" => 4,
                 _ => return rustora_core::fieldloader::invalid(value, "PlayerRelationship", field),
             };
         }

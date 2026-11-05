@@ -44,6 +44,7 @@ pub mod selection;
 pub mod smudge;
 pub mod support_powers;
 pub mod targetable;
+pub mod tooltip;
 pub mod transforms;
 pub mod turreted;
 pub mod util;
@@ -58,6 +59,7 @@ pub fn register(r: &mut TraitRegistry) {
     actor_map::register(r);
     game_save::register(r);
     selection::register(r);
+    tooltip::register(r);
     aircraft::register(r);
     attack::register(r);
     attack_move::register(r);

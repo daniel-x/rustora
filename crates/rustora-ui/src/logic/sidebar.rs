@@ -366,3 +366,326 @@ pub fn power_counter(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> 
         infinite,
     })
 }
+
+/// `SupportPowerBinLogic`.
+pub fn support_power_bin(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
+    use crate::widgets::support_powers::SupportPowersWidget;
+    let palette = ui.child(id, "SUPPORT_PALETTE");
+    let background = ui.find(id, "PALETTE_BACKGROUND");
+    let foreground = ui.find(id, "PALETTE_FOREGROUND");
+    if background.is_none() && foreground.is_none() {
+        return cell(NoLogic);
+    }
+    let bg_template = background.map(|b| ui.child(b, "ICON_TEMPLATE"));
+    let fg_template = foreground.map(|f| ui.child(f, "ICON_TEMPLATE"));
+    if let (Some(b), Some(t)) = (background, bg_template) {
+        ui.hide_child(b, t);
+    }
+    if let (Some(f), Some(t)) = (foreground, fg_template) {
+        ui.hide_child(f, t);
+    }
+    let update = Rc::new(move |ui: &mut Ui, _old: i32, icons: i32| {
+        let (size, margin, horizontal) = {
+            let p = ui.get::<SupportPowersWidget>(palette);
+            (p.icon_size, p.icon_margin, p.horizontal)
+        };
+        for (parent, template) in [(background, bg_template), (foreground, fg_template)] {
+            let (Some(parent), Some(template)) = (parent, template) else {
+                continue;
+            };
+            ui.remove_children(parent);
+            for i in 0..icons {
+                let row = ui.clone_widget(template);
+                if horizontal {
+                    ui.node_mut(row).bounds.x += i * (size.0 + margin);
+                } else {
+                    ui.node_mut(row).bounds.y += i * (size.1 + margin);
+                }
+                ui.add_child(parent, row);
+            }
+        }
+    });
+    ui.get::<SupportPowersWidget>(palette).on_icon_count_changed = Some(update.clone());
+    update(ui, 0, 0);
+    cell(NoLogic)
+}
+
+/// A label text that logic updates in `tick`, read by the label's getter while drawing.
+fn shared_text(ui: &mut Ui, label: WidgetId) -> Rc<RefCell<String>> {
+    let text: Rc<RefCell<String>> = Rc::default();
+    let t = text.clone();
+    ui.label(label).get_text = Some(Rc::new(move || t.borrow().clone()));
+    text
+}
+
+/// `ProductionTooltipLogic`; `BeforeRender` runs in `tick`.
+struct ProductionTooltip {
+    widget: WidgetId,
+    palette: WidgetId,
+    queue_power: Option<Rc<PowerManager>>,
+    labels: TooltipLabels,
+    texts: TooltipTexts,
+    cost: Rc<Cell<i32>>,
+    power: Rc<Cell<i32>>,
+    last: Option<(String, Option<String>, Option<rustora_mods_common::base::PowerState>)>,
+    desc_y: i32,
+    desc_padding: i32,
+    icon_margin: i32,
+}
+
+struct TooltipLabels {
+    name: WidgetId,
+    hotkey: WidgetId,
+    requires: WidgetId,
+    power: WidgetId,
+    power_icon: WidgetId,
+    time: WidgetId,
+    time_icon: WidgetId,
+    cost: WidgetId,
+    cost_icon: WidgetId,
+    desc: WidgetId,
+}
+
+struct TooltipTexts {
+    name: Rc<RefCell<String>>,
+    hotkey: Rc<RefCell<String>>,
+    requires: Rc<RefCell<String>>,
+    power: Rc<RefCell<String>>,
+    time: Rc<RefCell<String>>,
+    cost: Rc<RefCell<String>>,
+    desc: Rc<RefCell<String>>,
+}
+
+fn actor_name(world: &rustora_engine::world::World, ui: &Ui, a: &str) -> String {
+    world
+        .rules()
+        .actor(&a.to_lowercase())
+        .and_then(|ai| rustora_mods_common::tooltip::default_tooltip_name(&ai))
+        .map_or_else(|| a.to_string(), |key| message(ui, &key))
+}
+
+impl ChromeLogic for ProductionTooltip {
+    fn tick(&mut self, ui: &mut Ui) {
+        let icon = ui.get::<ProductionPaletteWidget>(self.palette).tooltip_icon.clone();
+        let Some(icon) = icon else { return };
+        let actor = icon.actor.clone();
+        let hotkey = icon
+            .hotkey
+            .as_deref()
+            .and_then(|h| ui.assets.borrow().hotkeys.get(h))
+            .map(|h| h.display_string(&ui.assets.borrow().messages));
+        let power_state = self.queue_power.as_ref().map(|pm| pm.power_state());
+        let key = (actor.name.clone(), hotkey.clone(), power_state);
+        if self.last.as_ref() == Some(&key) {
+            return;
+        }
+        let world = icon.queue.actor.world();
+        let l = &self.labels;
+        let name = rustora_mods_common::tooltip::default_tooltip_name(&actor).map_or_else(|| actor.name.clone(), |k| message(ui, &k));
+        let bi = actor
+            .trait_info::<rustora_mods_common::production::BuildableInfo>()
+            .expect("buildable");
+        self.cost.set(icon.queue.get_production_cost(&actor));
+        let font = ui.label(l.name).font.clone();
+        let name_x = ui.node(l.name).bounds.x;
+        let name_size = ui.measure(&font, &name);
+        *self.texts.name.borrow_mut() = name;
+        let mut hotkey_width = 0;
+        ui.node_mut(l.hotkey).visible = hotkey.is_some();
+        if let Some(h) = &hotkey {
+            let text = format!("({h})");
+            hotkey_width = ui.measure(&font, &text).0 + 2 * name_x;
+            *self.texts.hotkey.borrow_mut() = text;
+            ui.node_mut(l.hotkey).bounds.x = name_size.0 + 2 * name_x;
+        }
+        let prereqs: Vec<String> = bi
+            .prerequisites
+            .iter()
+            .map(|a| actor_name(&world, ui, a))
+            .filter(|s| !s.starts_with('~') && !s.starts_with('!'))
+            .collect();
+        let mut requires_size = (0, 0);
+        if prereqs.is_empty() {
+            ui.node_mut(l.requires).visible = false;
+            ui.node_mut(l.desc).bounds.y = self.desc_y;
+        } else {
+            let text = message_with(ui, "label-requires", &[("prerequisites", MessageArg::Text(&prereqs.join(", ")))]);
+            let requires_font = ui.label(l.requires).font.clone();
+            requires_size = ui.measure(&requires_font, &text);
+            *self.texts.requires.borrow_mut() = text;
+            ui.node_mut(l.requires).visible = true;
+            let h = ui.node(l.requires).bounds.h;
+            ui.node_mut(l.desc).bounds.y = self.desc_y + h;
+        }
+        let mut power_size = (0, 0);
+        if self.queue_power.is_some() {
+            let power: i32 = actor
+                .trait_infos::<rustora_mods_common::base::PowerInfo>()
+                .iter()
+                .filter(|p| p.base.enabled_by_default())
+                .map(|p| p.amount)
+                .sum();
+            self.power.set(power);
+            let text = power.to_string();
+            power_size = ui.measure(&font, &text);
+            *self.texts.power.borrow_mut() = text;
+            ui.node_mut(l.power).visible = power != 0;
+            ui.node_mut(l.power_icon).visible = power != 0;
+        }
+        let build_time = icon.queue.get_build_time(&actor, &bi);
+        let low_power = power_state.is_some_and(|s| s != rustora_mods_common::base::PowerState::Normal);
+        let modifier = if low_power { icon.queue.info.low_power_modifier } else { 100 };
+        let time_text = crate::widgets::production::format_time(build_time * modifier / 100, world.timestep);
+        let time_size = ui.measure(&font, &time_text);
+        *self.texts.time.borrow_mut() = time_text;
+        ui.label(l.time).text_color = if low_power && icon.queue.info.low_power_modifier > 100 {
+            Color::from_argb(255, 255, 0, 0)
+        } else {
+            Color::from_argb(255, 255, 255, 255)
+        };
+        let cost_text = self.cost.get().to_string();
+        let cost_size = ui.measure(&font, &cost_text);
+        *self.texts.cost.borrow_mut() = cost_text;
+        let desc = bi
+            .description
+            .as_deref()
+            .filter(|d| !d.is_empty())
+            .map(|d| message(ui, d))
+            .unwrap_or_default();
+        let desc_font = ui.label(l.desc).font.clone();
+        let desc_size = ui.measure(&desc_font, &desc);
+        *self.texts.desc.borrow_mut() = desc;
+        ui.node_mut(l.desc).bounds.w = desc_size.0;
+        ui.node_mut(l.desc).bounds.h = desc_size.1 + self.desc_padding;
+        let left = (name_size.0 + hotkey_width).max(requires_size.0).max(desc_size.0);
+        let right = power_size.0.max(time_size.0).max(cost_size.0);
+        let icon_x = left + 2 * name_x;
+        for i in [l.time_icon, l.power_icon, l.cost_icon] {
+            ui.node_mut(i).bounds.x = icon_x;
+        }
+        let label_x = icon_x + ui.node(l.time_icon).bounds.w + self.icon_margin;
+        for i in [l.time, l.power, l.cost] {
+            ui.node_mut(i).bounds.x = label_x;
+        }
+        let time_icon_w = ui.node(l.time_icon).bounds.w;
+        ui.node_mut(self.widget).bounds.w = left + right + 3 * name_x + time_icon_w + self.icon_margin;
+        let desc_b = ui.node(l.desc).bounds;
+        let left_height = desc_b.bottom() + desc_b.x;
+        let right_bottom = if ui.node(l.power).visible {
+            ui.node(l.power_icon).bounds.bottom()
+        } else {
+            ui.node(l.time_icon).bounds.bottom()
+        };
+        let right_height = right_bottom + ui.node(l.cost_icon).bounds.y;
+        ui.node_mut(self.widget).bounds.h = left_height.max(right_height);
+        self.last = Some(key);
+    }
+}
+
+pub fn production_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+    let (Some(palette), Some(player)) = (args.value::<WidgetId>("palette"), local_player(ui)) else {
+        return cell(NoLogic);
+    };
+
+    let pa = player.player_actor();
+    let queue_power = pa.trait_or_default::<PowerManager>();
+    let resources = pa.trait_::<PlayerResources>();
+    let get = |ui: &Ui, n: &str| ui.child(id, n);
+    let labels = TooltipLabels {
+        name: get(ui, "NAME"),
+        hotkey: get(ui, "HOTKEY"),
+        requires: get(ui, "REQUIRES"),
+        power: get(ui, "POWER"),
+        power_icon: get(ui, "POWER_ICON"),
+        time: get(ui, "TIME"),
+        time_icon: get(ui, "TIME_ICON"),
+        cost: get(ui, "COST"),
+        cost_icon: get(ui, "COST_ICON"),
+        desc: get(ui, "DESC"),
+    };
+    let texts = TooltipTexts {
+        name: shared_text(ui, labels.name),
+        hotkey: shared_text(ui, labels.hotkey),
+        requires: shared_text(ui, labels.requires),
+        power: shared_text(ui, labels.power),
+        time: shared_text(ui, labels.time),
+        cost: shared_text(ui, labels.cost),
+        desc: shared_text(ui, labels.desc),
+    };
+    let palette_kind = ui.kind(palette);
+    ui.set_visible_fn(id, move || {
+        palette_kind
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut k| {
+                k.as_any()
+                    .downcast_mut::<ProductionPaletteWidget>()
+                    .map(|p| p.tooltip_icon.is_some())
+            })
+            .unwrap_or(false)
+    });
+    let cost = Rc::new(Cell::new(0));
+    let c = cost.clone();
+    ui.label(labels.cost).get_color = Some(Rc::new(move || {
+        if resources.get_cash_and_resources() >= c.get() {
+            Color::from_argb(255, 255, 255, 255)
+        } else {
+            Color::from_argb(255, 255, 0, 0)
+        }
+    }));
+    let power = Rc::new(Cell::new(0));
+    if let Some(pm) = queue_power.clone() {
+        let p = power.clone();
+        ui.label(labels.power).get_color = Some(Rc::new(move || {
+            if pm.power_provided() - pm.power_drained() >= -p.get() || p.get() > 0 {
+                Color::from_argb(255, 255, 255, 255)
+            } else {
+                Color::from_argb(255, 255, 0, 0)
+            }
+        }));
+    }
+    let desc_b = ui.node(labels.desc).bounds;
+    let icon_margin = ui.node(labels.time_icon).bounds.x;
+    cell(ProductionTooltip {
+        widget: id,
+        palette,
+        queue_power,
+        labels,
+        texts,
+        cost,
+        power,
+        last: None,
+        desc_y: desc_b.y,
+        desc_padding: desc_b.h,
+        icon_margin,
+    })
+}
+
+/// `OrderButtonsChromeUtils.BindOrderButton`.
+pub fn bind_order_button(ui: &mut Ui, id: WidgetId, kind: crate::button_orders::ButtonOrder, icon: &str) -> Rc<RefCell<dyn ChromeLogic>> {
+    use crate::button_orders::ButtonOrderGenerator;
+    let Some(ingame) = services(ui).ingame.borrow().clone() else {
+        return cell(NoLogic);
+    };
+    let active = {
+        let ingame = ingame.clone();
+        move || ingame.order_generator().button_order() == Some(kind)
+    };
+    {
+        let mut b = ui.button(id);
+        let ingame = ingame.clone();
+        let a = active.clone();
+        b.on_click = Some(Rc::new(move |_ui: &mut Ui| {
+            if a() {
+                ingame.cancel_input_mode();
+            } else {
+                ingame.set_order_generator(Rc::new(ButtonOrderGenerator { kind }));
+            }
+        }));
+        b.is_highlighted = Some(Rc::new(active.clone()));
+    }
+    let image = ui.child(id, "ICON");
+    let icon = icon.to_string();
+    ui.get::<ImageWidget>(image).get_image_name = Some(Rc::new(move || if active() { format!("{icon}-active") } else { icon.clone() }));
+    cell(NoLogic)
+}

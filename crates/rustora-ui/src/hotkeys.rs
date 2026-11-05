@@ -42,6 +42,30 @@ impl Hotkey {
         })
     }
 
+    /// Port of `Hotkey.DisplayString`. Key names come from `keycode.<name>` messages as `KeycodeFluentKeys` lists
+    /// them, falling back to the enum name.
+    pub fn display_string(&self, messages: &crate::fluent::Messages) -> String {
+        let name = |key: &str, fallback: &str| messages.try_get(key, &[]).unwrap_or_else(|| fallback.to_string());
+        let mut ret = name(&format!("keycode.{}", self.key.to_ascii_lowercase()), &self.key);
+        let m = self.modifiers;
+        let meta_key = if cfg!(target_os = "macos") {
+            "keycode-modifier.cmd"
+        } else {
+            "keycode-modifier.meta"
+        };
+        for (on, key, fallback) in [
+            (m.shift, "keycode-modifier.shift", "Shift"),
+            (m.alt, "keycode-modifier.alt", "Alt"),
+            (m.ctrl, "keycode-modifier.ctrl", "Ctrl"),
+            (m.meta, meta_key, "Meta"),
+        ] {
+            if on {
+                ret = format!("{} + {ret}", name(key, fallback));
+            }
+        }
+        ret
+    }
+
     /// Port of `HotkeyReference.IsActivatedBy`.
     pub fn is_activated_by(&self, e: &KeyInput) -> bool {
         self.key == e.key && self.modifiers == e.modifiers

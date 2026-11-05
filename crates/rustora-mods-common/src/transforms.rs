@@ -341,6 +341,7 @@ pub struct SellableInfo {
     pub refund_percent: i32,
     pub show_ticks: bool,
     pub skip_make_animation: bool,
+    pub cursor: String,
 }
 
 impl Default for SellableInfo {
@@ -351,13 +352,20 @@ impl Default for SellableInfo {
             refund_percent: 50,
             show_ticks: true,
             skip_make_animation: false,
+            cursor: "sell".into(),
         }
     }
 }
 
 pub struct Sellable {
-    info: Rc<SellableInfo>,
+    pub info: Rc<SellableInfo>,
     state: ConditionalState,
+}
+
+impl Sellable {
+    pub fn is_trait_disabled(&self) -> bool {
+        self.state.is_trait_disabled()
+    }
 }
 
 register_traits!(Sellable: IResolveOrder, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);

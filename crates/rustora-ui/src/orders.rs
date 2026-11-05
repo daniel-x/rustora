@@ -71,6 +71,10 @@ pub trait OrderGenerator {
     fn selection_changed(&self, _ctx: &OrderContext) {}
     /// `Render`, `RenderAboveShroud` and `RenderAnnotations`, drawn in screen pixels over the world.
     fn draw(&self, _ctx: &OrderContext, _dc: &mut crate::draw::DrawContext, _viewport: &crate::viewport::Viewport) {}
+    /// Which order button made this generator, for `ToggleInputMode` and the button highlights.
+    fn button_order(&self) -> Option<crate::button_orders::ButtonOrder> {
+        None
+    }
     /// `this is UnitOrderGenerator`.
     fn as_unit_order_generator(&self) -> Option<&UnitOrderGenerator> {
         None

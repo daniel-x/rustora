@@ -101,6 +101,12 @@ pub struct SupportPowerInfo {
     pub start_fully_charged: bool,
     pub prerequisites: Vec<String>,
     pub order_name: String,
+    pub icon_image: String,
+    pub icon: Option<String>,
+    pub icon_palette: String,
+    pub cursor: String,
+    pub blocked_cursor: String,
+    pub support_power_palette_order: i32,
     // DirectionalSupportPower
     pub use_directional_target: bool,
     // AirstrikePower, ParatroopersPower
@@ -145,6 +151,12 @@ impl Default for SupportPowerInfo {
             kind: PowerKind::default(),
             base: PausableConditionalTraitInfo::default(),
             charge_interval: 0,
+            icon_image: "icon".into(),
+            icon: None,
+            icon_palette: "chrome".into(),
+            cursor: "ability".into(),
+            blocked_cursor: "generic-blocked".into(),
+            support_power_palette_order: 9999,
             allow_multiple: false,
             one_shot: false,
             start_fully_charged: false,
@@ -558,6 +570,19 @@ impl SupportPowerInstance {
 
     pub fn ready(&self) -> bool {
         self.active.get() && self.remaining_ticks() == 0
+    }
+
+    /// `Active`.
+    pub fn active(&self) -> bool {
+        self.active.get()
+    }
+
+    /// The instance `Target` uses: the first that is not paused.
+    pub fn target_instance(&self) -> Option<Rc<SupportPower>> {
+        if !self.ready() {
+            return None;
+        }
+        self.instances.borrow().iter().find(|i| !i.is_trait_paused()).cloned()
     }
 
     pub fn disabled(&self) -> bool {

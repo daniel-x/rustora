@@ -239,6 +239,11 @@ pub fn create(
         "ClassicProductionLogic" => sidebar::classic_production(ui, id),
         "IngameCashCounterLogic" => sidebar::cash_counter(ui, id),
         "IngamePowerCounterLogic" => sidebar::power_counter(ui, id),
+        "SupportPowerBinLogic" => sidebar::support_power_bin(ui, id),
+        "ProductionTooltipLogic" => sidebar::production_tooltip(ui, id, args),
+        "SellOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Sell, "sell"),
+        "RepairOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Repair, "repair"),
+        "PowerdownOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::PowerDown, "power"),
         "VersionLabelLogic" => {
             let version = services(ui).mod_version.clone();
             ui.get::<LabelWidget>(id).get_text = Some(Rc::new(move || version.clone()));
