@@ -59,12 +59,24 @@ fn print_detail(world: &World) {
     }
 }
 
-/// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick.
+/// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick. `PROGRESS=n` prints the time and
+/// actor count of every n ticks.
 fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
     let mut driver = ReplayDriver::new(world, replay);
+    let progress: i32 = std::env::var("PROGRESS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let mut last = std::time::Instant::now();
     while world.world_tick() < max_ticks && driver.orders.out_of_sync.is_none() {
         match driver.step() {
             Step::Ticked => {
+                if progress > 0 && world.world_tick() % progress == 0 {
+                    println!(
+                        "progress tick {} {:.3}s actors {}",
+                        world.world_tick(),
+                        last.elapsed().as_secs_f64(),
+                        world.actors().len()
+                    );
+                    last = std::time::Instant::now();
+                }
                 if !on_tick(world, world.sync_hash()) {
                     break;
                 }
