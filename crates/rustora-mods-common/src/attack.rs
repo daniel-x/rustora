@@ -49,6 +49,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("AttackOmni", |n| load_attack(n, AttackKind::Omni));
     r.register("AttackFollow", |n| load_attack(n, AttackKind::Follow));
     r.register("AttackTurreted", |n| load_attack(n, AttackKind::Turreted));
+    r.register("AttackPopupTurreted", |n| load_attack(n, AttackKind::PopupTurreted));
     r.register("AttackCharges", |n| load_attack(n, AttackKind::Charges));
     r.register("AttackGarrisoned", |n| load_attack(n, AttackKind::Garrisoned));
     r.register("AttackAircraft", |n| load_attack(n, AttackKind::Aircraft));
@@ -511,6 +512,7 @@ pub enum AttackKind {
     Bomber,
     Leap,
     Tesla,
+    PopupTurreted,
 }
 
 impl AttackKind {
@@ -520,6 +522,7 @@ impl AttackKind {
             AttackKind::Omni => "AttackOmni",
             AttackKind::Follow => "AttackFollow",
             AttackKind::Turreted => "AttackTurreted",
+            AttackKind::PopupTurreted => "AttackPopupTurreted",
             AttackKind::Charges => "AttackCharges",
             AttackKind::Garrisoned => "AttackGarrisoned",
             AttackKind::Aircraft => "AttackAircraft",
@@ -532,8 +535,13 @@ impl AttackKind {
     fn is_follow(self) -> bool {
         matches!(
             self,
-            AttackKind::Follow | AttackKind::Turreted | AttackKind::Garrisoned | AttackKind::Aircraft
+            AttackKind::Follow | AttackKind::Turreted | AttackKind::PopupTurreted | AttackKind::Garrisoned | AttackKind::Aircraft
         )
+    }
+
+    /// `AttackTurreted` and its subclass `AttackPopupTurreted`.
+    fn is_turreted(self) -> bool {
+        matches!(self, AttackKind::Turreted | AttackKind::PopupTurreted)
     }
 
     fn is_frontal(self) -> bool {
@@ -598,6 +606,14 @@ pub struct AttackBaseInfo {
     pub charge_delay: i32,
     pub cursor: Option<String>,
     pub outside_range_cursor: Option<String>,
+    // AttackPopupTurreted
+    pub close_delay: i32,
+    pub default_facing: WAngle,
+    pub closed_damage_multiplier: i32,
+    pub opening_sequence: String,
+    pub closing_sequence: String,
+    pub closed_idle_sequence: String,
+    pub body: String,
 }
 
 impl Default for AttackBaseInfo {
@@ -636,6 +652,13 @@ impl Default for AttackBaseInfo {
             charge_delay: 3,
             cursor: None,
             outside_range_cursor: None,
+            close_delay: 125,
+            default_facing: WAngle::ZERO,
+            closed_damage_multiplier: 50,
+            opening_sequence: "opening".into(),
+            closing_sequence: "closing".into(),
+            closed_idle_sequence: "closed-idle".into(),
+            body: "body".into(),
         }
     }
 }
@@ -680,6 +703,19 @@ pub struct AttackBase {
     // AttackTesla
     charges: Cell<i32>,
     time_to_recharge: Cell<i32>,
+    // AttackPopupTurreted
+    popup_state: Rc<Cell<PopupState>>,
+    idle_ticks: Rc<Cell<i32>>,
+    skipped_make_animation: bool,
+}
+
+/// `AttackPopupTurreted.PopupState`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PopupState {
+    Open,
+    Rotating,
+    Transitioning,
+    Closed,
 }
 
 impl TraitObject for AttackBase {
@@ -699,6 +735,10 @@ impl TraitObject for AttackBase {
         }
         if self.info.kind == AttackKind::Charges {
             dict.add::<dyn INotifySold>(actor, self.clone());
+        }
+        if self.info.kind == AttackKind::PopupTurreted {
+            dict.add::<dyn INotifyIdle>(actor, self.clone());
+            dict.add::<dyn IDamageModifier>(actor, self.clone());
         }
         if self.info.kind == AttackKind::Garrisoned {
             dict.add::<dyn INotifyPassengerEntered>(actor, self.clone());
@@ -724,12 +764,13 @@ impl TraitObject for AttackBase {
 info_impl!(AttackBaseInfo => |info, init| {
     let state = ConditionalState::new_pausable(&info.base);
     let self_ = init.self_.clone();
-    let turrets = if info.kind == AttackKind::Turreted {
+    let turrets = if info.kind.is_turreted() {
         self_.traits_implementing::<Turreted>().into_iter().filter(|t| info.turrets.contains(&t.info.turret)).collect()
     } else {
         Vec::new()
     };
     let charges = info.max_charges;
+    let skipped_make_animation = init.inits.contains::<crate::actor_reference::SkipMakeAnimsInit>();
     Some(Rc::new_cyclic(|me| AttackBase {
         state,
         self_,
@@ -763,6 +804,9 @@ info_impl!(AttackBaseInfo => |info, init| {
         leap_token: Cell::new(INVALID_CONDITION_TOKEN),
         charges: Cell::new(charges),
         time_to_recharge: Cell::new(0),
+        popup_state: Rc::new(Cell::new(PopupState::Open)),
+        idle_ticks: Rc::new(Cell::new(0)),
+        skipped_make_animation,
         info,
     }))
 });
@@ -807,6 +851,47 @@ impl INotifyCreated for AttackBase {
                 .collect();
         }
         conditional_created(self, self_);
+        if self.info.kind == AttackKind::PopupTurreted && self.skipped_make_animation {
+            self.popup_closed(self_)();
+        }
+    }
+}
+
+impl INotifyIdle for AttackBase {
+    /// `AttackPopupTurreted.TickIdle`: an idle open turret turns to `DefaultFacing` and closes.
+    fn tick_idle(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() || self.state.is_trait_paused() {
+            return;
+        }
+        let Some(turret) = self.popup_turret() else { return };
+        match self.popup_state.get() {
+            PopupState::Open => {
+                let t = self.idle_ticks.get();
+                self.idle_ticks.set(t + 1);
+                if t > self.info.close_delay {
+                    let offset = WVec::new(0, -1024, 0).rotate(&WRot::from_yaw(self.info.default_facing));
+                    turret.face_target(self_, &Target::from_pos(self_.center_position() + offset));
+                    self.popup_state.set(PopupState::Rotating);
+                }
+            }
+            PopupState::Rotating if turret.has_achieved_desired_facing() => {
+                self.popup_state.set(PopupState::Transitioning);
+                let closed = self.popup_closed(self_);
+                self.popup_body(self_)
+                    .play_custom_animation(self_, &self.info.closing_sequence, Some(Rc::new(move || closed())));
+            }
+            _ => {}
+        }
+    }
+}
+
+impl IDamageModifier for AttackBase {
+    fn get_damage_modifier(&self, _attacker: Option<&ActorRef>, _damage: &rustora_engine::damage::Damage) -> i32 {
+        if self.popup_state.get() == PopupState::Closed {
+            self.info.closed_damage_multiplier
+        } else {
+            100
+        }
     }
 }
 
@@ -880,7 +965,7 @@ impl AttackBase {
     }
 
     pub fn is_turreted_with(&self, turret: &str) -> bool {
-        self.info.kind == AttackKind::Turreted && self.info.turrets.iter().any(|t| t == turret)
+        self.info.kind.is_turreted() && self.info.turrets.iter().any(|t| t == turret)
     }
 
     pub fn requested_target(&self) -> Target {
@@ -1054,6 +1139,76 @@ impl AttackBase {
                 .is_none_or(|m| m.can_interact_with_ground_layer(self_))
     }
 
+    /// `AttackTurreted.CanAttack`.
+    fn can_attack_turreted(&self, self_: &ActorRef, target: &Target) -> bool {
+        if target.target_type() == TargetType::Invalid {
+            return false;
+        }
+        let mut ready = false;
+        for t in self.turrets.borrow().iter() {
+            if t.face_target(self_, target) {
+                ready = true;
+            }
+        }
+        ready && self.can_attack_base(self_, target)
+    }
+
+    fn popup_body(&self, self_: &ActorRef) -> Rc<crate::render::WithSpriteBody> {
+        self_
+            .traits_implementing::<crate::render::WithSpriteBody>()
+            .into_iter()
+            .find(|w| w.info.name == self.info.body)
+            .expect("AttackPopupTurreted requires a WithSpriteBody with the Body name")
+    }
+
+    fn popup_turret(&self) -> Option<Rc<Turreted>> {
+        self.turrets.borrow().first().cloned()
+    }
+
+    /// The closing animation of `AttackPopupTurreted`, which leaves the turret closed.
+    fn popup_closed(&self, self_: &ActorRef) -> Rc<dyn Fn()> {
+        let (state, a, body, turret, seq) = (
+            self.popup_state.clone(),
+            self_.clone(),
+            self.popup_body(self_),
+            self.popup_turret(),
+            self.info.closed_idle_sequence.clone(),
+        );
+        Rc::new(move || {
+            state.set(PopupState::Closed);
+            body.play_custom_animation_repeating(&a, &seq);
+            if let Some(t) = &turret {
+                t.face_target(&a, &Target::Invalid);
+            }
+        })
+    }
+
+    /// `AttackPopupTurreted.CanAttack`: a closed turret opens first.
+    fn can_attack_popup(&self, self_: &ActorRef, target: &Target) -> bool {
+        if self.state.is_trait_paused() {
+            return false;
+        }
+        if self.popup_state.get() == PopupState::Closed {
+            self.popup_state.set(PopupState::Transitioning);
+            let body = self.popup_body(self_);
+            let (state, a, b) = (self.popup_state.clone(), self_.clone(), body.clone());
+            body.play_custom_animation(
+                self_,
+                &self.info.opening_sequence,
+                Some(Rc::new(move || {
+                    state.set(PopupState::Open);
+                    b.play_custom_animation_repeating(&a, &b.info.sequence);
+                })),
+            );
+            self.idle_ticks.set(0);
+        }
+        if self.popup_state.get() == PopupState::Transitioning || !self.can_attack_turreted(self_, target) {
+            return false;
+        }
+        self.idle_ticks.set(0);
+        true
+    }
+
     pub fn can_attack(&self, self_: &ActorRef, target: &Target) -> bool {
         match self.info.kind {
             AttackKind::Frontal => self.can_attack_frontal(self_, target),
@@ -1066,18 +1221,8 @@ impl AttackBase {
                 }
                 self.can_attack_frontal(self_, target)
             }
-            AttackKind::Turreted => {
-                if target.target_type() == TargetType::Invalid {
-                    return false;
-                }
-                let mut ready = false;
-                for t in self.turrets.borrow().iter() {
-                    if t.face_target(self_, target) {
-                        ready = true;
-                    }
-                }
-                ready && self.can_attack_base(self_, target)
-            }
+            AttackKind::Turreted => self.can_attack_turreted(self_, target),
+            AttackKind::PopupTurreted => self.can_attack_popup(self_, target),
             AttackKind::Charges => {
                 self.charging
                     .set(self.can_attack_base(self_, target) && self.is_reachable_target(target, true));
@@ -1182,7 +1327,7 @@ impl AttackBase {
                 force_attack,
                 target: RefCell::new(target.clone()),
             }),
-            AttackKind::Follow | AttackKind::Turreted | AttackKind::Garrisoned => {
+            AttackKind::Follow | AttackKind::Turreted | AttackKind::PopupTurreted | AttackKind::Garrisoned => {
                 let force = force_attack
                     || (self.opportunity_target_is_persistent.get()
                         && self.opportunity_force_attack.get()

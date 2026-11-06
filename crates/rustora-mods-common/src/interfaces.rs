@@ -80,6 +80,16 @@ pub trait IRevealsShroudModifier {
     fn get_reveals_shroud_modifier(&self) -> i32;
 }
 
+/// `INotifyDelivery`: production that is brought in by another actor, like `ProductionAirdrop`.
+pub trait INotifyDelivery {
+    fn incoming_delivery(&self, self_: &ActorRef);
+    fn delivered(&self, self_: &ActorRef);
+}
+
+pub trait IReloadAmmoModifier {
+    fn get_reload_ammo_modifier(&self) -> i32;
+}
+
 pub trait ICreatesShroudModifier {
     fn get_creates_shroud_modifier(&self) -> i32;
 }

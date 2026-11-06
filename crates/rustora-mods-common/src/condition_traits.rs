@@ -3,8 +3,9 @@
 
 //! Ports of small condition and multiplier traits: `ToggleConditionOnOrder`, `GrantConditionOnDeploy`, `KillsSelf`,
 //! `ProximityExternalCondition`, `GrantExternalConditionToProduced`, `GrantConditionOnCombatantOwner`, `PowerMultiplier`,
-//! the handicap multipliers, `GivesBounty`, `SpawnActorsOnSell`, `GrantConditionOnMovement`, `GrantRandomCondition`, `ProductionTimeMultiplier` and
-//! `ProductionCostMultiplier`.
+//! the handicap multipliers, `GivesBounty`, `SpawnActorsOnSell`, `GrantConditionOnMovement`, `GrantRandomCondition`, `ProductionTimeMultiplier`,
+//! `ProductionCostMultiplier`, `GrantConditionOnTerrain`, `DamagedByTerrain`, `ChangesTerrain` and
+//! `SpreadsCondition`.
 //!
 //! Not ported: the floating bounty text, `IDelayCarryallPickup` because no RA actor uses a carryall, and the ramp check
 //! of `GrantConditionOnDeploy` because RA tilesets have no ramps.
@@ -66,6 +67,232 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("GrantRandomCondition", |n| load_info!(GrantRandomConditionInfo, n));
     r.register("ProductionTimeMultiplier", |n| load_info!(ProductionTimeMultiplierInfo, n));
     r.register("ProductionCostMultiplier", |n| load_info!(ProductionCostMultiplierInfo, n));
+    r.register("GrantConditionOnTerrain", |n| load_info!(GrantConditionOnTerrainInfo, n));
+    r.register("DamagedByTerrain", |n| load_info!(DamagedByTerrainInfo, n));
+    r.register("ChangesTerrain", |n| load_info!(ChangesTerrainInfo, n));
+    r.register("SpreadsCondition", |n| load_info!(SpreadsConditionInfo, n));
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct SpreadsConditionInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub probability: i32,
+    pub range: WDist,
+    pub spread_condition: String,
+    pub delay: i32,
+}
+
+impl Default for SpreadsConditionInfo {
+    fn default() -> Self {
+        SpreadsConditionInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            probability: 5,
+            range: WDist::from_cells(3),
+            spread_condition: "spreading".into(),
+            delay: 5,
+        }
+    }
+}
+
+/// Grants `SpreadCondition` to a random nearby actor with this trait every `Delay` ticks, with `Probability` percent.
+pub struct SpreadsCondition {
+    info: Rc<SpreadsConditionInfo>,
+    state: ConditionalState,
+    delay: Cell<i32>,
+}
+
+register_traits!(SpreadsCondition: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(SpreadsConditionInfo => |info, _| Some(Rc::new(SpreadsCondition {
+    state: ConditionalState::new(&info.base),
+    delay: Cell::new(info.delay),
+    info,
+})));
+rustora_engine::conditional_simple!(SpreadsCondition);
+
+impl ITick for SpreadsCondition {
+    fn tick(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        let d = self.delay.get();
+        self.delay.set(d - 1);
+        if d > 0 {
+            return;
+        }
+        self.delay.set(self.info.delay);
+        let w = self_.world();
+        if w.shared_random.borrow_mut().next_max(100) > self.info.probability {
+            return;
+        }
+        let in_range: Vec<ActorRef> = w
+            .find_actors_in_circle(self_.center_position(), self.info.range)
+            .into_iter()
+            .filter(|a| a.trait_or_default::<SpreadsCondition>().is_some())
+            .collect();
+        if in_range.is_empty() {
+            return;
+        }
+        let i = w.shared_random.borrow_mut().next_max(in_range.len() as i32) as usize;
+        in_range[i].grant_condition(&self.info.spread_condition);
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct GrantConditionOnTerrainInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub condition: String,
+    #[field(require)]
+    pub terrain_types: Vec<String>,
+}
+
+/// Grants a condition while the actor stands on one of `TerrainTypes`. RA has no custom movement layers.
+pub struct GrantConditionOnTerrain {
+    info: Rc<GrantConditionOnTerrainInfo>,
+    token: Cell<i32>,
+    cached_terrain: RefCell<Option<String>>,
+}
+
+register_traits!(GrantConditionOnTerrain: ITick);
+info_impl!(GrantConditionOnTerrainInfo => |info, _| Some(Rc::new(GrantConditionOnTerrain {
+    info,
+    token: Cell::new(INVALID_CONDITION_TOKEN),
+    cached_terrain: RefCell::new(None),
+})));
+
+impl ITick for GrantConditionOnTerrain {
+    fn tick(&self, self_: &ActorRef) {
+        let cell = self_.location();
+        let w = self_.world();
+        let map = w.map();
+        if !map.contains(cell) {
+            return;
+        }
+        let current = map.terrain_type_info(cell).ty.clone();
+        let wants_granted = self.info.terrain_types.contains(&current);
+        if self.cached_terrain.borrow().as_deref() != Some(current.as_str()) {
+            if wants_granted && self.token.get() == INVALID_CONDITION_TOKEN {
+                self.token.set(self_.grant_condition(&self.info.condition));
+            } else if !wants_granted && self.token.get() != INVALID_CONDITION_TOKEN {
+                self.token.set(self_.revoke_condition(self.token.get()));
+            }
+        }
+        *self.cached_terrain.borrow_mut() = Some(current);
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct DamagedByTerrainInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    #[field(require)]
+    pub damage: i32,
+    pub damage_interval: i32,
+    pub damage_types: rustora_engine::damage::DamageTypes,
+    #[field(require)]
+    pub terrain: Vec<String>,
+}
+
+/// Damages the actor every `DamageInterval` ticks while it stands on one of `Terrain`.
+pub struct DamagedByTerrain {
+    info: Rc<DamagedByTerrainInfo>,
+    state: ConditionalState,
+    damage_ticks: Cell<i32>,
+}
+
+register_traits!(DamagedByTerrain: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(DamagedByTerrainInfo => |info, _| Some(Rc::new(DamagedByTerrain {
+    state: ConditionalState::new(&info.base),
+    info,
+    damage_ticks: Cell::new(0),
+})));
+
+impl ConditionalHooks for DamagedByTerrain {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+}
+
+impl ISync for DamagedByTerrain {
+    fn sync_hash(&self) -> i32 {
+        self.state.sync_hash()
+    }
+}
+rustora_engine::conditional_observers_impl!(DamagedByTerrain);
+
+impl INotifyCreated for DamagedByTerrain {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl ITick for DamagedByTerrain {
+    fn tick(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        self.damage_ticks.set(self.damage_ticks.get() - 1);
+        if self.damage_ticks.get() > 0 || !self_.is_in_world() {
+            return;
+        }
+        let w = self_.world();
+        if !self.info.terrain.contains(&w.map().terrain_type_info(self_.location()).ty) {
+            return;
+        }
+        if let Some(health) = self_.trait_or_default::<dyn IHealth>() {
+            health.inflict_damage(
+                self_,
+                Some(w.world_actor()),
+                &Damage::new(self.info.damage, self.info.damage_types),
+                false,
+            );
+        }
+        self.damage_ticks.set(self.info.damage_interval);
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ChangesTerrainInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub terrain_type: String,
+}
+
+/// Overrides the terrain type of the cell of the actor while it is in the world.
+pub struct ChangesTerrain {
+    info: Rc<ChangesTerrainInfo>,
+    previous_terrain: Cell<u8>,
+}
+
+register_traits!(ChangesTerrain: INotifyAddedToWorld, INotifyRemovedFromWorld);
+info_impl!(ChangesTerrainInfo => |info, _| Some(Rc::new(ChangesTerrain { info, previous_terrain: Cell::new(0) })));
+
+impl INotifyAddedToWorld for ChangesTerrain {
+    fn added_to_world(&self, self_: &ActorRef) {
+        let w = self_.world();
+        let map = w.map();
+        let cell = self_.location();
+        let terrain = map.terrain.terrain_index(&self.info.terrain_type);
+        self.previous_terrain.set(map.custom_terrain_at(cell));
+        map.set_custom_terrain(cell, terrain);
+    }
+}
+
+impl INotifyRemovedFromWorld for ChangesTerrain {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        self_
+            .world()
+            .map()
+            .set_custom_terrain(self_.location(), self.previous_terrain.get());
+    }
 }
 
 /// The fields of `ProductionTimeMultiplier` and `ProductionCostMultiplier`.

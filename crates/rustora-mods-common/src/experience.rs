@@ -19,6 +19,7 @@ use rustora_engine::traits::*;
 use rustora_engine::{conditional_simple, info_impl, load_info, register_traits, value_init};
 
 use crate::base::PlayerExperience;
+use crate::harvester::ICashTricklerModifier;
 use crate::interfaces::*;
 use crate::production::ValuedInfo;
 use crate::util;
@@ -88,6 +89,14 @@ multiplier!(RangeMultiplier, RangeMultiplierInfo, IRangeModifier, simple_modifie
 multiplier!(InaccuracyMultiplier, InaccuracyMultiplierInfo, IInaccuracyModifier, simple_modifier!(get_inaccuracy_modifier););
 multiplier!(GainsExperienceMultiplier, GainsExperienceMultiplierInfo, IGainsExperienceModifier, simple_modifier!(get_gains_experience_modifier););
 multiplier!(GivesExperienceMultiplier, GivesExperienceMultiplierInfo, IGivesExperienceModifier, simple_modifier!(get_gives_experience_modifier););
+multiplier!(RevealsShroudMultiplier, RevealsShroudMultiplierInfo, IRevealsShroudModifier, simple_modifier!(get_reveals_shroud_modifier););
+multiplier!(
+    CashTricklerMultiplier,
+    CashTricklerMultiplierInfo,
+    ICashTricklerModifier,
+    simple_modifier!(get_cash_trickler_modifier);
+);
+multiplier!(ReloadAmmoDelayMultiplier, ReloadAmmoDelayMultiplierInfo, IReloadAmmoModifier, simple_modifier!(get_reload_ammo_modifier););
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("DamageMultiplier", |n| load_info!(DamageMultiplierInfo, n));
@@ -98,6 +107,10 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("InaccuracyMultiplier", |n| load_info!(InaccuracyMultiplierInfo, n));
     r.register("GainsExperienceMultiplier", |n| load_info!(GainsExperienceMultiplierInfo, n));
     r.register("GivesExperienceMultiplier", |n| load_info!(GivesExperienceMultiplierInfo, n));
+    r.register("RevealsShroudMultiplier", |n| load_info!(RevealsShroudMultiplierInfo, n));
+    r.register("CashTricklerMultiplier", |n| load_info!(CashTricklerMultiplierInfo, n));
+    r.register("ReloadAmmoDelayMultiplier", |n| load_info!(ReloadAmmoDelayMultiplierInfo, n));
+    r.register("GrantConditionOnFaction", |n| load_info!(GrantConditionOnFactionInfo, n));
     r.register("GainsExperience", |n| load_info!(GainsExperienceInfo, n));
     r.register("GivesExperience", |n| load_info!(GivesExperienceInfo, n));
     r.register("ChangesHealth", |n| load_info!(ChangesHealthInfo, n));
@@ -1049,5 +1062,74 @@ impl INotifyCreated for ProducibleWithLevel {
             return;
         }
         ge.give_levels(self.info.initial_levels);
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct GrantConditionOnFactionInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    #[field(require)]
+    pub condition: String,
+    pub factions: Vec<String>,
+    pub reset_on_owner_change: bool,
+}
+
+/// Grants a condition while the faction of the actor is one of `Factions`.
+pub struct GrantConditionOnFaction {
+    info: Rc<GrantConditionOnFactionInfo>,
+    state: ConditionalState,
+    token: Cell<i32>,
+    faction: RefCell<String>,
+}
+
+register_traits!(GrantConditionOnFaction: INotifyOwnerChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(GrantConditionOnFactionInfo => |info, init| {
+    let faction = init
+        .inits
+        .get::<rustora_engine::actor_init::FactionInit>()
+        .map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
+    Some(Rc::new(GrantConditionOnFaction {
+        state: ConditionalState::new(&info.base),
+        info,
+        token: Cell::new(rustora_engine::actor::INVALID_CONDITION_TOKEN),
+        faction: RefCell::new(faction),
+    }))
+});
+
+impl ConditionalHooks for GrantConditionOnFaction {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        if self.token.get() == rustora_engine::actor::INVALID_CONDITION_TOKEN && self.info.factions.contains(&self.faction.borrow()) {
+            self.token.set(self_.grant_condition(&self.info.condition));
+        }
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        if self.token.get() != rustora_engine::actor::INVALID_CONDITION_TOKEN {
+            self.token.set(self_.revoke_condition(self.token.get()));
+        }
+    }
+}
+rustora_engine::conditional_plumbing!(GrantConditionOnFaction);
+
+impl INotifyCreated for GrantConditionOnFaction {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl INotifyOwnerChanged for GrantConditionOnFaction {
+    fn on_owner_changed(&self, self_: &ActorRef, _old: &rustora_engine::player::PlayerRef, new: &rustora_engine::player::PlayerRef) {
+        if self.info.reset_on_owner_change && *self.faction.borrow() != new.faction {
+            *self.faction.borrow_mut() = new.faction.clone();
+            self.trait_disabled(self_);
+            self.trait_enabled(self_);
+        }
     }
 }

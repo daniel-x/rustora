@@ -16,7 +16,7 @@ use rustora_engine::conditional::*;
 use rustora_engine::damage::{AttackInfo, DamageState};
 use rustora_engine::net_collections::NetMap;
 use rustora_engine::order::Order;
-use rustora_engine::player::PlayerRelationship;
+use rustora_engine::player::{PlayerRef, PlayerRelationship, WinState};
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::target::Target;
 use rustora_engine::traits::subcell::FULL_CELL;
@@ -39,6 +39,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("HarvesterBotModule", |n| load_info!(HarvesterBotModuleInfo, n));
     r.register("BuildingRepairBotModule", |n| load_info!(BuildingRepairBotModuleInfo, n));
     r.register("MinelayerBotModule", |n| load_info!(MinelayerBotModuleInfo, n));
+    r.register("CaptureManagerBotModule", |n| load_info!(CaptureManagerBotModuleInfo, n));
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -899,5 +900,164 @@ impl IBotRespondToAttack for MinelayerBotModule {
             self_.location()
         };
         self.enqueue_conflict_position(pos);
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct CaptureManagerBotModuleInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub capturing_actor_types: IndexSet<String>,
+    pub capturable_actor_types: IndexSet<String>,
+    pub minimum_capture_delay: i32,
+    pub maximum_capture_target_options: i32,
+    pub check_capture_targets_for_visibility: bool,
+    pub capturable_relationships: PlayerRelationship,
+}
+
+impl Default for CaptureManagerBotModuleInfo {
+    fn default() -> Self {
+        CaptureManagerBotModuleInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            capturing_actor_types: IndexSet::new(),
+            capturable_actor_types: IndexSet::new(),
+            minimum_capture_delay: 375,
+            maximum_capture_target_options: 10,
+            check_capture_targets_for_visibility: true,
+            capturable_relationships: PlayerRelationship(PlayerRelationship::ENEMY.0 | PlayerRelationship::NEUTRAL.0),
+        }
+    }
+}
+
+/// `CaptureManagerBotModule`: sends idle capturers to the most valuable capturable actors of a random player.
+pub struct CaptureManagerBotModule {
+    info: Rc<CaptureManagerBotModuleInfo>,
+    state: ConditionalState,
+    self_: ActorRef,
+    min_capture_delay_ticks: Cell<i32>,
+    active_capturers: RefCell<Vec<ActorRef>>,
+    capturing_actors: RefCell<Option<super::ActorIndex>>,
+}
+
+register_traits!(CaptureManagerBotModule: IBotTick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(CaptureManagerBotModuleInfo => |info, init| {
+    let world = init.world();
+    let capturing_actors = (world.world_type != rustora_engine::world::WorldType::Editor).then(|| {
+        super::ActorIndex::owner_and_names_and_trait::<crate::capture::CapturesInfo>(&world, &info.capturing_actor_types, &init.self_.owner())
+    });
+    Some(Rc::new(CaptureManagerBotModule {
+        state: ConditionalState::new(&info.base),
+        self_: init.self_.clone(),
+        min_capture_delay_ticks: Cell::new(0),
+        active_capturers: RefCell::new(Vec::new()),
+        capturing_actors: RefCell::new(capturing_actors),
+        info,
+    }))
+});
+
+impl ConditionalHooks for CaptureManagerBotModule {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        self.min_capture_delay_ticks
+            .set(self_.world().bot_random.borrow_mut().next_range(0, self.info.minimum_capture_delay));
+    }
+}
+rustora_engine::conditional_plumbing!(CaptureManagerBotModule);
+
+impl INotifyCreated for CaptureManagerBotModule {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl CaptureManagerBotModule {
+    fn is_positionable(a: &ActorRef) -> bool {
+        ["Mobile", "Aircraft", "Husk", "Crate", "TDGunboat"]
+            .iter()
+            .any(|n| a.info.has_trait_info_named(n))
+    }
+
+    fn queue_capture_orders(&self, bot: &ModularBot) {
+        let player = self.self_.owner();
+        if self.info.capturing_actor_types.is_empty() || player.win_state.get() != WinState::Undefined {
+            return;
+        }
+        self.active_capturers
+            .borrow_mut()
+            .retain(|a| !(a.owner_opt().is_none_or(|o| !Rc::ptr_eq(&o, &player)) || a.is_dead() || !a.is_in_world() || a.is_idle()));
+        let candidates = self.capturing_actors.borrow().as_ref().map(|i| i.actors()).unwrap_or_default();
+        let capturers: Vec<(ActorRef, Rc<crate::capture::CaptureManager>)> = candidates
+            .into_iter()
+            .filter(|a| a.is_idle() && Self::is_positionable(a) && !self.active_capturers.borrow().iter().any(|c| c.id == a.id))
+            .filter_map(|a| a.trait_or_default::<crate::capture::CaptureManager>().map(|t| (a, t)))
+            .collect();
+        if capturers.is_empty() {
+            return;
+        }
+        let w = self.self_.world();
+        let players: Vec<PlayerRef> = w
+            .players()
+            .into_iter()
+            .filter(|p| {
+                !p.spectating()
+                    && self
+                        .info
+                        .capturable_relationships
+                        .has_relationship(player.relationship_with(Some(p)))
+            })
+            .collect();
+        assert!(!players.is_empty(), "Collection must not be empty.");
+        let i = w.bot_random.borrow_mut().next_max(players.len() as i32) as usize;
+        let rand_player = &players[i];
+        let mut options: Vec<ActorRef> = w
+            .actors()
+            .into_iter()
+            .filter(|a| Rc::ptr_eq(&a.owner(), rand_player) && !a.is_dead() && a.is_in_world())
+            .filter(|a| !self.info.check_capture_targets_for_visibility || a.can_be_viewed_by_player(Some(&player)))
+            .filter(|t| {
+                t.trait_or_default::<crate::capture::CaptureManager>()
+                    .is_some_and(|cm| capturers.iter().any(|(_, c)| c.can_target(&cm)))
+            })
+            .collect();
+        options.sort_by_key(|t| std::cmp::Reverse(crate::production::get_sell_value(t)));
+        options.truncate(self.info.maximum_capture_target_options.max(1) as usize);
+        if !self.info.capturable_actor_types.is_empty() {
+            options.retain(|t| self.info.capturable_actor_types.contains(&t.info.name.to_lowercase()));
+        }
+        if options.is_empty() {
+            return;
+        }
+        for (capturer, _) in &capturers {
+            let Some(target) = crate::util::closest_to_with_path_from(options.clone(), capturer) else {
+                continue;
+            };
+            bot.queue_order(Order::new(
+                "CaptureActor",
+                Some(capturer.clone()),
+                Target::from_actor(Some(&target)),
+                true,
+            ));
+            self.active_capturers.borrow_mut().push(capturer.clone());
+        }
+    }
+}
+
+impl IBotTick for CaptureManagerBotModule {
+    fn bot_module_enabled(&self) -> bool {
+        !self.state.is_trait_disabled()
+    }
+
+    fn bot_tick(&self, bot: &ModularBot) {
+        self.min_capture_delay_ticks.set(self.min_capture_delay_ticks.get() - 1);
+        if self.min_capture_delay_ticks.get() <= 0 {
+            self.min_capture_delay_ticks.set(self.info.minimum_capture_delay);
+            self.queue_capture_orders(bot);
+        }
     }
 }

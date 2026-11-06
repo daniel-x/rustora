@@ -56,12 +56,19 @@ impl Replay {
         let mut lobby_info = None;
         let mut is_valid = false;
         let mut tick_count = 0;
-        while r.remaining() > 0 {
+        while r.remaining() >= 4 {
             let client_id = r.i32()?;
             if client_id == META_START_MARKER {
                 break;
             }
+            // A game that crashed or lost power leaves a truncated last packet; keep the packets before it.
+            if r.remaining() < 4 {
+                break;
+            }
             let len = r.i32()? as usize;
+            if len > r.remaining() {
+                break;
+            }
             let packet = RecordedPacket {
                 client_id,
                 data: r.bytes(len)?.to_vec(),

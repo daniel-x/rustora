@@ -33,6 +33,7 @@ use crate::production::{RallyPoint, ValuedInfo};
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("AmmoPool", |n| load_info!(AmmoPoolInfo, n));
+    r.register("ReloadAmmoPool", |n| load_info!(ReloadAmmoPoolInfo, n));
     r.register("Rearmable", |n| load_info!(RearmableInfo, n));
     r.register("Repairable", |n| load_info!(RepairableInfo, n));
     r.register("RepairableNear", |n| load_info!(RepairableNearInfo, n));
@@ -817,5 +818,122 @@ impl rustora_engine::sound::IOrderVoice for Repairable {
 impl rustora_engine::sound::IOrderVoice for RepairableNear {
     fn voice_phrase_for_order(&self, self_: &ActorRef, order: &Order) -> Option<String> {
         (order.order_string == "RepairNear" && has_damage(self_)).then(|| self.info.voice.clone())
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ReloadAmmoPoolInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: PausableConditionalTraitInfo,
+    pub ammo_pool: String,
+    pub delay: i32,
+    pub count: i32,
+    pub reset_on_fire: bool,
+    pub sound: Option<String>,
+}
+
+impl Default for ReloadAmmoPoolInfo {
+    fn default() -> Self {
+        ReloadAmmoPoolInfo {
+            instance_name: None,
+            base: PausableConditionalTraitInfo::default(),
+            ammo_pool: "primary".into(),
+            delay: 50,
+            count: 1,
+            reset_on_fire: false,
+            sound: None,
+        }
+    }
+}
+
+/// Refills an `AmmoPool` by `Count` every `Delay` ticks.
+pub struct ReloadAmmoPool {
+    info: Rc<ReloadAmmoPoolInfo>,
+    state: ConditionalState,
+    ammo_pool: OnceCell<Rc<AmmoPool>>,
+    modifiers: OnceCell<Vec<Rc<dyn IReloadAmmoModifier>>>,
+    remaining_ticks: Rc<Cell<i32>>,
+}
+
+register_traits!(ReloadAmmoPool: ITick, INotifyAttack, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(ReloadAmmoPoolInfo => |info, _init| Some(Rc::new(ReloadAmmoPool {
+    state: ConditionalState::new_pausable(&info.base),
+    info,
+    ammo_pool: OnceCell::new(),
+    modifiers: OnceCell::new(),
+    remaining_ticks: Rc::new(Cell::new(0)),
+})));
+
+impl ReloadAmmoPool {
+    fn delay(&self, delay: i32) -> i32 {
+        let modifiers = self.modifiers.get().map(Vec::as_slice).unwrap_or_default();
+        crate::util::apply_percentage_modifiers(delay, modifiers.iter().map(|m| m.get_reload_ammo_modifier()))
+    }
+}
+
+impl ConditionalHooks for ReloadAmmoPool {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+}
+
+impl ISync for ReloadAmmoPool {
+    fn sync_hash(&self) -> i32 {
+        self.state.sync_hash() ^ self.remaining_ticks.get()
+    }
+}
+rustora_engine::conditional_observers_impl!(ReloadAmmoPool);
+
+impl INotifyCreated for ReloadAmmoPool {
+    fn created(&self, self_: &ActorRef) {
+        let pool = self_
+            .traits_implementing::<AmmoPool>()
+            .into_iter()
+            .find(|p| p.info.name == self.info.ammo_pool)
+            .expect("ReloadsAmmoPool.AmmoPool requires exactly one AmmoPool with matching Name!");
+        let _ = self.ammo_pool.set(pool);
+        let _ = self.modifiers.set(self_.traits_implementing::<dyn IReloadAmmoModifier>());
+        conditional_created(self, self_);
+        let delay = self.delay(self.info.delay);
+        let remaining = self.remaining_ticks.clone();
+        self_.world().add_frame_end_task(Box::new(move |_| remaining.set(delay)));
+    }
+}
+
+impl INotifyAttack for ReloadAmmoPool {
+    fn attacking(&self, _self_: &ActorRef, _target: &Target, _a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {
+        if self.info.reset_on_fire {
+            self.remaining_ticks.set(self.delay(self.info.delay));
+        }
+    }
+
+    fn preparing_attack(&self, _self_: &ActorRef, _target: &Target, _a: &crate::attack::Armament, _barrel: &crate::attack::Barrel) {}
+}
+
+impl ITick for ReloadAmmoPool {
+    fn tick(&self, self_: &ActorRef) {
+        if self.state.is_trait_paused() || self.state.is_trait_disabled() {
+            return;
+        }
+        let Some(pool) = self.ammo_pool.get() else { return };
+        if pool.has_full_ammo() {
+            return;
+        }
+        self.remaining_ticks.set(self.remaining_ticks.get() - 1);
+        if self.remaining_ticks.get() == 0 {
+            self.remaining_ticks.set(self.delay(self.info.delay));
+            if let Some(s) = &self.info.sound {
+                rustora_engine::sound::play_to_player_at(
+                    &self_.world(),
+                    rustora_engine::sound::SoundType::World,
+                    &self_.owner(),
+                    s,
+                    self_.center_position(),
+                );
+            }
+            pool.give_ammo(self_, self.info.count);
+        }
     }
 }

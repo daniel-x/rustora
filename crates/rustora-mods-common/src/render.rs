@@ -43,6 +43,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("WithResourceLevelSpriteBody", |n| load_info!(WithResourceLevelSpriteBodyInfo, n));
     r.register("WithHarvesterSpriteBody", |n| load_info!(WithHarvesterSpriteBodyInfo, n));
     r.register("WithWallSpriteBody", |n| load_info!(WithWallSpriteBodyInfo, n));
+    r.register("WithEmbeddedTurretSpriteBody", |n| load_info!(WithEmbeddedTurretSpriteBodyInfo, n));
     r.register("WithMakeAnimation", |n| load_info!(WithMakeAnimationInfo, n));
     r.register("WithBuildingPlacedAnimation", |n| load_info!(WithBuildingPlacedAnimationInfo, n));
     r.register("WithDockingAnimation", |n| load_info!(WithDockingAnimationInfo, n));
@@ -273,6 +274,11 @@ enum BodyVariant {
         image_by_fullness: Vec<String>,
         harv: Rc<crate::harvester::Harvester>,
     },
+    /// `WithEmbeddedTurretSpriteBody`: the body faces like the first turret and sets its quantized facings.
+    EmbeddedTurret {
+        quantized_facings: i32,
+        turreted: Rc<crate::turreted::Turreted>,
+    },
 }
 
 pub struct WithSpriteBody {
@@ -399,6 +405,56 @@ info_impl!(WithWallSpriteBodyInfo => |info, init| {
     Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithWallSpriteBody", None, v))
 });
 
+/// `WithEmbeddedTurretSpriteBodyInfo`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithEmbeddedTurretSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub quantized_facings: i32,
+}
+
+impl Default for WithEmbeddedTurretSpriteBodyInfo {
+    fn default() -> Self {
+        WithEmbeddedTurretSpriteBodyInfo {
+            base: WithSpriteBodyInfo::default(),
+            instance_name: None,
+            quantized_facings: -1,
+        }
+    }
+}
+
+info_impl!(WithEmbeddedTurretSpriteBodyInfo => |info, init| {
+    let turreted = init
+        .self_
+        .traits_implementing::<crate::turreted::Turreted>()
+        .into_iter()
+        .next()
+        .expect("WithEmbeddedTurretSpriteBody requires Turreted");
+    let t = turreted.clone();
+    let facing: Rc<dyn Fn() -> WAngle> = Rc::new(move || t.world_orientation().yaw);
+    let v = BodyVariant::EmbeddedTurret { quantized_facings: info.quantized_facings, turreted };
+    Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithEmbeddedTurretSpriteBody", Some(facing), v))
+});
+
+impl WithSpriteBody {
+    fn update_turret_facings(&self) {
+        if let BodyVariant::EmbeddedTurret {
+            quantized_facings,
+            turreted,
+        } = &self.variant
+        {
+            let facings = if *quantized_facings >= 0 {
+                *quantized_facings
+            } else {
+                self.default_animation.current_sequence().map_or(0, |s| s.facings_or_interpolated())
+            };
+            turreted.quantized_facings.set(facings);
+        }
+    }
+}
+
 info_impl!(WithFacingSpriteBodyInfo => |info, init| {
     let facing = make_facing_func(&init.self_);
     Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithFacingSpriteBody", Some(facing), BodyVariant::Plain))
@@ -476,6 +532,7 @@ impl ConditionalHooks for WithSpriteBody {
 
     fn trait_enabled(&self, self_: &ActorRef) {
         self.base_trait_enabled(self_);
+        self.update_turret_facings();
         if let BodyVariant::ResourceLevel { .. } = self.variant {
             self.configure_animation(self_);
         }
@@ -625,6 +682,7 @@ impl INotifyDamageStateChanged for WithSpriteBody {
         if let Some(s) = self.default_animation.current_sequence() {
             self.default_animation.replace_anim(&self.normalize_sequence(self_, &s.name));
         }
+        self.update_turret_facings();
     }
 }
 

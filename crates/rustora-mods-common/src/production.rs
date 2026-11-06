@@ -39,6 +39,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("TechTree", |n| load_info!(TechTreeInfo, n));
     r.register("Exit", |n| load_info!(ExitInfo, n));
     r.register("Production", |n| load_info!(ProductionInfo, n));
+    r.register("ProductionFromMapEdge", |n| load_production(n, ProductionKind::FromMapEdge));
+    r.register("ProductionAirdrop", |n| load_production(n, ProductionKind::Airdrop));
     r.register("Buildable", |n| load_info!(BuildableInfo, n));
     r.register("Valued", |n| load_info!(ValuedInfo, n));
     r.register("CustomSellValue", |n| load_info!(CustomSellValueInfo, n));
@@ -405,15 +407,73 @@ pub fn random_exit_or_default(
     None
 }
 
-#[derive(Clone, Debug, Default, FieldLoad)]
+/// The `Production` subclasses, which only override `Produce`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProductionKind {
+    #[default]
+    Standard,
+    FromMapEdge,
+    Airdrop,
+}
+
+fn load_production(
+    node: &rustora_engine::actor_info::TraitNode,
+    kind: ProductionKind,
+) -> Result<Rc<dyn rustora_engine::traits::TraitInfo>, String> {
+    let mut info = ProductionInfo::default();
+    if kind == ProductionKind::Airdrop {
+        info.ready_audio = Some("Reinforce".into());
+    }
+    rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(|e| format!("Trait name {}: {}", node.display_name(), e))?;
+    if kind == ProductionKind::Airdrop && info.actor_type.is_none() {
+        return Err(format!("Trait name {}: ActorType is required", node.display_name()));
+    }
+    info.instance_name = node.instance_name.clone();
+    info.kind = kind;
+    Ok(Rc::new(info))
+}
+
+/// `ProductionInfo` with the fields of `ProductionAirdropInfo`.
+#[derive(Clone, Debug, FieldLoad)]
 pub struct ProductionInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    #[field(ignore)]
+    pub kind: ProductionKind,
     #[field(flatten)]
     pub base: PausableConditionalTraitInfo,
     #[field(require)]
     pub produces: Vec<String>,
     pub update_faction_on_owner_change: bool,
+    // ProductionAirdrop
+    pub ready_audio: Option<String>,
+    pub ready_text_notification: Option<String>,
+    pub actor_type: Option<String>,
+    pub baseline_spawn: bool,
+    pub facing: WAngle,
+    pub wait_tick_before_produce: i32,
+    pub wait_tick_after_produce: i32,
+    pub land_offset: WVec,
+}
+
+impl Default for ProductionInfo {
+    fn default() -> Self {
+        ProductionInfo {
+            instance_name: None,
+            kind: ProductionKind::Standard,
+            base: PausableConditionalTraitInfo::default(),
+            produces: Vec::new(),
+            update_faction_on_owner_change: false,
+            ready_audio: None,
+            ready_text_notification: None,
+            actor_type: None,
+            baseline_spawn: false,
+            facing: WAngle::new(256),
+            wait_tick_before_produce: 0,
+            wait_tick_after_produce: 0,
+            land_offset: WVec::ZERO,
+        }
+    }
 }
 
 pub struct Production {
@@ -558,8 +618,13 @@ impl Production {
         producee: &Rc<ActorInfo>,
         production_type: &str,
         inits: ActorInits,
-        _refundable_value: i32,
+        refundable_value: i32,
     ) -> bool {
+        match self.info.kind {
+            ProductionKind::Standard => {}
+            ProductionKind::FromMapEdge => return self.produce_from_map_edge(self_, producee, production_type, inits),
+            ProductionKind::Airdrop => return self.produce_airdrop(self_, producee, production_type, inits, refundable_value),
+        }
         if self.is_trait_disabled() || self.is_trait_paused() || crate::aircraft::is_reserved(self_) {
             return false;
         }
@@ -569,6 +634,184 @@ impl Production {
             return true;
         }
         false
+    }
+}
+
+impl Production {
+    fn rally_destinations(&self, self_: &ActorRef) -> Vec<CPos> {
+        match self.rp.borrow().as_ref().filter(|r| !r.path.borrow().is_empty()) {
+            Some(r) => r.path.borrow().clone(),
+            None => vec![self_.location()],
+        }
+    }
+
+    /// `ProductionFromMapEdge.Produce`: the unit enters at the closest map edge cell and moves to the rally point.
+    fn produce_from_map_edge(&self, self_: &ActorRef, producee: &Rc<ActorInfo>, production_type: &str, inits: ActorInits) -> bool {
+        if self.is_trait_disabled() || self.is_trait_paused() {
+            return false;
+        }
+        let w = self_.world();
+        let aircraft_info = producee.trait_info::<crate::aircraft::AircraftInfo>();
+        let mobile_info = producee.trait_info::<MobileInfo>();
+        let destinations = self.rally_destinations(self_);
+        let mut location = None;
+        if aircraft_info.is_some() {
+            location = Some(w.map().choose_closest_edge_cell(self_.location()));
+        }
+        if let Some(m) = &mobile_info {
+            let locomotor = crate::locomotor::locomotor_by_name(&w, &m.locomotor);
+            let path_finder = w.world_actor().trait_::<crate::path_finder_trait::PathFinder>();
+            location = w.map().choose_closest_matching_edge_cell(self_.location(), |c| {
+                m.can_enter_cell(&w, None, c, rustora_engine::traits::subcell::FULL_CELL, None, BlockedByActor::All)
+                    && path_finder.path_exists_for_locomotor(&locomotor, c, destinations[0])
+            });
+        }
+        let Some(location) = location else {
+            return false;
+        };
+        let mut pos = w.map().center_of_cell(location);
+        if let Some(a) = &aircraft_info {
+            pos = pos + WVec::new(0, 0, a.cruise_altitude.length);
+        }
+        let initial_facing = w.map().facing_between(location, destinations[0], WAngle::ZERO);
+        let (me, name, pt) = (self_.clone(), producee.name.clone(), production_type.to_string());
+        w.add_frame_end_task(Box::new(move |w: &Rc<World>| {
+            let mut td = inits;
+            td.push(Rc::new(LocationInit::new(location)));
+            td.push(Rc::new(CenterPositionInit::new(pos)));
+            td.push(Rc::new(FacingInit::new(initial_facing)));
+            let new_unit = w.create_actor(&name, td.clone());
+            if let Some(mv) = new_unit.trait_or_default::<dyn IMove>() {
+                for cell in &destinations {
+                    new_unit.queue_activity(mv.move_to(*cell, 2, None, true));
+                }
+            }
+            if !me.is_dead() {
+                for t in me.traits_implementing::<dyn INotifyProduction>() {
+                    t.unit_produced(&me, &new_unit, destinations[0]);
+                }
+            }
+            for (a, t) in w.actors_with_trait::<dyn INotifyOtherProduction>() {
+                t.unit_produced_by_other(&a, &me, &new_unit, &pt, &td);
+            }
+        }));
+        true
+    }
+
+    /// `ProductionAirdrop.Produce`: an aircraft brings the unit, lands at the exit and flies off the map.
+    fn produce_airdrop(
+        &self,
+        self_: &ActorRef,
+        producee: &Rc<ActorInfo>,
+        production_type: &str,
+        inits: ActorInits,
+        refundable_value: i32,
+    ) -> bool {
+        if self.is_trait_disabled() || self.is_trait_paused() {
+            return false;
+        }
+        let info = self.info.clone();
+        let owner = self_.owner();
+        let w = self_.world();
+        let map = w.map();
+        let actor_type = info.actor_type.clone().expect("checked when loading");
+        let aircraft_info = w
+            .rules()
+            .actor(&actor_type)
+            .and_then(|a| a.trait_info::<crate::aircraft::AircraftInfo>())
+            .expect("ProductionAirdrop.ActorType requires an Aircraft");
+        let grid = map.grid.grid_type;
+        let bounds = map.bounds;
+        let (start_pos, end_pos, spawn_facing) = if info.baseline_spawn {
+            let center =
+                rustora_core::world_types::MPos::new(bounds.left() + bounds.width / 2, bounds.top() + bounds.height / 2).to_cpos(grid);
+            let spawn_vec = owner.home_location - center;
+            let scale = rustora_core::world_types::isqrt_i32(
+                (bounds.height * bounds.height + bounds.width * bounds.width) / (4 * spawn_vec.length_squared()),
+            );
+            let start = owner.home_location + spawn_vec * scale;
+            let d = self_.location() - start;
+            (start, start, WVec::new(d.x, d.y, 0).yaw())
+        } else {
+            let loc = self_.location().to_mpos(grid);
+            let start = rustora_core::world_types::MPos::new(loc.u + bounds.width, loc.v).to_cpos(grid);
+            let end = rustora_core::world_types::MPos::new(bounds.left(), loc.v).to_cpos(grid);
+            (start, end, info.facing)
+        };
+        let exit = self_
+            .info
+            .trait_infos::<ExitInfo>()
+            .into_iter()
+            .next()
+            .expect("ProductionAirdrop requires an Exit");
+        for t in self_.traits_implementing::<dyn INotifyDelivery>() {
+            t.incoming_delivery(self_);
+        }
+        let (me, producee, pt) = (self_.clone(), producee.clone(), production_type.to_string());
+        let production = self_
+            .traits_implementing::<Production>()
+            .into_iter()
+            .find(|p| Rc::ptr_eq(&p.info, &self.info))
+            .expect("this trait");
+        w.add_frame_end_task(Box::new(move |w: &Rc<World>| {
+            let refund = move |owner: &PlayerRef| owner.player_actor().trait_::<PlayerResources>().give_cash(refundable_value);
+            if !me.is_in_world() || me.is_dead() {
+                refund(&owner);
+                return;
+            }
+            let actor = w.create_actor(
+                &actor_type,
+                ActorInits::new()
+                    .with(CenterPositionInit::new(
+                        w.map().center_of_cell(start_pos) + WVec::new(0, 0, aircraft_info.cruise_altitude.length),
+                    ))
+                    .with(OwnerInit::from_player(&owner))
+                    .with(FacingInit::new(spawn_facing)),
+            );
+            let exit_cell = me.location() + exit.exit_cell;
+            actor.queue_activity(crate::aircraft::Land::full(
+                &actor,
+                Target::from_actor(Some(&me)),
+                crate::aircraft::LandArgs {
+                    land_range: rustora_core::world_types::WDist::ZERO,
+                    offset: info.land_offset,
+                    facing: Some(info.facing),
+                    clear_cells: vec![exit_cell],
+                },
+            ));
+            if info.wait_tick_before_produce > 0 {
+                actor.queue_activity(crate::activities::Wait::new(info.wait_tick_before_produce));
+            }
+            let (me2, owner2, info2) = (me.clone(), owner.clone(), info.clone());
+            actor.queue_activity(crate::activities::CallFunc::new(Box::new(move || {
+                if !me2.is_in_world() || me2.is_dead() {
+                    refund(&owner2);
+                    return;
+                }
+                for t in me2.traits_implementing::<dyn INotifyDelivery>() {
+                    t.delivered(&me2);
+                }
+                let (me3, production, exit) = (me2.clone(), production.clone(), exit.clone());
+                me2.world().add_frame_end_task(Box::new(move |_| {
+                    production.do_production(&me3, &producee, Some(&exit), &pt, inits);
+                }));
+                rustora_engine::sound::notify_owner(
+                    &me2,
+                    "Speech",
+                    info2.ready_audio.as_deref(),
+                    info2.ready_text_notification.as_deref(),
+                );
+            })));
+            if info.wait_tick_after_produce > 0 {
+                actor.queue_activity(crate::activities::Wait::new(info.wait_tick_after_produce));
+            }
+            actor.queue_activity(crate::aircraft::FlyOffMap::new(
+                &actor,
+                Some(Target::from_cell(w, end_pos, rustora_engine::traits::subcell::FULL_CELL)),
+            ));
+            actor.queue_activity(crate::aircraft::RemoveSelf::new());
+        }));
+        true
     }
 }
 

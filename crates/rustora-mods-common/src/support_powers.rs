@@ -2,7 +2,8 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Port of `Traits/SupportPowers`: `SupportPowerManager.cs`, `SupportPower.cs`, `DirectionalSupportPower.cs`,
-//! `AirstrikePower.cs`, `ParatroopersPower.cs` and `ProduceActorPower.cs`. The subclasses are one [`SupportPower`] struct with a
+//! `AirstrikePower.cs`, `ParatroopersPower.cs`, `ProduceActorPower.cs` and the Cnc `IonCannonPower.cs` with its
+//! `IonCannon` effect. The subclasses are one [`SupportPower`] struct with a
 //! [`PowerKind`]. Beacons, radar pings, sounds and order generators are left out.
 
 use std::cell::{Cell, RefCell};
@@ -44,6 +45,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("SpawnActorPower", |n| load_power(n, PowerKind::SpawnActor));
     r.register("ChronoshiftPower", |n| load_power(n, PowerKind::Chronoshift));
     r.register("ProduceActorPower", |n| load_power(n, PowerKind::ProduceActor));
+    r.register("IonCannonPower", |n| load_power(n, PowerKind::IonCannon));
 }
 
 pub trait INotifySupportPower {
@@ -62,6 +64,7 @@ pub enum PowerKind {
     SpawnActor,
     Chronoshift,
     ProduceActor,
+    IonCannon,
 }
 
 impl PowerKind {
@@ -75,6 +78,7 @@ impl PowerKind {
             PowerKind::SpawnActor => "SpawnActorPower",
             PowerKind::Chronoshift => "ChronoshiftPower",
             PowerKind::ProduceActor => "ProduceActorPower",
+            PowerKind::IonCannon => "IonCannonPower",
         }
     }
 
@@ -99,6 +103,11 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
         PowerKind::Nuke => info.camera_remove_delay = 25,
         PowerKind::GrantExternalCondition | PowerKind::SpawnActor | PowerKind::ProduceActor => {}
         PowerKind::Chronoshift => info.duration = 750,
+        PowerKind::IonCannon => {
+            info.camera_remove_delay = 25;
+            info.effect_sequence = Some("idle".into());
+            info.effect_palette = Some("effect".into());
+        }
     }
     info.order_name = format!("{}InfoOrder", kind.class_name());
     rustora_core::fieldloader::FieldLoad::load(&mut info, &node.yaml).map_err(|e| format!("Trait name {}: {}", node.display_name(), e))?;
@@ -219,6 +228,10 @@ pub struct SupportPowerInfo {
     pub ready_text_notification: Option<String>,
     pub blocked_audio: Option<String>,
     pub blocked_text_notification: Option<String>,
+    // IonCannonPower
+    pub effect: String,
+    pub weapon: String,
+    pub weapon_delay: i32,
 }
 
 impl Default for SupportPowerInfo {
@@ -323,6 +336,9 @@ impl Default for SupportPowerInfo {
             ready_text_notification: None,
             blocked_audio: None,
             blocked_text_notification: None,
+            effect: "ionsfx".into(),
+            weapon: "IonCannon".into(),
+            weapon_delay: 7,
         }
     }
 }
@@ -631,6 +647,7 @@ impl SupportPower {
             PowerKind::Chronoshift => self.chronoshift(self_, order),
             PowerKind::SpawnActor => self.spawn_actor(self_, spawn_at.expect("set for this kind"), spawn_cell.expect("set for this kind")),
             PowerKind::ProduceActor => self.produce_actor(self_),
+            PowerKind::IonCannon => self.fire_ion_cannon(self_, &order.target),
             PowerKind::Gps => {
                 let (a, info) = (self_.clone(), self.info.clone());
                 self_.world().add_frame_end_task(Box::new(move |w| {
@@ -644,6 +661,42 @@ impl SupportPower {
                 }));
             }
         }
+    }
+
+    /// `IonCannonPower.Activate`: the beam effect, its weapon and the camera.
+    fn fire_ion_cannon(&self, self_: &ActorRef, target: &Target) {
+        let info = self.info.clone();
+        let (owner, target, launch_pos) = (self_.owner(), target.clone(), self_.center_position());
+        self_.world().add_frame_end_task(Box::new(move |w| {
+            let weapon_name = info.weapon.to_lowercase();
+            let weapon = w
+                .rules()
+                .weapon(&weapon_name)
+                .unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{weapon_name}'"));
+            if let Some(s) = &info.on_fire_sound {
+                sound::play_at(w, SoundType::World, s, target.center_position(), 1.0);
+            }
+            w.add_effect(IonCannon::new(
+                w,
+                &owner,
+                weapon,
+                launch_pos,
+                target.clone(),
+                &info.effect,
+                info.effect_sequence.as_deref().unwrap_or("idle"),
+                info.effect_palette.as_deref().unwrap_or("effect"),
+                info.weapon_delay,
+            ));
+            let Some(cam) = &info.camera_actor else { return };
+            let camera = w.create_actor(
+                cam,
+                ActorInits::new()
+                    .with(LocationInit::new(w.map().cell_containing(target.center_position())))
+                    .with(OwnerInit::from_player(&owner)),
+            );
+            camera.queue_activity(Wait::new(info.camera_remove_delay));
+            camera.queue_activity(RemoveSelf::new());
+        }));
     }
 
     /// `ProduceActorPower.Activate`: the first producer that can produce any of `Actors` produces them.
@@ -1419,6 +1472,90 @@ impl rustora_engine::effect::Effect for NukeLaunch {
             self.explode(world, ticks == self.impact_delay || self.remove_on_detonation);
         }
         self.ticks.set(ticks + 1);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// The Cnc `IonCannon` projectile: an animation whose weapon hits the target after `WeaponDelay` ticks.
+pub struct IonCannon {
+    target: Target,
+    anim: Rc<rustora_engine::sequence::Animation>,
+    fired_by: rustora_engine::player::PlayerRef,
+    palette: String,
+    weapon: Rc<rustora_engine::weapon::WeaponInfo>,
+    weapon_delay: Cell<i32>,
+    impacted: Cell<bool>,
+}
+
+impl IonCannon {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        world: &Rc<World>,
+        fired_by: &rustora_engine::player::PlayerRef,
+        weapon: Rc<rustora_engine::weapon::WeaponInfo>,
+        launch_pos: rustora_core::world_types::WPos,
+        target: Target,
+        effect: &str,
+        sequence: &str,
+        palette: &str,
+        delay: i32,
+    ) -> Rc<IonCannon> {
+        let anim = rustora_engine::sequence::Animation::new(world.map().sequences().clone(), effect, None, None);
+        if !weapon.report.is_empty() {
+            sound::play_random_at(world, SoundType::World, &weapon.report, launch_pos, 1.0);
+        }
+        let ion = Rc::new(IonCannon {
+            target,
+            anim: anim.clone(),
+            fired_by: fired_by.clone(),
+            palette: palette.to_string(),
+            weapon,
+            weapon_delay: Cell::new(delay),
+            impacted: Cell::new(false),
+        });
+        let (me, w) = (Rc::downgrade(&ion), Rc::downgrade(world));
+        anim.play_then(
+            sequence,
+            Some(Rc::new(move || {
+                if let (Some(me), Some(w)) = (me.upgrade(), w.upgrade()) {
+                    let me: rustora_engine::effect::EffectRef = me;
+                    w.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+                }
+            })),
+        );
+        ion
+    }
+}
+
+impl rustora_engine::effect::Effect for IonCannon {
+    fn tick(&self, _world: &Rc<World>) {
+        self.anim.tick();
+        if self.impacted.get() {
+            return;
+        }
+        let d = self.weapon_delay.get();
+        self.weapon_delay.set(d - 1);
+        if d <= 0 {
+            let args = rustora_engine::weapon::WarheadArgs {
+                weapon: self.weapon.clone(),
+                damage_modifiers: Vec::new(),
+                source: Some(self.target.center_position()),
+                impact_orientation: WRot::NONE,
+                impact_position: rustora_core::world_types::WPos::ZERO,
+                source_actor: self.fired_by.player_actor().clone(),
+                weapon_target: self.target.clone(),
+            };
+            rustora_engine::weapon::weapon_impact_args(&self.weapon, &self.target, &args);
+            self.impacted.set(true);
+        }
+    }
+
+    fn render(&self, _viewer: Option<&rustora_engine::player::PlayerRef>, out: &mut Vec<rustora_engine::render::Renderable>) {
+        let palette = rustora_engine::render::PaletteRef::named(&self.palette);
+        rustora_engine::render::render_animation(&self.anim, self.target.center_position(), WVec::ZERO, 0, &palette, out);
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

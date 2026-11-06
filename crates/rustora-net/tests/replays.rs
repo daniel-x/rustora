@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Parses the replay corpus recorded by the C# reference.
+//! Parses the replay corpus recorded by the C# reference. Mission runs (prefixes m, n and k) have no bots.
 
 use std::path::PathBuf;
 
@@ -22,7 +22,7 @@ fn corpus_replays_parse_and_round_trip() {
         let replay = Replay::parse(&data).unwrap();
         assert!(replay.is_valid, "{:?}", e.path());
         let lobby = replay.lobby_info.as_ref().unwrap();
-        let is_mission = e.file_name().to_string_lossy().starts_with('m');
+        let is_mission = e.file_name().to_string_lossy().starts_with(['m', 'n', 'k']);
         assert!(is_mission || lobby.clients.iter().any(|c| c.bot.is_some()));
         assert!(replay.metadata.is_some());
         for c in &replay.chunks {

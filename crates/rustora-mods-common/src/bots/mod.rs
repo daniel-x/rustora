@@ -34,6 +34,7 @@ use crate::production::ProductionQueue;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("ModularBot", |n| load_info!(ModularBotInfo, n));
+    r.register("DummyBot", |n| load_info!(DummyBotInfo, n));
     modules::register(r);
     base_builder::register(r);
     unit_builder::register(r);
@@ -140,6 +141,28 @@ impl ModularBot {
 }
 
 /// Activates the bot logic of all bot players, like `Player` does on the host.
+/// `DummyBot`: a placeholder bot that does nothing, so it needs no instance.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct DummyBotInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub name: String,
+    #[field(name = "Type")]
+    pub ty: String,
+}
+
+impl Default for DummyBotInfo {
+    fn default() -> Self {
+        DummyBotInfo {
+            instance_name: None,
+            name: "Unnamed Bot".into(),
+            ty: String::new(),
+        }
+    }
+}
+
+info_impl!(DummyBotInfo => |_info, _| None);
+
 pub fn activate_bots(world: &World) {
     for p in world.players() {
         let Some(ty) = p.bot_type.clone() else { continue };

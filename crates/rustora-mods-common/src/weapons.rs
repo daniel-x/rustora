@@ -35,6 +35,7 @@ use crate::actor_map::WorldExt;
 use crate::effects::{ContrailFader, ContrailFields, SharedContrail, SpriteEffect};
 use crate::health::HealthInfo;
 use crate::hit_shape::{ArmorType, HitShape};
+use crate::interfaces::{IFirepowerModifier, IInaccuracyModifier, IRangeModifier};
 use crate::resources::ResourceLayer;
 use crate::util;
 
@@ -42,6 +43,116 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Armor", |n| load_info!(ArmorInfo, n));
     r.register("BlocksProjectiles", |n| load_info!(BlocksProjectilesInfo, n));
     r.register("JamsMissiles", |n| load_info!(JamsMissilesInfo, n));
+    r.register("FireProjectilesOnDeath", |n| load_info!(FireProjectilesOnDeathInfo, n));
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct FireProjectilesOnDeathInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    #[field(require)]
+    pub weapons: Vec<String>,
+    pub pieces: Vec<i32>,
+    pub range: Vec<WDist>,
+}
+
+impl Default for FireProjectilesOnDeathInfo {
+    fn default() -> Self {
+        FireProjectilesOnDeathInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            weapons: Vec::new(),
+            pieces: vec![3, 10],
+            range: vec![WDist::from_cells(2), WDist::from_cells(5)],
+        }
+    }
+}
+
+/// Fires a random number of projectiles of each weapon in random directions when the actor dies.
+pub struct FireProjectilesOnDeath {
+    info: Rc<FireProjectilesOnDeathInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(FireProjectilesOnDeath: crate::interfaces::INotifyKilled, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(FireProjectilesOnDeathInfo => |info, _| Some(Rc::new(FireProjectilesOnDeath {
+    state: ConditionalState::new(&info.base),
+    info,
+})));
+conditional_simple!(FireProjectilesOnDeath);
+
+impl crate::interfaces::INotifyKilled for FireProjectilesOnDeath {
+    fn killed(&self, self_: &ActorRef, _e: &rustora_engine::damage::AttackInfo) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        let w = self_.world();
+        let info = &self.info;
+        for name in &info.weapons {
+            let weapon = w
+                .rules()
+                .weapon(&name.to_lowercase())
+                .unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", name.to_lowercase()));
+            let (pieces, range) = {
+                let mut r = w.shared_random.borrow_mut();
+                let pieces = r.next_range(info.pieces[0], info.pieces[1]);
+                (pieces, r.next_range(info.range[0].length, info.range[1].length))
+            };
+            for _ in 0..pieces {
+                let (rotation, facing) = {
+                    let mut r = w.shared_random.borrow_mut();
+                    let rotation = WRot::from_yaw(WAngle::new(r.next_max(1024)));
+                    (rotation, WAngle::new(r.next_max(1024)))
+                };
+                let center = self_.center_position();
+                let me = self_.clone();
+                let args = ProjectileArgs {
+                    weapon: weapon.clone(),
+                    damage_modifiers: self_
+                        .traits_implementing::<dyn IFirepowerModifier>()
+                        .iter()
+                        .map(|m| m.get_firepower_modifier())
+                        .collect(),
+                    inaccuracy_modifiers: self_
+                        .traits_implementing::<dyn IInaccuracyModifier>()
+                        .iter()
+                        .map(|m| m.get_inaccuracy_modifier())
+                        .collect(),
+                    range_modifiers: self_
+                        .traits_implementing::<dyn IRangeModifier>()
+                        .iter()
+                        .map(|m| m.get_range_modifier())
+                        .collect(),
+                    facing,
+                    current_muzzle_facing: Rc::new(|| WAngle::ZERO),
+                    source: center,
+                    current_source: Rc::new(move || me.center_position()),
+                    source_actor: self_.clone(),
+                    passive_target: center + WVec::new(range, 0, 0).rotate(&rotation),
+                    guided_target: Target::Invalid,
+                };
+                let me = self_.clone();
+                w.add_frame_end_task(Box::new(move |w| {
+                    let weapon = args.weapon.clone();
+                    let Some(projectile) = weapon.projectile.as_ref() else { return };
+                    if let Some(p) = projectile.create(args) {
+                        w.add_effect(p);
+                    }
+                    if !weapon.report.is_empty() {
+                        rustora_engine::sound::play_random_at(
+                            w,
+                            rustora_engine::sound::SoundType::World,
+                            &weapon.report,
+                            me.center_position(),
+                            1.0,
+                        );
+                    }
+                }));
+            }
+        }
+    }
 }
 
 macro_rules! projectile_loader {
@@ -79,6 +190,7 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.projectiles.insert("Missile", projectile_loader!(MissileInfo));
     r.projectiles.insert("TeslaZap", projectile_loader!(TeslaZapInfo));
     r.projectiles.insert("LaserZap", projectile_loader!(LaserZapInfo));
+    r.projectiles.insert("Railgun", projectile_loader!(RailgunInfo));
     r.warheads.insert("SpreadDamage", |y| load_damage(y, DamageKind::Spread));
     r.warheads.insert("TargetDamage", |y| load_damage(y, DamageKind::Target));
     r.warheads
@@ -89,7 +201,8 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.warheads.insert("CreateResource", warhead_loader!(CreateResourceWarhead));
     r.warheads.insert("DestroyResource", warhead_loader!(DestroyResourceWarhead));
     r.warheads.insert("FireCluster", warhead_loader!(FireClusterWarhead));
-    r.warheads.insert("GrantExternalCondition", warhead_loader!(GrantExternalConditionWarhead));
+    r.warheads
+        .insert("GrantExternalCondition", warhead_loader!(GrantExternalConditionWarhead));
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -138,9 +251,19 @@ fn minimum_point_line_projection(line_start: WPos, line_end: WPos, point: WPos) 
 
 /// `WorldExtensions.FindBlockingActorsOnLine`.
 fn find_blocking_actors_on_line(w: &World, start: WPos, end: WPos, width: WDist) -> Vec<ActorRef> {
+    find_actors_on_line(w, start, end, width, true)
+}
+
+/// `WorldExtensions.FindActorsOnLine`.
+fn find_actors_on_line(w: &World, start: WPos, end: WPos, width: WDist, only_blockers: bool) -> Vec<ActorRef> {
     let dir = WVec::new(if end.x < start.x { -1 } else { 1 }, if end.y < start.y { -1 } else { 1 }, 0);
     let m = w.actor_map();
-    let overselect = dir * (1024 + width.length + m.largest_blocking_actor_radius.get().length);
+    let radius = if only_blockers {
+        m.largest_blocking_actor_radius.get()
+    } else {
+        m.largest_actor_radius.get()
+    };
+    let overselect = dir * (1024 + width.length + radius.length);
     let mut out = Vec::new();
     for a in m.actors_in_box(end + overselect, start - overselect) {
         let mut actor_width = 0;
@@ -1850,7 +1973,11 @@ impl IProjectileInfo for LaserZapInfo {
         let w = args.source_actor.world();
         let owner_color = args.source_actor.owner().color;
         let color = if self.use_player_color { owner_color } else { self.color };
-        let secondary_color = if self.secondary_beam_use_player_color { owner_color } else { self.secondary_beam_color };
+        let secondary_color = if self.secondary_beam_use_player_color {
+            owner_color
+        } else {
+            self.secondary_beam_color
+        };
         let mut target = args.passive_target;
         if self.inaccuracy.length > 0 {
             let max = get_projectile_inaccuracy(self.inaccuracy.length, self.inaccuracy_type, &args);
@@ -1946,8 +2073,11 @@ impl Effect for LaserZap {
             if self.interval.get() <= 0 {
                 let target = self.target.get();
                 let mut a = WarheadArgs::from_projectile(args);
-                a.impact_orientation =
-                    WRot::new(WAngle::ZERO, util::get_vertical_angle(self.source.get(), target), (args.current_muzzle_facing)());
+                a.impact_orientation = WRot::new(
+                    WAngle::ZERO,
+                    util::get_vertical_angle(self.source.get(), target),
+                    (args.current_muzzle_facing)(),
+                );
                 a.impact_position = target;
                 weapon_impact_args(&args.weapon, &Target::from_pos(target), &a);
                 self.interval.set(info.damage_interval);
@@ -1993,6 +2123,191 @@ impl Effect for LaserZap {
             && let Some(anim) = &self.hit_anim
         {
             render_animation(anim, target, WVec::ZERO, 0, &PaletteRef::named(&info.hit_anim_palette), out);
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `RailgunInfo`. The helix is not drawn; the beam is drawn as a fading line.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct RailgunInfo {
+    pub damage_actors_in_line: bool,
+    pub inaccuracy: WDist,
+    pub inaccuracy_type: InaccuracyType,
+    pub blockable: bool,
+    pub duration: i32,
+    pub z_offset: i32,
+    pub beam_width: WDist,
+    pub beam_shape: String,
+    pub beam_color: Color,
+    pub beam_player_color: bool,
+    pub beam_alpha_delta_per_tick: i32,
+    pub helix_thickness: WDist,
+    pub helix_radius: WDist,
+    pub helix_pitch: WDist,
+    pub helix_radius_delta_per_tick: i32,
+    pub helix_alpha_delta_per_tick: i32,
+    pub helix_angle_delta_per_tick: WAngle,
+    pub quantization_count: i32,
+    pub helix_color: Color,
+    pub helix_player_color: bool,
+    pub hit_anim: Option<String>,
+    pub hit_anim_sequence: String,
+    pub hit_anim_palette: String,
+}
+
+impl Default for RailgunInfo {
+    fn default() -> Self {
+        RailgunInfo {
+            damage_actors_in_line: false,
+            inaccuracy: WDist::ZERO,
+            inaccuracy_type: InaccuracyType::Maximum,
+            blockable: false,
+            duration: 15,
+            z_offset: 0,
+            beam_width: WDist::new(86),
+            beam_shape: "Cylindrical".into(),
+            beam_color: Color::from_argb(128, 255, 255, 255),
+            beam_player_color: false,
+            beam_alpha_delta_per_tick: -8,
+            helix_thickness: WDist::new(32),
+            helix_radius: WDist::new(64),
+            helix_pitch: WDist::new(512),
+            helix_radius_delta_per_tick: 8,
+            helix_alpha_delta_per_tick: -8,
+            helix_angle_delta_per_tick: WAngle::new(16),
+            quantization_count: 16,
+            helix_color: Color::from_argb(128, 255, 255, 255),
+            helix_player_color: false,
+            hit_anim: None,
+            hit_anim_sequence: "idle".into(),
+            hit_anim_palette: "effect".into(),
+        }
+    }
+}
+
+impl IProjectileInfo for RailgunInfo {
+    fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
+        let w = args.source_actor.world();
+        let c = args.source_actor.owner().color;
+        let beam_color = if self.beam_player_color {
+            Color::from_argb(self.beam_color.a(), c.r(), c.g(), c.b())
+        } else {
+            self.beam_color
+        };
+        let mut target = args.passive_target;
+        if self.inaccuracy.length > 0 {
+            let max = get_projectile_inaccuracy(self.inaccuracy.length, self.inaccuracy_type, &args);
+            target = target + WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2) * max / 1024;
+        }
+        let hit_anim = self
+            .hit_anim
+            .as_deref()
+            .filter(|i| !i.is_empty())
+            .map(|image| Animation::new(w.map().sequences().clone(), image, None, None));
+        if self.blockable
+            && let Some(hit) = any_blocking_actors_between(&w, &args.source_actor.owner(), target, args.source, self.beam_width)
+        {
+            target = hit;
+        }
+        Some(Rc::new_cyclic(|me: &Weak<Railgun>| Railgun {
+            me: me.clone(),
+            info: self.clone(),
+            beam_color,
+            hit_anim,
+            animation_complete: Rc::new(Cell::new(false)),
+            ticks: Cell::new(0),
+            target,
+            args,
+        }))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `Railgun`: hits the target, or every actor on the line, on its first tick.
+struct Railgun {
+    me: Weak<Railgun>,
+    info: RailgunInfo,
+    args: ProjectileArgs,
+    beam_color: Color,
+    hit_anim: Option<Rc<Animation>>,
+    animation_complete: Rc<Cell<bool>>,
+    ticks: Cell<i32>,
+    target: WPos,
+}
+
+impl Effect for Railgun {
+    fn tick(&self, world: &Rc<World>) {
+        let args = &self.args;
+        let target = self.target;
+        if self.ticks.get() == 0 {
+            match &self.hit_anim {
+                Some(anim) => {
+                    let done = self.animation_complete.clone();
+                    anim.play_then(&self.info.hit_anim_sequence, Some(Rc::new(move || done.set(true))));
+                }
+                None => self.animation_complete.set(true),
+            }
+            let orientation = WRot::new(WAngle::ZERO, util::get_vertical_angle(args.source, target), args.facing);
+            if !self.info.damage_actors_in_line {
+                let mut a = WarheadArgs::from_projectile(args);
+                a.impact_orientation = orientation;
+                a.impact_position = target;
+                weapon_impact_args(&args.weapon, &Target::from_pos(target), &a);
+            } else {
+                for actor in find_actors_on_line(world, args.source, target, self.info.beam_width, false) {
+                    let mut a = WarheadArgs::from_projectile(args);
+                    a.impact_orientation = orientation;
+                    a.impact_position = actor.center_position();
+                    weapon_impact_args(&args.weapon, &Target::from_actor(Some(&actor)), &a);
+                }
+            }
+        }
+        if let Some(anim) = &self.hit_anim {
+            anim.tick();
+        }
+        let t = self.ticks.get();
+        self.ticks.set(t + 1);
+        if t > self.info.duration && self.animation_complete.get() {
+            let me: EffectRef = self.me.upgrade().expect("railgun");
+            world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+        }
+    }
+
+    fn is_sync(&self) -> bool {
+        true
+    }
+
+    fn sync_hash(&self) -> i32 {
+        self.target.hash()
+    }
+
+    fn render(&self, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        let source = self.args.source;
+        if fog_obscures(viewer, self.target) && fog_obscures(viewer, source) {
+            return;
+        }
+        let info = &self.info;
+        if self.ticks.get() < info.duration {
+            let c = self.beam_color;
+            let a = (c.a() as i32 + info.beam_alpha_delta_per_tick * self.ticks.get()).clamp(0, 255) as u8;
+            let color = crate::effects::premultiplied(Color::from_argb(a, c.r(), c.g(), c.b()));
+            out.push(Renderable::Line {
+                from: source,
+                to: self.target,
+                width: info.beam_width.length as f32,
+                from_color: color,
+                to_color: color,
+            });
+        }
+        if let Some(anim) = &self.hit_anim {
+            render_animation(anim, self.target, WVec::ZERO, 0, &PaletteRef::named(&info.hit_anim_palette), out);
         }
     }
 
