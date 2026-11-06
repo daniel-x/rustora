@@ -444,12 +444,22 @@ impl World {
         self.actors.borrow().values().cloned().collect()
     }
 
+    /// The actors in id order that satisfy `f`, without copying the full actor list.
+    pub fn actors_where(&self, mut f: impl FnMut(&ActorRef) -> bool) -> Vec<ActorRef> {
+        self.actors.borrow().values().filter(|a| f(a)).cloned().collect()
+    }
+
     pub fn get_actor_by_id(&self, id: u32) -> Option<ActorRef> {
         self.actors.borrow().get(&id).cloned()
     }
 
     pub fn actors_with_trait<T: ?Sized + 'static>(&self) -> Vec<(ActorRef, Rc<T>)> {
         self.trait_dict.actors_with_trait::<T>()
+    }
+
+    /// See `TraitDict::for_each_with_trait`.
+    pub fn for_each_with_trait<T: ?Sized + 'static>(&self, f: impl FnMut(&ActorRef, &Rc<T>)) {
+        self.trait_dict.for_each_with_trait::<T>(f)
     }
 
     pub fn actors_having_trait<T: ?Sized + 'static>(&self) -> Vec<ActorRef> {
@@ -559,12 +569,17 @@ impl World {
             ret = ret.wrapping_add(n.wrapping_mul(1i32.wrapping_add(a.id as i32)).wrapping_mul(a.sync_hash_id()));
             n += 1;
         }
-        for a in self.trait_dict.actors_having_trait::<dyn ISync>() {
+        let mut last_id = None;
+        self.trait_dict.for_each_with_trait::<dyn ISync>(|a, _| {
+            if last_id == Some(a.id) {
+                return;
+            }
+            last_id = Some(a.id);
             for s in &a.cache().sync_hashes {
                 ret = ret.wrapping_add(n.wrapping_mul(1i32.wrapping_add(a.id as i32)).wrapping_mul(s.sync_hash()));
                 n += 1;
             }
-        }
+        });
         for e in self.synced_effects.borrow().iter() {
             ret = ret.wrapping_add(n.wrapping_mul(e.sync_hash()));
             n += 1;

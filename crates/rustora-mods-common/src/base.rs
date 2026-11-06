@@ -1243,7 +1243,7 @@ pub fn clear_blockers_orders(world: &Rc<World>, tiles: &[CPos], owner: &PlayerRe
     let mut out = Vec::new();
     for &tile in tiles {
         for a in world.actor_map().get_actors_at(tile) {
-            if !Rc::ptr_eq(&a.owner(), owner) || !a.is_idle() || ignore_actor.is_some_and(|i| i.id == a.id) {
+            if !a.is_owned_by(owner) || !a.is_idle() || ignore_actor.is_some_and(|i| i.id == a.id) {
                 continue;
             }
             let move_cell = if let Some(mobile) = a.trait_or_default::<crate::mobile::Mobile>() {
@@ -1338,7 +1338,7 @@ pub fn find_base_provider(bi: &BuildingInfo, world: &World, p: &PlayerRef, top_l
     }
     let ally_build = radius.ally_build_radius_enabled.get();
     for (a, bp) in world.actors_with_trait::<BaseProvider>() {
-        let valid_owner = Rc::ptr_eq(&a.owner(), p) || (ally_build && a.owner().relationship_with(Some(p)) == PlayerRelationship::ALLY);
+        let valid_owner = a.is_owned_by(p) || (ally_build && a.owner().relationship_with(Some(p)) == PlayerRelationship::ALLY);
         if !valid_owner || !bp.ready() {
             continue;
         }
@@ -1354,7 +1354,7 @@ fn any_gives_buildable_area(actors: &[ActorRef], p: &PlayerRef, ally_build: bool
         if !a.is_in_world() {
             continue;
         }
-        if !Rc::ptr_eq(&a.owner(), p) && (!ally_build || a.owner().relationship_with(Some(p)) != PlayerRelationship::ALLY) {
+        if !a.is_owned_by(p) && (!ally_build || a.owner().relationship_with(Some(p)) != PlayerRelationship::ALLY) {
             continue;
         }
         let overlaps = a

@@ -381,7 +381,7 @@ impl IAcceptResources for Refinery {
         }
         let owner = self_.owner();
         for (a, t) in self_.world().actors_with_trait::<dyn INotifyResourceAccepted>() {
-            if Rc::ptr_eq(&a.owner(), &owner) {
+            if a.is_owned_by(&owner) {
                 t.on_resource_accepted(&a, self_, resource_type, count, value);
             }
         }

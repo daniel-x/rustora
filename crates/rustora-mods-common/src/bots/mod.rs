@@ -333,7 +333,7 @@ pub fn max_by_first<T, K: Ord>(items: impl IntoIterator<Item = T>, key: impl Fn(
 pub fn find_queues_by_category(player: &PlayerRef) -> NetMap<String, Vec<Rc<ProductionQueue>>> {
     let mut out: NetMap<String, Vec<Rc<ProductionQueue>>> = NetMap::new();
     for (a, q) in player.player_actor().world().actors_with_trait::<ProductionQueue>() {
-        if !Rc::ptr_eq(&a.owner(), player) || !q.enabled() {
+        if !a.is_owned_by(player) || !q.enabled() {
             continue;
         }
         let ty = q.info.ty.clone();
@@ -357,7 +357,7 @@ pub fn count_actors_with_name_and_trait<T: ?Sized + 'static>(name: &str, owner: 
         .world()
         .actors_having_trait::<T>()
         .iter()
-        .filter(|a| Rc::ptr_eq(&a.owner(), owner) && a.info.name == name)
+        .filter(|a| a.is_owned_by(owner) && a.info.name == name)
         .count() as i32
 }
 

@@ -123,6 +123,17 @@ impl TraitDict {
         })
     }
 
+    /// Calls `f` for each actor and trait pair of `T` without copying the list. `f` must not add
+    /// or remove traits.
+    pub fn for_each_with_trait<T: ?Sized + 'static>(&self, mut f: impl FnMut(&ActorRef, &Rc<T>)) {
+        self.with::<T, _>(|c| {
+            let c = c.borrow();
+            for (a, t) in c.actors.iter().zip(&c.traits) {
+                f(a, t);
+            }
+        })
+    }
+
     /// Distinct actors that have a trait implementing `T`, in actor ID order.
     pub fn actors_having_trait<T: ?Sized + 'static>(&self) -> Vec<ActorRef> {
         self.with::<T, _>(|c| {

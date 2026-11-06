@@ -228,7 +228,7 @@ impl Stats {
                 let base = world
                     .actors_having_trait::<BaseBuilding>()
                     .into_iter()
-                    .find(|a| !a.is_dead() && Rc::ptr_eq(&a.owner(), &p));
+                    .find(|a| !a.is_dead() && a.is_owned_by(&p));
                 if let Some(base) = base {
                     let c = base.center_position();
                     ingame.viewport.borrow_mut().center_on((c.x * 24 / 1024, (c.y - c.z) * 24 / 1024));
@@ -365,7 +365,7 @@ impl Stats {
             world
                 .actors()
                 .iter()
-                .filter(|a| Rc::ptr_eq(&a.owner(), &p) && !a.is_dead() && a.info.has_trait_info::<UpdatesDerrickCountInfo>())
+                .filter(|a| a.is_owned_by(&p) && !a.is_dead() && a.info.has_trait_info::<UpdatesDerrickCountInfo>())
                 .count()
                 .to_string()
         });
@@ -374,7 +374,7 @@ impl Stats {
             world
                 .actors_with_trait::<Harvester>()
                 .iter()
-                .filter(|(a, h)| Rc::ptr_eq(&a.owner(), &p) && !a.is_dead() && !h.is_trait_disabled())
+                .filter(|(a, h)| a.is_owned_by(&p) && !a.is_dead() && !h.is_trait_disabled())
                 .count()
                 .to_string()
         });

@@ -155,14 +155,10 @@ impl ITick for Shroud {
                 self.update_cell(i, self_);
             }
         } else {
-            for i in 0..n {
-                let was = {
-                    let mut l = self.l.borrow_mut();
-                    std::mem::replace(&mut l.touched[i], false)
-                };
-                if was {
-                    self.update_cell(i, self_);
-                }
+            let mut i = 0;
+            while let Some(j) = self.take_next_touched(i, n) {
+                self.update_cell(j, self_);
+                i = j + 1;
             }
         }
         self.hash
@@ -182,6 +178,14 @@ impl Shroud {
 
     fn resolved(&self, p: PPos) -> u8 {
         self.l.borrow().resolved[self.index(p)]
+    }
+
+    /// Clears and returns the first touched cell index in `from..n`.
+    fn take_next_touched(&self, from: usize, n: usize) -> Option<usize> {
+        let mut l = self.l.borrow_mut();
+        let j = from + l.touched[from..n].iter().position(|&t| t)?;
+        l.touched[j] = false;
+        Some(j)
     }
 
     fn update_cell(&self, index: usize, self_: &ActorRef) {

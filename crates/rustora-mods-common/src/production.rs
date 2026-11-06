@@ -216,19 +216,19 @@ info_impl!(TechTreeInfo => |_, init| {
 
 fn gather_owned_prerequisites(player: &PlayerRef, world: &World) -> HashMap<String, i32> {
     let mut ret: HashMap<String, i32> = HashMap::new();
-    let valid = |a: &ActorRef| Rc::ptr_eq(&a.owner(), player) && a.is_in_world() && !a.is_dead();
-    for (a, t) in world.actors_with_trait::<dyn ITechTreePrerequisite>() {
-        if valid(&a) {
+    let valid = |a: &ActorRef| a.is_owned_by(player) && a.is_in_world() && !a.is_dead();
+    world.for_each_with_trait::<dyn ITechTreePrerequisite>(|a, t| {
+        if valid(a) {
             for p in t.provides_prerequisites() {
                 *ret.entry(p).or_insert(0) += 1;
             }
         }
-    }
-    for (a, _) in world.actors_with_trait::<Buildable>() {
-        if valid(&a) && !ret.contains_key(&a.info.name) && a.info.trait_info::<BuildableInfo>().expect("Buildable").build_limit > 0 {
+    });
+    world.for_each_with_trait::<Buildable>(|a, _| {
+        if valid(a) && !ret.contains_key(&a.info.name) && a.info.trait_info::<BuildableInfo>().expect("Buildable").build_limit > 0 {
             *ret.entry(a.info.name.clone()).or_insert(0) += 1;
         }
-    }
+    });
     ret
 }
 
@@ -1319,7 +1319,7 @@ impl ProductionQueue {
                 .world()
                 .actors_having_trait::<Buildable>()
                 .iter()
-                .filter(|a| a.info.name == actor.name && Rc::ptr_eq(&a.owner(), &owner))
+                .filter(|a| a.info.name == actor.name && a.is_owned_by(&owner))
                 .count() as i32;
             if queue_count + owned >= bi.build_limit {
                 return false;
@@ -1441,10 +1441,7 @@ impl ProductionQueue {
                 .actors_with_trait::<Production>()
                 .iter()
                 .filter(|(a, p)| {
-                    !p.is_trait_disabled()
-                        && !p.is_trait_paused()
-                        && Rc::ptr_eq(&a.owner(), &owner)
-                        && p.info.produces.iter().any(|x| x == ty)
+                    !p.is_trait_disabled() && !p.is_trait_paused() && a.is_owned_by(&owner) && p.info.produces.iter().any(|x| x == ty)
                 })
                 .count() as i32;
             let m = count.clamp(1, c.build_time_speed_reduction.len() as i32) - 1;
@@ -1562,7 +1559,7 @@ impl ProductionQueue {
             let mut v: Vec<(ActorRef, Rc<Production>)> = w
                 .actors_with_trait::<Production>()
                 .into_iter()
-                .filter(|(a, p)| Rc::ptr_eq(&a.owner(), &owner) && !p.is_trait_disabled() && p.info.produces.contains(&self.info.ty))
+                .filter(|(a, p)| a.is_owned_by(&owner) && !p.is_trait_disabled() && p.info.produces.contains(&self.info.ty))
                 .collect();
             v.sort_by_key(|(a, p)| {
                 (
@@ -1595,7 +1592,7 @@ impl ProductionQueue {
             let mut producers: Vec<(ActorRef, Rc<Production>)> = w
                 .actors_with_trait::<Production>()
                 .into_iter()
-                .filter(|(a, p)| Rc::ptr_eq(&a.owner(), &owner) && !p.is_trait_disabled() && p.info.produces.contains(&ty))
+                .filter(|(a, p)| a.is_owned_by(&owner) && !p.is_trait_disabled() && p.info.produces.contains(&ty))
                 .collect();
             producers.sort_by_key(|(a, _)| (std::cmp::Reverse(is_primary_building(a)), std::cmp::Reverse(a.id)));
             let any = !producers.is_empty();
@@ -1653,7 +1650,7 @@ impl ITick for ProductionQueue {
                 if p.is_trait_disabled() {
                     continue;
                 }
-                if !Rc::ptr_eq(&a.owner(), &owner) || !p.info.produces.contains(&self.info.ty) {
+                if !a.is_owned_by(&owner) || !p.info.produces.contains(&self.info.ty) {
                     continue;
                 }
                 self.enabled.set(self.enabled.get() | self.is_valid_faction.get());
@@ -1709,7 +1706,7 @@ impl IResolveOrder for ProductionQueue {
                         let owned = w
                             .actors_having_trait::<Buildable>()
                             .iter()
-                            .filter(|a| a.info.name == name && Rc::ptr_eq(&a.owner(), &owner))
+                            .filter(|a| a.info.name == name && a.is_owned_by(&owner))
                             .count() as i32;
                         from_limit = from_limit.min(bi.build_limit - (in_queue + owned));
                     }
@@ -2177,7 +2174,7 @@ impl PrimaryBuilding {
             for q in queues {
                 for (a, t) in self_.world().actors_with_trait::<PrimaryBuilding>() {
                     if a.id != self_.id
-                        && Rc::ptr_eq(&a.owner(), &owner)
+                        && a.is_owned_by(&owner)
                         && t.is_primary.get()
                         && a.traits_implementing::<Production>()
                             .iter()
@@ -2443,7 +2440,7 @@ fn num_buildables(w: &World, player: &PlayerRef) -> usize {
     }
     let mut items = IndexSet::new();
     for (a, q) in w.actors_with_trait::<ProductionQueue>() {
-        if Rc::ptr_eq(&a.owner(), player) {
+        if a.is_owned_by(player) {
             items.extend(q.buildable_items());
         }
     }

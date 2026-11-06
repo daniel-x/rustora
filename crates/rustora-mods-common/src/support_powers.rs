@@ -707,7 +707,7 @@ impl SupportPower {
         let mut producers: Vec<(ActorRef, Rc<crate::production::Production>)> = w
             .actors_with_trait::<crate::production::Production>()
             .into_iter()
-            .filter(|(a, p)| Rc::ptr_eq(&a.owner(), &owner) && !p.is_trait_disabled() && p.info.produces.contains(&info.produce_type))
+            .filter(|(a, p)| a.is_owned_by(&owner) && !p.is_trait_disabled() && p.info.produces.contains(&info.produce_type))
             .collect();
         producers.sort_by_key(|(a, _)| std::cmp::Reverse((crate::production::is_primary_building(a), a.id)));
         let mut activated = false;
@@ -1264,7 +1264,7 @@ impl SupportPower {
             .world()
             .actors_with_trait::<ProvidesRadar>()
             .iter()
-            .any(|(a, r)| !r.is_trait_disabled() && Rc::ptr_eq(&a.owner(), &owner))
+            .any(|(a, r)| !r.is_trait_disabled() && a.is_owned_by(&owner))
     }
 }
 

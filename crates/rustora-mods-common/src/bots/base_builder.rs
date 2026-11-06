@@ -338,7 +338,7 @@ impl IBotTick for BaseBuilderBotModule {
         if self.assign_rally_points_ticks.get() <= 0 {
             self.assign_rally_points_ticks.set(self.info.assign_rally_points_interval.max(2));
             for (a, rp) in w.actors_with_trait::<RallyPoint>() {
-                if Rc::ptr_eq(&a.owner(), &player) {
+                if a.is_owned_by(&player) {
                     self.rally_points.borrow_mut().push((a, rp));
                 }
             }
@@ -346,7 +346,7 @@ impl IBotTick for BaseBuilderBotModule {
             let n = div_away_from_zero(self.rally_points.borrow().len() as i32, self.assign_rally_points_ticks.get());
             for _ in 0..n {
                 let rp = self.rally_points.borrow_mut().pop().expect("rally point");
-                if Rc::ptr_eq(&rp.0.owner(), &player) && !rp.0.disposed() {
+                if rp.0.is_owned_by(&player) && !rp.0.disposed() {
                     self.set_rally_point(bot, &rp);
                 }
             }
@@ -524,10 +524,7 @@ impl BaseBuilderBotModule {
     }
 
     fn count_owned<T: ?Sized + 'static>(w: &World, player: &PlayerRef) -> i32 {
-        w.actors_having_trait::<T>()
-            .iter()
-            .filter(|a| Rc::ptr_eq(&a.owner(), player))
-            .count() as i32
+        w.actors_having_trait::<T>().iter().filter(|a| a.is_owned_by(player)).count() as i32
     }
 
     /// `AIUtils.IsAreaAvailable<T>`.
@@ -537,20 +534,17 @@ impl BaseBuilderBotModule {
         let map = w.map();
         let types = &self.info.water_terrain_types;
         let ok = |c: CPos| map.contains(c) && types.contains(&map.terrain_type_info(c).ty);
-        w.actors_having_trait::<T>()
-            .iter()
-            .filter(|a| Rc::ptr_eq(&a.owner(), &player))
-            .any(|a| {
-                map.find_tiles_in_circle(a.location(), radius, false)
-                    .filter(|&c| {
-                        ok(c)
-                            && crate::util::adjacent_cells(&w, &Target::from_cell(&w, c, FULL_CELL))
-                                .iter()
-                                .all(|&ac| ok(ac))
-                    })
-                    .count()
-                    > 0
-            })
+        w.actors_having_trait::<T>().iter().filter(|a| a.is_owned_by(&player)).any(|a| {
+            map.find_tiles_in_circle(a.location(), radius, false)
+                .filter(|&c| {
+                    ok(c)
+                        && crate::util::adjacent_cells(&w, &Target::from_cell(&w, c, FULL_CELL))
+                            .iter()
+                            .all(|&ac| ok(ac))
+                })
+                .count()
+                > 0
+        })
     }
 
     /// `BaseBuilderQueueManager.Tick`.
@@ -594,7 +588,7 @@ impl BaseBuilderBotModule {
         let buildings: Vec<ActorRef> = w
             .actors_having_trait::<Building>()
             .into_iter()
-            .filter(|a| Rc::ptr_eq(&a.owner(), &player))
+            .filter(|a| a.is_owned_by(&player))
             .collect();
         let bonus = info.excess_power_increment * (buildings.len() as i32 / info.excess_power_increase_threshold.max(1));
         *b.player_buildings.borrow_mut() = buildings;

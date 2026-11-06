@@ -391,7 +391,7 @@ impl SquadManagerBotModule {
             .construction_yard_buildings
             .actors()
             .into_iter()
-            .filter(|a| Rc::ptr_eq(&a.owner(), &player))
+            .filter(|a| a.is_owned_by(&player))
             .collect();
         random_or_default(&yards, &self.self_.world().bot_random).map_or(self.initial_base_center.get(), |a| a.location())
     }
@@ -611,7 +611,7 @@ impl SquadManagerBotModule {
         let player = self.self_.owner();
         let w = self.self_.world();
         for a in w.actors_having_trait::<dyn IPositionable>() {
-            if !Rc::ptr_eq(&a.owner(), &player)
+            if !a.is_owned_by(&player)
                 || self.info.exclude_from_squads_types.contains(&a.info.name)
                 || self.active_units.borrow().contains_key(&a.id)
             {
@@ -728,7 +728,7 @@ impl SquadManagerBotModule {
                 map.center_of_cell(self.random_base_center()),
                 WDist::from_cells(self.info.protect_unit_scan_radius),
             ) {
-                if !Rc::ptr_eq(&u.owner(), &player)
+                if !u.is_owned_by(&player)
                     || self.info.protection_types.contains(&u.info.name)
                     || !u.info.has_trait_info::<AttackBaseInfo>()
                 {
@@ -854,7 +854,7 @@ impl SquadManagerBotModule {
         let units = w.find_actors_in_circle(sq.center_position(), WDist::from_cells(self.info.danger_scan_radius));
         if units
             .iter()
-            .any(|u| Rc::ptr_eq(&u.owner(), &player) && u.info.has_trait_info::<BuildingInfo>())
+            .any(|u| u.is_owned_by(&player) && u.info.has_trait_info::<BuildingInfo>())
         {
             return false;
         }
@@ -881,7 +881,7 @@ impl SquadManagerBotModule {
         let buildings: Vec<ActorRef> = w
             .actors_having_trait::<Building>()
             .into_iter()
-            .filter(|a| Rc::ptr_eq(&a.owner(), &player))
+            .filter(|a| a.is_owned_by(&player))
             .collect();
         random_or_default(&buildings, &w.bot_random).map_or(location, |b| b.location())
     }

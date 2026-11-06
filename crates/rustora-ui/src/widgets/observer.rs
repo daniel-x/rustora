@@ -557,7 +557,7 @@ impl WidgetKind for ObserverProductionIconsWidget {
         let world = &ingame.world;
         let mut groups: Vec<(String, Vec<(Rc<ProductionQueue>, Rc<ProductionItem>)>)> = Vec::new();
         for (actor, queue) in world.actors_with_trait::<ProductionQueue>() {
-            if !Rc::ptr_eq(&actor.owner(), &player) {
+            if !actor.is_owned_by(&player) {
                 continue;
             }
             let Some(item) = queue.current_item() else { continue };

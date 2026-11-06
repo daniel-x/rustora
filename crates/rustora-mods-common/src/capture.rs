@@ -746,7 +746,7 @@ info_impl!(ProximityCapturableInfo => |info, init| Some(Rc::new_cyclic(|me| Prox
 
 impl ProximityCapturable {
     pub fn captured(&self) -> bool {
-        !Rc::ptr_eq(&self.self_.owner(), &self.original_owner)
+        !self.self_.is_owned_by(&self.original_owner)
     }
 
     fn create_trigger(&self, self_: &ActorRef) -> i32 {

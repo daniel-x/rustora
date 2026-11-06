@@ -402,11 +402,9 @@ info_impl!(ConquestVictoryConditionsInfo => |info, init| {
 pub fn has_no_required_units(world: &World, player: &PlayerRef, short_game: bool) -> bool {
     let actors = world.actors_with_trait::<MustBeDestroyed>();
     if short_game {
-        return !actors
-            .iter()
-            .any(|(a, t)| t.info.required_for_short_game && Rc::ptr_eq(&a.owner(), player));
+        return !actors.iter().any(|(a, t)| t.info.required_for_short_game && a.is_owned_by(player));
     }
-    !actors.iter().any(|(a, _)| Rc::ptr_eq(&a.owner(), player) && a.is_in_world())
+    !actors.iter().any(|(a, _)| a.is_owned_by(player) && a.is_in_world())
 }
 
 impl ITick for ConquestVictoryConditions {
@@ -486,7 +484,7 @@ impl INotifyWinStateChanged for ConquestVictoryConditions {
     fn on_player_lost(&self, player: &PlayerRef) {
         let w = player.player_actor().world();
         for (a, t) in w.actors_with_trait::<dyn INotifyOwnerLost>() {
-            if Rc::ptr_eq(&a.owner(), player) {
+            if a.is_owned_by(player) {
                 t.on_owner_lost(&a);
             }
         }
@@ -670,7 +668,7 @@ impl INotifyWinStateChanged for StrategicVictoryConditions {
     fn on_player_lost(&self, player: &PlayerRef) {
         let w = player.player_actor().world();
         for (a, t) in w.actors_with_trait::<dyn INotifyOwnerLost>() {
-            if Rc::ptr_eq(&a.owner(), player) {
+            if a.is_owned_by(player) {
                 t.on_owner_lost(&a);
             }
         }

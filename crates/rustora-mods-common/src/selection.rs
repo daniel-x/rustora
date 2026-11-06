@@ -251,7 +251,7 @@ impl Selection {
             return;
         }
         for actor in &actors {
-            if !Rc::ptr_eq(&actor.owner(), &local_player) || !actor.is_in_world() {
+            if !actor.is_owned_by(&local_player) || !actor.is_in_world() {
                 continue;
             }
             let Some(info) = actor.info.trait_info::<SelectableInfo>() else {

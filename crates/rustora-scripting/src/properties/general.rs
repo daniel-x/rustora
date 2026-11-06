@@ -3,8 +3,6 @@
 
 //! Port of `GeneralProperties.cs`.
 
-use std::rc::Rc;
-
 use mlua::Function;
 use rustora_core::fieldloader::{Color, FieldValue};
 use rustora_core::world_types::CPos;
@@ -77,7 +75,7 @@ pub fn groups() -> Vec<G> {
                         actor_string(a)
                     )),
                     Some(p) => {
-                        if !Rc::ptr_eq(&a.owner(), &p) {
+                        if !a.is_owned_by(&p) {
                             a.change_owner(p);
                         }
                         Ok(())

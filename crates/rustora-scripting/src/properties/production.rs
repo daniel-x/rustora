@@ -252,7 +252,7 @@ fn classic_state(lua: &Lua, p: &PlayerRef) -> LuaResult<Rc<ClassicState>> {
     if created {
         let (weak_state, player, lua) = (Rc::downgrade(&state), p.clone(), lua.clone());
         let global: ActorPairEvent = Rc::new(move |factory: &ActorRef, unit: &ActorRef| {
-            if !Rc::ptr_eq(&factory.owner(), &player) {
+            if !factory.is_owned_by(&player) {
                 return;
             }
             let Some(state) = weak_state.upgrade() else { return };

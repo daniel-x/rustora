@@ -25,11 +25,7 @@ use crate::values::{LuaCPos, LuaColor, LuaResult, actors_table, error};
 type G = Group<PlayerRef>;
 
 fn owned_actors(p: &PlayerRef, filter: impl Fn(&ActorRef) -> bool) -> Vec<ActorRef> {
-    pw(p)
-        .actors()
-        .into_iter()
-        .filter(|a| Rc::ptr_eq(&a.owner(), p) && !a.is_dead() && a.is_in_world() && filter(a))
-        .collect()
+    pw(p).actors_where(|a| a.is_owned_by(p) && !a.is_dead() && a.is_in_world() && filter(a))
 }
 
 /// The team and handicap of the lobby client of `p`, or zeros.
@@ -73,7 +69,7 @@ fn player() -> G {
             let actors: Vec<ActorRef> = pw(p)
                 .actors_having_trait::<AttackBase>()
                 .into_iter()
-                .filter(|a| Rc::ptr_eq(&a.owner(), p) && !a.is_dead() && a.is_in_world() && a.info.has_trait_info::<MobileInfo>())
+                .filter(|a| a.is_owned_by(p) && !a.is_dead() && a.is_in_world() && a.info.has_trait_info::<MobileInfo>())
                 .collect();
             actors_table(lua, &actors)
         })

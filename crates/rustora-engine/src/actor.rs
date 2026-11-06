@@ -182,6 +182,11 @@ impl Actor {
         self.owner.borrow().clone().expect("actor has an owner")
     }
 
+    /// True if `p` owns the actor, without cloning the owner reference.
+    pub fn is_owned_by(&self, p: &PlayerRef) -> bool {
+        self.owner.borrow().as_ref().is_some_and(|o| Rc::ptr_eq(o, p))
+    }
+
     pub fn owner_opt(&self) -> Option<PlayerRef> {
         self.owner.borrow().clone()
     }

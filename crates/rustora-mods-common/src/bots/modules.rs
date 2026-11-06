@@ -399,7 +399,7 @@ impl IBotTick for HarvesterBotModule {
             return;
         }
         let owner = self.self_.owner();
-        let cannot_be_ordered = |a: &ActorRef| !Rc::ptr_eq(&a.owner(), &owner) || a.is_dead() || !a.is_in_world();
+        let cannot_be_ordered = |a: &ActorRef| !a.is_owned_by(&owner) || a.is_dead() || !a.is_in_world();
         let to_remove: Vec<u32> = self
             .harvesters
             .borrow()
@@ -795,7 +795,7 @@ impl IBotTick for MinelayerBotModule {
                 if ml.is_empty() {
                     return;
                 }
-                let enemies: Vec<ActorRef> = w.actors().into_iter().filter(|a| self.is_preferred_enemy_unit(Some(a))).collect();
+                let enemies: Vec<ActorRef> = w.actors_where(|a| self.is_preferred_enemy_unit(Some(a)));
                 let Some(enemy) = random_or_default(&enemies, &w.bot_random) else {
                     return;
                 };
@@ -1018,7 +1018,7 @@ impl CaptureManagerBotModule {
         let mut options: Vec<ActorRef> = w
             .actors()
             .into_iter()
-            .filter(|a| Rc::ptr_eq(&a.owner(), rand_player) && !a.is_dead() && a.is_in_world())
+            .filter(|a| a.is_owned_by(rand_player) && !a.is_dead() && a.is_in_world())
             .filter(|a| !self.info.check_capture_targets_for_visibility || a.can_be_viewed_by_player(Some(&player)))
             .filter(|t| {
                 t.trait_or_default::<crate::capture::CaptureManager>()

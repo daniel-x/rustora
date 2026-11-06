@@ -835,7 +835,7 @@ pub fn radar_display(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> 
         let any_radar = world
             .actors_with_trait::<rustora_mods_common::gps::ProvidesRadar>()
             .iter()
-            .any(|(a, r)| !rustora_engine::traits::IDisabledTrait::is_trait_disabled(&**r) && Rc::ptr_eq(&a.owner(), &player));
+            .any(|(a, r)| !rustora_engine::traits::IDisabledTrait::is_trait_disabled(&**r) && a.is_owned_by(&player));
         e.set(developer.disable_shroud() || any_radar);
     }));
     if let Some(block) = ui.find(id, "RADAR_FADETOBLACK") {
