@@ -60,13 +60,14 @@ impl ReadFs for ModFs {
     }
 }
 
-/// The world behind the main menu. Its Lua script, which moves the camera and sends units, waits for P9.
+/// The world behind the main menu, or the world of a game.
 struct ShellWorld {
     world: Rc<World>,
     driver: SkirmishDriver,
     read_file: ReadFile,
     scene: Option<Scene>,
     quads: Vec<Quad>,
+    passes: Vec<rustora_render::post::PostPass>,
     viewport: Rc<RefCell<Viewport>>,
     viewer: Option<PlayerRef>,
     ingame: Option<Rc<Ingame>>,
@@ -220,6 +221,7 @@ impl ShellWorld {
             read_file,
             scene: None,
             quads: Vec::new(),
+            passes: Vec::new(),
             viewport,
             viewer,
             ingame: None,
@@ -248,6 +250,7 @@ impl ShellWorld {
             read_file,
             scene: None,
             quads: Vec::new(),
+            passes: Vec::new(),
             viewport,
             viewer: None,
             ingame: None,
@@ -275,6 +278,7 @@ impl ShellWorld {
             read_file,
             scene: None,
             quads: Vec::new(),
+            passes: Vec::new(),
             viewport,
             viewer: None,
             ingame: None,
@@ -429,6 +433,7 @@ impl ShellWorld {
         let overlay = self.ingame.as_ref().map_or_else(Vec::new, |i| i.order_generator_renderables());
         let viewer = self.ingame.as_ref().map_or_else(|| self.viewer.clone(), |i| i.render_player());
         self.quads = scene.build(renderer, world, viewer.as_ref(), &cam, &overlay);
+        self.passes = crate::scene::post_passes(world, scene.after_actors, self.quads.len());
         if let Some(ingame) = &self.ingame {
             ingame.screen_map.borrow_mut().set(scene.mouse_bounds(renderer, world));
         }
@@ -797,6 +802,9 @@ impl Client {
         self.ui.close_window();
         self.ui.set_visible_fn(root, || true);
         start_music(&self.services, self.shell.as_ref());
+        if let Some(fade) = world.world_actor().trait_or_default::<rustora_mods_common::post_effects::MenuPostProcessEffect>() {
+            fade.game_loaded(&world);
+        }
         if !world.is_replay() {
             let mut unpause = rustora_engine::order::Order::new("PauseGame", None, rustora_engine::target::Target::Invalid, false);
             unpause.target_string = Some("UnPause".to_string());
@@ -1049,7 +1057,7 @@ impl Client {
 
     pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {
         match &self.shell {
-            Some(shell) => renderer.render(target, shell.camera(size), &shell.quads),
+            Some(shell) => renderer.render_with_passes(target, shell.camera(size), &shell.quads, &shell.passes),
             None => renderer.render(
                 target,
                 Camera {

@@ -75,20 +75,6 @@ pub trait ScriptHost {
         let _ = (command, track);
     }
 
-    /// `Lighting.Flash`.
-    fn flash(&self, ty: Option<&str>, ticks: i32) {
-        let _ = (ty, ticks);
-    }
-
-    /// The red, green, blue and ambient values of the `TintPostProcessEffect`, if there is one.
-    fn tint(&self) -> Option<[f32; 4]> {
-        None
-    }
-
-    fn set_tint(&self, tint: [f32; 4]) {
-        let _ = tint;
-    }
-
     /// `UserInterface.SetMissionText`.
     fn set_mission_text(&self, text: &str, color: Option<Color>) {
         let _ = (text, color);

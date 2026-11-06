@@ -9,6 +9,7 @@ use rustora_formats::palette::Palette;
 
 pub use wgpu;
 
+pub mod post;
 pub mod ui;
 
 const SHEET_SIZE: u32 = 2048;
@@ -148,6 +149,8 @@ pub struct Renderer {
     packer: Packer,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: usize,
+    format: wgpu::TextureFormat,
+    post: Option<post::PostResources>,
 }
 
 impl Renderer {
@@ -263,6 +266,8 @@ impl Renderer {
             packer: Packer { x: 0, y: 0, row_height: 0 },
             vertex_buffer,
             vertex_capacity,
+            format,
+            post: None,
         }
     }
 
@@ -407,6 +412,11 @@ impl Renderer {
 
     /// Clears `target` to black and draws `quads` in order.
     pub fn render(&mut self, target: &wgpu::TextureView, camera: Camera, quads: &[Quad]) {
+        self.render_with_passes(target, camera, quads, &[]);
+    }
+
+    /// Draws `quads` like [`Renderer::render`], with the post-processing `passes` between them.
+    pub fn render_with_passes(&mut self, target: &wgpu::TextureView, camera: Camera, quads: &[Quad], passes: &[post::PostPass]) {
         let cam = CameraUniform {
             scale: [2.0 * camera.zoom / camera.width as f32, -2.0 * camera.zoom / camera.height as f32],
             offset: [
@@ -483,31 +493,98 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sprites"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            for (sheet, start, end) in batches {
+        if passes.is_empty() {
+            self.draw_batches(&mut encoder, target, true, &batches, 0, vertices.len() as u32);
+            self.queue.submit([encoder.finish()]);
+            return;
+        }
+        let size = (camera.width, camera.height);
+        if self.post.as_ref().is_none_or(|p| p.size != size) {
+            self.post = Some(post::PostResources::new(&self.device, self.format, size));
+        }
+        let post = self.post.take().expect("post resources");
+        let mut start = 0u32;
+        let mut first = true;
+        for pass in passes {
+            let end = (pass.at.min(quads.len()) * 6) as u32;
+            self.draw_batches(&mut encoder, &post.world_view, first, &batches, start, end.max(start));
+            first = false;
+            start = end.max(start);
+            post.snapshot(&mut encoder);
+            let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::of(pass.effect));
+            Self::draw_post(&mut encoder, &post, &post.world_view, &bind_group, false);
+        }
+        self.draw_batches(&mut encoder, &post.world_view, false, &batches, start, vertices.len() as u32);
+        post.snapshot(&mut encoder);
+        let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::COPY);
+        Self::draw_post(&mut encoder, &post, target, &bind_group, true);
+        self.queue.submit([encoder.finish()]);
+        self.post = Some(post);
+    }
+
+    /// Draws the parts of `batches` within the vertices `start..end` into `target`.
+    fn draw_batches(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        clear: bool,
+        batches: &[(u16, u32, u32)],
+        start: u32,
+        end: u32,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sprites"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: if clear { wgpu::LoadOp::Clear(wgpu::Color::BLACK) } else { wgpu::LoadOp::Load },
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        for &(sheet, s, e) in batches {
+            let (s, e) = (s.max(start), e.min(end));
+            if s < e {
                 pass.set_bind_group(0, &self.sheets[sheet as usize].bind_group, &[]);
-                pass.draw(start..end, 0..1);
+                pass.draw(s..e, 0..1);
             }
         }
-        self.queue.submit([encoder.finish()]);
+    }
+
+    fn draw_post(
+        encoder: &mut wgpu::CommandEncoder,
+        post: &post::PostResources,
+        target: &wgpu::TextureView,
+        bind_group: &wgpu::BindGroup,
+        clear: bool,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("post"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: if clear { wgpu::LoadOp::Clear(wgpu::Color::BLACK) } else { wgpu::LoadOp::Load },
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&post.pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 

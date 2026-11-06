@@ -97,6 +97,38 @@ pub struct Scene {
     terrain: HashMap<u16, Rc<Vec<Option<Sprite>>>>,
     palettes: Palettes,
     variant_seed: u32,
+    /// The number of quads of the last frame before the shroud: the `AfterActors` and `AfterWorld` passes.
+    pub after_actors: usize,
+}
+
+/// The `IRenderPostProcessPass` traits of the world actor as render passes, in the order of
+/// `WorldRenderer.Draw`: `AfterActors` and `AfterWorld` at `after_actors`, `AfterShroud` at `end`.
+pub fn post_passes(world: &World, after_actors: usize, end: usize) -> Vec<rustora_render::post::PostPass> {
+    use rustora_mods_common::post_effects::*;
+    use rustora_render::post::{PostEffect, PostPass};
+    let wa = world.world_actor();
+    let mut passes = Vec::new();
+    for t in wa.traits_implementing::<TintPostProcessEffect>() {
+        passes.push(PostPass { at: after_actors, effect: PostEffect::Tint(t.tint()) });
+    }
+    for t in wa.traits_implementing::<ChronoshiftPostProcessEffect>() {
+        if let Some(blend) = t.blend() {
+            passes.push(PostPass { at: after_actors, effect: PostEffect::Chronoshift { blend } });
+        }
+    }
+    for t in wa.traits_implementing::<FlashPostProcessEffect>() {
+        if t.enabled() {
+            let c = t.info.color;
+            let color = [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0];
+            passes.push(PostPass { at: after_actors, effect: PostEffect::Flash { blend: t.blend(), color } });
+        }
+    }
+    for t in wa.traits_implementing::<MenuPostProcessEffect>() {
+        if let Some((from, to, blend)) = t.state() {
+            passes.push(PostPass { at: end, effect: PostEffect::MenuFade { from: from as u32, to: to as u32, blend } });
+        }
+    }
+    passes
 }
 
 impl Scene {
@@ -106,6 +138,7 @@ impl Scene {
             sprites: SpriteCache::new(read_file, &world.map().tileset),
             terrain: HashMap::new(),
             variant_seed: 0x9e37_79b9,
+            after_actors: 0,
         }
     }
 
@@ -281,6 +314,7 @@ impl Scene {
             e.render(viewer, &mut renderables);
         }
         self.add_renderables(renderer, world, &renderables, cam, &mut quads);
+        self.after_actors = quads.len();
 
         if let Some(v) = viewer {
             self.add_shroud(renderer, world, v, cam, &mut quads);

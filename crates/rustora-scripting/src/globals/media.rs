@@ -238,20 +238,27 @@ pub fn radar() -> Group<()> {
 }
 
 pub fn lighting() -> Group<()> {
-    let mut g = Group::new("Lighting", &[]).method("Flash", |_, _, a| {
+    use rustora_mods_common::post_effects::TintPostProcessEffect;
+    let mut g = Group::new("Lighting", &[]).method("Flash", |lua, _, a| {
         let ty: Option<String> = a.opt(0, None)?;
         let ticks: i32 = a.opt(1, -1)?;
-        host().flash(ty.as_deref(), ticks);
+        let w = world(lua)?;
+        rustora_mods_common::post_effects::flash(&w, ty.as_deref(), ticks);
         Ok(())
     });
+    fn channel(t: &TintPostProcessEffect, i: usize) -> &std::cell::Cell<f32> {
+        [&t.red, &t.green, &t.blue, &t.ambient][i]
+    }
     for (i, name) in ["Red", "Green", "Blue", "Ambient"].into_iter().enumerate() {
         g = g.get_set(
             name,
-            move |_, _| Ok(host().tint().map_or(1.0, |t| t[i] as f64)),
-            move |_, _, v: f64| {
-                if let Some(mut t) = host().tint() {
-                    t[i] = v as f32;
-                    host().set_tint(t);
+            move |lua, _| {
+                let tint = world(lua)?.world_actor().trait_or_default::<TintPostProcessEffect>();
+                Ok(tint.map_or(1.0, |t| channel(&t, i).get() as f64))
+            },
+            move |lua, _, v: f64| {
+                if let Some(t) = world(lua)?.world_actor().trait_or_default::<TintPostProcessEffect>() {
+                    channel(&t, i).set(v as f32);
                 }
                 Ok(())
             },

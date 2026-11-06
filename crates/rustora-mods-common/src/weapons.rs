@@ -203,6 +203,81 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.warheads.insert("FireCluster", warhead_loader!(FireClusterWarhead));
     r.warheads
         .insert("GrantExternalCondition", warhead_loader!(GrantExternalConditionWarhead));
+    r.warheads.insert("FlashEffect", warhead_loader!(FlashEffectWarhead));
+    r.warheads.insert("FlashTargetsInRadius", warhead_loader!(FlashTargetsInRadiusWarhead));
+}
+
+/// `FlashEffectWarhead`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct FlashEffectWarhead {
+    #[field(flatten)]
+    pub base: WarheadBase,
+    pub flash_type: Option<String>,
+    pub duration: i32,
+}
+
+impl IWarhead for FlashEffectWarhead {
+    fn delay(&self) -> i32 {
+        self.base.delay
+    }
+
+    fn do_impact(&self, _target: &Target, args: &WarheadArgs) {
+        crate::post_effects::flash(&args.source_actor.world(), self.flash_type.as_deref(), self.duration);
+    }
+}
+
+/// `FlashTargetsInRadiusWarhead`: a cosmetic flash of the valid actors in the radius.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct FlashTargetsInRadiusWarhead {
+    #[field(flatten)]
+    pub base: WarheadBase,
+    pub actor_flash_overlay_color: Color,
+    pub actor_flash_overlay_alpha: f32,
+    pub actor_flash_count: i32,
+    pub actor_flash_interval: i32,
+    pub radius: WDist,
+}
+
+impl Default for FlashTargetsInRadiusWarhead {
+    fn default() -> Self {
+        FlashTargetsInRadiusWarhead {
+            base: WarheadBase::default(),
+            actor_flash_overlay_color: Color::from_argb(255, 255, 255, 255),
+            actor_flash_overlay_alpha: 0.5,
+            actor_flash_count: 2,
+            actor_flash_interval: 2,
+            radius: WDist::new(0),
+        }
+    }
+}
+
+impl IWarhead for FlashTargetsInRadiusWarhead {
+    fn delay(&self) -> i32 {
+        self.base.delay
+    }
+
+    fn do_impact(&self, target: &Target, args: &WarheadArgs) {
+        let fired_by = &args.source_actor;
+        let w = fired_by.world();
+        let victims = match target.actor() {
+            Some(a) if self.radius == WDist::new(0) => vec![a.clone()],
+            _ => w.find_actors_in_circle(target.center_position(), self.radius),
+        };
+        for victim in victims {
+            if !self.base.is_valid_against(&victim, fired_by) {
+                continue;
+            }
+            let (color, alpha, count, interval) = (
+                self.actor_flash_overlay_color,
+                self.actor_flash_overlay_alpha,
+                self.actor_flash_count,
+                self.actor_flash_interval,
+            );
+            w.add_frame_end_task(Box::new(move |w: &Rc<World>| {
+                w.add_effect(crate::effects::FlashTarget::new(w, victim, color, alpha, count, interval, 0));
+            }));
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

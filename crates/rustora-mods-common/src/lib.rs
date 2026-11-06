@@ -9,6 +9,7 @@ pub mod actor_reference;
 pub mod aircraft;
 pub mod attack;
 pub mod beacon;
+pub mod post_effects;
 pub mod attack_move;
 pub mod auto_target;
 pub mod base;
@@ -80,6 +81,7 @@ pub fn register(r: &mut TraitRegistry) {
     capture::register(r);
     gate::register(r);
     beacon::register(r);
+    post_effects::register(r);
     carryall::register(r);
     cosmetic::register(r);
     chrono::register(r);

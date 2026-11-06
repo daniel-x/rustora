@@ -2,8 +2,8 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `MenuButtonsChromeLogic.cs` and `IngameMenuLogic.cs`. The menu has the abort, surrender and resume
-//! buttons; restart, load, save and the editor buttons, the menu fade effect
-//! and the leave notification are not ported.
+//! buttons; restart, load, save and the editor buttons and the leave notification are not ported. Leaving does not
+//! wait for `ExitDelay` and the fade to black.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -144,11 +144,27 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
         (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0))
     };
     let is_single_player = !world.lobby_info.global_settings.dedicated && single_non_bot_client(&world);
+    let mpe = world
+        .world_actor()
+        .trait_or_default::<rustora_mods_common::post_effects::MenuPostProcessEffect>();
+    if let Some(mpe) = &mpe {
+        mpe.fade(mpe.info.menu_effect);
+    }
+    let fade: Rc<dyn Fn(rustora_mods_common::post_effects::MenuEffectType)> = {
+        let mpe = mpe.clone();
+        Rc::new(move |ty| {
+            if let Some(mpe) = &mpe {
+                mpe.fade(ty);
+            }
+        })
+    };
 
     let close_menu: Action = {
         let on_exit = on_exit.clone();
+        let fade = fade.clone();
         Rc::new(move |ui: &mut Ui| {
             ui.close_window();
+            fade(rustora_mods_common::post_effects::MenuEffectType::None);
             on_exit(ui);
             ui.reset_tooltips();
         })
@@ -188,10 +204,12 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
                 };
                 let button = add_button(ui, name, label);
                 let (h, l, show) = (hide_menu.clone(), leaving.clone(), show_menu.clone());
+                let fade = fade.clone();
                 ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
                     h.set(true);
-                    let l = l.clone();
+                    let (l, fade) = (l.clone(), fade.clone());
                     let on_confirm: Action = Rc::new(move |ui: &mut Ui| {
+                        fade(rustora_mods_common::post_effects::MenuEffectType::Black);
                         ui.requests.push(AppRequest::LeaveGame);
                         l.set(true);
                     });
@@ -209,11 +227,13 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
             "RESTART" if world.world_type == WorldType::Regular && is_single_player => {
                 let button = add_button(ui, name, "menu-ingame.restart");
                 let (h, l, show) = (hide_menu.clone(), leaving.clone(), show_menu.clone());
+                let fade = fade.clone();
                 ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
                     h.set(true);
-                    let l = l.clone();
+                    let (l, fade) = (l.clone(), fade.clone());
                     let on_confirm: Action = Rc::new(move |ui: &mut Ui| {
                         ui.close_window();
+                        fade(rustora_mods_common::post_effects::MenuEffectType::Black);
                         ui.requests.push(AppRequest::RestartGame);
                         l.set(true);
                     });

@@ -42,6 +42,17 @@ pub enum MusicRequest {
     Stop,
 }
 
+/// The center of a new `Viewport`, which `WorldLoaded` sees as `Camera.Position`: the middle of the map bounds in
+/// world pixels.
+fn initial_camera_center(map: &Map) -> WPos {
+    let (left, top) = crate::scene::world_to_px(map.projected_top_left());
+    let (right, bottom) = crate::scene::world_to_px(map.projected_bottom_right());
+    let (l, t) = (left as i32, top as i32);
+    let (x, y) = (l + (right as i32 - l) / 2, t + (bottom as i32 - t) / 2);
+    let tile = crate::scene::TILE_SIZE as i32;
+    WPos::new(x * 1024 / tile, y * 1024 / tile, 0)
+}
+
 /// `Map.Open` as a file system, for the `FluentMessages` of a map.
 struct MapFs<'a>(&'a Map);
 
@@ -107,6 +118,7 @@ impl ScriptHost for ClientScriptHost {
             })
             .unwrap_or_default();
         *self.map_messages.borrow_mut() = (!files.is_empty()).then(|| Messages::new(&files, &MapFs(map)));
+        self.camera.set(Some(initial_camera_center(map)));
         self.lines.borrow_mut().clear();
         self.movies.borrow_mut().clear();
         self.music.borrow_mut().clear();

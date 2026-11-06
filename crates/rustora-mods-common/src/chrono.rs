@@ -3,7 +3,7 @@
 
 //! Ports of `Chronoshiftable`, `Teleport`, `ConyardChronoReturn`, `ConyardChronoVortex`, `PortableChrono` and `MadTank`.
 //!
-//! Not ported: the time bars (`ISelectionBar`), `ChronoshiftPostProcessEffect`, the vortex renderer, and the
+//! Not ported: the time bars (`ISelectionBar`), the vortex renderer, and the
 //! `PortableChronoOrderGenerator` of the deploy order; force move still targets the teleport.
 
 use std::cell::{Cell, RefCell};
@@ -179,6 +179,7 @@ impl ITick for Chronoshiftable {
             None,
             TeleportOptions {
                 kill_cargo: true,
+                screen_flash: self.kill_cargo.get(),
                 sound: Some(self.info.chronoshift_sound.clone()),
                 interruptable: false,
                 kill_on_failure: true,
@@ -234,6 +235,7 @@ impl Chronoshiftable {
             None,
             TeleportOptions {
                 kill_cargo,
+                screen_flash: true,
                 sound: Some(self.info.chronoshift_sound.clone()),
                 interruptable: true,
                 kill_on_failure: false,
@@ -272,6 +274,7 @@ impl ITransformActorInitModifier for Chronoshiftable {
 /// Optional arguments of the `Teleport` constructor.
 pub struct TeleportOptions {
     pub kill_cargo: bool,
+    pub screen_flash: bool,
     pub sound: Option<String>,
     pub interruptable: bool,
     pub kill_on_failure: bool,
@@ -378,6 +381,9 @@ impl Activity for Teleport {
         }
         if is_self && let Some(pc) = &pc {
             pc.reset_charge_time();
+        }
+        if self.options.screen_flash {
+            crate::post_effects::chronoshift_flash(&world);
         }
         play_active_animation(teleporter, self_);
         true
@@ -579,6 +585,7 @@ impl ITick for ConyardChronoReturn {
         } else {
             self.trigger_vortex();
         }
+        crate::post_effects::chronoshift_flash(&self_.world());
         sound::play_at(
             &self_.world(),
             SoundType::World,
@@ -801,6 +808,7 @@ impl IResolveOrder for PortableChrono {
         }
         let options = TeleportOptions {
             kill_cargo: self.info.kill_cargo,
+            screen_flash: self.info.flash_screen,
             sound: Some(self.info.chronoshift_sound.clone()),
             interruptable: true,
             kill_on_failure: false,
