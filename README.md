@@ -15,12 +15,24 @@ cargo build --release
 
 ## Running
 
+`rustora [Key=Value]...` opens the main menu like the OpenRA launcher. The mod data is looked up next to
+the executable, in `../share/rustora` or in `../Resources` (macOS app bundle); `Engine.EngineDir=<dir>`
+overrides it, for example with an OpenRA release-20250330 source tree. Settings, content and replays
+live in the OpenRA support directory, or in a `Support` directory next to the mod data if one exists;
+`Engine.SupportDir=<dir>` overrides it.
+
 `rustora <engine-dir> <support-dir> <replay>` plays back a replay in a window. Arrow keys or WASD
 scroll, the mouse wheel zooms, space pauses, `+` and `-` change the speed, Tab cycles the shroud of
 each player, Escape quits. `--screenshot <out.webp> --tick <n>` renders one frame offscreen instead.
 
 `rustora-headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a game
 without graphics and compares the sync hashes.
+
+## Packaging
+
+`packaging/linux/package.sh <openra-dir>`, `packaging/windows/package.ps1 <openra-dir>` and
+`packaging/macos/package.sh <openra-dir>` build archives with the binaries and the RA mod data of an
+OpenRA release-20250330 source tree. The release workflow runs them for tags `v*`.
 
 ## License
 
