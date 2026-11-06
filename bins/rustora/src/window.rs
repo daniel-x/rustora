@@ -5,11 +5,12 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use rustora_game::settings::{Settings, WindowMode};
 use rustora_render::{Renderer, wgpu};
 use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
 use rustora_ui::widget::{AppRequest, Clipboard};
@@ -18,7 +19,7 @@ use winit::event::{ElementState, KeyEvent, MouseButton as WinitButton, MouseScro
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-use winit::window::{CustomCursor, Window, WindowId};
+use winit::window::{CustomCursor, Fullscreen, Window, WindowId};
 
 use crate::client::Client;
 
@@ -40,6 +41,7 @@ struct Gpu {
 struct App {
     client: Client,
     size: (u32, u32),
+    fullscreen: Option<Fullscreen>,
     gpu: Option<Gpu>,
     modifiers: Modifiers,
     mouse: (i32, i32),
@@ -77,34 +79,111 @@ impl Clipboard for SystemClipboard {
 }
 
 /// Opens a window with the user interface of the mod and runs until the window closes.
-pub fn run(engine: &Path, support: &str, size: (u32, u32), args: &[String]) {
-    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), args);
-    client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
-    client.logic_tick();
-    let now = Instant::now();
-    let client_mod = client.mod_id().to_string();
-    let mut app = App {
-        client,
+/// Opens the client window. Without an explicit `size`, the window follows the `Graphics.Mode` setting like
+/// OpenRA: fullscreen modes cover the monitor, windowed mode uses `Graphics.WindowedSize`.
+pub fn run(engine: &Path, support: &str, size: Option<(u32, u32)>, args: &[String]) {
+    let mut launcher = Launcher {
+        engine: engine.to_path_buf(),
+        support: support.to_string(),
         size,
-        gpu: None,
-        modifiers: Modifiers::default(),
-        mouse: (0, 0),
-        held: [false; 3],
-        pending_motion: false,
-        scroll_remainder: 0.0,
-        mouse_taps: HashMap::new(),
-        key_taps: HashMap::new(),
-        cursor_mod: client_mod,
-        hardware_cursors: HashMap::new(),
-        shown_cursor: None,
-        suspended: false,
-        next_logic: now,
-        next_render: now,
-        forced_next_render: now,
-        render_before_next_tick: false,
+        args: args.to_vec(),
+        app: None,
     };
     let event_loop = EventLoop::new().expect("event loop");
-    event_loop.run_app(&mut app).expect("run event loop");
+    event_loop.run_app(&mut launcher).expect("run event loop");
+}
+
+/// Creates the `App` once the event loop can report the monitor size, then forwards all events to it.
+struct Launcher {
+    engine: PathBuf,
+    support: String,
+    size: Option<(u32, u32)>,
+    args: Vec<String>,
+    app: Option<App>,
+}
+
+impl Launcher {
+    fn window_layout(&self, el: &ActiveEventLoop) -> ((u32, u32), Option<Fullscreen>) {
+        if let Some(size) = self.size {
+            return (size, None);
+        }
+        let graphics = Settings::load(Path::new(&self.support).join("settings.yaml"), &self.args).graphics;
+        let windowed = (graphics.windowed_size.0.max(1) as u32, graphics.windowed_size.1.max(1) as u32);
+        let Some(monitor) = el.primary_monitor().or_else(|| el.available_monitors().next()) else {
+            return (windowed, None);
+        };
+        let desktop = (monitor.size().width, monitor.size().height);
+        match graphics.mode {
+            WindowMode::Windowed => (windowed, None),
+            WindowMode::PseudoFullscreen => (desktop, Some(Fullscreen::Borderless(Some(monitor)))),
+            WindowMode::Fullscreen => {
+                let wanted = (graphics.fullscreen_size.0 as u32, graphics.fullscreen_size.1 as u32);
+                let mode = monitor
+                    .video_modes()
+                    .filter(|m| (m.size().width, m.size().height) == wanted)
+                    .max_by_key(|m| (m.bit_depth(), m.refresh_rate_millihertz()));
+                match mode {
+                    Some(m) => (wanted, Some(Fullscreen::Exclusive(m))),
+                    None => (desktop, Some(Fullscreen::Borderless(Some(monitor)))),
+                }
+            }
+        }
+    }
+}
+
+impl ApplicationHandler for Launcher {
+    fn resumed(&mut self, el: &ActiveEventLoop) {
+        if self.app.is_none() {
+            let (size, fullscreen) = self.window_layout(el);
+            self.app = Some(App::new(&self.engine, &self.support, size, fullscreen, &self.args));
+        }
+        if let Some(app) = self.app.as_mut() {
+            app.resumed(el);
+        }
+    }
+
+    fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if let Some(app) = self.app.as_mut() {
+            app.window_event(el, id, event);
+        }
+    }
+
+    fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        if let Some(app) = self.app.as_mut() {
+            app.about_to_wait(el);
+        }
+    }
+}
+
+impl App {
+    fn new(engine: &Path, support: &str, size: (u32, u32), fullscreen: Option<Fullscreen>, args: &[String]) -> App {
+        let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), args);
+        client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
+        client.logic_tick();
+        let now = Instant::now();
+        let client_mod = client.mod_id().to_string();
+        App {
+            client,
+            size,
+            fullscreen,
+            gpu: None,
+            modifiers: Modifiers::default(),
+            mouse: (0, 0),
+            held: [false; 3],
+            pending_motion: false,
+            scroll_remainder: 0.0,
+            mouse_taps: HashMap::new(),
+            key_taps: HashMap::new(),
+            cursor_mod: client_mod,
+            hardware_cursors: HashMap::new(),
+            shown_cursor: None,
+            suspended: false,
+            next_logic: now,
+            next_render: now,
+            forced_next_render: now,
+            render_before_next_tick: false,
+        }
+    }
 }
 
 fn char_key_name(c: char) -> Option<&'static str> {
@@ -386,6 +465,7 @@ impl App {
                 Window::default_attributes()
                     .with_title("rustora")
                     .with_resizable(false)
+                    .with_fullscreen(self.fullscreen.clone())
                     .with_inner_size(winit::dpi::PhysicalSize::new(self.size.0, self.size.1)),
             )
             .expect("create window"),

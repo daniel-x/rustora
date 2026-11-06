@@ -6,7 +6,8 @@
 //! or renders one frame offscreen to a lossless WebP file:
 //! `rustora <engine-dir> <support-dir> <replay> --screenshot <out.webp> [--tick N] [--player I] [--at X,Y] [--size WxH] [--zoom Z]`.
 //!
-//! Opens the user interface in a window: `rustora --ui <engine-dir> <support-dir> [WxH] [Section.Field=value...]`.
+//! Opens the user interface: `rustora --ui <engine-dir> <support-dir> [WxH] [Section.Field=value...]`. Without WxH the
+//! window follows `Graphics.Mode` (default borderless fullscreen); WxH opens a window of that size.
 //!
 //! Window controls: arrow keys or WASD scroll, mouse wheel zooms, space pauses, `+`/`-` change the speed,
 //! Tab cycles the shroud of each player and the full view, Escape quits.
@@ -134,7 +135,7 @@ fn ui_screenshot(a: &[String]) {
 /// `rustora --ui <engine-dir> <support-dir> [WxH] [Section.Field=value...]`
 fn ui_window(a: &[String]) {
     let (settings, sizes): (Vec<String>, Vec<String>) = a[2..].iter().cloned().partition(|s| s.contains('='));
-    let size = sizes.first().map_or((1280, 800), |s| {
+    let size = sizes.first().map(|s| {
         let (w, h) = s.split_once('x').expect("WxH");
         (w.parse().expect("width"), h.parse().expect("height"))
     });
