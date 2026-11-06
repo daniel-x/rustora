@@ -129,7 +129,9 @@ pub fn media() -> Group<()> {
             if !w.map().contains(w.map().cell_containing(position)) {
                 return Ok(());
             }
-            host().floating_text(position, color, &text, duration);
+            let effect: rustora_engine::effect::EffectRef =
+                rustora_mods_common::beacon::FloatingText::new(position, color, &text, duration);
+            w.add_frame_end_task(Box::new(move |w| w.add_effect(effect)));
             Ok(())
         })
 }
@@ -201,10 +203,12 @@ pub fn beacon() -> Group<()> {
         let position: WPos = a.get(1)?;
         let duration: i32 = a.opt(2, 750)?;
         let show_pings: bool = a.opt(3, true)?;
-        if !owner.player_actor().info.has_trait_info_assignable_to("PlaceBeaconInfo") {
+        let Some(info) = owner.player_actor().info.trait_info::<rustora_mods_common::beacon::PlaceBeaconInfo>() else {
             return error("The player actor has no 'PlaceBeacon' trait.");
-        }
-        host().beacon(&owner, position, duration);
+        };
+        let beacon: rustora_engine::effect::EffectRef =
+            rustora_mods_common::beacon::Beacon::new(&owner, position, duration, &info);
+        world(lua)?.add_frame_end_task(Box::new(move |w| w.add_effect(beacon)));
         if show_pings && let Some(pings) = radar_pings(lua)? {
             let viewer = world(lua)?.sound.local_player();
             pings.add(

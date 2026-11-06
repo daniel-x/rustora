@@ -174,7 +174,7 @@ impl ITick for RadarPings {
 }
 
 impl RadarPings {
-    pub fn add(&self, visibility: PingVisibility, viewer: Option<&PlayerRef>, position: WPos, color: Color, duration: i32) {
+    pub fn add(&self, visibility: PingVisibility, viewer: Option<&PlayerRef>, position: WPos, color: Color, duration: i32) -> Rc<RadarPing> {
         let ping = Rc::new(RadarPing {
             visibility,
             position,
@@ -190,7 +190,13 @@ impl RadarPings {
         if ping.is_visible(viewer) {
             self.last_ping_position.set(Some(position));
         }
-        self.pings.borrow_mut().push(ping);
+        self.pings.borrow_mut().push(ping.clone());
+        ping
+    }
+
+    /// `RadarPings.Remove`.
+    pub fn remove(&self, ping: &Rc<RadarPing>) {
+        self.pings.borrow_mut().retain(|p| !Rc::ptr_eq(p, ping));
     }
 }
 

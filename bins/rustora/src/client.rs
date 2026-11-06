@@ -588,6 +588,54 @@ impl Client {
         self.script_host.camera.set(Some(px_to_world(x, y)));
     }
 
+    /// The `MediaGlobal` music calls: `GetMusicTrack` looks the track up in the rules of the map.
+    fn apply_music_requests(&self) {
+        let requests = std::mem::take(&mut *self.script_host.music.borrow_mut());
+        let playlist = self.services.music.borrow().clone();
+        let (Some(playlist), Some(shell)) = (playlist, &self.shell) else {
+            return;
+        };
+        let rules = shell.world.rules();
+        let track = |name: &str| {
+            let music = rules.audio().music.get(name).cloned();
+            if music.is_none() {
+                log::info!("Missing music track: {name}");
+            }
+            music
+        };
+        for request in requests {
+            if !playlist.is_music_available() {
+                if matches!(request, crate::script_host::MusicRequest::Stop) {
+                    playlist.stop();
+                }
+                continue;
+            }
+            match request {
+                crate::script_host::MusicRequest::Play(name, on_complete) => {
+                    let music = match name {
+                        Some(name) => track(&name),
+                        None => playlist.next_song(),
+                    };
+                    if let Some(music) = music {
+                        let on_complete = RefCell::new(Some(on_complete));
+                        playlist.play_then(
+                            &music,
+                            Rc::new(move || {
+                                if let Some(f) = on_complete.borrow_mut().take() {
+                                    f();
+                                }
+                            }),
+                        );
+                    }
+                }
+                crate::script_host::MusicRequest::Background(name) => {
+                    playlist.set_background_music(name.and_then(|n| track(&n)));
+                }
+                crate::script_host::MusicRequest::Stop => playlist.stop(),
+            }
+        }
+    }
+
     /// Carries out what the scripts asked for during the last world tick.
     fn drain_script_host(&mut self) {
         let movies = std::mem::take(&mut *self.script_host.movies.borrow_mut());
@@ -608,6 +656,7 @@ impl Client {
             let (x, y) = crate::scene::world_to_px(pos);
             shell.viewport.borrow_mut().center_on((x as i32, y as i32));
         }
+        self.apply_music_requests();
         let lines = std::mem::take(&mut *self.script_host.lines.borrow_mut());
         let mut net = self.services.net.borrow_mut();
         for line in lines {

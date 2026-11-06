@@ -34,6 +34,14 @@ pub struct MovieRequest {
     pub on_complete: Box<dyn FnOnce()>,
 }
 
+/// A `Media.PlayMusic`, `SetBackgroundMusic` or `StopMusic` call, carried out on the `MusicPlaylist` after the
+/// world tick, since the playlist of the client only exists once the world has loaded.
+pub enum MusicRequest {
+    Play(Option<String>, Box<dyn FnOnce()>),
+    Background(Option<String>),
+    Stop,
+}
+
 /// `Map.Open` as a file system, for the `FluentMessages` of a map.
 struct MapFs<'a>(&'a Map);
 
@@ -58,6 +66,7 @@ pub struct ClientScriptHost {
     pub lines: RefCell<Vec<ScriptLine>>,
     pub mission_text: RefCell<(String, Color)>,
     pub movies: RefCell<Vec<MovieRequest>>,
+    pub music: RefCell<Vec<MusicRequest>>,
 }
 
 impl ClientScriptHost {
@@ -71,6 +80,7 @@ impl ClientScriptHost {
             lines: RefCell::new(Vec::new()),
             mission_text: RefCell::new((String::new(), WHITE)),
             movies: RefCell::new(Vec::new()),
+            music: RefCell::new(Vec::new()),
         }
     }
 }
@@ -99,6 +109,7 @@ impl ScriptHost for ClientScriptHost {
         *self.map_messages.borrow_mut() = (!files.is_empty()).then(|| Messages::new(&files, &MapFs(map)));
         self.lines.borrow_mut().clear();
         self.movies.borrow_mut().clear();
+        self.music.borrow_mut().clear();
         self.camera_request.set(None);
         *self.mission_text.borrow_mut() = (String::new(), WHITE);
     }
@@ -164,6 +175,18 @@ impl ScriptHost for ClientScriptHost {
             fullscreen,
             on_complete,
         });
+    }
+
+    fn play_music(&self, track: Option<&str>, on_complete: Box<dyn FnOnce()>) {
+        self.music.borrow_mut().push(MusicRequest::Play(track.map(String::from), on_complete));
+    }
+
+    fn music(&self, command: &str, track: Option<&str>) {
+        let request = match command {
+            "SetBackgroundMusic" => MusicRequest::Background(track.map(String::from)),
+            _ => MusicRequest::Stop,
+        };
+        self.music.borrow_mut().push(request);
     }
 
     fn set_mission_text(&self, text: &str, color: Option<Color>) {

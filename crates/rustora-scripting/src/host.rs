@@ -75,16 +75,6 @@ pub trait ScriptHost {
         let _ = (command, track);
     }
 
-    /// `Media.FloatingText`.
-    fn floating_text(&self, pos: WPos, color: Color, text: &str, duration: i32) {
-        let _ = (pos, color, text, duration);
-    }
-
-    /// The `Beacon` effect of `Beacon.New`.
-    fn beacon(&self, owner: &PlayerRef, pos: WPos, duration: i32) {
-        let _ = (owner, pos, duration);
-    }
-
     /// `Lighting.Flash`.
     fn flash(&self, ty: Option<&str>, ticks: i32) {
         let _ = (ty, ticks);

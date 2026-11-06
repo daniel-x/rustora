@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `GlobalButtonOrderGenerator.cs` (sell and power down), `RepairOrderGenerator.cs` and
-//! `OrderButtonsChromeLogic.cs`. The beacon button is not bound because `PlaceBeacon` is not ported. Power down
-//! orders are issued, but `ToggleConditionOnOrder` is still a sim stub that ignores them.
+//! Ports of `GlobalButtonOrderGenerator.cs` (sell and power down), `RepairOrderGenerator.cs`,
+//! `BeaconOrderGenerator.cs` and `OrderButtonsChromeLogic.cs`. Power down orders are issued, but
+//! `ToggleConditionOnOrder` is still a sim stub that ignores them.
 
 use std::rc::Rc;
 
@@ -26,6 +26,7 @@ pub enum ButtonOrder {
     Sell,
     Repair,
     PowerDown,
+    Beacon,
 }
 
 /// The order generators of the sell, repair and power down buttons.
@@ -43,9 +44,12 @@ fn damage_state(a: &ActorRef) -> Option<DamageState> {
 
 impl ButtonOrderGenerator {
     /// `OrderInner(world, mi)` with the mouse at `world_px`.
-    fn orders_at(&self, ctx: &OrderContext, world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+    fn orders_at(&self, ctx: &OrderContext, cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
         if mi.button != MouseButton::Left {
             return Vec::new();
+        }
+        if self.kind == ButtonOrder::Beacon {
+            return self.beacon_orders(ctx, cell);
         }
         let under: Vec<ActorRef> = ctx.screen_map.actors_at_mouse(world_px).into_iter().map(|e| e.actor).collect();
         match self.kind {
@@ -60,7 +64,20 @@ impl ButtonOrderGenerator {
                 .map(|a| vec![Order::new("PowerDown", Some(a), Target::Invalid, false)])
                 .unwrap_or_default(),
             ButtonOrder::Repair => self.repair_orders(ctx, under, mi),
+            ButtonOrder::Beacon => Vec::new(),
         }
+    }
+
+    /// `BeaconOrderGenerator.OrderInner` of a left click.
+    fn beacon_orders(&self, ctx: &OrderContext, cell: CPos) -> Vec<Order> {
+        ctx.cancel_input_mode();
+        let Some(local) = ctx.local_player else {
+            return Vec::new();
+        };
+        let target = Target::from_cell(ctx.world, cell, rustora_engine::traits::subcell::FULL_CELL);
+        let mut order = Order::new("PlaceBeacon", Some(local.player_actor().clone()), target, false);
+        order.suppress_visual_feedback = true;
+        vec![order]
     }
 
     /// `RepairOrderGenerator.OrderInner`.
@@ -111,7 +128,7 @@ impl ButtonOrderGenerator {
 }
 
 impl OrderGenerator for ButtonOrderGenerator {
-    fn order(&self, ctx: &OrderContext, _cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+    fn order(&self, ctx: &OrderContext, cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
         let left_down = mi.button == MouseButton::Left && mi.event == MouseEvent::Down;
         let right_up = mi.button == MouseButton::Right && mi.event == MouseEvent::Up;
         if !left_down && !right_up {
@@ -120,21 +137,25 @@ impl OrderGenerator for ButtonOrderGenerator {
         if mi.button == MouseButton::Right {
             ctx.cancel_input_mode();
         }
-        self.orders_at(ctx, world_px, mi)
+        self.orders_at(ctx, cell, world_px, mi)
     }
 
     fn tick(&self, ctx: &OrderContext) {
-        if ctx.local_player.is_some_and(|p| p.win_state.get() != WinState::Undefined) {
+        if self.kind != ButtonOrder::Beacon
+            && ctx.local_player.is_some_and(|p| p.win_state.get() != WinState::Undefined) {
             ctx.cancel_input_mode();
         }
     }
 
-    fn get_cursor(&self, ctx: &OrderContext, _cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Option<String> {
+    fn get_cursor(&self, ctx: &OrderContext, cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Option<String> {
+        if self.kind == ButtonOrder::Beacon {
+            return Some("ability".to_string());
+        }
         let mi = MouseInput {
             button: MouseButton::Left,
             ..*mi
         };
-        let orders = self.orders_at(ctx, world_px, &mi);
+        let orders = self.orders_at(ctx, cell, world_px, &mi);
         Some(match self.kind {
             ButtonOrder::Sell => orders
                 .iter()
@@ -144,6 +165,7 @@ impl OrderGenerator for ButtonOrderGenerator {
                 .map_or_else(|| "sell-blocked".to_string(), |s| s.info.cursor.clone()),
             ButtonOrder::Repair => if orders.is_empty() { "repair-blocked" } else { "repair" }.to_string(),
             ButtonOrder::PowerDown => if orders.is_empty() { "powerdown-blocked" } else { "powerdown" }.to_string(),
+            ButtonOrder::Beacon => "ability".to_string(),
         })
     }
 

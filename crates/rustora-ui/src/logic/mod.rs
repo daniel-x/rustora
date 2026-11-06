@@ -451,6 +451,7 @@ pub fn create(
         "ArmyTooltipLogic" => icon_tooltips::army_tooltip(ui, id, args),
         "SellOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Sell, "sell"),
         "RepairOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Repair, "repair"),
+        "BeaconOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::Beacon, "beacon"),
         "PowerdownOrderButtonLogic" => sidebar::bind_order_button(ui, id, crate::button_orders::ButtonOrder::PowerDown, "power"),
         "VersionLabelLogic" => {
             let version = services(ui).mod_version.clone();

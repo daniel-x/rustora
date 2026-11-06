@@ -18,7 +18,7 @@ use rustora_mods_common::decorations::{AnnotationCircle, IDecoration, IRenderCir
 use rustora_mods_common::selection::SelectableInfo;
 use rustora_mods_common::target_lines::DrawLineToTarget;
 
-use crate::draw::{DrawContext, Rect};
+use crate::draw::{DrawContext, Rect, TextStyle};
 use crate::logic::ingame::Ingame;
 use crate::screen_map::SelectionContext;
 use crate::viewport::Viewport;
@@ -308,5 +308,23 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
     }
     for c in &circles {
         draw_circle(dc, &viewport, c);
+    }
+    draw_effect_texts(dc, ingame, &viewport);
+}
+
+/// The `TextAnnotationRenderable`s of the `IEffectAnnotation` effects, centered on their position.
+fn draw_effect_texts(dc: &mut DrawContext, ingame: &Ingame, viewport: &Viewport) {
+    let render_player = ingame.render_player();
+    let (dark, light) = {
+        let m = &dc.assets.metrics;
+        (m.color("TextContrastColorDark"), m.color("TextContrastColorLight"))
+    };
+    for e in ingame.world.effects() {
+        let Some((p, color, text)) = e.annotation_text(render_player.as_ref()) else {
+            continue;
+        };
+        let (x, y) = viewport.world_to_view_px((p.x * 24 / 1024, (p.y - p.z) * 24 / 1024));
+        let (w, h) = dc.measure("TinyBold", &text);
+        dc.draw_text("TinyBold", &text, x - w / 2, y - h / 2, color, TextStyle::Contrast { dark, light, radius: 1 });
     }
 }
