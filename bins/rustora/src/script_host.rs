@@ -27,6 +27,13 @@ pub struct ScriptLine {
     pub prefix_color: Option<Color>,
 }
 
+/// A video a script asked to play, with what runs when it ends.
+pub struct MovieRequest {
+    pub movie: String,
+    pub fullscreen: bool,
+    pub on_complete: Box<dyn FnOnce()>,
+}
+
 /// `Map.Open` as a file system, for the `FluentMessages` of a map.
 struct MapFs<'a>(&'a Map);
 
@@ -50,6 +57,7 @@ pub struct ClientScriptHost {
     pub camera_request: Cell<Option<WPos>>,
     pub lines: RefCell<Vec<ScriptLine>>,
     pub mission_text: RefCell<(String, Color)>,
+    pub movies: RefCell<Vec<MovieRequest>>,
 }
 
 impl ClientScriptHost {
@@ -62,6 +70,7 @@ impl ClientScriptHost {
             camera_request: Cell::new(None),
             lines: RefCell::new(Vec::new()),
             mission_text: RefCell::new((String::new(), WHITE)),
+            movies: RefCell::new(Vec::new()),
         }
     }
 }
@@ -89,6 +98,7 @@ impl ScriptHost for ClientScriptHost {
             .unwrap_or_default();
         *self.map_messages.borrow_mut() = (!files.is_empty()).then(|| Messages::new(&files, &MapFs(map)));
         self.lines.borrow_mut().clear();
+        self.movies.borrow_mut().clear();
         self.camera_request.set(None);
         *self.mission_text.borrow_mut() = (String::new(), WHITE);
     }
@@ -140,6 +150,20 @@ impl ScriptHost for ClientScriptHost {
     fn set_camera_position(&self, pos: WPos) {
         self.camera.set(Some(pos));
         self.camera_request.set(Some(pos));
+    }
+
+    /// A missing video completes at once, inside the script call, as the `FileNotFoundException` path of
+    /// `Media.PlayFMVFullscreen`; an existing one plays after the world tick.
+    fn play_movie(&self, movie: &str, fullscreen: bool, on_complete: Box<dyn FnOnce()>) {
+        if !self.assets.borrow().fs.exists(movie) {
+            on_complete();
+            return;
+        }
+        self.movies.borrow_mut().push(MovieRequest {
+            movie: movie.to_string(),
+            fullscreen,
+            on_complete,
+        });
     }
 
     fn set_mission_text(&self, text: &str, color: Option<Color>) {

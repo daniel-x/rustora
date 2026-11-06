@@ -34,6 +34,7 @@ pub mod support_powers;
 mod text_field;
 pub mod text_notifications;
 pub mod tooltip;
+pub mod video_player;
 pub mod viewport_controller;
 pub mod world_interaction;
 
@@ -72,6 +73,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "ControlGroups" => cell(control_groups::ControlGroupsWidget::default()),
         "MenuButton" => cell(menu_button::MenuButtonWidget::new(assets)),
         "Radar" => cell(radar::RadarWidget::default()),
+        "VideoPlayer" => cell(video_player::VideoPlayerWidget::default()),
         "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
         "Label" => cell(LabelWidget::new(assets)),

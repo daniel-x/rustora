@@ -14,6 +14,7 @@ rustora-game = { path = "../rustora-game" }
 rustora-render = { path = "../rustora-render" }
 rustora-engine = { path = "../rustora-engine" }
 rustora-mods-common = { path = "../rustora-mods-common" }
+rustora-scripting = { path = "../rustora-scripting" }
 indexmap = "2"
 png = "0.18"
 log = "0.4"

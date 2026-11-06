@@ -7,3 +7,4 @@ pub mod audio;
 pub mod lcw;
 pub mod palette;
 pub mod sprite;
+pub mod vqa;

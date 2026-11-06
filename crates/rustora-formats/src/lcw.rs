@@ -22,6 +22,12 @@ impl Reader<'_> {
 
 /// `LCWCompression.DecodeInto` without the `reverse` mode. Returns the number of bytes written.
 pub fn lcw_decode_into(src: &[u8], dest: &mut [u8], src_offset: usize) -> Option<usize> {
+    lcw_decode_into_mode(src, dest, src_offset, false)
+}
+
+/// `LCWCompression.DecodeInto`: with `reverse`, the long copy commands address bytes relative to the end of
+/// the output. Returns the number of bytes written.
+pub fn lcw_decode_into_mode(src: &[u8], dest: &mut [u8], src_offset: usize, reverse: bool) -> Option<usize> {
     let mut r = Reader { src, pos: src_offset };
     let mut d = 0usize;
     loop {
@@ -55,7 +61,7 @@ pub fn lcw_decode_into(src: &[u8], dest: &mut [u8], src_offset: usize) -> Option
                 d += count;
             } else {
                 let count = if count3 == 0x3f { r.word()? } else { count3 + 3 };
-                let s = r.word()?;
+                let s = if reverse { d.checked_sub(r.word()?)? } else { r.word()? };
                 if s >= d {
                     return None;
                 }

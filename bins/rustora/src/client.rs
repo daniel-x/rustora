@@ -589,7 +589,19 @@ impl Client {
     }
 
     /// Carries out what the scripts asked for during the last world tick.
-    fn drain_script_host(&self) {
+    fn drain_script_host(&mut self) {
+        let movies = std::mem::take(&mut *self.script_host.movies.borrow_mut());
+        for request in movies {
+            let on_complete = request.on_complete;
+            let action: rustora_ui::widgets::video_player::VideoAction = Box::new(move |_| on_complete());
+            match (&self.shell, request.fullscreen) {
+                (Some(shell), true) => {
+                    let world = shell.world.clone();
+                    rustora_ui::logic::media::play_fmv_fullscreen(&mut self.ui, &world, &request.movie, action);
+                }
+                _ => rustora_ui::logic::media::play_fmv_in_radar(&mut self.ui, &request.movie, action),
+            }
+        }
         if let Some(pos) = self.script_host.camera_request.take()
             && let Some(shell) = &self.shell
         {

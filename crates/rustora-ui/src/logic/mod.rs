@@ -37,6 +37,7 @@ pub mod lobby_utils;
 pub mod main_menu;
 pub mod map_chooser;
 pub mod map_preview;
+pub mod media;
 pub mod multiplayer;
 pub mod music_player;
 pub mod observer;

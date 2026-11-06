@@ -1114,6 +1114,11 @@ impl Sound {
         }
     }
 
+    /// Whether a video sound plays, which `Sound.DummyEngine` and videos without audio lack.
+    pub fn video_playing(&self) -> bool {
+        self.video.get().is_some()
+    }
+
     /// `Sound.VideoSeekPosition`.
     pub fn video_seek_position(&self) -> f32 {
         self.video.get().map_or(0.0, |v| self.device.seek_position(v))

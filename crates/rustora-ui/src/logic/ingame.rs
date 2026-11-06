@@ -153,8 +153,7 @@ impl Ingame {
     }
 }
 
-/// Port of `LoadIngamePlayerOrObserverUILogic`. The `World.GameOver` event is polled in `tick`, the mission videos
-/// are not played, and the observer widgets after a win or loss stay mostly plain containers until slice 6 ends.
+/// Port of `LoadIngamePlayerOrObserverUILogic`. The `World.GameOver` event is polled in `tick`, and the observer widgets after a win or loss stay mostly plain containers until slice 6 ends.
 struct PlayerOrObserverUi {
     ingame: Option<Rc<Ingame>>,
     player_root: WidgetId,
@@ -187,11 +186,32 @@ impl ChromeLogic for PlayerOrObserverUi {
             self.game_over = true;
             ui.close_window();
             ui.remove_children(self.menu_root);
+            if let Some(player) = &ingame.local_player {
+                play_game_over_video(ui, &ingame.world, player);
+            }
             let options = ui.find(self.player_root, "OPTIONS_BUTTON");
             if let Some(click) = options.and_then(|b| ui.button(b).on_click.clone()) {
                 click(ui);
             }
         }
+    }
+}
+
+/// The `MissionData` win or loss video of the `World.GameOver` handler, unless a script failed.
+fn play_game_over_video(ui: &mut Ui, world: &Rc<World>, player: &PlayerRef) {
+    let Some(mission) = world.world_actor().info.trait_info::<rustora_mods_common::player::objectives::MissionDataInfo>() else {
+        return;
+    };
+    let failed = world
+        .world_actor()
+        .trait_or_default::<rustora_scripting::lua_script::LuaScript>()
+        .is_some_and(|s| s.fatal_error_occurred());
+    if failed {
+        return;
+    }
+    let video = if player.win_state.get() == WinState::Won { &mission.win_video } else { &mission.loss_video };
+    if let Some(video) = video.as_deref().filter(|v| !v.is_empty()) {
+        crate::logic::media::play_fmv_fullscreen(ui, world, video, Box::new(|_| {}));
     }
 }
 
