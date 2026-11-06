@@ -113,6 +113,17 @@ pub struct MapInfo {
     pub color_picker: ColorPicker,
     pub restricted_colors: Vec<Color>,
     pub briefing: Option<String>,
+    /// The `MissionData` trait of the world, if there is one.
+    pub mission: Option<MissionData>,
+}
+
+/// The fields of `MissionDataInfo` that the mission browser shows.
+#[derive(Clone, Debug, Default)]
+pub struct MissionData {
+    pub briefing: Option<String>,
+    pub briefing_video: Option<String>,
+    pub background_video: Option<String>,
+    pub start_video: Option<String>,
 }
 
 impl MapInfo {
@@ -164,6 +175,8 @@ pub struct ServerMod {
     pub speeds: IndexMap<String, GameSpeed>,
     speed_names: IndexMap<String, String>,
     fluent: HashMap<String, String>,
+    /// The `FluentMessages` of the map whose information loads, the fallback bundle of `MapPreview.GetMessage`.
+    map_fluent: std::cell::RefCell<HashMap<String, String>>,
     restricted_colors: HashMap<String, Vec<Color>>,
     maps: IndexMap<String, MapEntry>,
     infos: HashMap<String, Rc<MapInfo>>,
@@ -299,15 +312,20 @@ impl ServerMod {
             speeds,
             speed_names,
             fluent,
+            map_fluent: Default::default(),
             restricted_colors,
             maps,
             infos: HashMap::new(),
         })
     }
 
-    /// The text of a fluent message or attribute without arguments, or the key if unknown.
+    /// The text of a fluent message or attribute without arguments, or the key if unknown. The mod messages take
+    /// precedence over those of the map whose information loads.
     pub fn message(&self, key: &str) -> String {
-        self.fluent.get(key).cloned().unwrap_or_else(|| key.to_string())
+        if let Some(m) = self.fluent.get(key) {
+            return m.clone();
+        }
+        self.map_fluent.borrow().get(key).cloned().unwrap_or_else(|| key.to_string())
     }
 
     /// The uids of the maps offered in the lobby, the map pool of a server without a map repository.
@@ -382,7 +400,28 @@ impl ServerMod {
             package: entry.package.as_ref(),
             fs: &self.data.file_system,
         };
-        let rules = ModData::load_yaml(&fs, &self.data.manifest.rules, map.section("Rules")).map_err(|e| e.to_string())?;
+        let mut map_fluent = HashMap::new();
+        for file in map
+            .section("FluentMessages")
+            .map(MiniYaml::value_str)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+        {
+            if let Some(bytes) = rustora_fs::ReadFs::try_open(&fs, file) {
+                parse_fluent(&String::from_utf8_lossy(&bytes), &mut map_fluent);
+            }
+        }
+        *self.map_fluent.borrow_mut() = map_fluent;
+        let info = self.build_map_info(uid, entry, &fs);
+        self.map_fluent.borrow_mut().clear();
+        info
+    }
+
+    fn build_map_info(&self, uid: &str, entry: &MapEntry, fs: &MapFs) -> Result<MapInfo, String> {
+        let map = &entry.map;
+        let rules = ModData::load_yaml(fs, &self.data.manifest.rules, map.section("Rules")).map_err(|e| e.to_string())?;
         let actor = |name: &str| -> Result<Vec<TraitNode>, String> {
             let n = rules
                 .iter()
@@ -451,6 +490,12 @@ impl ServerMod {
                 .and_then(|t| field(t, "Briefing"))
                 .filter(|b| !b.is_empty())
                 .map(|b| b.replace("\\n", "\n")),
+            mission: world.iter().find(|t| t.name == "MissionData").map(|t| MissionData {
+                briefing: field(t, "Briefing").map(str::to_string),
+                briefing_video: field(t, "BriefingVideo").map(str::to_string),
+                background_video: field(t, "BackgroundVideo").map(str::to_string),
+                start_video: field(t, "StartVideo").map(str::to_string),
+            }),
             players,
         })
     }

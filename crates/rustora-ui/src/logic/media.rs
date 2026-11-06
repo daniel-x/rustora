@@ -13,7 +13,7 @@ use crate::widget::{Ui, WidgetArgs, WidgetId};
 use crate::widgets::video_player::{VideoAction, VideoPlayerWidget, run_after_tick};
 
 /// Runs `f` on the video player widget `id`.
-fn with_player<R>(ui: &mut Ui, id: WidgetId, f: impl FnOnce(&mut VideoPlayerWidget, &mut Ui) -> R) -> R {
+pub(crate) fn with_player<R>(ui: &mut Ui, id: WidgetId, f: impl FnOnce(&mut VideoPlayerWidget, &mut Ui) -> R) -> R {
     let kind = ui.kind(id);
     let mut kind = kind.borrow_mut();
     let player = kind

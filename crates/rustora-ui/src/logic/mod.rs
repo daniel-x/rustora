@@ -38,6 +38,7 @@ pub mod main_menu;
 pub mod map_chooser;
 pub mod map_preview;
 pub mod media;
+pub mod mission_browser;
 pub mod multiplayer;
 pub mod music_player;
 pub mod observer;
@@ -64,6 +65,8 @@ pub struct Services {
     /// `ContentInstallerFileSystemLoader.ContentInstallerMod`.
     pub content_installer_mod: Option<String>,
     pub settings: Rc<RefCell<Settings>>,
+    /// `Manifest.Missions`: the files of the campaign mission lists.
+    pub missions: Vec<String>,
     pub maps: Rc<RefCell<MapCache>>,
     /// `WebServices.MapRepository`.
     pub map_repository: Rc<crate::map_repository::MapRepository>,
@@ -98,6 +101,7 @@ impl Default for Services {
             save_dir: std::path::PathBuf::new(),
             content_installer_mod: None,
             settings: Rc::new(RefCell::new(Settings::load("", &[]))),
+            missions: Vec::new(),
             maps: Rc::default(),
             map_repository: Rc::default(),
             net: Rc::default(),
@@ -461,6 +465,7 @@ pub fn create(
         "ButtonTooltipLogic" => button_tooltip(ui, id, args),
         "SimpleTooltipLogic" => simple_tooltip(ui, id, args),
         "MapChooserLogic" => map_chooser::create(ui, id, args),
+        "MissionBrowserLogic" => mission_browser::create(ui, id, args),
         "LoadIngamePlayerOrObserverUILogic" => ingame::load_player_or_observer_ui(ui, id),
         "ColorPickerLogic" => color_picker::create(ui, id, args, logic_args),
         "ConnectionLogic" => connection::create_connection(ui, id, args),

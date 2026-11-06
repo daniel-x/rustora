@@ -73,6 +73,15 @@ pub struct LobbyOption {
     pub is_boolean: bool,
 }
 
+/// The fields of `MissionDataInfo` that the mission browser shows.
+#[derive(Clone, Debug, Default)]
+pub struct MissionInfo {
+    pub briefing: Option<String>,
+    pub briefing_video: Option<String>,
+    pub background_video: Option<String>,
+    pub start_video: Option<String>,
+}
+
 /// `LobbyFaction`. The texts are message keys.
 #[derive(Clone, Debug, Default)]
 pub struct LobbyFaction {
@@ -86,6 +95,8 @@ pub struct LobbyFaction {
 #[derive(Clone, Debug, Default)]
 pub struct LobbyRules {
     pub options: Vec<LobbyOption>,
+    /// `MissionDataInfo` of the world: the briefing and the briefing, background and start videos.
+    pub mission: Option<MissionInfo>,
     /// The type and the name message key of each bot.
     pub bots: Vec<(String, String)>,
     pub factions: IndexMap<String, LobbyFaction>,

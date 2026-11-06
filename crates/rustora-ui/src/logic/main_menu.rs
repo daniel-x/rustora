@@ -26,6 +26,7 @@ enum MenuType {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MenuPanel {
     None,
+    Missions,
     Skirmish,
     Multiplayer,
     Replays,
@@ -88,6 +89,23 @@ fn start_skirmish_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
     connection::connect(ui, LOCAL_SERVER_TARGET, "", on_connect, on_abort);
 }
 
+/// Port of `OpenMissionBrowserPanel`.
+fn open_mission_browser_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>, map: Option<String>) {
+    menu.set(MenuType::None);
+    let to_singleplayer = menu.clone();
+    let args = WidgetArgs::default()
+        .with_action(
+            "onExit",
+            Rc::new(move |ui| {
+                ui.requests.push(AppRequest::Disconnect);
+                to_singleplayer.set(MenuType::Singleplayer);
+            }),
+        )
+        .with_action("onStart", remember_panel(MenuPanel::Missions))
+        .with_value("initialMap", map);
+    ui.open_window("MISSIONBROWSER_PANEL", args);
+}
+
 /// Port of `OpenGameSaveBrowserPanel`.
 fn open_game_save_browser_panel(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
     menu.set(MenuType::None);
@@ -125,6 +143,10 @@ fn open_menu_based_on_last_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
         MenuPanel::Replays => open_replay_browser_panel(ui, menu),
         MenuPanel::GameSaves => open_game_save_browser_panel(ui, menu),
         MenuPanel::Skirmish => start_skirmish_game(ui, menu),
+        MenuPanel::Missions => {
+            let map = super::mission_browser::pick_last_modified_map(ui, MapVisibility::MISSION_SELECTOR);
+            open_mission_browser_panel(ui, menu, map);
+        }
         MenuPanel::Multiplayer => open_multiplayer_panel(ui, menu),
         MenuPanel::None => {}
     }
@@ -181,6 +203,17 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     on_click(ui, main_menu, "QUIT_BUTTON", |ui| ui.requests.push(AppRequest::Quit));
 
     let singleplayer = panel(ui, "SINGLEPLAYER_MENU", MenuType::Singleplayer);
+    let missions_menu = menu.clone();
+    let missions_button = ui.child(singleplayer, "MISSIONS_BUTTON");
+    {
+        let disabled = !super::mission_browser::has_missions(ui);
+        let mut b = ui.button(missions_button);
+        b.disabled = disabled;
+        b.on_click = Some(Rc::new(move |ui| {
+            let map = super::mission_browser::pick_last_modified_map(ui, MapVisibility::MISSION_SELECTOR);
+            open_mission_browser_panel(ui, &missions_menu, map);
+        }));
+    }
     let skirmish_menu = menu.clone();
     on_click(ui, singleplayer, "SKIRMISH_BUTTON", move |ui| {
         start_skirmish_game(ui, &skirmish_menu)

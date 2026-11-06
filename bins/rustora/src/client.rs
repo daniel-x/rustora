@@ -505,6 +505,7 @@ impl Client {
                 .join(&mod_data.manifest.metadata.version),
             save_dir: rustora_net::game_save::saves_dir(Path::new(support), &mod_data.manifest.id, &mod_data.manifest.metadata.version),
             content_installer_mod: installer_mod,
+            missions: mod_data.manifest.missions.clone(),
             maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
             map_repository: Rc::default(),
             settings: Rc::new(RefCell::new(settings)),

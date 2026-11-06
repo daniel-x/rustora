@@ -120,6 +120,12 @@ pub fn lobby_rules_lookup(game_mod: LazyServerMod) -> LobbyRulesLookup {
                     is_boolean: o.is_boolean,
                 })
                 .collect(),
+            mission: info.mission.as_ref().map(|m| rustora_ui::net::MissionInfo {
+                briefing: m.briefing.clone(),
+                briefing_video: m.briefing_video.clone(),
+                background_video: m.background_video.clone(),
+                start_video: m.start_video.clone(),
+            }),
             bots: info.bots.iter().map(|b| (b.bot_type.clone(), b.name.clone())).collect(),
             factions: info
                 .factions
