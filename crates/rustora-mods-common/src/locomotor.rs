@@ -38,6 +38,7 @@ const HAS_MOVING_ACTOR: u8 = 1;
 const HAS_STATIONARY_ACTOR: u8 = 2;
 const HAS_MOVABLE_ACTOR: u8 = 4;
 const HAS_CRUSHABLE_ACTOR: u8 = 8;
+const HAS_TEMPORARY_BLOCKER: u8 = 16;
 const HAS_TRANSIT_ONLY_ACTOR: u8 = 32;
 
 pub mod movement_type {
@@ -242,7 +243,7 @@ impl Locomotor {
         if check <= BlockedByActor::Immovable && cache.immovable & owner_mask == 0 {
             return true;
         }
-        if ignore_actor.is_none() && !ignore_self && sub == FULL_CELL && flag & HAS_TRANSIT_ONLY_ACTOR == 0 {
+        if ignore_actor.is_none() && !ignore_self && sub == FULL_CELL && flag & (HAS_TEMPORARY_BLOCKER | HAS_TRANSIT_ONLY_ACTOR) == 0 {
             if check == BlockedByActor::All {
                 return false;
             }
@@ -344,6 +345,13 @@ impl Locomotor {
         if check <= BlockedByActor::Stationary && flag & HAS_MOVING_ACTOR != 0 && other_is_moving {
             return false;
         }
+        if flag & HAS_TEMPORARY_BLOCKER != 0
+            && other
+                .trait_or_default::<dyn crate::interfaces::ITemporaryBlocker>()
+                .is_some_and(|t| t.can_remove_blockage(other, actor))
+        {
+            return false;
+        }
         if flag & HAS_TRANSIT_ONLY_ACTOR != 0
             && let Some(b) = building_of(other)
             && b.transit_only.contains(&cell)
@@ -427,6 +435,9 @@ impl Locomotor {
             if is_movable {
                 flag |= HAS_MOVABLE_ACTOR;
                 actor_immovable &= !actor.owner().allied_players_mask.get();
+            }
+            if actor.trait_or_default::<dyn crate::interfaces::ITemporaryBlocker>().is_some() {
+                flag |= HAS_TEMPORARY_BLOCKER;
             }
             crushable &= actor_crushable;
             immovable |= actor_immovable;

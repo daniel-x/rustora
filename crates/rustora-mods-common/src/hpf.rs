@@ -379,6 +379,9 @@ impl HierarchicalPathFinder {
         if crate::mobile::mobile_of(actor).is_some_and(crate::mobile::Mobile::is_movable) {
             return false;
         }
+        if actor.trait_or_default::<dyn crate::interfaces::ITemporaryBlocker>().is_some() {
+            return false;
+        }
         for c in &actor.cache().crushables {
             if c.crushable_by(actor, self.locomotor.info.crushes) != 0 {
                 return false;

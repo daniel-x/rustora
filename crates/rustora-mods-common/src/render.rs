@@ -43,6 +43,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("WithResourceLevelSpriteBody", |n| load_info!(WithResourceLevelSpriteBodyInfo, n));
     r.register("WithHarvesterSpriteBody", |n| load_info!(WithHarvesterSpriteBodyInfo, n));
     r.register("WithWallSpriteBody", |n| load_info!(WithWallSpriteBodyInfo, n));
+    r.register("WithGateSpriteBody", |n| load_info!(WithGateSpriteBodyInfo, n));
+    r.register("WithChargeSpriteBody", |n| load_info!(WithChargeSpriteBodyInfo, n));
     r.register("WithEmbeddedTurretSpriteBody", |n| load_info!(WithEmbeddedTurretSpriteBodyInfo, n));
     r.register("WithMakeAnimation", |n| load_info!(WithMakeAnimationInfo, n));
     r.register("WithBuildingPlacedAnimation", |n| load_info!(WithBuildingPlacedAnimationInfo, n));
@@ -274,6 +276,16 @@ enum BodyVariant {
         image_by_fullness: Vec<String>,
         harv: Rc<crate::harvester::Harvester>,
     },
+    /// `WithGateSpriteBody`: the frame follows the gate position, walls connect at `wall_connections`.
+    Gate {
+        ty: String,
+        wall_connections: Vec<rustora_core::world_types::CVec>,
+        open_sequence: Option<String>,
+        gate: Rc<crate::gate::Gate>,
+        render_open: Cell<bool>,
+    },
+    /// `WithChargeSpriteBody`: the frame follows the charge level of `AttackCharges`.
+    Charge { attack: Rc<crate::attack::AttackBase> },
     /// `WithEmbeddedTurretSpriteBody`: the body faces like the first turret and sets its quantized facings.
     EmbeddedTurret {
         quantized_facings: i32,
@@ -303,7 +315,7 @@ impl TraitObject for WithSpriteBody {
         if let BodyVariant::ResourceLevel { .. } = self.variant {
             dict.add::<dyn INotifyOwnerChanged>(actor, self.clone());
         }
-        if let BodyVariant::Wall { .. } = self.variant {
+        if let BodyVariant::Wall { .. } | BodyVariant::Gate { .. } = self.variant {
             dict.add::<dyn ITick>(actor, self.clone());
             dict.add::<dyn INotifyRemovedFromWorld>(actor, self.clone());
         }
@@ -403,6 +415,63 @@ impl Default for WithWallSpriteBodyInfo {
 info_impl!(WithWallSpriteBodyInfo => |info, init| {
     let v = BodyVariant::Wall { ty: info.wall_type.clone(), adjacent: Rc::new(Cell::new(0)), dirty: Cell::new(true) };
     Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithWallSpriteBody", None, v))
+});
+
+/// `WithChargeSpriteBodyInfo`.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct WithChargeSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+info_impl!(WithChargeSpriteBodyInfo => |info, init| {
+    let attack = init
+        .self_
+        .traits_implementing::<crate::attack::AttackBase>()
+        .into_iter()
+        .find(|a| a.type_name() == "AttackCharges")
+        .expect("WithChargeSpriteBody requires AttackCharges");
+    let body = new_sprite_body(Rc::new(info.base.clone()), init, "WithChargeSpriteBody", None, BodyVariant::Charge { attack });
+    body.configure_animation(&init.self_);
+    Some(body)
+});
+
+/// `WithGateSpriteBodyInfo`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithGateSpriteBodyInfo {
+    #[field(flatten)]
+    pub base: WithSpriteBodyInfo,
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub wall_connections: Vec<rustora_core::world_types::CVec>,
+    #[field(name = "Type")]
+    pub wall_type: String,
+    pub open_sequence: Option<String>,
+}
+
+impl Default for WithGateSpriteBodyInfo {
+    fn default() -> Self {
+        WithGateSpriteBodyInfo {
+            base: WithSpriteBodyInfo::default(),
+            instance_name: None,
+            wall_connections: Vec::new(),
+            wall_type: "wall".into(),
+            open_sequence: None,
+        }
+    }
+}
+
+info_impl!(WithGateSpriteBodyInfo => |info, init| {
+    let v = BodyVariant::Gate {
+        ty: info.wall_type.clone(),
+        wall_connections: info.wall_connections.clone(),
+        open_sequence: info.open_sequence.clone(),
+        gate: init.self_.trait_::<crate::gate::Gate>(),
+        render_open: Cell::new(false),
+    };
+    Some(new_sprite_body(Rc::new(info.base.clone()), init, "WithGateSpriteBody", None, v))
 });
 
 /// `WithEmbeddedTurretSpriteBodyInfo`.
@@ -505,6 +574,7 @@ info_impl!(WithHarvesterSpriteBodyInfo => |info, init| {
 impl ITick for WithSpriteBody {
     fn tick(&self, _self_: &ActorRef) {
         self.tick_wall(_self_);
+        self.tick_gate(_self_);
         let BodyVariant::Harvester { image_by_fullness, harv } = &self.variant else {
             return;
         };
@@ -531,6 +601,9 @@ impl ConditionalHooks for WithSpriteBody {
     }
 
     fn trait_enabled(&self, self_: &ActorRef) {
+        if let BodyVariant::Charge { .. } = self.variant {
+            return;
+        }
         self.base_trait_enabled(self_);
         self.update_turret_facings();
         if let BodyVariant::ResourceLevel { .. } = self.variant {
@@ -542,6 +615,10 @@ impl ConditionalHooks for WithSpriteBody {
             update_wall_neighbours(self_);
             let anim = self.default_animation.clone();
             self_.world().add_frame_end_task(Box::new(move |_| anim.tick()));
+        }
+        if let BodyVariant::Gate { .. } = self.variant {
+            self.update_gate_state(self_);
+            self.update_gate_neighbours(self_);
         }
     }
 }
@@ -573,7 +650,69 @@ fn update_wall_neighbours(self_: &ActorRef) {
 
 impl INotifyRemovedFromWorld for WithSpriteBody {
     fn removed_from_world(&self, self_: &ActorRef) {
-        update_wall_neighbours(self_);
+        if let BodyVariant::Gate { .. } = self.variant {
+            self.update_gate_neighbours(self_);
+        } else {
+            update_wall_neighbours(self_);
+        }
+    }
+}
+
+impl WithSpriteBody {
+    /// `WithGateSpriteBody.UpdateState`.
+    fn update_gate_state(&self, self_: &ActorRef) {
+        let BodyVariant::Gate { open_sequence, gate, render_open, .. } = &self.variant else {
+            return;
+        };
+        if let Some(open) = open_sequence
+            && (render_open.get() || self.state.is_trait_paused())
+        {
+            self.default_animation.play_repeating(&self.normalize_sequence(self_, open));
+            return;
+        }
+        let (anim, gate) = (self.default_animation.clone(), gate.clone());
+        self.default_animation.play_fetch_index(
+            &self.normalize_sequence(self_, &self.info.sequence),
+            Rc::new(move || {
+                let len = anim.current_sequence().map_or(1, |s| s.length());
+                (len - 1) * gate.position() / gate.open_position()
+            }),
+        );
+    }
+
+    /// `WithGateSpriteBody.ITick.Tick`.
+    fn tick_gate(&self, self_: &ActorRef) {
+        let BodyVariant::Gate { open_sequence, gate, render_open, .. } = &self.variant else {
+            return;
+        };
+        if open_sequence.is_none() {
+            return;
+        }
+        let open = gate.position() == gate.open_position();
+        if open != render_open.get() {
+            render_open.set(open);
+            self.update_gate_state(self_);
+        }
+    }
+
+    /// `WithGateSpriteBody.UpdateNeighbours`: marks the walls around the footprint dirty.
+    fn update_gate_neighbours(&self, self_: &ActorRef) {
+        use crate::actor_map::WorldExt;
+        let BodyVariant::Gate { gate, .. } = &self.variant else { return };
+        let w = self_.world();
+        let footprint = gate.footprint();
+        let adjacent = crate::util::expand_footprint(footprint, true)
+            .into_iter()
+            .filter(|c| !footprint.contains(c) && w.map().contains(*c));
+        for c in adjacent {
+            for a in w.actor_map().get_actors_at(c) {
+                for b in a.traits_implementing::<WithSpriteBody>() {
+                    if let BodyVariant::Wall { dirty, .. } = &b.variant {
+                        dirty.set(true);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -603,11 +742,13 @@ impl WithSpriteBody {
                 .into_iter()
                 .find(|b| !b.is_trait_disabled());
             let Some(b) = connector else { continue };
-            let BodyVariant::Wall { ty: other, .. } = &b.variant else {
-                continue;
-            };
             let facing = self_.location() - a.location();
-            if other != ty || facing.x.abs() + facing.y.abs() != 1 {
+            let connects = match &b.variant {
+                BodyVariant::Wall { ty: other, .. } => other == ty && facing.x.abs() + facing.y.abs() == 1,
+                BodyVariant::Gate { ty: other, wall_connections, .. } => other == ty && wall_connections.contains(&facing),
+                _ => false,
+            };
+            if !connects {
                 continue;
             }
             if facing.y > 0 {
@@ -625,6 +766,18 @@ impl WithSpriteBody {
     }
 
     fn configure_animation(&self, self_: &ActorRef) {
+        if let BodyVariant::Charge { attack } = &self.variant {
+            let (anim, attack) = (self.default_animation.clone(), attack.clone());
+            let a2 = anim.clone();
+            anim.play_fetch_index(
+                &self.normalize_sequence(self_, &self.info.sequence),
+                Rc::new(move || {
+                    let len = a2.current_sequence().map_or(0, |s| s.length());
+                    len * attack.charge_level() / (attack.info.charge_level + 1)
+                }),
+            );
+            return;
+        }
         let BodyVariant::ResourceLevel { stages, player_resources } = &self.variant else {
             return;
         };
@@ -673,6 +826,10 @@ impl INotifyCreated for WithSpriteBody {
 
 impl INotifyDamageStateChanged for WithSpriteBody {
     fn damage_state_changed(&self, self_: &ActorRef, _e: &AttackInfo) {
+        if let BodyVariant::Gate { .. } = self.variant {
+            self.update_gate_state(self_);
+            return;
+        }
         if let BodyVariant::Wall { .. } = self.variant {
             if !self.is_trait_disabled() {
                 self.play_wall_animation(self_);
@@ -725,7 +882,7 @@ impl WithSpriteBody {
     }
 
     pub fn cancel_custom_animation(&self, self_: &ActorRef) {
-        if let BodyVariant::ResourceLevel { .. } = self.variant {
+        if let BodyVariant::ResourceLevel { .. } | BodyVariant::Charge { .. } = self.variant {
             self.configure_animation(self_);
             return;
         }

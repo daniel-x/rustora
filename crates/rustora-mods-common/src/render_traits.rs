@@ -48,6 +48,13 @@ pub fn register(r: &mut TraitRegistry) {
     });
     r.register("WithLandingCraftAnimation", |n| load_info!(WithLandingCraftAnimationInfo, n));
     r.register("WithCrateBody", |n| load_info!(WithCrateBodyInfo, n));
+    r.register("WithIdleAnimation", |n| load_info!(WithIdleAnimationInfo, n));
+    r.register("WithMoveAnimation", |n| load_info!(WithMoveAnimationInfo, n));
+    r.register("WithAttackAnimation", |n| load_info!(WithAttackAnimationInfo, n));
+    r.register("WithAttackOverlay", |n| load_info!(WithAttackOverlayInfo, n));
+    r.register("WithSupportPowerActivationOverlay", |n| load_info!(WithSupportPowerActivationOverlayInfo, n));
+    r.register("WithDeliveryAnimation", |n| load_info!(WithDeliveryAnimationInfo, n));
+    r.register("WithResourceLevelOverlay", |n| load_info!(WithResourceLevelOverlayInfo, n));
 }
 
 fn body_named(self_: &ActorRef, name: &str) -> Rc<WithSpriteBody> {
@@ -1485,5 +1492,587 @@ impl INotifyParachute for WithCrateBody {
 
     fn on_landed(&self, self_: &ActorRef) {
         self.play_sequence(self_);
+    }
+}
+
+/// `Traits/Render/WithIdleAnimation.cs`. The interval draws from the shared random.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithIdleAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub sequences: Vec<String>,
+    pub interval: Vec<i32>,
+    pub body: String,
+}
+
+impl Default for WithIdleAnimationInfo {
+    fn default() -> Self {
+        WithIdleAnimationInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sequences: vec!["active".into()],
+            interval: vec![750],
+            body: "body".into(),
+        }
+    }
+}
+
+pub struct WithIdleAnimation {
+    info: Rc<WithIdleAnimationInfo>,
+    state: ConditionalState,
+    ticks: Cell<i32>,
+}
+
+register_traits!(WithIdleAnimation: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithIdleAnimationInfo => |info, init| {
+    let w = init.world();
+    let ticks = crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &info.interval);
+    Some(Rc::new(WithIdleAnimation { state: ConditionalState::new(&info.base), ticks: Cell::new(ticks), info }))
+});
+conditional_plumbing!(WithIdleAnimation);
+
+impl ConditionalHooks for WithIdleAnimation {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        body_named(self_, &self.info.body).cancel_custom_animation(self_);
+    }
+}
+
+impl INotifyCreated for WithIdleAnimation {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl ITick for WithIdleAnimation {
+    fn tick(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        self.ticks.set(self.ticks.get() - 1);
+        if self.ticks.get() <= 0 {
+            let w = self_.world();
+            if !self.info.sequences.is_empty() {
+                let i = w.local_random.borrow_mut().next_max(self.info.sequences.len() as i32) as usize;
+                body_named(self_, &self.info.body).play_custom_animation(self_, &self.info.sequences[i], None);
+            }
+            self.ticks.set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.interval));
+        }
+    }
+}
+
+/// `Traits/Render/WithMoveAnimation.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithMoveAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub move_sequence: String,
+    pub body: String,
+    pub valid_movement_types: Vec<String>,
+}
+
+impl Default for WithMoveAnimationInfo {
+    fn default() -> Self {
+        WithMoveAnimationInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            move_sequence: "move".into(),
+            body: "body".into(),
+            valid_movement_types: vec!["Horizontal".into()],
+        }
+    }
+}
+
+pub struct WithMoveAnimation {
+    info: Rc<WithMoveAnimationInfo>,
+    state: ConditionalState,
+    valid_types: u8,
+}
+
+register_traits!(WithMoveAnimation: INotifyMoving, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithMoveAnimationInfo => |info, _init| {
+    use crate::locomotor::movement_type;
+    let valid_types = info.valid_movement_types.iter().fold(movement_type::NONE, |acc, t| {
+        acc | match t.trim() {
+            "Horizontal" => movement_type::HORIZONTAL,
+            "Vertical" => movement_type::VERTICAL,
+            "Turn" => movement_type::TURN,
+            _ => movement_type::NONE,
+        }
+    });
+    Some(Rc::new(WithMoveAnimation { state: ConditionalState::new(&info.base), valid_types, info }))
+});
+conditional_plumbing!(WithMoveAnimation);
+
+impl WithMoveAnimation {
+    fn update_animation(&self, self_: &ActorRef, types: u8) {
+        let body = body_named(self_, &self.info.body);
+        let play = !self.state.is_trait_disabled() && types & self.valid_types != 0;
+        let current = body.default_animation.current_sequence().map(|s| s.name.clone());
+        let playing = current.as_deref() == Some(self.info.move_sequence.as_str());
+        if !play && playing {
+            body.cancel_custom_animation(self_);
+            return;
+        }
+        if play && !playing {
+            body.play_custom_animation_repeating(self_, &self.info.move_sequence);
+        }
+    }
+
+    fn current_types(self_: &ActorRef) -> u8 {
+        self_.trait_or_default::<dyn IMove>().map_or(0, |m| m.current_movement_types())
+    }
+}
+
+impl ConditionalHooks for WithMoveAnimation {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        let me = self_
+            .traits_implementing::<WithMoveAnimation>()
+            .into_iter()
+            .find(|t| std::ptr::eq(Rc::as_ptr(t), self));
+        let a = self_.clone();
+        self_.world().add_frame_end_task(Box::new(move |_| {
+            if let Some(me) = me {
+                me.update_animation(&a, Self::current_types(&a));
+            }
+        }));
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        self.update_animation(self_, Self::current_types(self_));
+    }
+}
+
+impl INotifyCreated for WithMoveAnimation {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl INotifyMoving for WithMoveAnimation {
+    fn movement_type_changed(&self, self_: &ActorRef, ty: u8) {
+        self.update_animation(self_, ty);
+    }
+}
+
+/// `Traits/Render/WithAttackAnimation.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithAttackAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub armament: String,
+    pub sequence: Option<String>,
+    pub delay: i32,
+    pub delay_relative_to: String,
+    pub body: String,
+}
+
+impl Default for WithAttackAnimationInfo {
+    fn default() -> Self {
+        WithAttackAnimationInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            armament: "primary".into(),
+            sequence: None,
+            delay: 0,
+            delay_relative_to: "Preparation".into(),
+            body: "body".into(),
+        }
+    }
+}
+
+pub struct WithAttackAnimation {
+    info: Rc<WithAttackAnimationInfo>,
+    state: ConditionalState,
+    tick: Cell<i32>,
+}
+
+register_traits!(WithAttackAnimation: ITick, INotifyAttack, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithAttackAnimationInfo => |info, _init| Some(Rc::new(WithAttackAnimation {
+    state: ConditionalState::new(&info.base),
+    tick: Cell::new(0),
+    info,
+})));
+conditional_simple!(WithAttackAnimation);
+
+impl WithAttackAnimation {
+    fn play(&self, self_: &ActorRef) {
+        let body = body_named(self_, &self.info.body);
+        if !self.state.is_trait_disabled()
+            && !body.is_trait_disabled()
+            && let Some(seq) = self.info.sequence.as_deref().filter(|s| !s.is_empty())
+        {
+            body.play_custom_animation(self_, seq, None);
+        }
+    }
+
+    fn notify(&self, self_: &ActorRef, a: &Armament, relative_to: &str) {
+        if a.info.name != self.info.armament || self.info.delay_relative_to != relative_to {
+            return;
+        }
+        if self.info.delay > 0 {
+            self.tick.set(self.info.delay);
+        } else {
+            self.play(self_);
+        }
+    }
+}
+
+impl INotifyAttack for WithAttackAnimation {
+    fn attacking(&self, self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
+        self.notify(self_, a, "Attack");
+    }
+
+    fn preparing_attack(&self, self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
+        self.notify(self_, a, "Preparation");
+    }
+}
+
+impl ITick for WithAttackAnimation {
+    fn tick(&self, self_: &ActorRef) {
+        if self.info.delay > 0 {
+            self.tick.set(self.tick.get() - 1);
+            if self.tick.get() == 0 {
+                self.play(self_);
+            }
+        }
+    }
+}
+
+/// `Traits/Render/WithAttackOverlay.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithAttackOverlayInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub armament: Option<String>,
+    #[field(require)]
+    pub sequence: String,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
+    pub is_decoration: bool,
+    pub delay: i32,
+    pub delay_relative_to: String,
+}
+
+impl Default for WithAttackOverlayInfo {
+    fn default() -> Self {
+        WithAttackOverlayInfo {
+            instance_name: None,
+            armament: None,
+            sequence: String::new(),
+            palette: None,
+            is_player_palette: false,
+            is_decoration: false,
+            delay: 0,
+            delay_relative_to: "Preparation".into(),
+        }
+    }
+}
+
+pub struct WithAttackOverlay {
+    info: Rc<WithAttackOverlayInfo>,
+    overlay: Rc<Animation>,
+    attacking: Rc<Cell<bool>>,
+    tick: Cell<i32>,
+}
+
+register_traits!(WithAttackOverlay: INotifyAttack, ITick);
+info_impl!(WithAttackOverlayInfo => |info, init| {
+    let self_ = init.self_.clone();
+    let w = init.world();
+    let rs = self_.trait_::<RenderSprites>();
+    let body = self_.trait_or_default::<BodyOrientation>();
+    let facing = self_.trait_or_default::<dyn IFacing>();
+    let facing_func: Rc<dyn Fn() -> WAngle> = match (facing, body) {
+        (None, _) => Rc::new(|| WAngle::ZERO),
+        (Some(f), None) => Rc::new(move || f.facing()),
+        (Some(f), Some(b)) => Rc::new(move || b.quantize_facing(f.facing())),
+    };
+    let overlay = Animation::new(w.map().sequences().clone(), &rs.get_image(&self_), Some(facing_func), None);
+    overlay.is_decoration.set(info.is_decoration);
+    let attacking = Rc::new(Cell::new(false));
+    let (att, center) = (attacking.clone(), self_.clone());
+    rs.add(
+        AnimationWithOffset {
+            animation: overlay.clone(),
+            offset_func: None,
+            disable_func: Some(Rc::new(move || !att.get())),
+            zoffset_func: Some(Rc::new(move |p| z_offset_from_center(&center, p, 1))),
+        },
+        info.palette.clone(),
+        info.is_player_palette,
+    );
+    Some(Rc::new(WithAttackOverlay { info, overlay, attacking, tick: Cell::new(0) }))
+});
+
+impl WithAttackOverlay {
+    fn play_overlay(&self) {
+        self.attacking.set(true);
+        let att = self.attacking.clone();
+        self.overlay.play_then(&self.info.sequence, Some(Rc::new(move || att.set(false))));
+    }
+
+    fn notify(&self, a: &Armament, relative_to: &str) {
+        if self.info.delay_relative_to != relative_to
+            || self.info.armament.as_deref().is_some_and(|n| !n.is_empty() && n != a.info.name)
+        {
+            return;
+        }
+        if self.info.delay > 0 {
+            self.tick.set(self.info.delay);
+        } else {
+            self.play_overlay();
+        }
+    }
+}
+
+impl INotifyAttack for WithAttackOverlay {
+    fn attacking(&self, _self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
+        self.notify(a, "Attack");
+    }
+
+    fn preparing_attack(&self, _self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
+        self.notify(a, "Preparation");
+    }
+}
+
+impl ITick for WithAttackOverlay {
+    fn tick(&self, _self_: &ActorRef) {
+        if self.info.delay > 0 {
+            self.tick.set(self.tick.get() - 1);
+            if self.tick.get() == 0 {
+                self.play_overlay();
+            }
+        }
+    }
+}
+
+/// `Traits/Render/WithSupportPowerActivationOverlay.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithSupportPowerActivationOverlayInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub sequence: String,
+    pub offset: WVec,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
+}
+
+impl Default for WithSupportPowerActivationOverlayInfo {
+    fn default() -> Self {
+        WithSupportPowerActivationOverlayInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sequence: "active".into(),
+            offset: WVec::ZERO,
+            palette: None,
+            is_player_palette: false,
+        }
+    }
+}
+
+pub struct WithSupportPowerActivationOverlay {
+    state: ConditionalState,
+    overlay: Rc<Animation>,
+    visible: Rc<Cell<bool>>,
+}
+
+register_traits!(WithSupportPowerActivationOverlay: INotifySupportPower, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithSupportPowerActivationOverlayInfo => |info, init| {
+    let self_ = init.self_.clone();
+    let w = init.world();
+    let rs = self_.trait_::<RenderSprites>();
+    let body = self_.trait_::<BodyOrientation>();
+    let overlay = Animation::new(w.map().sequences().clone(), &rs.get_image(&self_), None, None);
+    let visible = Rc::new(Cell::new(false));
+    let v = visible.clone();
+    overlay.play_then(&info.sequence, Some(Rc::new(move || v.set(false))));
+    let t = Rc::new(WithSupportPowerActivationOverlay { state: ConditionalState::new(&info.base), overlay, visible });
+    let (b, a, off, weak) = (body, self_.clone(), info.offset, Rc::downgrade(&t));
+    let center = self_.clone();
+    rs.add(
+        AnimationWithOffset {
+            animation: t.overlay.clone(),
+            offset_func: Some(Rc::new(move || b.local_to_world(off.rotate(&b.quantize_orientation(a.orientation()))))),
+            disable_func: Some(Rc::new(move || weak.upgrade().is_none_or(|t| t.state.is_trait_disabled() || !t.visible.get()))),
+            zoffset_func: Some(Rc::new(move |p| z_offset_from_center(&center, p, 1))),
+        },
+        info.palette.clone(),
+        info.is_player_palette,
+    );
+    Some(t)
+});
+conditional_simple!(WithSupportPowerActivationOverlay);
+
+impl INotifySupportPower for WithSupportPowerActivationOverlay {
+    fn charged(&self, _self_: &ActorRef) {}
+
+    fn activated(&self, _self_: &ActorRef) {
+        self.visible.set(true);
+        let v = self.visible.clone();
+        if let Some(name) = self.overlay.current_sequence().map(|s| s.name.clone()) {
+            self.overlay.play_then(&name, Some(Rc::new(move || v.set(false))));
+        }
+    }
+}
+
+/// `Traits/Render/WithDeliveryAnimation.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithDeliveryAnimationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub active_sequence: String,
+    pub body: String,
+}
+
+impl Default for WithDeliveryAnimationInfo {
+    fn default() -> Self {
+        WithDeliveryAnimationInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            active_sequence: "active".into(),
+            body: "body".into(),
+        }
+    }
+}
+
+pub struct WithDeliveryAnimation {
+    info: Rc<WithDeliveryAnimationInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(WithDeliveryAnimation: INotifyDelivery, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithDeliveryAnimationInfo => |info, _init| Some(Rc::new(WithDeliveryAnimation {
+    state: ConditionalState::new(&info.base),
+    info,
+})));
+conditional_plumbing!(WithDeliveryAnimation);
+
+impl ConditionalHooks for WithDeliveryAnimation {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        body_named(self_, &self.info.body).cancel_custom_animation(self_);
+    }
+}
+
+impl INotifyCreated for WithDeliveryAnimation {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl INotifyDelivery for WithDeliveryAnimation {
+    fn incoming_delivery(&self, self_: &ActorRef) {
+        if !self.state.is_trait_disabled() {
+            body_named(self_, &self.info.body).play_custom_animation_repeating(self_, &self.info.active_sequence);
+        }
+    }
+
+    fn delivered(&self, self_: &ActorRef) {
+        if !self.state.is_trait_disabled() {
+            body_named(self_, &self.info.body).cancel_custom_animation(self_);
+        }
+    }
+}
+
+/// `Traits/Render/WithResourceLevelOverlay.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithResourceLevelOverlayInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub sequence: String,
+    pub palette: Option<String>,
+    pub is_player_palette: bool,
+}
+
+impl Default for WithResourceLevelOverlayInfo {
+    fn default() -> Self {
+        WithResourceLevelOverlayInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sequence: "resources".into(),
+            palette: None,
+            is_player_palette: false,
+        }
+    }
+}
+
+pub struct WithResourceLevelOverlay {
+    info: Rc<WithResourceLevelOverlayInfo>,
+    state: ConditionalState,
+    overlay: Rc<Animation>,
+    player_resources: Rc<RefCell<Rc<crate::player::PlayerResources>>>,
+}
+
+register_traits!(WithResourceLevelOverlay: INotifyOwnerChanged, INotifyDamageStateChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithResourceLevelOverlayInfo => |info, init| {
+    let self_ = init.self_.clone();
+    let w = init.world();
+    let rs = self_.trait_::<RenderSprites>();
+    let player_resources = Rc::new(RefCell::new(self_.owner().player_actor().trait_::<crate::player::PlayerResources>()));
+    let overlay = Animation::new(w.map().sequences().clone(), &rs.get_image(&self_), None, None);
+    let (a, pr) = (overlay.clone(), player_resources.clone());
+    overlay.play_fetch_index(
+        &info.sequence,
+        Rc::new(move || {
+            let pr = pr.borrow();
+            let cap = pr.resource_capacity.get();
+            if cap == 0 {
+                return 0;
+            }
+            let len = a.current_sequence().map_or(0, |s| s.length());
+            (10 * len - 1).wrapping_mul(pr.resources.get()) / (10 * cap)
+        }),
+    );
+    let t = Rc::new(WithResourceLevelOverlay { state: ConditionalState::new(&info.base), overlay, player_resources, info });
+    let weak = Rc::downgrade(&t);
+    rs.add(
+        AnimationWithOffset {
+            animation: t.overlay.clone(),
+            offset_func: None,
+            disable_func: Some(Rc::new(move || weak.upgrade().is_none_or(|t| t.state.is_trait_disabled()))),
+            zoffset_func: Some(Rc::new(|_| 1024)),
+        },
+        t.info.palette.clone(),
+        t.info.is_player_palette,
+    );
+    Some(t)
+});
+conditional_simple!(WithResourceLevelOverlay);
+
+impl INotifyDamageStateChanged for WithResourceLevelOverlay {
+    fn damage_state_changed(&self, self_: &ActorRef, _e: &AttackInfo) {
+        if self.overlay.current_sequence().is_some() {
+            let body = self_.trait_::<WithSpriteBody>();
+            self.overlay.replace_anim(&body.normalize_sequence(self_, &self.info.sequence));
+        }
+    }
+}
+
+impl INotifyOwnerChanged for WithResourceLevelOverlay {
+    fn on_owner_changed(&self, _self_: &ActorRef, _old: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef) {
+        *self.player_resources.borrow_mut() = new_owner.player_actor().trait_::<crate::player::PlayerResources>();
     }
 }

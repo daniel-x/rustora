@@ -20,6 +20,9 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("RotationPaletteEffect", |n| load_info!(RotationPaletteEffectInfo, n));
     r.register("LightPaletteRotator", |n| load_info!(LightPaletteRotatorInfo, n));
     r.register("ShroudRenderer", |n| load_info!(ShroudRendererInfo, n));
+    r.register("PaletteFromPaletteWithAlpha", |n| load_info!(PaletteFromPaletteWithAlphaInfo, n));
+    r.register("PaletteFromPlayerPaletteWithAlpha", |n| load_info!(PaletteFromPlayerPaletteWithAlphaInfo, n));
+    r.register("FixedColorPalette", |n| load_info!(FixedColorPaletteInfo, n));
 }
 
 /// A trait without runtime state, whose info is read by the client.
@@ -32,6 +35,9 @@ macro_rules! palette_info {
     };
 }
 palette_info!(
+    PaletteFromPaletteWithAlphaInfo,
+    PaletteFromPlayerPaletteWithAlphaInfo,
+    FixedColorPaletteInfo,
     PaletteFromFileInfo,
     PaletteFromRgbaInfo,
     IndexedPaletteInfo,
@@ -242,6 +248,83 @@ impl Default for LightPaletteRotatorInfo {
             rotation_indices: vec![
                 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 238, 237, 236, 235, 234, 233, 232, 231,
             ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct PaletteFromPaletteWithAlphaInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub name: String,
+    #[field(require)]
+    pub base_palette: String,
+    pub allow_modifiers: bool,
+    pub alpha: f32,
+    pub premultiply: bool,
+}
+
+impl Default for PaletteFromPaletteWithAlphaInfo {
+    fn default() -> Self {
+        PaletteFromPaletteWithAlphaInfo {
+            instance_name: None,
+            name: String::new(),
+            base_palette: String::new(),
+            allow_modifiers: true,
+            alpha: 1.0,
+            premultiply: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct PaletteFromPlayerPaletteWithAlphaInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub base_name: String,
+    #[field(require)]
+    pub base_palette: String,
+    pub allow_modifiers: bool,
+    pub alpha: f32,
+    pub premultiply: bool,
+}
+
+impl Default for PaletteFromPlayerPaletteWithAlphaInfo {
+    fn default() -> Self {
+        PaletteFromPlayerPaletteWithAlphaInfo {
+            instance_name: None,
+            base_name: String::new(),
+            base_palette: String::new(),
+            allow_modifiers: true,
+            alpha: 1.0,
+            premultiply: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct FixedColorPaletteInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(name = "Base")]
+    pub base_palette: String,
+    pub name: String,
+    pub remap_index: Vec<i32>,
+    pub color: rustora_core::fieldloader::Color,
+    pub allow_modifiers: bool,
+}
+
+impl Default for FixedColorPaletteInfo {
+    fn default() -> Self {
+        FixedColorPaletteInfo {
+            instance_name: None,
+            base_palette: "terrain".into(),
+            name: "resources".into(),
+            remap_index: Vec::new(),
+            color: rustora_core::fieldloader::Color::from_argb(0, 0, 0, 0),
+            allow_modifiers: true,
         }
     }
 }

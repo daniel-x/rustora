@@ -29,6 +29,7 @@ use rustora_engine::{conditional_simple, info_impl, load_info, register_traits};
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("EnemyWatcher", |n| load_info!(EnemyWatcherInfo, n));
+    r.register("AmbientSound", |n| load_info!(AmbientSoundInfo, n));
     r.register("AnnounceOnSeen", |n| load_info!(AnnounceOnSeenInfo, n));
     r.register("Voiced", |n| load_info!(VoicedInfo, n));
     r.register("MusicPlaylist", |n| load_info!(MusicPlaylistInfo, n));
@@ -917,5 +918,143 @@ impl INotifyDiscovered for AnnounceOnSeen {
                 50,
             );
         }
+    }
+}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct AmbientSoundInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    #[field(require)]
+    pub sound_files: Vec<String>,
+    pub delay: Vec<i32>,
+    pub interval: Vec<i32>,
+}
+
+impl Default for AmbientSoundInfo {
+    fn default() -> Self {
+        AmbientSoundInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            sound_files: Vec::new(),
+            delay: vec![0],
+            interval: vec![0],
+        }
+    }
+}
+
+/// `Traits/Sound/AmbientSound.cs`: plays a looping or repeating sound at the actor. The delays draw from the
+/// shared random, so they are part of the simulation.
+pub struct AmbientSound {
+    info: Rc<AmbientSoundInfo>,
+    state: ConditionalState,
+    looped: bool,
+    current_sounds: RefCell<Vec<sound::SoundHandle>>,
+    cached_position: Cell<rustora_core::world_types::WPos>,
+    delay: Cell<i32>,
+}
+
+register_traits!(AmbientSound: ITick, INotifyRemovedFromWorld, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(AmbientSoundInfo => |info, init| {
+    let w = init.world();
+    let delay = crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &info.delay);
+    let looped = info.interval.is_empty() || (info.interval.len() == 1 && info.interval[0] == 0);
+    Some(Rc::new(AmbientSound {
+        state: ConditionalState::new(&info.base),
+        info,
+        looped,
+        current_sounds: RefCell::new(Vec::new()),
+        cached_position: Cell::new(rustora_core::world_types::WPos::ZERO),
+        delay: Cell::new(delay),
+    }))
+});
+conditional_plumbing!(AmbientSound);
+
+impl ConditionalHooks for AmbientSound {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        let w = self_.world();
+        self.delay.set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.delay));
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        self.stop_sound(self_);
+    }
+}
+
+impl INotifyCreated for AmbientSound {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl AmbientSound {
+    fn start_sound(&self, self_: &ActorRef) {
+        let w = self_.world();
+        let Some(name) = sound::random_name(&w, &self.info.sound_files).map(str::to_string) else { return };
+        let handle = if self_.cache().occupies_space.is_some() {
+            self.cached_position.set(self_.center_position());
+            if self.looped {
+                sound::play_looped_at(&w, SoundType::World, &name, self.cached_position.get())
+            } else {
+                sound::play_at(&w, SoundType::World, &name, self_.center_position(), 1.0)
+            }
+        } else if self.looped {
+            sound::play_looped(&w, SoundType::World, &name)
+        } else {
+            sound::play(&w, SoundType::World, &name, 1.0)
+        };
+        if let Some(h) = handle
+            && self.looped
+        {
+            self.current_sounds.borrow_mut().push(h);
+        }
+    }
+
+    fn stop_sound(&self, self_: &ActorRef) {
+        let w = self_.world();
+        for h in self.current_sounds.borrow_mut().drain(..) {
+            sound::stop(&w, h);
+        }
+    }
+}
+
+impl ITick for AmbientSound {
+    fn tick(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        if self_.cache().occupies_space.is_some() {
+            let pos = self_.center_position();
+            if pos != self.cached_position.get() {
+                let w = self_.world();
+                for h in self.current_sounds.borrow().iter() {
+                    sound::set_position(&w, *h, pos);
+                }
+                self.cached_position.set(pos);
+            }
+        }
+        if self.delay.get() < 0 {
+            return;
+        }
+        self.delay.set(self.delay.get() - 1);
+        if self.delay.get() < 0 {
+            self.start_sound(self_);
+            if !self.looped {
+                let w = self_.world();
+                self.delay.set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.interval));
+            }
+        }
+    }
+}
+
+impl INotifyRemovedFromWorld for AmbientSound {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        self.stop_sound(self_);
     }
 }

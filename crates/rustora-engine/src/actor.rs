@@ -303,6 +303,7 @@ impl Actor {
 
     pub fn tick(self: &ActorRef) {
         let was_idle = self.is_idle();
+        rustora_core::world_types::TRACE_ACTOR_ID.with(|a| a.set(self.id));
         let next = activity::run_activity(self, self.current_activity());
         self.set_current_activity(next);
 

@@ -400,10 +400,12 @@ impl Move {
             return (None, false);
         }
         let ignore = self.ignore_actor.as_ref();
-        if !m.can_enter_cell(next_cell, ignore, BlockedByActor::All) {
+        let contains_temporary_blocker = crate::gate::contains_temporary_blocker(&self_.world(), next_cell, Some(self_));
+        if contains_temporary_blocker || !m.can_enter_cell(next_cell, ignore, BlockedByActor::All) {
             let cell_range = self.near_enough.length / 1024;
             let dest = self.destination.get().expect("destination");
-            if (m.to_cell() - dest).length_squared() <= cell_range * cell_range && m.can_stay_in_cell(m.to_cell()) {
+            if !contains_temporary_blocker
+                && (m.to_cell() - dest).length_squared() <= cell_range * cell_range && m.can_stay_in_cell(m.to_cell()) {
                 if self.path_len() < 2 {
                     self.path_clear();
                     return (None, false);

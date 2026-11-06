@@ -529,7 +529,10 @@ impl World {
             for a in self.actors() {
                 a.tick();
             }
-            self.trait_dict.apply_to_all::<dyn ITick>(|a, t| t.tick(a));
+            self.trait_dict.apply_to_all::<dyn ITick>(|a, t| {
+                rustora_core::world_types::TRACE_ACTOR_ID.with(|c| c.set(a.id));
+                t.tick(a)
+            });
             for e in self.effects() {
                 e.tick(self);
             }
@@ -539,6 +542,11 @@ impl World {
             match next {
                 Some(t) => t(self),
                 None => break,
+            }
+        }
+        for p in self.players() {
+            if let Some(l) = p.frozen_actor_layer() {
+                l.emulate_tick_render();
             }
         }
     }

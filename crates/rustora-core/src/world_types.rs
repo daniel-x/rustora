@@ -1034,6 +1034,11 @@ pub fn shuffle<T: Clone>(ts: &[T], random: &mut MersenneTwister) -> Vec<T> {
     items
 }
 
+thread_local! {
+    /// The actor whose activities are ticking, printed with traced random draws.
+    pub static TRACE_ACTOR_ID: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Port of OpenRA's `MersenneTwister` (MT19937 with OpenRA's output reduction).
 #[derive(Clone)]
 pub struct MersenneTwister {
@@ -1041,6 +1046,8 @@ pub struct MersenneTwister {
     index: usize,
     pub last: i32,
     pub total_count: i32,
+    /// Prints a backtrace for each draw whose count is in this inclusive range, for desync debugging.
+    pub trace: Option<(i32, i32)>,
 }
 
 impl MersenneTwister {
@@ -1056,6 +1063,7 @@ impl MersenneTwister {
             index: 0,
             last: 0,
             total_count: 0,
+            trace: None,
         }
     }
 
@@ -1073,6 +1081,12 @@ impl MersenneTwister {
         self.index = (self.index + 1) % 624;
         self.total_count = self.total_count.wrapping_add(1);
         self.last = (y % i32::MAX as u32) as i32;
+        if let Some((from, to)) = self.trace
+            && (from..=to).contains(&self.total_count)
+        {
+            let actor = TRACE_ACTOR_ID.with(|a| a.get());
+            eprintln!("RANDOM {} actor {actor}\n{}", self.total_count, std::backtrace::Backtrace::force_capture());
+        }
         self.last
     }
 

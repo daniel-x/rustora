@@ -332,3 +332,31 @@ pub trait IFirepowerModifier {
 pub trait IInaccuracyModifier {
     fn get_inaccuracy_modifier(&self) -> i32;
 }
+
+/// `ITemporaryBlocker`: an actor that blocks cells only temporarily, like a closed gate.
+pub trait ITemporaryBlocker {
+    fn can_remove_blockage(&self, self_: &ActorRef, blocking: &ActorRef) -> bool;
+    fn is_blocking(&self, self_: &ActorRef, cell: CPos) -> bool;
+}
+
+/// `IBlocksProjectiles`, with `Exts.IsTraitEnabled` folded in.
+pub trait IBlocksProjectiles {
+    fn blocking_height(&self) -> WDist;
+    fn valid_relationships(&self) -> rustora_engine::player::PlayerRelationship;
+    fn is_trait_enabled(&self) -> bool;
+}
+
+/// `IDelayCarryallPickup`, with `Exts.IsTraitEnabled` folded in.
+pub trait IDelayCarryallPickup {
+    fn try_lock_for_pickup(&self, self_: &ActorRef, carrier: &ActorRef) -> bool;
+    fn is_trait_enabled(&self) -> bool;
+}
+
+pub trait IAircraftCenterPositionOffset {
+    fn position_offset(&self) -> WVec;
+}
+
+/// `IOverrideAircraftLanding`; `None` keeps the aircraft's own `LandableTerrainTypes`.
+pub trait IOverrideAircraftLanding {
+    fn landable_terrain_types(&self) -> Option<std::rc::Rc<indexmap::IndexSet<String>>>;
+}

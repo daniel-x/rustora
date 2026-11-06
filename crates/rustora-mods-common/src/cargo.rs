@@ -552,6 +552,7 @@ pub struct PassengerInfo {
     pub require_force_move_condition: Option<BooleanExpression>,
     pub enter_cursor: String,
     pub enter_blocked_cursor: String,
+    pub custom_pip_type: Option<String>,
 }
 
 impl Default for PassengerInfo {
@@ -566,6 +567,7 @@ impl Default for PassengerInfo {
             require_force_move_condition: None,
             enter_cursor: "enter".into(),
             enter_blocked_cursor: "enter-blocked".into(),
+            custom_pip_type: None,
         }
     }
 }

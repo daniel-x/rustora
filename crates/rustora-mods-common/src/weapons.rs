@@ -35,7 +35,7 @@ use crate::actor_map::WorldExt;
 use crate::effects::{ContrailFader, ContrailFields, SharedContrail, SpriteEffect};
 use crate::health::HealthInfo;
 use crate::hit_shape::{ArmorType, HitShape};
-use crate::interfaces::{IFirepowerModifier, IInaccuracyModifier, IRangeModifier};
+use crate::interfaces::{IBlocksProjectiles, IFirepowerModifier, IInaccuracyModifier, IRangeModifier};
 use crate::resources::ResourceLayer;
 use crate::util;
 
@@ -283,22 +283,17 @@ fn find_actors_on_line(w: &World, start: WPos, end: WPos, width: WDist, only_blo
 fn any_blocking_actors_between(w: &World, owner: &PlayerRef, start: WPos, end: WPos, width: WDist) -> Option<WPos> {
     let length = (end - start).length();
     for a in find_blocking_actors_on_line(w, start, end, width) {
-        let blockers: Vec<Rc<BlocksProjectiles>> = a
-            .traits_implementing::<BlocksProjectiles>()
+        let blockers: Vec<Rc<dyn IBlocksProjectiles>> = a
+            .traits_implementing::<dyn IBlocksProjectiles>()
             .into_iter()
-            .filter(|t| {
-                !t.state.is_trait_disabled()
-                    && t.info
-                        .valid_relationships
-                        .has_relationship(a.owner().relationship_with(Some(owner)))
-            })
+            .filter(|t| t.is_trait_enabled() && t.valid_relationships().has_relationship(a.owner().relationship_with(Some(owner))))
             .collect();
         if blockers.is_empty() {
             continue;
         }
         let hit = minimum_point_line_projection(start, end, a.center_position());
         let dat = w.map().distance_above_terrain(hit);
-        if (hit - start).length() < length && blockers.iter().any(|t| t.info.height > dat) {
+        if (hit - start).length() < length && blockers.iter().any(|t| t.blocking_height() > dat) {
             return Some(hit);
         }
     }
@@ -372,12 +367,26 @@ pub struct BlocksProjectiles {
     state: ConditionalState,
 }
 
-register_traits!(BlocksProjectiles: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(BlocksProjectiles: IBlocksProjectiles, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(BlocksProjectilesInfo => |info, _init| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new(BlocksProjectiles { info, state }))
 });
 conditional_simple!(BlocksProjectiles);
+
+impl IBlocksProjectiles for BlocksProjectiles {
+    fn blocking_height(&self) -> WDist {
+        self.info.height
+    }
+
+    fn valid_relationships(&self) -> PlayerRelationship {
+        self.info.valid_relationships
+    }
+
+    fn is_trait_enabled(&self) -> bool {
+        !self.state.is_trait_disabled()
+    }
+}
 
 #[derive(Clone, Debug, FieldLoad)]
 pub struct JamsMissilesInfo {

@@ -228,6 +228,10 @@ impl AutoTarget {
         }
     }
 
+    pub fn next_scan_time(&self) -> i32 {
+        self.next_scan_time.get()
+    }
+
     pub fn scan_for_target(&self, self_: &ActorRef, allow_move: bool, allow_turn: bool, ignore_scan_interval: bool) -> Target {
         let active = self.active_attack_bases();
         if (ignore_scan_interval || self.next_scan_time.get() <= 0) && !active.is_empty() {

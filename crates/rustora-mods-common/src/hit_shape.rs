@@ -428,7 +428,7 @@ impl HitShape {
 pub fn largest_outer_radius(w: &World, blocking_only: bool) -> WDist {
     let mut max = WDist::ZERO;
     for (_, a) in w.rules().actors() {
-        if blocking_only && !a.has_trait_info_named("BlocksProjectiles") {
+        if blocking_only && !a.has_trait_info_named("BlocksProjectiles") && !a.has_trait_info_named("Gate") {
             continue;
         }
         for h in a.trait_infos::<HitShapeInfo>() {

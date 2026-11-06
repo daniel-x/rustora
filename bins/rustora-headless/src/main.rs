@@ -355,6 +355,12 @@ fn main() {
         "world" => {
             let tick: i32 = args.get(5).map_or(0, |t| t.parse().expect("tick"));
             if tick > 0 {
+                if let Some((a, b)) = std::env::var("TRACE_RANDOM").ok().and_then(|v| {
+                    let (a, b) = v.split_once(',')?;
+                    Some((a.parse().ok()?, b.parse().ok()?))
+                }) {
+                    world.shared_random.borrow_mut().trace = Some((a, b));
+                }
                 let trace: Option<u32> = std::env::var("TRACE_ACTOR").ok().and_then(|v| v.parse().ok());
                 let trace_frozen: Option<(usize, u32)> = std::env::var("TRACE_FROZEN").ok().and_then(|v| {
                     let (a, b) = v.split_once(':')?;
@@ -386,12 +392,13 @@ fn main() {
                                 .map(|m| m.movement_speed_for_cell(a.location())),
                         );
                         eprintln!(
-                            "trace {} pos={:?} facing={:?} prone={:?} activity={:?}",
+                            "trace {} pos={:?} facing={:?} prone={:?} activity={:?} scan={:?}",
                             w.world_tick(),
                             a.center_position(),
                             facing,
                             prone,
-                            activity_chain(&a, a.current_activity())
+                            activity_chain(&a, a.current_activity()),
+                            a.trait_or_default::<rustora_mods_common::auto_target::AutoTarget>().map(|t| t.next_scan_time())
                         );
                     }
                     if let Some((pi, fid)) = trace_frozen {
@@ -404,9 +411,11 @@ fn main() {
                             let sh = p.shroud();
                             let vis: Vec<u8> = fa.footprint.iter().map(|&c| sh.get_visibility(c)).collect();
                             eprintln!(
-                                "frozen {} {} visible={} actor_alive={} footprint={:?} cell_visibility={:?}",
+                                "frozen {} {} owner={:?} types={:?} visible={} actor_alive={} footprint={:?} cell_visibility={:?}",
                                 w.world_tick(),
                                 fa.info().name,
+                                fa.owner().map(|o| o.internal_name.clone()),
+                                fa.target_types(),
                                 fa.visible(),
                                 fa.actor().is_some(),
                                 fa.footprint,

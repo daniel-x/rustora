@@ -2,9 +2,6 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Port of `Traits/Air/Aircraft.cs`, `Traits/Buildings/Reservable.cs` and `Activities/Air`.
-//!
-//! The Carryall interfaces (`IAircraftCenterPositionOffset`, `IOverrideAircraftLanding`) are left out because
-//! Red Alert has no carryall.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
@@ -208,6 +205,8 @@ pub struct Aircraft {
     self_: ActorRef,
     repairable: OnceCell<Option<Rc<Repairable>>>,
     rearmable: OnceCell<Option<Rc<Rearmable>>>,
+    position_offsets: OnceCell<Vec<Rc<dyn IAircraftCenterPositionOffset>>>,
+    override_aircraft_landing: OnceCell<Option<Rc<dyn IOverrideAircraftLanding>>>,
     reservation: RefCell<Option<Rc<Reservable>>>,
     speed_modifiers: OnceCell<Vec<Rc<dyn ISpeedModifier>>>,
     notify_moving: RefCell<Vec<Rc<dyn INotifyMoving>>>,
@@ -263,6 +262,8 @@ info_impl!(AircraftInfo => |info, init| {
         self_: init.self_.clone(),
         repairable: OnceCell::new(),
         rearmable: OnceCell::new(),
+        position_offsets: OnceCell::new(),
+        override_aircraft_landing: OnceCell::new(),
         reservation: RefCell::new(None),
         speed_modifiers: OnceCell::new(),
         notify_moving: RefCell::new(Vec::new()),
@@ -434,12 +435,24 @@ impl Aircraft {
         self.self_.world().map().distance_above_terrain(self.get_position()) == self.land_altitude()
     }
 
+    fn position_offsets(&self) -> &[Rc<dyn IAircraftCenterPositionOffset>] {
+        self.position_offsets.get().map(Vec::as_slice).unwrap_or_default()
+    }
+
     pub fn land_altitude(&self) -> WDist {
-        self.info.land_altitude
+        let mut alt = self.info.land_altitude;
+        for o in self.position_offsets() {
+            alt = alt - WDist::new(o.position_offset().z);
+        }
+        alt
     }
 
     pub fn get_position(&self) -> WPos {
-        self.self_.center_position()
+        let mut pos = self.self_.center_position();
+        for o in self.position_offsets() {
+            pos = pos + o.position_offset();
+        }
+        pos
     }
 
     fn rearmable(&self) -> Option<&Rc<Rearmable>> {
@@ -624,7 +637,11 @@ impl Aircraft {
         if docking_actor.is_some() {
             return true;
         }
-        self.info.landable_terrain_types.contains(&w.map().terrain_type_info(cell).ty)
+        let ty = &w.map().terrain_type_info(cell).ty;
+        match self.override_aircraft_landing.get().and_then(|o| o.as_ref()).and_then(|o| o.landable_terrain_types()) {
+            Some(types) => types.contains(ty),
+            None => self.info.landable_terrain_types.contains(ty),
+        }
     }
 
     fn is_blocked_by(&self, other: &ActorRef, ignore: Option<&ActorRef>, blocked_by_mobile: bool) -> bool {
@@ -636,6 +653,12 @@ impl Aircraft {
             && self_.owner().relationship_with(Some(&other.owner())) == PlayerRelationship::ALLY
             && other.trait_or_default::<Mobile>().is_some()
             && other.current_activity().is_none()
+        {
+            return false;
+        }
+        if other
+            .trait_or_default::<dyn crate::interfaces::ITemporaryBlocker>()
+            .is_some_and(|t| t.can_remove_blockage(other, self_))
         {
             return false;
         }
@@ -754,6 +777,8 @@ impl INotifyCreated for Aircraft {
     fn created(&self, self_: &ActorRef) {
         let _ = self.repairable.set(self_.trait_or_default::<Repairable>());
         let _ = self.rearmable.set(self_.trait_or_default::<Rearmable>());
+        let _ = self.position_offsets.set(self_.traits_implementing::<dyn IAircraftCenterPositionOffset>());
+        let _ = self.override_aircraft_landing.set(self_.trait_or_default::<dyn IOverrideAircraftLanding>());
         let _ = self.speed_modifiers.set(self_.traits_implementing::<dyn ISpeedModifier>());
         self.cached_position.set(self_.center_position());
         *self.notify_moving.borrow_mut() = self_.traits_implementing::<dyn INotifyMoving>();

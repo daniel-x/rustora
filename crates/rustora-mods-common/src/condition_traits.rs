@@ -7,7 +7,7 @@
 //! `ProductionCostMultiplier`, `GrantConditionOnTerrain`, `DamagedByTerrain`, `ChangesTerrain` and
 //! `SpreadsCondition`.
 //!
-//! Not ported: the floating bounty text, `IDelayCarryallPickup` because no RA actor uses a carryall, and the ramp check
+//! Not ported: the floating bounty text and the ramp check
 //! of `GrantConditionOnDeploy` because RA tilesets have no ramps.
 
 use std::cell::{Cell, RefCell};
@@ -670,7 +670,7 @@ pub struct GrantConditionOnDeploy {
     deploy_state: Cell<DeployState>,
 }
 
-register_traits!(GrantConditionOnDeploy: IResolveOrder, IIssueOrder, INotifyDeployComplete, IIssueDeployOrder, IOrderVoice, IWrapMove, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(GrantConditionOnDeploy: IDelayCarryallPickup, IResolveOrder, IIssueOrder, INotifyDeployComplete, IIssueDeployOrder, IOrderVoice, IWrapMove, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(GrantConditionOnDeployInfo => |info, init| Some(Rc::new_cyclic(|me| GrantConditionOnDeploy {
     state: ConditionalState::new_pausable(&info.base),
     info,
@@ -1608,5 +1608,21 @@ impl INotifySold for SpawnActorsOnSell {
             dudes_value -= at.1;
             spawn(at.0.clone(), loc);
         }
+    }
+}
+
+impl IDelayCarryallPickup for GrantConditionOnDeploy {
+    fn try_lock_for_pickup(&self, _self_: &ActorRef, _carrier: &ActorRef) -> bool {
+        if !self.info.undeploy_on_pickup || self.deploy_state.get() == DeployState::Undeployed || self.state.is_trait_disabled() {
+            return true;
+        }
+        if self.deploy_state.get() == DeployState::Deployed && !self.state.is_trait_paused() {
+            self.undeploy();
+        }
+        false
+    }
+
+    fn is_trait_enabled(&self) -> bool {
+        !self.state.is_trait_disabled()
     }
 }

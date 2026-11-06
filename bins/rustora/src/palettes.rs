@@ -72,6 +72,22 @@ impl Palettes {
             }
             p.add(&f.name, pal, true);
         }
+        for f in info.trait_infos::<FixedColorPaletteInfo>() {
+            let Some(base) = p.try_base(&f.base_palette) else { continue };
+            let remap: Vec<usize> = if f.remap_index.is_empty() {
+                (0..256).collect()
+            } else {
+                f.remap_index.iter().map(|&i| i as usize).collect()
+            };
+            let c = f.color.argb;
+            let pal = palette::player_remap(&base, &remap, [(c >> 16) as u8, (c >> 8) as u8, c as u8]);
+            p.add(&f.name, pal, f.allow_modifiers);
+        }
+        for f in info.trait_infos::<PaletteFromPaletteWithAlphaInfo>() {
+            if let Some(base) = p.try_base(&f.base_palette) {
+                p.add(&f.name, palette::alpha_remap(&base, f.alpha, f.premultiply), f.allow_modifiers);
+            }
+        }
         for pl in world.players() {
             let id = pl.player_actor().id;
             for f in info.trait_infos::<IndexedPlayerPaletteInfo>() {
@@ -96,6 +112,12 @@ impl Palettes {
                 let pal = palette::player_remap(&base, &remap, [(c >> 16) as u8, (c >> 8) as u8, c as u8]);
                 p.add_player(&f.base_name, id, &pl.internal_name, pal);
             }
+            for f in info.trait_infos::<PaletteFromPlayerPaletteWithAlphaInfo>() {
+                if let Some(base) = p.try_base(&format!("{}{}", f.base_palette, pl.internal_name)) {
+                    let pal = palette::alpha_remap(&base, f.alpha, f.premultiply);
+                    p.add_player(&f.base_name, id, &pl.internal_name, pal);
+                }
+            }
         }
         p.rotations = info.trait_infos::<RotationPaletteEffectInfo>();
         p.filter_tileset(tileset);
@@ -107,6 +129,10 @@ impl Palettes {
     fn base(&self, name: &str) -> Palette {
         let row = *self.named.get(name).unwrap_or_else(|| panic!("palette {name} is not defined"));
         self.rows[row as usize].base
+    }
+
+    fn try_base(&self, name: &str) -> Option<Palette> {
+        self.named.get(name).map(|&row| self.rows[row as usize].base)
     }
 
     fn add(&mut self, name: &str, pal: Palette, allow_modifiers: bool) -> u32 {

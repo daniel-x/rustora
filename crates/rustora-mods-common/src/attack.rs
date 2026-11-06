@@ -2993,3 +2993,10 @@ impl crate::orders::IOrderTargeter for AttackOrderTargeter {
         self
     }
 }
+
+impl AttackBase {
+    /// `AttackCharges.ChargeLevel`.
+    pub fn charge_level(&self) -> i32 {
+        self.charge_level.get()
+    }
+}

@@ -155,8 +155,8 @@ pub struct FrozenUnderFogUpdatedByGpsInfo {
     pub instance_name: Option<String>,
 }
 
-/// `FrozenUnderFogUpdatedByGps`. Its `Refresh` action only acts on frozen actors with renderables, which only the
-/// renderer fills, so it is a no-op in the simulation.
+/// `FrozenUnderFogUpdatedByGps`. Its `Refresh` action only acts on frozen actors with renderables, which the C#
+/// renderer fills; see [`rustora_engine::frozen::FrozenActor::has_renderables`].
 pub struct FrozenUnderFogUpdatedByGps {
     self_: ActorRef,
     me: Weak<FrozenUnderFogUpdatedByGps>,
@@ -173,6 +173,20 @@ info_impl!(FrozenUnderFogUpdatedByGpsInfo => |_, init| {
 });
 
 impl FrozenUnderFogUpdatedByGps {
+    /// The `Refresh` action: updates the frozen actor of `p` so that owner changes can be seen.
+    fn refresh_for(&self, p: &PlayerRef) {
+        let Some(layer) = p.frozen_actor_layer() else { return };
+        let Some(gps) = gps_watcher_of(p) else { return };
+        if !gps.granted() || !gps.granted_allies() {
+            return;
+        }
+        let Some(fa) = layer.from_id(self.self_.id) else { return };
+        if fa.has_renderables() {
+            fa.refresh_state();
+            fa.request_renderables();
+        }
+    }
+
     fn remove_for(&self, p: &PlayerRef) {
         let Some(layer) = p.frozen_actor_layer() else { return };
         let Some(gps) = gps_watcher_of(p) else { return };
@@ -188,7 +202,11 @@ impl FrozenUnderFogUpdatedByGps {
 }
 
 impl INotifyOwnerChanged for FrozenUnderFogUpdatedByGps {
-    fn on_owner_changed(&self, _self_: &ActorRef, _old: &PlayerRef, _new: &PlayerRef) {}
+    fn on_owner_changed(&self, self_: &ActorRef, _old: &PlayerRef, _new: &PlayerRef) {
+        for p in self_.world().players() {
+            self.refresh_for(&p);
+        }
+    }
 }
 
 impl INotifyActorDisposing for FrozenUnderFogUpdatedByGps {
@@ -203,6 +221,8 @@ impl IOnGpsRefreshed for FrozenUnderFogUpdatedByGps {
     fn on_gps_refresh(&self, self_: &ActorRef, player: &PlayerRef) {
         if self_.is_dead() {
             self.remove_for(player);
+        } else {
+            self.refresh_for(player);
         }
     }
 }

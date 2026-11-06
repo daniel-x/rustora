@@ -1907,6 +1907,8 @@ pub struct GenericDockSequence {
     end_drag: WPos,
     docking_state: Rc<Cell<DockingState>>,
     dock_initiated: Cell<bool>,
+    notify_dock_clients: Vec<Rc<dyn INotifyDockClient>>,
+    notify_dock_hosts: Vec<Rc<dyn INotifyDockHost>>,
 }
 
 impl GenericDockSequence {
@@ -1929,6 +1931,8 @@ impl GenericDockSequence {
             end_drag: host_actor.center_position() + info.drag_offset,
             docking_state: Rc::new(Cell::new(DockingState::Drag)),
             dock_initiated: Cell::new(false),
+            notify_dock_clients: self_.traits_implementing::<dyn INotifyDockClient>(),
+            notify_dock_hosts: host_actor.traits_implementing::<dyn INotifyDockHost>(),
         });
         a.base.queue_child(Wait::new(info.dock_wait));
         a
@@ -1985,6 +1989,12 @@ impl Activity for GenericDockSequence {
                     }
                     self.dock_host.on_dock_started(&self.dock_host_actor, self_, &self.dock_client);
                     self.dock_client.on_dock_started(self_, &self.dock_host_actor, &self.dock_host);
+                    for n in &self.notify_dock_clients {
+                        n.docked(self_, &self.dock_host_actor);
+                    }
+                    for n in &self.notify_dock_hosts {
+                        n.docked(&self.dock_host_actor, self_);
+                    }
                 } else {
                     state.set(DockingState::Undock);
                 }
@@ -2017,6 +2027,12 @@ impl Activity for GenericDockSequence {
             DockingState::Complete => {
                 self.dock_host.on_dock_completed(&self.dock_host_actor, self_, &self.dock_client);
                 self.dock_client.on_dock_completed(self_, &self.dock_host_actor, &self.dock_host);
+                for n in &self.notify_dock_clients {
+                    n.undocked(self_, &self.dock_host_actor);
+                }
+                for n in &self.notify_dock_hosts {
+                    n.undocked(&self.dock_host_actor, self_);
+                }
                 if self.is_drag_required {
                     self.base
                         .queue_child(Drag::new(self_, self.end_drag, self.start_drag, self.drag_length, None));

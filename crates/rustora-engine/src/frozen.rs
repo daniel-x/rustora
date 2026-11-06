@@ -46,6 +46,10 @@ pub struct FrozenActor {
     hidden: Cell<bool>,
     shrouded: Cell<bool>,
     pub need_renderables: Cell<bool>,
+    /// The simulation's copy of `NeedRenderables`, consumed by [`FrozenActorLayer::emulate_tick_render`].
+    render_pending: Cell<bool>,
+    /// Whether `TickRender` would have captured renderables, see [`FrozenActor::has_renderables`].
+    rendered: Cell<bool>,
     /// `FrozenActor.Renderables`: what the client draws while the actor is hidden.
     pub renderables: RefCell<Rc<Vec<crate::render::Renderable>>>,
     pub update_visibility_next_tick: Cell<bool>,
@@ -79,6 +83,8 @@ impl FrozenActor {
             shrouded: Cell::new(false),
             renderables: RefCell::new(Rc::new(Vec::new())),
             need_renderables: Cell::new(starts_revealed),
+            render_pending: Cell::new(starts_revealed),
+            rendered: Cell::new(false),
             update_visibility_next_tick: Cell::new(false),
         });
         fa.update_visibility();
@@ -184,7 +190,26 @@ impl FrozenActor {
             self.frozen_trait.on_visibility_changed(self);
         }
         if self.visible.get() && !was_visible {
-            self.need_renderables.set(true);
+            self.request_renderables();
+        }
+    }
+
+    /// Sets `NeedRenderables`.
+    pub fn request_renderables(&self) {
+        self.need_renderables.set(true);
+        self.render_pending.set(true);
+    }
+
+    /// `FrozenActor.HasRenderables`. C# fills the renderables in `FrozenUnderFog.TickRender`, so this simulation
+    /// state depends on the renderer; the simulation assumes a render after every tick of an actor with sprites.
+    pub fn has_renderables(&self) -> bool {
+        !self.shrouded.get() && self.rendered.get()
+    }
+
+    fn emulate_tick_render(&self) {
+        if self.render_pending.get() && self.actor.is_in_world() {
+            self.render_pending.set(false);
+            self.rendered.set(self.actor.info.has_trait_info_named("RenderSprites"));
         }
     }
 
@@ -292,6 +317,13 @@ impl FrozenActorLayer {
     pub fn remove(&self, fa: &FrozenActor) {
         self.partitioned.borrow_mut().remove(&fa.id());
         self.by_id.borrow_mut().remove(&fa.id());
+    }
+
+    /// Emulates `FrozenUnderFog.TickRender`, which runs after each tick, for [`FrozenActor::has_renderables`].
+    pub fn emulate_tick_render(&self) {
+        for fa in self.by_id.borrow().values() {
+            fa.emulate_tick_render();
+        }
     }
 
     pub fn from_id(&self, id: u32) -> Option<FrozenActorRef> {

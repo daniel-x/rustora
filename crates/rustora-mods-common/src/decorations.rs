@@ -28,6 +28,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("WithAmmoPipsDecoration", |n| load_pips(n, PipsKind::Ammo));
     r.register("WithResourceStoragePipsDecoration", |n| load_pips(n, PipsKind::Storage));
     r.register("WithStoresResourcesPipsDecoration", |n| load_pips(n, PipsKind::Stores));
+    r.register("WithCargoPipsDecoration", |n| load_pips(n, PipsKind::Cargo));
     r.register("WithSpriteControlGroupDecoration", |n| {
         load_info!(WithSpriteControlGroupDecorationInfo, n)
     });
@@ -283,6 +284,7 @@ pub enum PipsKind {
     Ammo,
     Storage,
     Stores,
+    Cargo,
 }
 
 /// `WithAmmoPipsDecorationInfo`, `WithResourceStoragePipsDecorationInfo` and `WithStoresResourcesPipsDecorationInfo`.
@@ -302,6 +304,7 @@ pub struct WithPipsDecorationInfo {
     pub palette: String,
     pub ammo_pools: Vec<String>,
     pub resource_sequences: IndexMap<String, String>,
+    pub custom_pip_sequences: IndexMap<String, String>,
 }
 
 impl Default for WithPipsDecorationInfo {
@@ -318,6 +321,7 @@ impl Default for WithPipsDecorationInfo {
             palette: "chrome".into(),
             ammo_pools: Vec::new(),
             resource_sequences: IndexMap::new(),
+            custom_pip_sequences: IndexMap::new(),
         }
     }
 }
@@ -372,6 +376,32 @@ impl WithPipsDecoration {
                                 return info.resource_sequences.get(&**ty).unwrap_or(full).clone();
                             }
                             n -= amount;
+                        }
+                        empty.clone()
+                    })
+                    .collect()
+            }
+            PipsKind::Cargo => {
+                let Some(cargo) = self_.trait_or_default::<crate::cargo::Cargo>() else {
+                    return Vec::new();
+                };
+                let max_weight = cargo.info.max_weight;
+                let count = if info.pip_count > 0 { info.pip_count } else { max_weight };
+                let passengers = cargo.passengers();
+                (0..count)
+                    .map(|i| {
+                        let mut n = i * max_weight / count;
+                        for p in &passengers {
+                            let Some(pi) = p.info.trait_info::<crate::cargo::PassengerInfo>() else { continue };
+                            if n < pi.weight {
+                                return pi
+                                    .custom_pip_type
+                                    .as_ref()
+                                    .and_then(|t| info.custom_pip_sequences.get(t))
+                                    .unwrap_or(full)
+                                    .clone();
+                            }
+                            n -= pi.weight;
                         }
                         empty.clone()
                     })
