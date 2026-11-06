@@ -204,7 +204,8 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.warheads
         .insert("GrantExternalCondition", warhead_loader!(GrantExternalConditionWarhead));
     r.warheads.insert("FlashEffect", warhead_loader!(FlashEffectWarhead));
-    r.warheads.insert("FlashTargetsInRadius", warhead_loader!(FlashTargetsInRadiusWarhead));
+    r.warheads
+        .insert("FlashTargetsInRadius", warhead_loader!(FlashTargetsInRadiusWarhead));
 }
 
 /// `FlashEffectWarhead`.

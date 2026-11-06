@@ -376,7 +376,9 @@ impl ITick for Cloak {
 impl IRadarColorModifier for Cloak {
     fn radar_color_override(&self, self_: &ActorRef, color: Color, local_player: Option<&PlayerRef>) -> Color {
         if local_player.is_some_and(|p| Rc::ptr_eq(p, &self_.owner())) && self.cloaked() {
-            return Color { argb: (color.argb & 0x00ff_ffff) | 128 << 24 };
+            return Color {
+                argb: (color.argb & 0x00ff_ffff) | 128 << 24,
+            };
         }
         color
     }

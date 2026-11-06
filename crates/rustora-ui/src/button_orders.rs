@@ -141,8 +141,7 @@ impl OrderGenerator for ButtonOrderGenerator {
     }
 
     fn tick(&self, ctx: &OrderContext) {
-        if self.kind != ButtonOrder::Beacon
-            && ctx.local_player.is_some_and(|p| p.win_state.get() != WinState::Undefined) {
+        if self.kind != ButtonOrder::Beacon && ctx.local_player.is_some_and(|p| p.win_state.get() != WinState::Undefined) {
             ctx.cancel_input_mode();
         }
     }

@@ -109,23 +109,39 @@ pub fn post_passes(world: &World, after_actors: usize, end: usize) -> Vec<rustor
     let wa = world.world_actor();
     let mut passes = Vec::new();
     for t in wa.traits_implementing::<TintPostProcessEffect>() {
-        passes.push(PostPass { at: after_actors, effect: PostEffect::Tint(t.tint()) });
+        passes.push(PostPass {
+            at: after_actors,
+            effect: PostEffect::Tint(t.tint()),
+        });
     }
     for t in wa.traits_implementing::<ChronoshiftPostProcessEffect>() {
         if let Some(blend) = t.blend() {
-            passes.push(PostPass { at: after_actors, effect: PostEffect::Chronoshift { blend } });
+            passes.push(PostPass {
+                at: after_actors,
+                effect: PostEffect::Chronoshift { blend },
+            });
         }
     }
     for t in wa.traits_implementing::<FlashPostProcessEffect>() {
         if t.enabled() {
             let c = t.info.color;
             let color = [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0];
-            passes.push(PostPass { at: after_actors, effect: PostEffect::Flash { blend: t.blend(), color } });
+            passes.push(PostPass {
+                at: after_actors,
+                effect: PostEffect::Flash { blend: t.blend(), color },
+            });
         }
     }
     for t in wa.traits_implementing::<MenuPostProcessEffect>() {
         if let Some((from, to, blend)) = t.state() {
-            passes.push(PostPass { at: end, effect: PostEffect::MenuFade { from: from as u32, to: to as u32, blend } });
+            passes.push(PostPass {
+                at: end,
+                effect: PostEffect::MenuFade {
+                    from: from as u32,
+                    to: to as u32,
+                    blend,
+                },
+            });
         }
     }
     passes

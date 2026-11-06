@@ -1085,7 +1085,11 @@ impl MersenneTwister {
             && (from..=to).contains(&self.total_count)
         {
             let actor = TRACE_ACTOR_ID.with(|a| a.get());
-            eprintln!("RANDOM {} actor {actor}\n{}", self.total_count, std::backtrace::Backtrace::force_capture());
+            eprintln!(
+                "RANDOM {} actor {actor}\n{}",
+                self.total_count,
+                std::backtrace::Backtrace::force_capture()
+            );
         }
         self.last
     }

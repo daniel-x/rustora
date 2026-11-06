@@ -210,7 +210,14 @@ impl ITick for RadarPings {
 }
 
 impl RadarPings {
-    pub fn add(&self, visibility: PingVisibility, viewer: Option<&PlayerRef>, position: WPos, color: Color, duration: i32) -> Rc<RadarPing> {
+    pub fn add(
+        &self,
+        visibility: PingVisibility,
+        viewer: Option<&PlayerRef>,
+        position: WPos,
+        color: Color,
+        duration: i32,
+    ) -> Rc<RadarPing> {
         let ping = Rc::new(RadarPing {
             visibility,
             position,

@@ -979,7 +979,8 @@ impl ConditionalHooks for AmbientSound {
 
     fn trait_enabled(&self, self_: &ActorRef) {
         let w = self_.world();
-        self.delay.set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.delay));
+        self.delay
+            .set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.delay));
     }
 
     fn trait_disabled(&self, self_: &ActorRef) {
@@ -996,7 +997,9 @@ impl INotifyCreated for AmbientSound {
 impl AmbientSound {
     fn start_sound(&self, self_: &ActorRef) {
         let w = self_.world();
-        let Some(name) = sound::random_name(&w, &self.info.sound_files).map(str::to_string) else { return };
+        let Some(name) = sound::random_name(&w, &self.info.sound_files).map(str::to_string) else {
+            return;
+        };
         let handle = if self_.cache().occupies_space.is_some() {
             self.cached_position.set(self_.center_position());
             if self.looped {
@@ -1047,7 +1050,8 @@ impl ITick for AmbientSound {
             self.start_sound(self_);
             if !self.looped {
                 let w = self_.world();
-                self.delay.set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.interval));
+                self.delay
+                    .set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.interval));
             }
         }
     }

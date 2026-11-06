@@ -119,12 +119,21 @@ impl Gate {
     fn is_blocked(&self, self_: &ActorRef) -> bool {
         let w = self_.world();
         let am = w.actor_map();
-        self.blocked_positions.borrow().iter().any(|c| am.get_actors_at(*c).iter().any(|a| a.id != self_.id))
+        self.blocked_positions
+            .borrow()
+            .iter()
+            .any(|c| am.get_actors_at(*c).iter().any(|a| a.id != self_.id))
     }
 
     fn play(&self, self_: &ActorRef, sound: &Option<String>) {
         if let Some(s) = sound {
-            rustora_engine::sound::play_at(&self_.world(), rustora_engine::sound::SoundType::World, s, self_.center_position(), 1.0);
+            rustora_engine::sound::play_at(
+                &self_.world(),
+                rustora_engine::sound::SoundType::World,
+                s,
+                self_.center_position(),
+                1.0,
+            );
         }
     }
 }
@@ -225,7 +234,10 @@ pub fn contains_temporary_blocker(w: &World, cell: CPos, ignore_actor: Option<&A
         if ignore_actor.is_some_and(|i| i.id == a.id) {
             continue;
         }
-        if a.traits_implementing::<dyn ITemporaryBlocker>().iter().any(|t| t.is_blocking(&a, cell)) {
+        if a.traits_implementing::<dyn ITemporaryBlocker>()
+            .iter()
+            .any(|t| t.is_blocking(&a, cell))
+        {
             return true;
         }
     }

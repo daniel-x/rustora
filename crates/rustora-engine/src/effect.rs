@@ -26,7 +26,10 @@ pub trait Effect: Any {
     /// `IEffectAboveShroud.RenderAboveShroud`.
     fn render_above_shroud(&self, _viewer: Option<&PlayerRef>, _out: &mut Vec<Renderable>) {}
     /// `IEffectAnnotation.RenderAnnotation` of a `TextAnnotationRenderable` in the `TinyBold` font.
-    fn annotation_text(&self, _viewer: Option<&PlayerRef>) -> Option<(rustora_core::world_types::WPos, rustora_core::fieldloader::Color, String)> {
+    fn annotation_text(
+        &self,
+        _viewer: Option<&PlayerRef>,
+    ) -> Option<(rustora_core::world_types::WPos, rustora_core::fieldloader::Color, String)> {
         None
     }
     fn as_any(&self) -> &dyn Any;

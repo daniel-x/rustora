@@ -325,6 +325,13 @@ fn draw_effect_texts(dc: &mut DrawContext, ingame: &Ingame, viewport: &Viewport)
         };
         let (x, y) = viewport.world_to_view_px((p.x * 24 / 1024, (p.y - p.z) * 24 / 1024));
         let (w, h) = dc.measure("TinyBold", &text);
-        dc.draw_text("TinyBold", &text, x - w / 2, y - h / 2, color, TextStyle::Contrast { dark, light, radius: 1 });
+        dc.draw_text(
+            "TinyBold",
+            &text,
+            x - w / 2,
+            y - h / 2,
+            color,
+            TextStyle::Contrast { dark, light, radius: 1 },
+        );
     }
 }

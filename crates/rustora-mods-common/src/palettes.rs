@@ -21,7 +21,9 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("LightPaletteRotator", |n| load_info!(LightPaletteRotatorInfo, n));
     r.register("ShroudRenderer", |n| load_info!(ShroudRendererInfo, n));
     r.register("PaletteFromPaletteWithAlpha", |n| load_info!(PaletteFromPaletteWithAlphaInfo, n));
-    r.register("PaletteFromPlayerPaletteWithAlpha", |n| load_info!(PaletteFromPlayerPaletteWithAlphaInfo, n));
+    r.register("PaletteFromPlayerPaletteWithAlpha", |n| {
+        load_info!(PaletteFromPlayerPaletteWithAlphaInfo, n)
+    });
     r.register("FixedColorPalette", |n| load_info!(FixedColorPaletteInfo, n));
 }
 

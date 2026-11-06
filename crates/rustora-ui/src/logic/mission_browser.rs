@@ -18,9 +18,7 @@ use super::{button_prompt_with_cancel, message, services};
 use crate::loader::cell;
 use crate::net::{LobbyOption, LobbyRules};
 use crate::widget::{Action, AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
-use crate::widgets::{
-    CheckboxWidget, DropDownButtonWidget, LabelWidget, LabelWithTooltipWidget, MapPreviewWidget, ScrollItemWidget,
-};
+use crate::widgets::{CheckboxWidget, DropDownButtonWidget, LabelWidget, LabelWithTooltipWidget, MapPreviewWidget, ScrollItemWidget};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PlayingVideo {
@@ -135,9 +133,7 @@ impl Browser {
         let loose: Vec<Rc<MapPreview>> = maps
             .previews
             .values()
-            .filter(|p| {
-                p.status == MapStatus::Available && p.visibility.has(MapVisibility::MISSION_SELECTOR) && !all.contains(&p.uid)
-            })
+            .filter(|p| p.status == MapStatus::Available && p.visibility.has(MapVisibility::MISSION_SELECTOR) && !all.contains(&p.uid))
             .cloned()
             .collect();
         if !loose.is_empty() {
@@ -185,7 +181,9 @@ impl Browser {
         }
         let b = Self::rc(self);
         let visible = briefing_video.is_some();
-        ui.set_visible_fn(self.start_briefing_video, move || visible && b.playing.get() != PlayingVideo::Briefing);
+        ui.set_visible_fn(self.start_briefing_video, move || {
+            visible && b.playing.get() != PlayingVideo::Briefing
+        });
         let (b, video) = (Self::rc(self), briefing_video.unwrap_or_default());
         ui.button(self.start_briefing_video).on_click = Some(Rc::new(move |ui| {
             b.play_video(ui, b.video_player, &video, PlayingVideo::Briefing, None);
@@ -219,7 +217,11 @@ impl Browser {
 
     fn set_remembered(&self, option: &LobbyOption, remembered: &RefCell<Option<String>>) {
         let value = remembered.borrow_mut().get_or_insert_with(|| option.default_value.clone()).clone();
-        let value = if option.values.contains_key(&value) { value } else { option.default_value.clone() };
+        let value = if option.values.contains_key(&value) {
+            value
+        } else {
+            option.default_value.clone()
+        };
         self.mission_options.borrow_mut().insert(option.id.clone(), value);
     }
 
@@ -263,7 +265,9 @@ impl Browser {
         let mut y = 0;
         let mut columns = VecDeque::new();
         for option in options.iter().filter(|o| o.is_boolean) {
-            self.mission_options.borrow_mut().insert(option.id.clone(), option.default_value.clone());
+            self.mission_options
+                .borrow_mut()
+                .insert(option.id.clone(), option.default_value.clone());
             if columns.is_empty() {
                 (_, columns) = self.new_row(ui, self.checkbox_row_template, &mut y);
             }
@@ -280,7 +284,11 @@ impl Browser {
             let (b, id) = (Self::rc(self), option.id.clone());
             ui.button(checkbox).on_click = Some(Rc::new(move |_| {
                 let mut options = b.mission_options.borrow_mut();
-                let value = if options.get(&id).is_some_and(|v| v == "True") { "False" } else { "True" };
+                let value = if options.get(&id).is_some_and(|v| v == "True") {
+                    "False"
+                } else {
+                    "True"
+                };
                 options.insert(id.clone(), value.to_string());
             }));
         }
@@ -291,7 +299,9 @@ impl Browser {
                 "difficulty" => self.set_remembered(option, &self.selected_difficulty),
                 "gamespeed" => self.set_remembered(option, &self.selected_game_speed),
                 _ => {
-                    self.mission_options.borrow_mut().insert(option.id.clone(), option.default_value.clone());
+                    self.mission_options
+                        .borrow_mut()
+                        .insert(option.id.clone(), option.default_value.clone());
                 }
             }
             if columns.is_empty() {
@@ -458,7 +468,11 @@ impl Browser {
     fn start_mission_clicked(self: &Rc<Self>, ui: &mut Ui) {
         self.stop_video(ui, self.video_player);
         let Some(selected) = self.selected.borrow().clone() else { return };
-        let available = services(ui).maps.borrow().get(&selected.uid).is_some_and(|p| p.status == MapStatus::Available);
+        let available = services(ui)
+            .maps
+            .borrow()
+            .get(&selected.uid)
+            .is_some_and(|p| p.status == MapStatus::Available);
         if !available {
             ui.requests.push(AppRequest::Disconnect);
             ui.close_window();

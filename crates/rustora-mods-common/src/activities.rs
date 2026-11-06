@@ -405,7 +405,9 @@ impl Move {
             let cell_range = self.near_enough.length / 1024;
             let dest = self.destination.get().expect("destination");
             if !contains_temporary_blocker
-                && (m.to_cell() - dest).length_squared() <= cell_range * cell_range && m.can_stay_in_cell(m.to_cell()) {
+                && (m.to_cell() - dest).length_squared() <= cell_range * cell_range
+                && m.can_stay_in_cell(m.to_cell())
+            {
                 if self.path_len() < 2 {
                     self.path_clear();
                     return (None, false);

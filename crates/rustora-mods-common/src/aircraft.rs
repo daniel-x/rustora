@@ -638,7 +638,12 @@ impl Aircraft {
             return true;
         }
         let ty = &w.map().terrain_type_info(cell).ty;
-        match self.override_aircraft_landing.get().and_then(|o| o.as_ref()).and_then(|o| o.landable_terrain_types()) {
+        match self
+            .override_aircraft_landing
+            .get()
+            .and_then(|o| o.as_ref())
+            .and_then(|o| o.landable_terrain_types())
+        {
             Some(types) => types.contains(ty),
             None => self.info.landable_terrain_types.contains(ty),
         }
@@ -777,8 +782,12 @@ impl INotifyCreated for Aircraft {
     fn created(&self, self_: &ActorRef) {
         let _ = self.repairable.set(self_.trait_or_default::<Repairable>());
         let _ = self.rearmable.set(self_.trait_or_default::<Rearmable>());
-        let _ = self.position_offsets.set(self_.traits_implementing::<dyn IAircraftCenterPositionOffset>());
-        let _ = self.override_aircraft_landing.set(self_.trait_or_default::<dyn IOverrideAircraftLanding>());
+        let _ = self
+            .position_offsets
+            .set(self_.traits_implementing::<dyn IAircraftCenterPositionOffset>());
+        let _ = self
+            .override_aircraft_landing
+            .set(self_.trait_or_default::<dyn IOverrideAircraftLanding>());
         let _ = self.speed_modifiers.set(self_.traits_implementing::<dyn ISpeedModifier>());
         self.cached_position.set(self_.center_position());
         *self.notify_moving.borrow_mut() = self_.traits_implementing::<dyn INotifyMoving>();

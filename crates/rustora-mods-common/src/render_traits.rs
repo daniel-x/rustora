@@ -52,7 +52,9 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("WithMoveAnimation", |n| load_info!(WithMoveAnimationInfo, n));
     r.register("WithAttackAnimation", |n| load_info!(WithAttackAnimationInfo, n));
     r.register("WithAttackOverlay", |n| load_info!(WithAttackOverlayInfo, n));
-    r.register("WithSupportPowerActivationOverlay", |n| load_info!(WithSupportPowerActivationOverlayInfo, n));
+    r.register("WithSupportPowerActivationOverlay", |n| {
+        load_info!(WithSupportPowerActivationOverlayInfo, n)
+    });
     r.register("WithDeliveryAnimation", |n| load_info!(WithDeliveryAnimationInfo, n));
     r.register("WithResourceLevelOverlay", |n| load_info!(WithResourceLevelOverlayInfo, n));
 }
@@ -1561,7 +1563,8 @@ impl ITick for WithIdleAnimation {
                 let i = w.local_random.borrow_mut().next_max(self.info.sequences.len() as i32) as usize;
                 body_named(self_, &self.info.body).play_custom_animation(self_, &self.info.sequences[i], None);
             }
-            self.ticks.set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.interval));
+            self.ticks
+                .set(crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &self.info.interval));
         }
     }
 }
@@ -1826,9 +1829,7 @@ impl WithAttackOverlay {
     }
 
     fn notify(&self, a: &Armament, relative_to: &str) {
-        if self.info.delay_relative_to != relative_to
-            || self.info.armament.as_deref().is_some_and(|n| !n.is_empty() && n != a.info.name)
-        {
+        if self.info.delay_relative_to != relative_to || self.info.armament.as_deref().is_some_and(|n| !n.is_empty() && n != a.info.name) {
             return;
         }
         if self.info.delay > 0 {

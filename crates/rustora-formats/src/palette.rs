@@ -99,7 +99,13 @@ pub fn alpha_remap(base: &Palette, alpha: f32, premultiply: bool) -> Palette {
     let mut p = *base;
     for c in p.iter_mut() {
         let [r, g, b, a] = *c;
-        let scale = |v: u8| if premultiply { ((alpha * v as f32 + 0.5) as i32).clamp(0, 255) as u8 } else { v };
+        let scale = |v: u8| {
+            if premultiply {
+                ((alpha * v as f32 + 0.5) as i32).clamp(0, 255) as u8
+            } else {
+                v
+            }
+        };
         *c = [scale(r), scale(g), scale(b), ((a as f32 * alpha) as i32).clamp(0, 255) as u8];
     }
     p

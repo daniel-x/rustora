@@ -588,7 +588,11 @@ impl Client {
         let Some(shell) = &self.shell else {
             return;
         };
-        let local_player = shell.ingame.as_ref().and_then(|i| i.local_player.clone()).or_else(|| shell.viewer.clone());
+        let local_player = shell
+            .ingame
+            .as_ref()
+            .and_then(|i| i.local_player.clone())
+            .or_else(|| shell.viewer.clone());
         *self.script_host.local_player.borrow_mut() = local_player;
         let (x, y) = shell.viewport.borrow().center;
         self.script_host.camera.set(Some(px_to_world(x, y)));
@@ -803,7 +807,10 @@ impl Client {
         self.ui.close_window();
         self.ui.set_visible_fn(root, || true);
         start_music(&self.services, self.shell.as_ref());
-        if let Some(fade) = world.world_actor().trait_or_default::<rustora_mods_common::post_effects::MenuPostProcessEffect>() {
+        if let Some(fade) = world
+            .world_actor()
+            .trait_or_default::<rustora_mods_common::post_effects::MenuPostProcessEffect>()
+        {
             fade.game_loaded(&world);
         }
         if !world.is_replay() {

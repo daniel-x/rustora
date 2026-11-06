@@ -15,10 +15,10 @@ use rustora_engine::effect::{Effect, EffectRef};
 use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::render::{PaletteRef, Renderable, fog_obscures, render_animation};
+use rustora_engine::rules::TraitRegistry;
 use rustora_engine::sequence::Animation;
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
-use rustora_engine::rules::TraitRegistry;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 use crate::radar::{PingVisibility, RadarPing, RadarPings};
@@ -118,7 +118,14 @@ impl Effect for Beacon {
             render_animation(a, self.position, zero, 0, &self.palette, out);
         }
         if let Some(a) = &self.arrow {
-            render_animation(a, self.position + WVec::new(0, 0, self.arrow_height.get()), zero, 0, &self.palette, out);
+            render_animation(
+                a,
+                self.position + WVec::new(0, 0, self.arrow_height.get()),
+                zero,
+                0,
+                &self.palette,
+                out,
+            );
         }
     }
 

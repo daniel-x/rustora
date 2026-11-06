@@ -398,7 +398,8 @@ fn main() {
                             facing,
                             prone,
                             activity_chain(&a, a.current_activity()),
-                            a.trait_or_default::<rustora_mods_common::auto_target::AutoTarget>().map(|t| t.next_scan_time())
+                            a.trait_or_default::<rustora_mods_common::auto_target::AutoTarget>()
+                                .map(|t| t.next_scan_time())
                         );
                     }
                     if let Some((pi, fid)) = trace_frozen {

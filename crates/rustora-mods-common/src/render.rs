@@ -285,7 +285,9 @@ enum BodyVariant {
         render_open: Cell<bool>,
     },
     /// `WithChargeSpriteBody`: the frame follows the charge level of `AttackCharges`.
-    Charge { attack: Rc<crate::attack::AttackBase> },
+    Charge {
+        attack: Rc<crate::attack::AttackBase>,
+    },
     /// `WithEmbeddedTurretSpriteBody`: the body faces like the first turret and sets its quantized facings.
     EmbeddedTurret {
         quantized_facings: i32,
@@ -661,7 +663,13 @@ impl INotifyRemovedFromWorld for WithSpriteBody {
 impl WithSpriteBody {
     /// `WithGateSpriteBody.UpdateState`.
     fn update_gate_state(&self, self_: &ActorRef) {
-        let BodyVariant::Gate { open_sequence, gate, render_open, .. } = &self.variant else {
+        let BodyVariant::Gate {
+            open_sequence,
+            gate,
+            render_open,
+            ..
+        } = &self.variant
+        else {
             return;
         };
         if let Some(open) = open_sequence
@@ -682,7 +690,13 @@ impl WithSpriteBody {
 
     /// `WithGateSpriteBody.ITick.Tick`.
     fn tick_gate(&self, self_: &ActorRef) {
-        let BodyVariant::Gate { open_sequence, gate, render_open, .. } = &self.variant else {
+        let BodyVariant::Gate {
+            open_sequence,
+            gate,
+            render_open,
+            ..
+        } = &self.variant
+        else {
             return;
         };
         if open_sequence.is_none() {
@@ -745,7 +759,11 @@ impl WithSpriteBody {
             let facing = self_.location() - a.location();
             let connects = match &b.variant {
                 BodyVariant::Wall { ty: other, .. } => other == ty && facing.x.abs() + facing.y.abs() == 1,
-                BodyVariant::Gate { ty: other, wall_connections, .. } => other == ty && wall_connections.contains(&facing),
+                BodyVariant::Gate {
+                    ty: other,
+                    wall_connections,
+                    ..
+                } => other == ty && wall_connections.contains(&facing),
                 _ => false,
             };
             if !connects {

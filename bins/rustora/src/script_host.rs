@@ -190,7 +190,9 @@ impl ScriptHost for ClientScriptHost {
     }
 
     fn play_music(&self, track: Option<&str>, on_complete: Box<dyn FnOnce()>) {
-        self.music.borrow_mut().push(MusicRequest::Play(track.map(String::from), on_complete));
+        self.music
+            .borrow_mut()
+            .push(MusicRequest::Play(track.map(String::from), on_complete));
     }
 
     fn music(&self, command: &str, track: Option<&str>) {

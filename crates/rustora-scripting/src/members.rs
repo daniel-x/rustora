@@ -60,9 +60,10 @@ pub fn clr_boundary<R>(f: impl FnOnce() -> LuaResult<R>) -> LuaResult<R> {
     BOUNDARY_DEPTH.with(|d| d.set(d.get() - 1));
     match result {
         Ok(r) => r,
-        Err(payload) if panic_message(payload.as_ref()).starts_with(DESTROYED_OBJECT) => {
-            error(format!("Uncaught CLR exception at Lua->CLR boundary: {}", panic_message(payload.as_ref())))
-        }
+        Err(payload) if panic_message(payload.as_ref()).starts_with(DESTROYED_OBJECT) => error(format!(
+            "Uncaught CLR exception at Lua->CLR boundary: {}",
+            panic_message(payload.as_ref())
+        )),
         Err(payload) => std::panic::resume_unwind(payload),
     }
 }

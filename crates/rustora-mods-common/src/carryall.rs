@@ -207,7 +207,8 @@ impl Carryall {
     pub fn detach_carryable(&self, self_: &ActorRef) {
         self.unreserve_carryable(self_);
         if self.carry_condition_token.get() != INVALID_CONDITION_TOKEN {
-            self.carry_condition_token.set(self_.revoke_condition(self.carry_condition_token.get()));
+            self.carry_condition_token
+                .set(self_.revoke_condition(self.carry_condition_token.get()));
         }
         if self.carryable_condition_token.get() != INVALID_CONDITION_TOKEN {
             self.carryable_condition_token
@@ -317,7 +318,9 @@ fn can_pickup(self_: &ActorRef, target: &ActorRef) -> bool {
     if !appears_friendly_to(target, self_) {
         return false;
     }
-    let Some(carryable) = target.trait_or_default::<Carryable>() else { return false };
+    let Some(carryable) = target.trait_or_default::<Carryable>() else {
+        return false;
+    };
     if carryable.state.is_trait_disabled() {
         return false;
     }
@@ -345,7 +348,9 @@ impl IOrderTargeter for DeliverUnitTargeter {
             return false;
         }
         let is_building = match target.target_type() {
-            TargetType::Actor => target.actor().is_some_and(|a| a.info.has_trait_info::<crate::building::BuildingInfo>()),
+            TargetType::Actor => target
+                .actor()
+                .is_some_and(|a| a.info.has_trait_info::<crate::building::BuildingInfo>()),
             TargetType::FrozenActor => target
                 .frozen_actor()
                 .is_some_and(|f| f.info().has_trait_info::<crate::building::BuildingInfo>()),
@@ -441,7 +446,12 @@ impl IResolveOrder for Carryall {
                 if !self.aircraft().info.move_into_shroud && !self_.owner().shroud().is_explored(cell) {
                     return;
                 }
-                let a = DeliverUnit::new(self_, Some(order.target.clone()), self.info.drop_range, Some(self.info.target_line_color));
+                let a = DeliverUnit::new(
+                    self_,
+                    Some(order.target.clone()),
+                    self.info.drop_range,
+                    Some(self.info.target_line_color),
+                );
                 self_.queue_activity_queued(order.queued, a);
                 crate::target_lines::show_target_lines(self_);
             }
@@ -606,7 +616,10 @@ impl Carryable {
             return LockResponse::Failed;
         }
         let delays = self.delay_pickups.borrow().clone();
-        if delays.iter().any(|d| d.is_trait_enabled() && !d.try_lock_for_pickup(self_, carrier)) {
+        if delays
+            .iter()
+            .any(|d| d.is_trait_enabled() && !d.try_lock_for_pickup(self_, carrier))
+        {
             return LockResponse::Pending;
         }
         if let Some(m) = self.mobile()
@@ -704,8 +717,7 @@ impl Activity for PickupUnit {
             return false;
         }
         if self.state.get() == PickupState::Intercept
-            && (self.cargo.center_position() - self_.center_position()).horizontal_length_squared()
-                <= TARGET_LOCK_RANGE.length_squared()
+            && (self.cargo.center_position() - self_.center_position()).horizontal_length_squared() <= TARGET_LOCK_RANGE.length_squared()
         {
             self.state.set(PickupState::LockCarryable);
         }
@@ -892,7 +904,9 @@ impl Activity for ReleaseUnit {
         let target_position = self_.center_position() + self.body.local_to_world(local);
         let w = self_.world();
         let target_location = w.map().cell_containing(target_position);
-        cargo.trait_::<dyn IPositionable>().set_position_cell(&cargo, target_location, FULL_CELL);
+        cargo
+            .trait_::<dyn IPositionable>()
+            .set_position_cell(&cargo, target_location, FULL_CELL);
         if let (Some(f), Some(own)) = (cargo.cache().facing.as_ref(), self_.cache().facing.as_ref()) {
             f.set_facing(own.facing());
         }
@@ -952,7 +966,12 @@ impl ConditionalHooks for FreeActorWithDelivery {
             return;
         }
         self.allow_spawn.set(self.info.free.allow_respawn);
-        self.do_delivery(self_, self_.location() + self.info.delivery_offset, &self.info.free.actor, &self.info.delivering_actor);
+        self.do_delivery(
+            self_,
+            self_.location() + self.info.delivery_offset,
+            &self.info.free.actor,
+            &self.info.delivering_actor,
+        );
     }
 }
 
@@ -972,7 +991,9 @@ impl FreeActorWithDelivery {
             spawn_cell = w.map().choose_closest_edge_cell(self_.location());
         }
         let mut spawn = w.map().center_of_cell(spawn_cell);
-        let initial_facing = w.map().facing_between(spawn_cell, self_.location(), rustora_core::world_types::WAngle::ZERO);
+        let initial_facing = w
+            .map()
+            .facing_between(spawn_cell, self_.location(), rustora_core::world_types::WAngle::ZERO);
         let carrier_info = w.rules().actor(&carrier_name.to_lowercase());
         if let Some(ai) = carrier_info.and_then(|a| a.trait_info::<crate::aircraft::AircraftInfo>()) {
             spawn = spawn + WVec::new(0, 0, ai.cruise_altitude.length);

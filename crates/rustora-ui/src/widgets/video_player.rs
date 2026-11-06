@@ -249,7 +249,13 @@ impl VideoPlayerWidget {
 
     fn upload(&mut self, dc: &mut DrawContext) {
         let Some(v) = &self.video else { return };
-        let rgba: Vec<u8> = v.current_frame_data.as_chunks::<4>().0.iter().flat_map(|p| [p[2], p[1], p[0], p[3]]).collect();
+        let rgba: Vec<u8> = v
+            .current_frame_data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| [p[2], p[1], p[0], p[3]])
+            .collect();
         let (w, h) = self.texture_size;
         match self.texture {
             None => self.texture = Some(dc.renderer.add_ui_texture(w, h, &rgba, true)),
@@ -282,7 +288,13 @@ impl VideoPlayerWidget {
             self.overlay = Some((texture, origin, size, overlay_height));
         }
         if let Some((texture, origin, size, height)) = self.overlay {
-            let sprite = Sprite { texture, x: 0, y: 0, w: 1, h: height };
+            let sprite = Sprite {
+                texture,
+                x: 0,
+                y: 0,
+                w: 1,
+                h: height,
+            };
             dc.draw_sprite_sized(sprite, origin.0, origin.1, size.0, size.1);
         }
     }
@@ -342,8 +354,20 @@ impl WidgetKind for VideoPlayerWidget {
         }
         let Some(v) = &self.video else { return };
         if let Some(texture) = self.texture {
-            let sprite = Sprite { texture, x: 0, y: 0, w: v.width as i32, h: v.height as i32 };
-            dc.draw_sprite_sized(sprite, self.video_origin.0, self.video_origin.1, self.video_size.0, self.video_size.1);
+            let sprite = Sprite {
+                texture,
+                x: 0,
+                y: 0,
+                w: v.width as i32,
+                h: v.height as i32,
+            };
+            dc.draw_sprite_sized(
+                sprite,
+                self.video_origin.0,
+                self.video_origin.1,
+                self.video_size.0,
+                self.video_size.1,
+            );
         }
         if self.draw_overlay {
             self.draw_overlay_lines(ui, id, dc);

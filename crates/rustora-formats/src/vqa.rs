@@ -138,9 +138,19 @@ impl VqaVideo {
         let hq = video_flags & 0x10 == 0x10;
         let pixels = width as usize * height as usize;
         let (cbf_buffer, cbf, cbp, orig_data) = if hq {
-            (vec![0; MAX_CBFZ_SIZE], vec![0; MAX_CBFZ_SIZE * 3], Vec::new(), vec![0; MAX_CBFZ_SIZE])
+            (
+                vec![0; MAX_CBFZ_SIZE],
+                vec![0; MAX_CBFZ_SIZE * 3],
+                Vec::new(),
+                vec![0; MAX_CBFZ_SIZE],
+            )
         } else {
-            (vec![0; pixels], vec![0; pixels], vec![0; pixels], vec![0; 2 * (blocks.0 * blocks.1) as usize])
+            (
+                vec![0; pixels],
+                vec![0; pixels],
+                vec![0; pixels],
+                vec![0; 2 * (blocks.0 * blocks.1) as usize],
+            )
         };
         let mut ty = s.ascii(4)?;
         while ty != "FINF" {
@@ -323,7 +333,10 @@ impl VqaVideo {
     }
 
     fn load_frame_from(&mut self, data: &[u8], index: usize) -> Result<(), String> {
-        let mut s = Cursor { data, pos: self.offsets[index] as usize };
+        let mut s = Cursor {
+            data,
+            pos: self.offsets[index] as usize,
+        };
         let end = self.frame_end(index, data.len());
         while s.pos < end {
             let mut ty = s.ascii(4)?;
@@ -372,7 +385,10 @@ impl VqaVideo {
                 "CBFZ" => {
                     let reverse = s.peek() == Some(0);
                     let chunk = s.bytes(length)?;
-                    self.file_buffer.get_mut(..length).ok_or("Invalid vqa (CBFZ)")?.copy_from_slice(chunk);
+                    self.file_buffer
+                        .get_mut(..length)
+                        .ok_or("Invalid vqa (CBFZ)")?
+                        .copy_from_slice(chunk);
                     self.cbf.fill(0);
                     self.cbf_buffer.fill(0);
                     let count = lcw_decode_into_mode(&self.file_buffer, &mut self.cbf_buffer, reverse as usize, reverse)
@@ -420,7 +436,10 @@ impl VqaVideo {
                 "VPRZ" => {
                     self.orig_data.fill(0);
                     let chunk = s.bytes(length)?;
-                    self.file_buffer.get_mut(..length).ok_or("Invalid vqa (VPRZ)")?.copy_from_slice(chunk);
+                    self.file_buffer
+                        .get_mut(..length)
+                        .ok_or("Invalid vqa (VPRZ)")?
+                        .copy_from_slice(chunk);
                     if self.file_buffer[0] != 0 {
                         self.vtpr_size =
                             lcw_decode_into_mode(&self.file_buffer, &mut self.orig_data, 0, false).ok_or("Invalid vqa (VPRZ)")?;
@@ -461,7 +480,10 @@ impl VqaVideo {
                             *self.cbf.get(cbfi).ok_or("Invalid vqa (codebook index)")? as usize
                         };
                         let pos = (y * bh + j) * total + x * bw + i;
-                        let c = self.palette_bytes.get(color * 4..color * 4 + 4).ok_or("Invalid vqa (palette index)")?;
+                        let c = self
+                            .palette_bytes
+                            .get(color * 4..color * 4 + 4)
+                            .ok_or("Invalid vqa (palette index)")?;
                         self.current_frame_data[pos * 4..pos * 4 + 4].copy_from_slice(c);
                     }
                 }

@@ -203,11 +203,14 @@ pub fn beacon() -> Group<()> {
         let position: WPos = a.get(1)?;
         let duration: i32 = a.opt(2, 750)?;
         let show_pings: bool = a.opt(3, true)?;
-        let Some(info) = owner.player_actor().info.trait_info::<rustora_mods_common::beacon::PlaceBeaconInfo>() else {
+        let Some(info) = owner
+            .player_actor()
+            .info
+            .trait_info::<rustora_mods_common::beacon::PlaceBeaconInfo>()
+        else {
             return error("The player actor has no 'PlaceBeacon' trait.");
         };
-        let beacon: rustora_engine::effect::EffectRef =
-            rustora_mods_common::beacon::Beacon::new(&owner, position, duration, &info);
+        let beacon: rustora_engine::effect::EffectRef = rustora_mods_common::beacon::Beacon::new(&owner, position, duration, &info);
         world(lua)?.add_frame_end_task(Box::new(move |w| w.add_effect(beacon)));
         if show_pings && let Some(pings) = radar_pings(lua)? {
             let viewer = world(lua)?.sound.local_player();

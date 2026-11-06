@@ -392,7 +392,9 @@ impl WithPipsDecoration {
                     .map(|i| {
                         let mut n = i * max_weight / count;
                         for p in &passengers {
-                            let Some(pi) = p.info.trait_info::<crate::cargo::PassengerInfo>() else { continue };
+                            let Some(pi) = p.info.trait_info::<crate::cargo::PassengerInfo>() else {
+                                continue;
+                            };
                             if n < pi.weight {
                                 return pi
                                     .custom_pip_type

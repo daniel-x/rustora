@@ -16,10 +16,7 @@ use crate::widgets::video_player::{VideoAction, VideoPlayerWidget, run_after_tic
 pub(crate) fn with_player<R>(ui: &mut Ui, id: WidgetId, f: impl FnOnce(&mut VideoPlayerWidget, &mut Ui) -> R) -> R {
     let kind = ui.kind(id);
     let mut kind = kind.borrow_mut();
-    let player = kind
-        .as_any()
-        .downcast_mut::<VideoPlayerWidget>()
-        .expect("a video player widget");
+    let player = kind.as_any().downcast_mut::<VideoPlayerWidget>().expect("a video player widget");
     f(player, ui)
 }
 

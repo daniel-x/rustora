@@ -199,7 +199,11 @@ impl ChromeLogic for PlayerOrObserverUi {
 
 /// The `MissionData` win or loss video of the `World.GameOver` handler, unless a script failed.
 fn play_game_over_video(ui: &mut Ui, world: &Rc<World>, player: &PlayerRef) {
-    let Some(mission) = world.world_actor().info.trait_info::<rustora_mods_common::player::objectives::MissionDataInfo>() else {
+    let Some(mission) = world
+        .world_actor()
+        .info
+        .trait_info::<rustora_mods_common::player::objectives::MissionDataInfo>()
+    else {
         return;
     };
     let failed = world
@@ -209,7 +213,11 @@ fn play_game_over_video(ui: &mut Ui, world: &Rc<World>, player: &PlayerRef) {
     if failed {
         return;
     }
-    let video = if player.win_state.get() == WinState::Won { &mission.win_video } else { &mission.loss_video };
+    let video = if player.win_state.get() == WinState::Won {
+        &mission.win_video
+    } else {
+        &mission.loss_video
+    };
     if let Some(video) = video.as_deref().filter(|v| !v.is_empty()) {
         crate::logic::media::play_fmv_fullscreen(ui, world, video, Box::new(|_| {}));
     }
