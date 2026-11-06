@@ -35,6 +35,46 @@ pub struct Group<T> {
     pub members: Vec<(&'static str, Member<T>)>,
 }
 
+/// The panic message of the trait accessors of a destroyed actor (`Actor.Trait*`), which C# throws as an exception.
+const DESTROYED_OBJECT: &str = "Attempted to get trait from destroyed object";
+
+thread_local! {
+    static BOUNDARY_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs a Rust member called from Lua. A trait access on a destroyed actor becomes a Lua error, as Eluant turns the
+/// CLR exception into one at the Lua to CLR boundary; any other panic continues.
+pub fn clr_boundary<R>(f: impl FnOnce() -> LuaResult<R>) -> LuaResult<R> {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let quiet = BOUNDARY_DEPTH.with(|d| d.get() > 0) && panic_message(info.payload()).starts_with(DESTROYED_OBJECT);
+            if !quiet {
+                previous(info);
+            }
+        }));
+    });
+    BOUNDARY_DEPTH.with(|d| d.set(d.get() + 1));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    BOUNDARY_DEPTH.with(|d| d.set(d.get() - 1));
+    match result {
+        Ok(r) => r,
+        Err(payload) if panic_message(payload.as_ref()).starts_with(DESTROYED_OBJECT) => {
+            error(format!("Uncaught CLR exception at Lua->CLR boundary: {}", panic_message(payload.as_ref())))
+        }
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("")
+}
+
 /// The first value of `r`, as a C# method returns one value (`void` gives `nil`).
 fn first<R: IntoLuaMulti>(lua: &Lua, r: R) -> LuaResult<Value> {
     Ok(r.into_lua_multi(lua)?.into_iter().next().unwrap_or(Value::Nil))
@@ -118,17 +158,17 @@ fn get_member<T: Clone + 'static>(
             let f = f.clone();
             let target = target.clone();
             Ok(Value::Function(lua.create_function(move |lua, args: MultiValue| {
-                f(lua, &target, &Args::new(args, name))
+                clr_boundary(|| f(lua, &target, &Args::new(args, name)))
             })?))
         }
-        Member::Property(Some(get), _) => get(lua, target),
+        Member::Property(Some(get), _) => clr_boundary(|| get(lua, target)),
         Member::Property(None, _) => error(format!("The property '{name}' is write-only")),
     }
 }
 
 fn set_member<T>(lua: &Lua, groups: &[Group<T>], (g, m): (usize, usize), target: &T, name: &str, v: Value) -> LuaResult<()> {
     match &groups[g].members[m].1 {
-        Member::Property(_, Some(set)) => set(lua, target, &v),
+        Member::Property(_, Some(set)) => clr_boundary(|| set(lua, target, &v)),
         _ => error(format!("The property '{name}' is read-only")),
     }
 }
