@@ -147,11 +147,11 @@ pub fn map() -> Group<()> {
             Ok(actor.id <= last && actor.id > last.wrapping_sub(count))
         })
         .method("ActorsWithTag", |lua, _, a| {
-            let tag: String = a.get(0)?;
+            let tag: Option<String> = a.get(0)?;
             let actors: Vec<ActorRef> = world(lua)?
                 .actors_with_trait::<ScriptTags>()
                 .into_iter()
-                .filter(|(_, t)| t.has_tag(&tag))
+                .filter(|(_, t)| t.has_tag(tag.as_deref()))
                 .map(|(a, _)| a)
                 .collect();
             actors_table(lua, &actors)

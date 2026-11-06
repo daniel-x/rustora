@@ -144,16 +144,16 @@ pub fn groups() -> Vec<G> {
             })
             .get("IsTaggable", |_, a| Ok(a.trait_or_default::<ScriptTags>().is_some()))
             .method("AddTag", |_, a, args| {
-                let t: String = args.get(0)?;
-                Ok(tag(a, |s| s.add_tag(&t), false))
+                let t: Option<String> = args.get(0)?;
+                Ok(tag(a, |s| s.add_tag(t.as_deref()), false))
             })
             .method("RemoveTag", |_, a, args| {
-                let t: String = args.get(0)?;
-                Ok(tag(a, |s| s.remove_tag(&t), false))
+                let t: Option<String> = args.get(0)?;
+                Ok(tag(a, |s| s.remove_tag(t.as_deref()), false))
             })
             .method("HasTag", |_, a, args| {
-                let t: String = args.get(0)?;
-                Ok(tag(a, |s| s.has_tag(&t), false))
+                let t: Option<String> = args.get(0)?;
+                Ok(tag(a, |s| s.has_tag(t.as_deref()), false))
             }),
         G::new("General", &["IOccupySpaceInfo"])
             .get("Location", |_, a| Ok(LuaCPos(a.location())))

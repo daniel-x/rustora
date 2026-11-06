@@ -459,17 +459,15 @@ impl INotifyDamage for AutoTarget {
         if util::appears_friendly_to(&attacker, self_) {
             return;
         }
+        let mut aggressor = Some(attacker);
         if self.stance.get() > UnitStance::ReturnFire {
             let auto_target = self.scan_for_target(self_, self.allow_move(), true, false);
             if auto_target.target_type() != TargetType::Invalid {
-                match auto_target.actor() {
-                    Some(a) => attacker = a.clone(),
-                    None => panic!("attacker replaced by a frozen actor target, which C# dereferences as null"),
-                }
+                aggressor = auto_target.actor().cloned();
             }
         }
-        *self.aggressor.borrow_mut() = Some(attacker.clone());
-        self.attack(&Target::from_actor(Some(&attacker)), self.allow_move());
+        *self.aggressor.borrow_mut() = aggressor.clone();
+        self.attack(&Target::from_actor(aggressor.as_ref()), self.allow_move());
     }
 }
 

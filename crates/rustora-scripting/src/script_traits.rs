@@ -21,8 +21,9 @@ pub struct ScriptTagsInfo {
     pub instance_name: Option<String>,
 }
 
+/// `ScriptTags`: `None` stands for the C# null tag, which Lua scripts add by passing nil.
 pub struct ScriptTags {
-    tags: RefCell<IndexSet<String>>,
+    tags: RefCell<IndexSet<Option<String>>>,
 }
 
 register_traits!(ScriptTags);
@@ -30,7 +31,7 @@ info_impl!(ScriptTagsInfo => |info, init| {
     let name = info.instance_name.as_deref();
     let mut tags = IndexSet::new();
     if let Some(i) = init.inits.get_for::<ScriptTagsInit>(name) {
-        tags.extend(i.value.iter().cloned());
+        tags.extend(i.value.iter().cloned().map(Some));
     } else if let Some(i) = init
         .inits
         .0
@@ -38,22 +39,22 @@ info_impl!(ScriptTagsInfo => |info, init| {
         .filter_map(|i| i.as_any().downcast_ref::<UnknownInit>())
         .rfind(|i| i.name == "ScriptTags")
     {
-        tags.extend(i.yaml.value_str().split(',').map(str::trim).filter(|t| !t.is_empty()).map(String::from));
+        tags.extend(i.yaml.value_str().split(',').map(str::trim).filter(|t| !t.is_empty()).map(|t| Some(t.to_string())));
     }
     Some(Rc::new(ScriptTags { tags: RefCell::new(tags) }))
 });
 
 impl ScriptTags {
-    pub fn add_tag(&self, tag: &str) -> bool {
-        self.tags.borrow_mut().insert(tag.to_string())
+    pub fn add_tag(&self, tag: Option<&str>) -> bool {
+        self.tags.borrow_mut().insert(tag.map(String::from))
     }
 
-    pub fn remove_tag(&self, tag: &str) -> bool {
-        self.tags.borrow_mut().shift_remove(tag)
+    pub fn remove_tag(&self, tag: Option<&str>) -> bool {
+        self.tags.borrow_mut().shift_remove(&tag.map(String::from))
     }
 
-    pub fn has_tag(&self, tag: &str) -> bool {
-        self.tags.borrow().contains(tag)
+    pub fn has_tag(&self, tag: Option<&str>) -> bool {
+        self.tags.borrow().contains(&tag.map(String::from))
     }
 }
 

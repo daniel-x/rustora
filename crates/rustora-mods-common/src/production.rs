@@ -661,10 +661,10 @@ impl Production {
         if let Some(m) = &mobile_info {
             let locomotor = crate::locomotor::locomotor_by_name(&w, &m.locomotor);
             let path_finder = w.world_actor().trait_::<crate::path_finder_trait::PathFinder>();
-            location = w.map().choose_closest_matching_edge_cell(self_.location(), |c| {
+            location = Some(w.map().choose_closest_matching_edge_cell(self_.location(), |c| {
                 m.can_enter_cell(&w, None, c, rustora_engine::traits::subcell::FULL_CELL, None, BlockedByActor::All)
                     && path_finder.path_exists_for_locomotor(&locomotor, c, destinations[0])
-            });
+            }));
         }
         let Some(location) = location else {
             return false;

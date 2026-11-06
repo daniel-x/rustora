@@ -468,10 +468,12 @@ impl Map {
         self.all_edge_cells[rand.next_max(self.all_edge_cells.len() as i32) as usize]
     }
 
-    pub fn choose_closest_matching_edge_cell(&self, cell: CPos, m: impl Fn(CPos) -> bool) -> Option<CPos> {
+    /// `Map.ChooseClosestMatchingEdgeCell`: like C# `FirstOrDefault` on a struct, it returns cell (0,0)
+    /// when no edge cell matches.
+    pub fn choose_closest_matching_edge_cell(&self, cell: CPos, m: impl Fn(CPos) -> bool) -> CPos {
         let mut cells: Vec<CPos> = self.all_edge_cells.clone();
         cells.sort_by_key(|c| (cell - *c).length());
-        cells.into_iter().find(|c| m(*c))
+        cells.into_iter().find(|c| m(*c)).unwrap_or_default()
     }
 
     pub fn projected_top_left(&self) -> WPos {
