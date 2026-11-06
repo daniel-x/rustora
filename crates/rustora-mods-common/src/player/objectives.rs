@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Port of `Traits/Player/MissionObjectives.cs`, `Traits/Player/ConquestVictoryConditions.cs`,
-//! `Traits/OwnerLostAction.cs` and `Traits/MustBeDestroyed.cs`. Notifications, the game over delay and the
+//! `Traits/Player/StrategicVictoryConditions.cs`, `Traits/OwnerLostAction.cs` and `Traits/MustBeDestroyed.cs`. Notifications, the game over delay and the
 //! time limit hook are left out.
 
 use std::cell::{Cell, OnceCell, RefCell};
@@ -27,6 +27,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("TimeLimitManager", |n| load_info!(TimeLimitManagerInfo, n));
     r.register("MissionObjectives", |n| load_info!(MissionObjectivesInfo, n));
     r.register("ConquestVictoryConditions", |n| load_info!(ConquestVictoryConditionsInfo, n));
+    r.register("StrategicVictoryConditions", |n| load_info!(StrategicVictoryConditionsInfo, n));
+    r.register("StrategicPoint", |n| load_info!(StrategicPointInfo, n));
     r.register("OwnerLostAction", |n| load_info!(OwnerLostActionInfo, n));
     r.register("MustBeDestroyed", |n| load_info!(MustBeDestroyedInfo, n));
     r.register("ObjectivesPanel", |n| load_info!(ObjectivesPanelInfo, n));
@@ -444,34 +446,40 @@ impl INotifyTimeLimit for ConquestVictoryConditions {
             return;
         };
         let owner = self_.owner();
-        let w = self_.world();
-        let team_of = |p: &PlayerRef| w.lobby_info.client_with_index(p.client_index).map_or(0, |c| c.team);
-        let experience = |p: &PlayerRef| {
-            p.player_actor()
-                .trait_or_default::<PlayerExperience>()
-                .map_or(0, |e| e.experience())
-        };
-        let mut players: Vec<PlayerRef> = w.players().into_iter().filter(|p| !p.non_combatant && p.playable).collect();
-        players.sort_by_key(|p| std::cmp::Reverse(experience(p)));
-        let mut teams: Vec<(i32, Vec<PlayerRef>)> = Vec::new();
-        for p in players {
-            let team = team_of(&p);
-            match teams.iter_mut().find(|t| t.0 == team) {
-                Some(t) => t.1.push(p),
-                None => teams.push((team, vec![p])),
-            }
-        }
-        teams.sort_by_key(|t| std::cmp::Reverse(t.1.iter().map(&experience).sum::<i32>()));
-        let my_team = team_of(&owner);
-        let won = teams
-            .first()
-            .is_some_and(|(team, members)| *team == my_team && (my_team != 0 || Rc::ptr_eq(&members[0], &owner)));
-        if won {
+        if team_won_on_time_limit(self_) {
             self.mo.mark_completed(&owner, id);
         } else {
             self.mo.mark_failed(&owner, id);
         }
     }
+}
+
+/// The winner check of `INotifyTimeLimit.NotifyTimerExpired` in the victory conditions: the team with the most
+/// experience wins, and without a team the player with the most experience.
+fn team_won_on_time_limit(self_: &ActorRef) -> bool {
+    let owner = self_.owner();
+    let w = self_.world();
+    let team_of = |p: &PlayerRef| w.lobby_info.client_with_index(p.client_index).map_or(0, |c| c.team);
+    let experience = |p: &PlayerRef| {
+        p.player_actor()
+            .trait_or_default::<PlayerExperience>()
+            .map_or(0, |e| e.experience())
+    };
+    let mut players: Vec<PlayerRef> = w.players().into_iter().filter(|p| !p.non_combatant && p.playable).collect();
+    players.sort_by_key(|p| std::cmp::Reverse(experience(p)));
+    let mut teams: Vec<(i32, Vec<PlayerRef>)> = Vec::new();
+    for p in players {
+        let team = team_of(&p);
+        match teams.iter_mut().find(|t| t.0 == team) {
+            Some(t) => t.1.push(p),
+            None => teams.push((team, vec![p])),
+        }
+    }
+    teams.sort_by_key(|t| std::cmp::Reverse(t.1.iter().map(&experience).sum::<i32>()));
+    let my_team = team_of(&owner);
+    teams
+        .first()
+        .is_some_and(|(team, members)| *team == my_team && (my_team != 0 || Rc::ptr_eq(&members[0], &owner)))
 }
 
 impl INotifyWinStateChanged for ConquestVictoryConditions {
@@ -483,7 +491,9 @@ impl INotifyWinStateChanged for ConquestVictoryConditions {
             }
         }
         let info = objectives_of(player).info.clone();
-        self.announce(
+        announce(
+            &self.info.suppress_notifications,
+            self.info.notification_delay,
             player,
             "notification-player-is-defeated",
             &info.lose_notification,
@@ -493,7 +503,9 @@ impl INotifyWinStateChanged for ConquestVictoryConditions {
 
     fn on_player_won(&self, player: &PlayerRef) {
         let info = objectives_of(player).info.clone();
-        self.announce(
+        announce(
+            &self.info.suppress_notifications,
+            self.info.notification_delay,
             player,
             "notification-player-is-victorious",
             &info.win_notification,
@@ -502,18 +514,187 @@ impl INotifyWinStateChanged for ConquestVictoryConditions {
     }
 }
 
-impl ConquestVictoryConditions {
-    /// The system line and the delayed speech of `OnPlayerLost` and `OnPlayerWon`.
-    fn announce(&self, player: &PlayerRef, line: &str, speech: &Option<String>, text: &Option<String>) {
-        if self.info.suppress_notifications {
+/// The system line and the delayed speech of `OnPlayerLost` and `OnPlayerWon` in the victory conditions.
+fn announce(suppress: &bool, delay: i32, player: &PlayerRef, line: &str, speech: &Option<String>, text: &Option<String>) {
+    if *suppress {
+        return;
+    }
+    let w = player.player_actor().world();
+    w.sound.add_player_system_line(line, &player.player_name);
+    if let Some(n) = speech {
+        rustora_engine::sound::play_notification_after_delay(&w, delay as u64, player, n);
+    }
+    w.sound.add_transient_line(Some(player), text.as_deref());
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct StrategicPointInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+/// Marks a place that needs to be in possession for `StrategicVictoryConditions`.
+pub struct StrategicPoint;
+
+register_traits!(StrategicPoint);
+info_impl!(StrategicPointInfo => |_info, _| Some(Rc::new(StrategicPoint)));
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct StrategicVictoryConditionsInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub hold_duration: i32,
+    pub reset_on_hold_lost: bool,
+    pub ratio_required: i32,
+    pub notification_delay: i32,
+    pub objective: String,
+    pub suppress_notifications: bool,
+}
+
+impl Default for StrategicVictoryConditionsInfo {
+    fn default() -> Self {
+        StrategicVictoryConditionsInfo {
+            instance_name: None,
+            hold_duration: 7500,
+            reset_on_hold_lost: true,
+            ratio_required: 50,
+            notification_delay: 1500,
+            objective: "Hold all the strategic positions!".into(),
+            suppress_notifications: false,
+        }
+    }
+}
+
+/// King of the Hill: a player wins by holding `RatioRequired` percent of the strategic points for `HoldDuration` ticks.
+pub struct StrategicVictoryConditions {
+    info: Rc<StrategicVictoryConditionsInfo>,
+    mo: Rc<MissionObjectives>,
+    short_game: bool,
+    pub ticks_left: Cell<i32>,
+    objective_id: Cell<Option<usize>>,
+}
+
+register_traits!(StrategicVictoryConditions: ITick, ISync, INotifyWinStateChanged, INotifyTimeLimit);
+info_impl!(StrategicVictoryConditionsInfo => |info, init| {
+    let short_game = init.world().world_actor().trait_::<MapOptions>().short_game();
+    Some(Rc::new(StrategicVictoryConditions {
+        ticks_left: Cell::new(info.hold_duration),
+        info,
+        mo: init.self_.trait_::<MissionObjectives>(),
+        short_game,
+        objective_id: Cell::new(None),
+    }))
+});
+
+impl StrategicVictoryConditions {
+    /// `Total` and `Owned`: the count of all strategic points and of those owned by allies of `player`.
+    fn points(&self, w: &World, player: &PlayerRef) -> (i32, i32) {
+        let points = w.actors_with_trait::<StrategicPoint>();
+        let owned = points
+            .iter()
+            .filter(|(a, _)| a.owner().relationship_with(Some(player)) == PlayerRelationship::ALLY)
+            .count();
+        (points.len() as i32, owned as i32)
+    }
+}
+
+impl ISync for StrategicVictoryConditions {
+    fn sync_hash(&self) -> i32 {
+        self.ticks_left.get()
+    }
+}
+
+impl ITick for StrategicVictoryConditions {
+    fn tick(&self, self_: &ActorRef) {
+        let owner = self_.owner();
+        if owner.win_state.get() != WinState::Undefined || owner.non_combatant {
             return;
         }
-        let w = player.player_actor().world();
-        w.sound.add_player_system_line(line, &player.player_name);
-        if let Some(n) = speech {
-            rustora_engine::sound::play_notification_after_delay(&w, self.info.notification_delay as u64, player, n);
+        let id = match self.objective_id.get() {
+            Some(id) => id,
+            None => {
+                let id = self.mo.add(&owner, &self.info.objective, "Primary", true);
+                self.objective_id.set(Some(id));
+                id
+            }
+        };
+        let w = self_.world();
+        if has_no_required_units(&w, &owner, self.short_game) {
+            self.mo.mark_failed(&owner, id);
         }
-        w.sound.add_transient_line(Some(player), text.as_deref());
+        let mut all_others_lost = true;
+        let mut any_other_won = false;
+        for other in w.players() {
+            if other.non_combatant || other.is_allied_with(Some(&owner)) {
+                continue;
+            }
+            all_others_lost = all_others_lost && other.win_state.get() == WinState::Lost;
+            any_other_won = any_other_won || other.win_state.get() == WinState::Won;
+        }
+        if all_others_lost {
+            self.mo.mark_completed(&owner, id);
+        }
+        if any_other_won {
+            self.mo.mark_failed(&owner, id);
+        }
+        let (total, owned) = self.points(&w, &owner);
+        if total > 0 {
+            if owned >= self.info.ratio_required * total / 100 {
+                let left = self.ticks_left.get() - 1;
+                self.ticks_left.set(left);
+                if left == 0 {
+                    self.mo.mark_completed(&owner, id);
+                }
+            } else if self.ticks_left.get() != 0 && self.info.reset_on_hold_lost {
+                self.ticks_left.set(self.info.hold_duration);
+            }
+        }
+    }
+}
+
+impl INotifyTimeLimit for StrategicVictoryConditions {
+    fn notify_timer_expired(&self, self_: &ActorRef) {
+        let Some(id) = self.objective_id.get() else {
+            return;
+        };
+        let owner = self_.owner();
+        if team_won_on_time_limit(self_) {
+            self.mo.mark_completed(&owner, id);
+        } else {
+            self.mo.mark_failed(&owner, id);
+        }
+    }
+}
+
+impl INotifyWinStateChanged for StrategicVictoryConditions {
+    fn on_player_lost(&self, player: &PlayerRef) {
+        let w = player.player_actor().world();
+        for (a, t) in w.actors_with_trait::<dyn INotifyOwnerLost>() {
+            if Rc::ptr_eq(&a.owner(), player) {
+                t.on_owner_lost(&a);
+            }
+        }
+        let info = objectives_of(player).info.clone();
+        announce(
+            &self.info.suppress_notifications,
+            self.info.notification_delay,
+            player,
+            "notification-player-is-defeated",
+            &info.lose_notification,
+            &info.lose_text_notification,
+        );
+    }
+
+    fn on_player_won(&self, player: &PlayerRef) {
+        let info = objectives_of(player).info.clone();
+        announce(
+            &self.info.suppress_notifications,
+            self.info.notification_delay,
+            player,
+            "notification-player-is-victorious",
+            &info.win_notification,
+            &info.win_text_notification,
+        );
     }
 }
 

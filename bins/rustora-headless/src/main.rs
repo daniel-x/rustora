@@ -3,6 +3,7 @@
 
 //! Headless rustora. Subcommands:
 //! `world <engine-dir> <support-dir> <replay> [tick]` prints the sync detail of a replay after world load (or after `tick`).
+//! `EXTRA_STEPS=n` runs n more replay steps after the last tick, e.g. to process the orders of a paused frame.
 //! `verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a recorded game and compares the sync hashes.
 //! `verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]` compares the Rust bots with a C# bot game.
 //! `skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]` hosts a bot game,
@@ -22,12 +23,30 @@ use rustora_engine::world::World;
 use rustora_launch::{LoadedGame, ReplayDriver, Step, load_game};
 use rustora_net::replay::Replay;
 
-/// Type names of an activity and its nested children, like `Fly > Turn`.
-fn activity_chain(a: Option<rustora_engine::activity::ActivityRef>) -> String {
+/// Type names of an activity and its nested children with their targets, like the C# `Harness.TraceActor` output:
+/// `Move[1024,2048,0] > Turn`.
+fn activity_chain(self_: &rustora_engine::actor::ActorRef, a: Option<rustora_engine::activity::ActivityRef>) -> String {
+    use rustora_engine::target::TargetType;
     let mut out = Vec::new();
     let mut cur = a;
     while let Some(x) = cur {
-        out.push(x.type_name());
+        let targets: Vec<String> = x
+            .get_targets(self_)
+            .iter()
+            .map(|t| match t.target_type() {
+                TargetType::Actor => format!("a{}", t.actor().expect("actor").id),
+                TargetType::Invalid => "invalid".to_string(),
+                _ => {
+                    let p = t.center_position();
+                    format!("{},{},{}", p.x, p.y, p.z)
+                }
+            })
+            .collect();
+        if targets.is_empty() {
+            out.push(x.type_name().to_string());
+        } else {
+            out.push(format!("{}[{}]", x.type_name(), targets.join(",")));
+        }
         cur = x.base().child_activity();
     }
     out.join(" > ")
@@ -43,7 +62,7 @@ fn print_detail(world: &World) {
 /// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick.
 fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
     let mut driver = ReplayDriver::new(world, replay);
-    while world.world_tick() < max_ticks {
+    while world.world_tick() < max_ticks && driver.orders.out_of_sync.is_none() {
         match driver.step() {
             Step::Ticked => {
                 if !on_tick(world, world.sync_hash()) {
@@ -56,6 +75,10 @@ fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: im
                 break;
             }
         }
+    }
+    let extra_steps: u32 = std::env::var("EXTRA_STEPS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    for _ in 0..extra_steps {
+        driver.step();
     }
     driver.orders
 }
@@ -337,7 +360,21 @@ fn main() {
                     let (a, b) = v.split_once(':')?;
                     Some((a.parse().ok()?, b.parse().ok()?))
                 });
+                let trace_cell: Option<rustora_core::world_types::CPos> = std::env::var("TRACE_CELL").ok().and_then(|v| {
+                    let (x, y) = v.split_once(',')?;
+                    Some(rustora_core::world_types::CPos::new(x.parse().ok()?, y.parse().ok()?))
+                });
                 run_replay(&world, replay, tick, |w, _| {
+                    if let Some(c) = trace_cell {
+                        use rustora_mods_common::actor_map::WorldExt;
+                        let actors: Vec<String> = w
+                            .actor_map()
+                            .get_actors_at(c)
+                            .iter()
+                            .map(|a| format!("{}:{}@{:?}", a.id, a.info.name, a.center_position()))
+                            .collect();
+                        eprintln!("cell {} {:?}", w.world_tick(), actors);
+                    }
                     if let Some(a) = trace.and_then(|id| w.get_actor_by_id(id)) {
                         let facing = a
                             .trait_or_default::<dyn rustora_engine::traits::IFacing>()
@@ -354,7 +391,7 @@ fn main() {
                             a.center_position(),
                             facing,
                             prone,
-                            activity_chain(a.current_activity())
+                            activity_chain(&a, a.current_activity())
                         );
                     }
                     if let Some((pi, fid)) = trace_frozen {
@@ -408,7 +445,7 @@ fn main() {
             });
             println!("ticks {} in {:?}", world.world_tick(), start.elapsed());
             if let Some(f) = om.out_of_sync {
-                println!("recorded sync hash differs at frame {f}");
+                println!("recorded sync hash differs at frame {f}: {:?}", om.out_of_sync_hashes);
             }
             match mismatch {
                 Some(t) => {

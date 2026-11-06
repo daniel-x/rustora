@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! `DeveloperMode`, `MapOptions`, `MapBuildRadius`, power, base and line-build traits, and `BuildingUtils`.
+//! `DeveloperMode`, `DebugPauseState`, `MapOptions`, `MapBuildRadius`, power, base and line-build traits, and `BuildingUtils`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -33,6 +33,7 @@ use crate::util;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("DeveloperMode", |n| load_info!(DeveloperModeInfo, n));
+    r.register("DebugPauseState", |n| load_info!(DebugPauseStateInfo, n));
     r.register("MapOptions", |n| load_info!(MapOptionsInfo, n));
     r.register("MapBuildRadius", |n| load_info!(MapBuildRadiusInfo, n));
     r.register("PowerManager", |n| load_info!(PowerManagerInfo, n));
@@ -1642,5 +1643,27 @@ impl IResolveOrder for AllyRepair {
         if let Some(rb) = building.trait_or_default::<RepairableBuilding>() {
             rb.repair_building(&building, &self_.owner());
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct DebugPauseStateInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+}
+
+/// Adds the pause state of the world to the sync hash.
+pub struct DebugPauseState {
+    world: std::rc::Weak<rustora_engine::world::World>,
+}
+
+register_traits!(DebugPauseState: ISync);
+info_impl!(DebugPauseStateInfo => |_info, init| Some(Rc::new(DebugPauseState {
+    world: Rc::downgrade(&init.world()),
+})));
+
+impl ISync for DebugPauseState {
+    fn sync_hash(&self) -> i32 {
+        self.world.upgrade().is_some_and(|w| w.paused()) as i32
     }
 }

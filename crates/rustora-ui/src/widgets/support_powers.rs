@@ -226,6 +226,12 @@ impl SupportPowersWidget {
             &instance.info.select_target_speech_notification,
             &instance.info.select_target_text_notification,
         );
+        if instance.info.kind.targets_immediately() {
+            ingame
+                .world
+                .issue_order(Order::new(&icon.power.key, Some(manager.self_.clone()), Target::Invalid, false));
+            return;
+        }
         ingame.set_order_generator(Rc::new(SelectGenericPowerTarget {
             manager: manager.clone(),
             order_key: icon.power.key.clone(),

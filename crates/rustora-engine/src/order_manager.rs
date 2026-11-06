@@ -125,6 +125,11 @@ pub struct OrderManager {
     net_frame_interval: i32,
     /// First frame whose synced state diverged, if any.
     pub out_of_sync: Option<i32>,
+    /// The two `(sync hash, defeat state)` pairs of the first out of sync frame, in arrival order.
+    pub out_of_sync_hashes: Option<((i32, u64), (i32, u64))>,
+    /// Starts the game on a received `StartGame` order, like `Game.StartGame` does for a replay. Packets that arrive
+    /// before it, like the disconnect of a client that left the lobby, are then not queued.
+    pub start_on_order: bool,
     /// The timestep multiplier the server requests so that this client does not run ahead of slower ones.
     pub tick_scale: f32,
     /// Collects the orders that concern the client user interface in `client_orders`.
@@ -150,6 +155,8 @@ impl OrderManager {
             collect_client_orders: false,
             client_orders: Vec::new(),
             out_of_sync: None,
+            out_of_sync_hashes: None,
+            start_on_order: false,
             tick_scale: 1.0,
         }
     }
@@ -192,6 +199,7 @@ impl OrderManager {
                     Some(&(h, d)) => {
                         if (h != sync_hash || d != defeat_state) && self.out_of_sync.is_none() {
                             self.out_of_sync = Some(frame);
+                            self.out_of_sync_hashes = Some(((h, d), (sync_hash, defeat_state)));
                         }
                     }
                     None => {
@@ -275,7 +283,6 @@ impl OrderManager {
             | "EndKickVote"
             | "Chat"
             | "TeamChat"
-            | "StartGame"
             | "HandshakeRequest"
             | "ServerError"
             | "AuthenticationError"
@@ -288,6 +295,14 @@ impl OrderManager {
             | "SyncMapPool"
             | "GameSaved"
             | "Kick" => {
+                if self.collect_client_orders {
+                    self.client_orders.push((client_id, raw.clone()));
+                }
+            }
+            "StartGame" => {
+                if self.start_on_order {
+                    self.start_game();
+                }
                 if self.collect_client_orders {
                     self.client_orders.push((client_id, raw.clone()));
                 }

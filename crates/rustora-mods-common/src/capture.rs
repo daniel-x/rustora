@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `CaptureManager`, `Capturable`, `Captures`, `CaptureActor`, `ProximityCaptor`, `TransformOnCapture`,
+//! Ports of `CaptureManager`, `Capturable`, `Captures`, `CaptureActor`, `ProximityCaptor`, `ProximityCapturable`,
+//! `TransformOnCapture`,
 //! `GivesCashOnCapture`, `RequiresSpecificOwners`, `CapturableProgressBar` and `CapturableProgressBlink`.
 //!
-//! Not ported: the floating cash text of `GivesCashOnCapture`.
+//! Not ported: the floating cash text of `GivesCashOnCapture` and the range circle and flash of `ProximityCapturable`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -23,6 +24,7 @@ use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
 use rustora_engine::{conditional_plumbing, info_impl, load_info, register_traits};
 
+use crate::actor_map::WorldExt;
 use crate::auto_target::IDisableEnemyAutoTarget;
 use crate::base::PlayerExperience;
 use crate::cargo::{Enter, EnterHooks};
@@ -38,6 +40,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Capturable", |n| load_info!(CapturableInfo, n));
     r.register("Captures", |n| load_info!(CapturesInfo, n));
     r.register("ProximityCaptor", |n| load_info!(ProximityCaptorInfo, n));
+    r.register("ProximityCapturable", |n| load_info!(ProximityCapturableInfo, n));
     r.register("RequiresSpecificOwners", |n| load_info!(RequiresSpecificOwnersInfo, n));
     r.register("TransformOnCapture", |n| load_info!(TransformOnCaptureInfo, n));
     r.register("GivesCashOnCapture", |n| load_info!(GivesCashOnCaptureInfo, n));
@@ -679,14 +682,220 @@ impl EnterHooks for CaptureActorHooks {
     }
 }
 
-/// `ProximityCaptor` only tags actors for `ProximityCapturable`, which RA does not use.
+/// `ProximityCaptor` only tags actors with the capture types for `ProximityCapturable`.
 #[derive(Clone, Debug, Default, FieldLoad)]
 pub struct ProximityCaptorInfo {
     #[field(ignore)]
     pub instance_name: Option<String>,
+    #[field(require)]
+    pub types: BitSet<CaptureType>,
 }
 
 info_impl!(ProximityCaptorInfo => |_info, _init| None);
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ProximityCapturableInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub captor_types: BitSet<CaptureType>,
+    pub must_be_clear: bool,
+    pub sticky: bool,
+    pub permanent: bool,
+    pub draw_decoration: bool,
+    pub range: rustora_core::world_types::WDist,
+}
+
+impl Default for ProximityCapturableInfo {
+    fn default() -> Self {
+        ProximityCapturableInfo {
+            instance_name: None,
+            captor_types: BitSet::new(&["Player", "Vehicle", "Tank", "Infantry"]),
+            must_be_clear: false,
+            sticky: false,
+            permanent: false,
+            draw_decoration: true,
+            range: rustora_core::world_types::WDist::from_cells(5),
+        }
+    }
+}
+
+/// `ProximityCapturable` with `ProximityCapturableBase`: the actor goes to the owner of the captor that has been in
+/// range the longest.
+pub struct ProximityCapturable {
+    info: Rc<ProximityCapturableInfo>,
+    me: Weak<ProximityCapturable>,
+    self_: ActorRef,
+    original_owner: PlayerRef,
+    actors_in_range: RefCell<Vec<ActorRef>>,
+    trigger: Cell<i32>,
+    prev_position: Cell<rustora_core::world_types::WPos>,
+    skip_trigger_update: Cell<bool>,
+}
+
+register_traits!(ProximityCapturable: ITick, INotifyAddedToWorld, INotifyRemovedFromWorld, INotifyOwnerChanged);
+info_impl!(ProximityCapturableInfo => |info, init| Some(Rc::new_cyclic(|me| ProximityCapturable {
+    info,
+    me: me.clone(),
+    self_: init.self_.clone(),
+    original_owner: init.self_.owner(),
+    actors_in_range: RefCell::new(Vec::new()),
+    trigger: Cell::new(0),
+    prev_position: Cell::new(rustora_core::world_types::WPos::ZERO),
+    skip_trigger_update: Cell::new(false),
+})));
+
+impl ProximityCapturable {
+    pub fn captured(&self) -> bool {
+        !Rc::ptr_eq(&self.self_.owner(), &self.original_owner)
+    }
+
+    fn create_trigger(&self, self_: &ActorRef) -> i32 {
+        let entered = self.me.clone();
+        let exited = self.me.clone();
+        self_.world().actor_map().add_proximity_trigger(
+            self_.center_position(),
+            self.info.range,
+            rustora_core::world_types::WDist::ZERO,
+            Some(Rc::new(move |a: &ActorRef| {
+                if let Some(t) = entered.upgrade() {
+                    t.actor_entered(a);
+                }
+            })),
+            Some(Rc::new(move |a: &ActorRef| {
+                if let Some(t) = exited.upgrade() {
+                    t.actor_left(a);
+                }
+            })),
+        )
+    }
+
+    fn captor_types(a: &ActorRef) -> Option<BitSet<CaptureType>> {
+        a.info.trait_info::<ProximityCaptorInfo>().map(|pc| pc.types)
+    }
+
+    fn can_be_captured_by(&self, a: &ActorRef) -> bool {
+        a.id != self.self_.id && Self::captor_types(a).is_some_and(|t| t.overlaps(&self.info.captor_types))
+    }
+
+    fn actor_entered(&self, other: &ActorRef) {
+        if self.skip_trigger_update.get() || !self.can_be_captured_by(other) {
+            return;
+        }
+        self.actors_in_range.borrow_mut().push(other.clone());
+        self.update_ownership();
+    }
+
+    fn actor_left(&self, other: &ActorRef) {
+        if self.skip_trigger_update.get() || !self.can_be_captured_by(other) {
+            return;
+        }
+        {
+            let mut in_range = self.actors_in_range.borrow_mut();
+            if let Some(i) = in_range.iter().position(|a| a.id == other.id) {
+                in_range.remove(i);
+            }
+        }
+        self.update_ownership();
+    }
+
+    fn update_ownership(&self) {
+        if self.captured() && self.info.permanent {
+            self.skip_trigger_update.set(true);
+            self.self_.world().actor_map().remove_proximity_trigger(self.trigger.get());
+            return;
+        }
+        let in_range = self.actors_in_range.borrow().clone();
+        let owner = self.self_.owner();
+        match in_range.first() {
+            None => {
+                if self.captured() && !self.info.sticky {
+                    self.change_ownership(self.original_owner.player_actor().clone());
+                }
+            }
+            Some(captor) if self.info.must_be_clear => {
+                let captor_owner = captor.owner();
+                let is_clear = in_range
+                    .iter()
+                    .all(|a| captor_owner.relationship_with(Some(&a.owner())) == PlayerRelationship::ALLY);
+                if self.captured() && !is_clear {
+                    self.change_ownership(self.original_owner.player_actor().clone());
+                } else if !Rc::ptr_eq(&owner, &captor_owner) && is_clear {
+                    self.change_ownership(captor.clone());
+                }
+            }
+            Some(captor) => {
+                if !Rc::ptr_eq(&owner, &captor.owner()) {
+                    self.change_ownership(captor.clone());
+                }
+            }
+        }
+    }
+
+    fn change_ownership(&self, captor: ActorRef) {
+        let me = self.me.clone();
+        self.self_.world().add_frame_end_task(Box::new(move |_w| {
+            let Some(t) = me.upgrade() else { return };
+            let self_ = t.self_.clone();
+            if self_.disposed() || captor.disposed() {
+                return;
+            }
+            t.skip_trigger_update.set(true);
+            let previous_owner = self_.owner();
+            let new_owner = captor.owner();
+            self_.change_owner(new_owner.clone());
+            let types = Self::captor_types(&captor).unwrap_or_default();
+            for n in self_.traits_implementing::<dyn INotifyCapture>() {
+                n.on_capture(&self_, &captor, &previous_owner, &new_owner, types);
+            }
+        }));
+    }
+}
+
+impl INotifyAddedToWorld for ProximityCapturable {
+    fn added_to_world(&self, self_: &ActorRef) {
+        if !self.skip_trigger_update.get() {
+            self.trigger.set(self.create_trigger(self_));
+        }
+    }
+}
+
+impl INotifyRemovedFromWorld for ProximityCapturable {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        if self.skip_trigger_update.get() {
+            return;
+        }
+        self_.world().actor_map().remove_proximity_trigger(self.trigger.get());
+        self.actors_in_range.borrow_mut().clear();
+    }
+}
+
+impl ITick for ProximityCapturable {
+    fn tick(&self, self_: &ActorRef) {
+        let pos = self_.center_position();
+        if !self_.is_in_world() || pos == self.prev_position.get() {
+            return;
+        }
+        self_.world().actor_map().update_proximity_trigger(
+            self.trigger.get(),
+            pos,
+            self.info.range,
+            rustora_core::world_types::WDist::ZERO,
+        );
+        self.prev_position.set(pos);
+    }
+}
+
+impl INotifyOwnerChanged for ProximityCapturable {
+    /// `Game.RunAfterTick` resets the flag after the frame end tasks of this tick; no proximity trigger fires before.
+    fn on_owner_changed(&self, self_: &ActorRef, _old: &PlayerRef, _new: &PlayerRef) {
+        let me = self.me.clone();
+        self_.world().add_frame_end_task(Box::new(move |_w| {
+            if let Some(t) = me.upgrade() {
+                t.skip_trigger_update.set(false);
+            }
+        }));
+    }
+}
 
 /// `RequiresSpecificOwners` only restricts the map editor.
 #[derive(Clone, Debug, Default, FieldLoad)]

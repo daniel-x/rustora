@@ -22,16 +22,32 @@ use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
 use rustora_net::replay::Replay;
 
-/// Opens the map with the given uid from the `maps` folder of the RA mod.
-pub fn find_map(engine: &Path, uid: &str) -> Option<Arc<dyn Package>> {
-    for e in std::fs::read_dir(engine.join("mods/ra/maps")).ok()?.flatten() {
+/// Opens the map with the given uid from the `maps` folder of the RA mod or from the user map folders
+/// `<support>/maps/ra/<version>`, like the `MapFolders` of the RA manifest.
+pub fn find_map(engine: &Path, support: &str, uid: &str) -> Option<Arc<dyn Package>> {
+    let mut folders = vec![engine.join("mods/ra/maps")];
+    if let Ok(versions) = std::fs::read_dir(Path::new(support).join("maps/ra")) {
+        let mut versions: Vec<_> = versions.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        versions.sort();
+        folders.extend(versions);
+    }
+    folders.iter().find_map(|f| find_map_in(f, uid))
+}
+
+fn find_map_in(folder: &Path, uid: &str) -> Option<Arc<dyn Package>> {
+    for e in std::fs::read_dir(folder).ok()?.flatten() {
         let p = e.path();
         let pkg: Arc<dyn Package> = if p.is_dir() {
             Arc::new(Folder::new(&p))
         } else {
-            Arc::new(ZipPackage::open_file(&p)?)
+            match ZipPackage::open_file(&p) {
+                Some(z) => Arc::new(z),
+                None => continue,
+            }
         };
-        if rustora_game::map::compute_uid(pkg.as_ref(), 12).ok()? == uid || MapPackage::load(pkg.clone()).ok()?.uid == uid {
+        if rustora_game::map::compute_uid(pkg.as_ref(), 12).ok() == Some(uid.to_string())
+            || MapPackage::load(pkg.clone()).ok().is_some_and(|m| m.uid == uid)
+        {
             return Some(pkg);
         }
     }
@@ -62,7 +78,7 @@ pub fn load_game(engine: &Path, support: &str, replay_path: &str) -> LoadedGame 
     let mut replay = Replay::parse(&std::fs::read(replay_path).expect("read replay")).expect("parse replay");
     let lobby = replay.lobby_info.take().expect("lobby info");
     let uid = lobby.global_settings.map.clone().expect("map uid");
-    let pkg = find_map(engine, &uid).expect("map not found");
+    let pkg = find_map(engine, support, &uid).expect("map not found");
     let (world, mod_data, read_file) = load_world(engine, support, pkg, lobby, true);
     LoadedGame {
         world,
@@ -208,7 +224,7 @@ pub struct ReplayDriver {
 impl ReplayDriver {
     pub fn new(world: &Rc<World>, replay: Replay) -> ReplayDriver {
         let mut orders = OrderManager::new(world.clone(), Box::new(ReplayConnection::new(replay.chunks, 3)));
-        orders.start_game();
+        orders.start_on_order = true;
         ReplayDriver {
             orders,
             world: world.clone(),

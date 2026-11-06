@@ -78,6 +78,7 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.projectiles.insert("GravityBomb", projectile_loader!(GravityBombInfo));
     r.projectiles.insert("Missile", projectile_loader!(MissileInfo));
     r.projectiles.insert("TeslaZap", projectile_loader!(TeslaZapInfo));
+    r.projectiles.insert("LaserZap", projectile_loader!(LaserZapInfo));
     r.warheads.insert("SpreadDamage", |y| load_damage(y, DamageKind::Spread));
     r.warheads.insert("TargetDamage", |y| load_damage(y, DamageKind::Target));
     r.warheads
@@ -88,6 +89,7 @@ pub fn register_weapon_parts(r: &mut WeaponRegistry) {
     r.warheads.insert("CreateResource", warhead_loader!(CreateResourceWarhead));
     r.warheads.insert("DestroyResource", warhead_loader!(DestroyResourceWarhead));
     r.warheads.insert("FireCluster", warhead_loader!(FireClusterWarhead));
+    r.warheads.insert("GrantExternalCondition", warhead_loader!(GrantExternalConditionWarhead));
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -785,6 +787,56 @@ impl IWarhead for CreateResourceWarhead {
                 .borrow_mut()
                 .next_range(1, max_density - layer.get_resource(cell).density);
             layer.add_resource(ty, cell, splash);
+        }
+    }
+}
+
+/// Grants an external condition to the hit actors.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct GrantExternalConditionWarhead {
+    #[field(flatten)]
+    pub base: WarheadBase,
+    #[field(require)]
+    pub condition: String,
+    pub duration: i32,
+    pub range: WDist,
+}
+
+impl Default for GrantExternalConditionWarhead {
+    fn default() -> Self {
+        GrantExternalConditionWarhead {
+            base: WarheadBase::default(),
+            condition: String::new(),
+            duration: 0,
+            range: WDist::from_cells(1),
+        }
+    }
+}
+
+impl IWarhead for GrantExternalConditionWarhead {
+    fn delay(&self) -> i32 {
+        self.base.delay
+    }
+
+    fn do_impact(&self, target: &Target, args: &WarheadArgs) {
+        let fired_by = &args.source_actor;
+        let actors = match target.target_type() {
+            TargetType::Invalid => return,
+            TargetType::Actor => vec![target.actor().expect("actor target").clone()],
+            _ => fired_by.world().find_actors_in_circle(target.center_position(), self.range),
+        };
+        let source = fired_by.id as usize;
+        for a in actors {
+            if !self.base.is_valid_against(&a, fired_by) {
+                continue;
+            }
+            if let Some(e) = a
+                .traits_implementing::<crate::experience::ExternalCondition>()
+                .into_iter()
+                .find(|t| t.info.condition == self.condition && t.can_grant_condition(source))
+            {
+                e.grant_condition(&a, source, self.duration, 0);
+            }
         }
     }
 }
@@ -1725,6 +1777,223 @@ impl Effect for TeslaZap {
             z_offset: 0,
             items,
         });
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `LaserZapInfo`. `Shape` and `SecondaryBeamShape` only affect rendering and are kept as text.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct LaserZapInfo {
+    pub width: WDist,
+    pub shape: String,
+    pub z_offset: i32,
+    pub duration: i32,
+    pub damage_duration: i32,
+    pub damage_interval: i32,
+    pub use_player_color: bool,
+    pub color: Color,
+    pub track_target: bool,
+    pub inaccuracy: WDist,
+    pub inaccuracy_type: InaccuracyType,
+    pub blockable: bool,
+    pub secondary_beam: bool,
+    pub secondary_beam_width: WDist,
+    pub secondary_beam_shape: String,
+    pub secondary_beam_z_offset: i32,
+    pub secondary_beam_use_player_color: bool,
+    pub secondary_beam_color: Color,
+    pub hit_anim: Option<String>,
+    pub hit_anim_sequence: String,
+    pub hit_anim_palette: String,
+    pub launch_effect_image: Option<String>,
+    pub launch_effect_sequence: Option<String>,
+    pub launch_effect_palette: String,
+}
+
+impl Default for LaserZapInfo {
+    fn default() -> Self {
+        let red = Color::from_argb(255, 255, 0, 0);
+        LaserZapInfo {
+            width: WDist::new(86),
+            shape: "Cylindrical".into(),
+            z_offset: 0,
+            duration: 10,
+            damage_duration: 1,
+            damage_interval: 1,
+            use_player_color: false,
+            color: red,
+            track_target: true,
+            inaccuracy: WDist::ZERO,
+            inaccuracy_type: InaccuracyType::Maximum,
+            blockable: false,
+            secondary_beam: false,
+            secondary_beam_width: WDist::new(86),
+            secondary_beam_shape: "Cylindrical".into(),
+            secondary_beam_z_offset: 0,
+            secondary_beam_use_player_color: false,
+            secondary_beam_color: red,
+            hit_anim: None,
+            hit_anim_sequence: "idle".into(),
+            hit_anim_palette: "effect".into(),
+            launch_effect_image: None,
+            launch_effect_sequence: None,
+            launch_effect_palette: "effect".into(),
+        }
+    }
+}
+
+impl IProjectileInfo for LaserZapInfo {
+    fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
+        let w = args.source_actor.world();
+        let owner_color = args.source_actor.owner().color;
+        let color = if self.use_player_color { owner_color } else { self.color };
+        let secondary_color = if self.secondary_beam_use_player_color { owner_color } else { self.secondary_beam_color };
+        let mut target = args.passive_target;
+        if self.inaccuracy.length > 0 {
+            let max = get_projectile_inaccuracy(self.inaccuracy.length, self.inaccuracy_type, &args);
+            target = target + WVec::from_pdf(&mut w.shared_random.borrow_mut(), 2) * max / 1024;
+        }
+        let hit_anim = self
+            .hit_anim
+            .as_deref()
+            .filter(|i| !i.is_empty())
+            .map(|image| Animation::new(w.map().sequences().clone(), image, None, None));
+        Some(Rc::new_cyclic(|me: &Weak<LaserZap>| LaserZap {
+            me: me.clone(),
+            info: self.clone(),
+            color,
+            secondary_color,
+            show_hit_anim: Rc::new(Cell::new(hit_anim.is_some())),
+            hit_anim,
+            ticks: Cell::new(0),
+            interval: Cell::new(0),
+            target: Cell::new(target),
+            source: Cell::new(args.source),
+            args,
+        }))
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// `LaserZap`: a beam that deals damage for `DamageDuration` ticks and fades over `Duration` ticks.
+struct LaserZap {
+    me: Weak<LaserZap>,
+    info: LaserZapInfo,
+    args: ProjectileArgs,
+    color: Color,
+    secondary_color: Color,
+    hit_anim: Option<Rc<Animation>>,
+    show_hit_anim: Rc<Cell<bool>>,
+    ticks: Cell<i32>,
+    interval: Cell<i32>,
+    target: Cell<WPos>,
+    source: Cell<WPos>,
+}
+
+impl LaserZap {
+    fn beam(&self, color: Color, width: WDist, out: &mut Vec<Renderable>) {
+        let info = &self.info;
+        let a = (info.duration - self.ticks.get()) * color.a() as i32 / info.duration;
+        let c = crate::effects::premultiplied(Color::from_argb(a.clamp(0, 255) as u8, color.r(), color.g(), color.b()));
+        out.push(Renderable::Line {
+            from: self.source.get(),
+            to: self.target.get(),
+            width: width.length as f32,
+            from_color: c,
+            to_color: c,
+        });
+    }
+}
+
+impl Effect for LaserZap {
+    fn tick(&self, world: &Rc<World>) {
+        let args = &self.args;
+        let info = &self.info;
+        self.source.set((args.current_source)());
+        if self.ticks.get() == 0
+            && let (Some(image), Some(sequence)) = (info.launch_effect_image.as_deref(), info.launch_effect_sequence.as_deref())
+            && !image.is_empty()
+            && !sequence.is_empty()
+        {
+            let (pos, facing) = (self.source.get(), (args.current_muzzle_facing)());
+            let (image, sequence, palette) = (image.to_string(), sequence.to_string(), info.launch_effect_palette.clone());
+            world.add_frame_end_task(Box::new(move |w| {
+                w.add_effect(SpriteEffect::at(w, pos, facing, &image, &sequence, PaletteRef::named(&palette)));
+            }));
+        }
+        if info.track_target && args.guided_target.is_valid_for(&args.source_actor) {
+            let p = if args.weapon.target_actor_center {
+                args.guided_target.center_position()
+            } else {
+                util::closest_position(&args.guided_target.positions(), self.source.get()).unwrap_or(WPos::ZERO)
+            };
+            self.target.set(p);
+        }
+        if info.blockable
+            && let Some(hit) =
+                any_blocking_actors_between(world, &args.source_actor.owner(), self.source.get(), self.target.get(), info.width)
+        {
+            self.target.set(hit);
+        }
+        if self.ticks.get() < info.damage_duration {
+            self.interval.set(self.interval.get() - 1);
+            if self.interval.get() <= 0 {
+                let target = self.target.get();
+                let mut a = WarheadArgs::from_projectile(args);
+                a.impact_orientation =
+                    WRot::new(WAngle::ZERO, util::get_vertical_angle(self.source.get(), target), (args.current_muzzle_facing)());
+                a.impact_position = target;
+                weapon_impact_args(&args.weapon, &Target::from_pos(target), &a);
+                self.interval.set(info.damage_interval);
+            }
+        }
+        if self.show_hit_anim.get()
+            && let Some(anim) = &self.hit_anim
+        {
+            if self.ticks.get() == 0 {
+                let show = self.show_hit_anim.clone();
+                anim.play_then(&info.hit_anim_sequence, Some(Rc::new(move || show.set(false))));
+            }
+            anim.tick();
+        }
+        self.ticks.set(self.ticks.get() + 1);
+        if self.ticks.get() >= info.duration && !self.show_hit_anim.get() {
+            let me: EffectRef = self.me.upgrade().expect("laser zap");
+            world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+        }
+    }
+
+    fn is_sync(&self) -> bool {
+        true
+    }
+
+    fn sync_hash(&self) -> i32 {
+        self.target.get().hash() ^ self.source.get().hash()
+    }
+
+    fn render(&self, viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        let (source, target) = (self.source.get(), self.target.get());
+        if fog_obscures(viewer, target) && fog_obscures(viewer, source) {
+            return;
+        }
+        let info = &self.info;
+        if self.ticks.get() < info.duration {
+            self.beam(self.color, info.width, out);
+            if info.secondary_beam {
+                self.beam(self.secondary_color, info.secondary_beam_width, out);
+            }
+        }
+        if self.show_hit_anim.get()
+            && let Some(anim) = &self.hit_anim
+        {
+            render_animation(anim, target, WVec::ZERO, 0, &PaletteRef::named(&info.hit_anim_palette), out);
+        }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

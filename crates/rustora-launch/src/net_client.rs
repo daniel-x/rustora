@@ -413,7 +413,7 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
         for order in &orders.orders {
             if process_lobby_order(&md, &mut connection, &mut lobby, options, order)? {
                 let uid = lobby.global_settings.map.clone().ok_or("lobby has no map")?;
-                let package = crate::find_map(engine, &uid).ok_or_else(|| format!("map {uid} not found"))?;
+                let package = crate::find_map(engine, support, &uid).ok_or_else(|| format!("map {uid} not found"))?;
                 let is_host = lobby.client_with_index(connection.local_client_id()).is_some_and(|c| c.is_admin);
                 let (world, _, _) = crate::load_world(engine, support, package, lobby, false);
                 if let Some((last_frame, last_sync_frame)) = parse_game_save_frames(order) {

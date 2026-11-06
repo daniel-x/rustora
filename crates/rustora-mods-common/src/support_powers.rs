@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Port of `Traits/SupportPowers`: `SupportPowerManager.cs`, `SupportPower.cs`, `DirectionalSupportPower.cs`,
-//! `AirstrikePower.cs` and `ParatroopersPower.cs`. The subclasses are one [`SupportPower`] struct with a
+//! `AirstrikePower.cs`, `ParatroopersPower.cs` and `ProduceActorPower.cs`. The subclasses are one [`SupportPower`] struct with a
 //! [`PowerKind`]. Beacons, radar pings, sounds and order generators are left out.
 
 use std::cell::{Cell, RefCell};
@@ -43,6 +43,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("GrantExternalConditionPower", |n| load_power(n, PowerKind::GrantExternalCondition));
     r.register("SpawnActorPower", |n| load_power(n, PowerKind::SpawnActor));
     r.register("ChronoshiftPower", |n| load_power(n, PowerKind::Chronoshift));
+    r.register("ProduceActorPower", |n| load_power(n, PowerKind::ProduceActor));
 }
 
 pub trait INotifySupportPower {
@@ -60,6 +61,7 @@ pub enum PowerKind {
     GrantExternalCondition,
     SpawnActor,
     Chronoshift,
+    ProduceActor,
 }
 
 impl PowerKind {
@@ -72,7 +74,13 @@ impl PowerKind {
             PowerKind::GrantExternalCondition => "GrantExternalConditionPower",
             PowerKind::SpawnActor => "SpawnActorPower",
             PowerKind::Chronoshift => "ChronoshiftPower",
+            PowerKind::ProduceActor => "ProduceActorPower",
         }
+    }
+
+    /// `SelectTarget` issues the order right away instead of opening an order generator.
+    pub fn targets_immediately(self) -> bool {
+        matches!(self, PowerKind::Gps | PowerKind::ProduceActor)
     }
 }
 
@@ -89,7 +97,7 @@ fn load_power(node: &TraitNode, kind: PowerKind) -> Result<Rc<dyn rustora_engine
         }
         PowerKind::Gps => {}
         PowerKind::Nuke => info.camera_remove_delay = 25,
-        PowerKind::GrantExternalCondition | PowerKind::SpawnActor => {}
+        PowerKind::GrantExternalCondition | PowerKind::SpawnActor | PowerKind::ProduceActor => {}
         PowerKind::Chronoshift => info.duration = 750,
     }
     info.order_name = format!("{}InfoOrder", kind.class_name());
@@ -203,6 +211,14 @@ pub struct SupportPowerInfo {
     pub selection_cursor: String,
     pub target_cursor: String,
     pub target_blocked_cursor: String,
+    // ProduceActorPower
+    pub actors: Vec<String>,
+    #[field(name = "Type")]
+    pub produce_type: String,
+    pub ready_audio: Option<String>,
+    pub ready_text_notification: Option<String>,
+    pub blocked_audio: Option<String>,
+    pub blocked_text_notification: Option<String>,
 }
 
 impl Default for SupportPowerInfo {
@@ -301,6 +317,12 @@ impl Default for SupportPowerInfo {
             selection_cursor: "chrono-select".into(),
             target_cursor: "chrono-target".into(),
             target_blocked_cursor: "move-blocked".into(),
+            actors: Vec::new(),
+            produce_type: String::new(),
+            ready_audio: None,
+            ready_text_notification: None,
+            blocked_audio: None,
+            blocked_text_notification: None,
         }
     }
 }
@@ -311,6 +333,8 @@ pub struct SupportPower {
     pub self_: ActorRef,
     gps_owner: RefCell<Option<Rc<GpsWatcher>>>,
     gps_was_paused: Cell<bool>,
+    /// The `FactionInit` of the actor, which `ProduceActorPower` passes to the produced actors.
+    faction: String,
 }
 
 impl rustora_engine::traits::TraitObject for SupportPower {
@@ -343,7 +367,18 @@ info_impl!(SupportPowerInfo => |info, init| {
     if let Some(g) = &gps_owner {
         g.gps_add(&init.self_);
     }
-    Some(Rc::new(SupportPower { info, state, self_: init.self_.clone(), gps_owner: RefCell::new(gps_owner), gps_was_paused: Cell::new(false) }))
+    let faction = init
+        .inits
+        .get::<rustora_engine::actor_init::FactionInit>()
+        .map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
+    Some(Rc::new(SupportPower {
+        info,
+        state,
+        self_: init.self_.clone(),
+        gps_owner: RefCell::new(gps_owner),
+        gps_was_paused: Cell::new(false),
+        faction,
+    }))
 });
 
 rustora_engine::conditional_simple!(SupportPower);
@@ -595,6 +630,7 @@ impl SupportPower {
             PowerKind::GrantExternalCondition => self.grant_external_condition(self_, order),
             PowerKind::Chronoshift => self.chronoshift(self_, order),
             PowerKind::SpawnActor => self.spawn_actor(self_, spawn_at.expect("set for this kind"), spawn_cell.expect("set for this kind")),
+            PowerKind::ProduceActor => self.produce_actor(self_),
             PowerKind::Gps => {
                 let (a, info) = (self_.clone(), self.info.clone());
                 self_.world().add_frame_end_task(Box::new(move |w| {
@@ -608,6 +644,43 @@ impl SupportPower {
                 }));
             }
         }
+    }
+
+    /// `ProduceActorPower.Activate`: the first producer that can produce any of `Actors` produces them.
+    fn produce_actor(&self, self_: &ActorRef) {
+        let w = self_.world();
+        let owner = self_.owner();
+        let info = &self.info;
+        let mut producers: Vec<(ActorRef, Rc<crate::production::Production>)> = w
+            .actors_with_trait::<crate::production::Production>()
+            .into_iter()
+            .filter(|(a, p)| Rc::ptr_eq(&a.owner(), &owner) && !p.is_trait_disabled() && p.info.produces.contains(&info.produce_type))
+            .collect();
+        producers.sort_by_key(|(a, _)| std::cmp::Reverse((crate::production::is_primary_building(a), a.id)));
+        let mut activated = false;
+        for (a, p) in &producers {
+            for name in &info.actors {
+                let ai = w
+                    .rules()
+                    .actor(name)
+                    .unwrap_or_else(|| panic!("Actors ruleset does not include the entry '{name}'"));
+                let inits = ActorInits::new()
+                    .with(OwnerInit::from_player(&owner))
+                    .with(rustora_engine::actor_init::FactionInit::new(
+                        crate::production::get_initial_faction(&ai, &self.faction),
+                    ));
+                activated |= p.produce(a, &ai, &info.produce_type, inits, 0);
+            }
+            if activated {
+                break;
+            }
+        }
+        let (speech, text) = if activated {
+            (&info.ready_audio, &info.ready_text_notification)
+        } else {
+            (&info.blocked_audio, &info.blocked_text_notification)
+        };
+        sound::notify_owner(self_, "Speech", speech.as_deref(), text.as_deref());
     }
 
     fn directional_facing(&self, order: &Order) -> Option<WAngle> {

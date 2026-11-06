@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Sprite file formats: `frame_count` for the simulation, `decode` for the renderer. Port of `ShpD2Loader.cs`, `ShpTDLoader.cs`, `TmpRALoader.cs`
-//! and `TmpTDLoader.cs`.
+//! `TmpTDLoader.cs` and `ShpTSLoader.cs`.
 
 fn u16_at(d: &[u8], o: usize) -> Option<u16> {
     Some(u16::from_le_bytes([*d.get(o)?, *d.get(o + 1)?]))
@@ -186,6 +186,9 @@ pub fn frame_count(d: &[u8]) -> Option<usize> {
         let index_start = u32_at(d, 28)? as usize;
         return index_end.checked_sub(index_start);
     }
+    if is_shp_ts(d) {
+        return u16_at(d, 6).map(|c| c as usize);
+    }
     None
 }
 
@@ -213,6 +216,9 @@ pub fn decode(d: &[u8]) -> Option<Vec<SpriteFrame>> {
     }
     if is_tmp_td(d) {
         return decode_tmp_td(d);
+    }
+    if is_shp_ts(d) {
+        return decode_shp_ts(d);
     }
     None
 }
@@ -382,6 +388,84 @@ fn decode_tmp_ra(d: &[u8]) -> Option<Vec<SpriteFrame>> {
         .collect()
 }
 
+/// `ShpTSLoader.IsShpTS`.
+pub fn is_shp_ts(d: &[u8]) -> bool {
+    if u16_at(d, 0) != Some(0) {
+        return false;
+    }
+    let Some(image_count) = u16_at(d, 6) else { return false };
+    if 8 + 24 * image_count as usize > d.len() {
+        return false;
+    }
+    let mut position = 12;
+    let mut f = 0;
+    loop {
+        let (Some(w), Some(h), Some(&kind)) = (u16_at(d, position), u16_at(d, position + 2), d.get(position + 4)) else {
+            return false;
+        };
+        if (w == 0 || h == 0) && kind == 0 {
+            return false;
+        }
+        position += 24;
+        f += 1;
+        if !(w == 0 && h == 0 && f < image_count) {
+            return f == image_count || kind < 4;
+        }
+    }
+}
+
+/// `ShpTSLoader.ParseFrames` with `ShpTSFrame`. Frames without data become empty frames.
+fn decode_shp_ts(d: &[u8]) -> Option<Vec<SpriteFrame>> {
+    let (fw, fh) = (u16_at(d, 2)? as usize, u16_at(d, 4)? as usize);
+    let count = u16_at(d, 6)? as usize;
+    (0..count)
+        .map(|i| {
+            let o = 8 + 24 * i;
+            let (x, y) = (u16_at(d, o)? as i32, u16_at(d, o + 2)? as i32);
+            let (width, height) = (u16_at(d, o + 4)? as usize, u16_at(d, o + 6)? as usize);
+            let format = *d.get(o + 8)?;
+            let file_offset = u32_at(d, o + 20)? as usize;
+            let (dw, dh) = (width + width % 2, height + height % 2);
+            if file_offset == 0 {
+                return Some(SpriteFrame {
+                    frame_width: fw,
+                    frame_height: fh,
+                    ..SpriteFrame::default()
+                });
+            }
+            let mut data = vec![0u8; dw * dh];
+            let mut s = file_offset;
+            if format == 3 {
+                for j in 0..height {
+                    let length = (u16_at(d, s)? as usize).checked_sub(2)?;
+                    rle_zeros_decode_into(d.get(s + 2..s + 2 + length)?, data.get_mut(dw * j..)?)?;
+                    s += 2 + length;
+                }
+            } else {
+                let length = if format == 2 {
+                    let l = (u16_at(d, s)? as usize).checked_sub(2)?;
+                    s += 2;
+                    l
+                } else {
+                    width
+                };
+                for j in 0..height {
+                    data.get_mut(dw * j..dw * j + length)?.copy_from_slice(d.get(s..s + length)?);
+                    s += length;
+                }
+            }
+            Some(SpriteFrame {
+                width: dw,
+                height: dh,
+                frame_width: fw,
+                frame_height: fh,
+                offset: ((x + (dw as i32 - fw as i32) / 2) as f32, (y + (dh as i32 - fh as i32) / 2) as f32),
+                data,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod d2_td_tests {
     use super::*;
@@ -432,6 +516,26 @@ mod d2_td_tests {
         let frames = decode(&d).expect("frames");
         assert_eq!(frames[0].data, [0x7f, 0, 0, 9]);
         assert_eq!(frames[0].offset, (0.0, 0.0));
+    }
+
+    #[test]
+    fn shp_ts_decodes_rle_rows_and_pads_to_even_sizes() {
+        let mut d = vec![0u8; 8 + 24];
+        d[2..4].copy_from_slice(&4u16.to_le_bytes());
+        d[4..6].copy_from_slice(&2u16.to_le_bytes());
+        d[6..8].copy_from_slice(&1u16.to_le_bytes());
+        d[8..10].copy_from_slice(&1u16.to_le_bytes());
+        d[12..14].copy_from_slice(&3u16.to_le_bytes());
+        d[14..16].copy_from_slice(&1u16.to_le_bytes());
+        d[16] = 3;
+        d[28..32].copy_from_slice(&32u32.to_le_bytes());
+        d.extend([5, 0, 7, 0, 1]);
+        assert!(is_shp_ts(&d));
+        assert_eq!(frame_count(&d), Some(1));
+        let f = &decode(&d).expect("frames")[0];
+        assert_eq!((f.width, f.height, f.frame_width, f.frame_height), (4, 2, 4, 2));
+        assert_eq!(f.data, [7, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(f.offset, (1.0, 0.0));
     }
 
     #[test]

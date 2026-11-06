@@ -3,7 +3,8 @@
 
 //! Ports of small condition and multiplier traits: `ToggleConditionOnOrder`, `GrantConditionOnDeploy`, `KillsSelf`,
 //! `ProximityExternalCondition`, `GrantExternalConditionToProduced`, `GrantConditionOnCombatantOwner`, `PowerMultiplier`,
-//! the handicap multipliers, `GivesBounty` and `SpawnActorsOnSell`.
+//! the handicap multipliers, `GivesBounty`, `SpawnActorsOnSell`, `GrantConditionOnMovement`, `GrantRandomCondition`, `ProductionTimeMultiplier` and
+//! `ProductionCostMultiplier`.
 //!
 //! Not ported: the floating bounty text, `IDelayCarryallPickup` because no RA actor uses a carryall, and the ramp check
 //! of `GrantConditionOnDeploy` because RA tilesets have no ramps.
@@ -61,6 +62,207 @@ pub fn register(r: &mut TraitRegistry) {
     });
     r.register("GivesBounty", |n| load_info!(GivesBountyInfo, n));
     r.register("SpawnActorsOnSell", |n| load_info!(SpawnActorsOnSellInfo, n));
+    r.register("GrantConditionOnMovement", |n| load_info!(GrantConditionOnMovementInfo, n));
+    r.register("GrantRandomCondition", |n| load_info!(GrantRandomConditionInfo, n));
+    r.register("ProductionTimeMultiplier", |n| load_info!(ProductionTimeMultiplierInfo, n));
+    r.register("ProductionCostMultiplier", |n| load_info!(ProductionCostMultiplierInfo, n));
+}
+
+/// The fields of `ProductionTimeMultiplier` and `ProductionCostMultiplier`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct ProductionMultiplierInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub multiplier: i32,
+    pub prerequisites: Vec<String>,
+    pub queue: Vec<String>,
+}
+
+impl Default for ProductionMultiplierInfo {
+    fn default() -> Self {
+        ProductionMultiplierInfo {
+            instance_name: None,
+            multiplier: 100,
+            prerequisites: Vec::new(),
+            queue: Vec::new(),
+        }
+    }
+}
+
+impl ProductionMultiplierInfo {
+    fn modifier(&self, tech_tree: &TechTree, queue: &str) -> i32 {
+        if (self.queue.is_empty() || self.queue.iter().any(|q| q == queue))
+            && (self.prerequisites.is_empty() || tech_tree.has_prerequisites(&self.prerequisites))
+        {
+            self.multiplier
+        } else {
+            100
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ProductionTimeMultiplierInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ProductionMultiplierInfo,
+}
+
+info_impl!(ProductionTimeMultiplierInfo => |_info, _init| None, [IProductionTimeModifierInfo]);
+
+impl IProductionTimeModifierInfo for ProductionTimeMultiplierInfo {
+    fn get_production_time_modifier(&self, tech_tree: &TechTree, queue: &str) -> i32 {
+        self.base.modifier(tech_tree, queue)
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ProductionCostMultiplierInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ProductionMultiplierInfo,
+}
+
+info_impl!(ProductionCostMultiplierInfo => |_info, _init| None, [IProductionCostModifierInfo]);
+
+impl IProductionCostModifierInfo for ProductionCostMultiplierInfo {
+    fn get_production_cost_modifier(&self, tech_tree: &TechTree, queue: &str) -> i32 {
+        self.base.modifier(tech_tree, queue)
+    }
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct GrantRandomConditionInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub conditions: Vec<String>,
+}
+
+/// Grants a random condition of `Conditions` when the actor is created.
+pub struct GrantRandomCondition {
+    info: Rc<GrantRandomConditionInfo>,
+}
+
+register_traits!(GrantRandomCondition: INotifyCreated);
+info_impl!(GrantRandomConditionInfo => |info, _| Some(Rc::new(GrantRandomCondition { info })));
+
+impl INotifyCreated for GrantRandomCondition {
+    fn created(&self, self_: &ActorRef) {
+        let conditions = &self.info.conditions;
+        if conditions.is_empty() {
+            return;
+        }
+        let i = self_.world().shared_random.borrow_mut().next_max(conditions.len() as i32) as usize;
+        self_.grant_condition(&conditions[i]);
+    }
+}
+
+/// The `MovementType` flags of a field, like `Horizontal, Turn`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MovementTypes(pub u8);
+
+impl rustora_core::fieldloader::FieldValue for MovementTypes {
+    const TYPE_NAME: &'static str = "MovementType";
+    fn parse(
+        field: &str,
+        value: Option<&str>,
+        _yaml: Option<&rustora_core::miniyaml::MiniYaml>,
+    ) -> Result<Self, rustora_core::fieldloader::LoadError> {
+        let mut r = 0;
+        for p in value.unwrap_or("").split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            r |= match p.to_ascii_lowercase().as_str() {
+                "none" => crate::locomotor::movement_type::NONE,
+                "horizontal" => crate::locomotor::movement_type::HORIZONTAL,
+                "vertical" => crate::locomotor::movement_type::VERTICAL,
+                "turn" => crate::locomotor::movement_type::TURN,
+                _ => return rustora_core::fieldloader::invalid(value, "MovementType", field),
+            };
+        }
+        Ok(MovementTypes(r))
+    }
+}
+
+impl rustora_core::fieldloader::ArrayAware for MovementTypes {}
+
+#[derive(Clone, Debug, FieldLoad)]
+pub struct GrantConditionOnMovementInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    #[field(require)]
+    pub condition: String,
+    pub valid_movement_types: MovementTypes,
+}
+
+impl Default for GrantConditionOnMovementInfo {
+    fn default() -> Self {
+        GrantConditionOnMovementInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            condition: String::new(),
+            valid_movement_types: MovementTypes(crate::locomotor::movement_type::HORIZONTAL),
+        }
+    }
+}
+
+/// Grants a condition while the actor moves in one of `ValidMovementTypes`.
+pub struct GrantConditionOnMovement {
+    info: Rc<GrantConditionOnMovementInfo>,
+    state: ConditionalState,
+    token: Cell<i32>,
+}
+
+register_traits!(GrantConditionOnMovement: INotifyMoving, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(GrantConditionOnMovementInfo => |info, _| Some(Rc::new(GrantConditionOnMovement {
+    state: ConditionalState::new(&info.base),
+    info,
+    token: Cell::new(INVALID_CONDITION_TOKEN),
+})));
+
+impl GrantConditionOnMovement {
+    fn update_condition(&self, self_: &ActorRef, types: u8) {
+        let valid = !self.state.is_trait_disabled() && types & self.info.valid_movement_types.0 != 0;
+        if !valid && self.token.get() != INVALID_CONDITION_TOKEN {
+            self.token.set(self_.revoke_condition(self.token.get()));
+        } else if valid && self.token.get() == INVALID_CONDITION_TOKEN {
+            self.token.set(self_.grant_condition(&self.info.condition));
+        }
+    }
+
+    fn current_types(self_: &ActorRef) -> u8 {
+        self_.trait_::<dyn IMove>().current_movement_types()
+    }
+}
+
+impl ConditionalHooks for GrantConditionOnMovement {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+
+    fn trait_enabled(&self, self_: &ActorRef) {
+        self.update_condition(self_, Self::current_types(self_));
+    }
+
+    fn trait_disabled(&self, self_: &ActorRef) {
+        self.update_condition(self_, Self::current_types(self_));
+    }
+}
+rustora_engine::conditional_plumbing!(GrantConditionOnMovement);
+
+impl INotifyCreated for GrantConditionOnMovement {
+    fn created(&self, self_: &ActorRef) {
+        conditional_created(self, self_);
+    }
+}
+
+impl INotifyMoving for GrantConditionOnMovement {
+    fn movement_type_changed(&self, self_: &ActorRef, ty: u8) {
+        self.update_condition(self_, ty);
+    }
 }
 
 fn notify_owner_faction(self_: &ActorRef, kind: &str, notification: Option<&str>) {

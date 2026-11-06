@@ -902,7 +902,8 @@ impl IPositionable for Aircraft {
         let altitude = w.map().distance_above_terrain(pos);
         if self.has_influence() && altitude.length <= self.info.min_airborne_altitude {
             let current = vec![(self.top_left(), FULL_CELL)];
-            if *self.landing_cells.borrow() != current {
+            // C# compares with `SequenceEqual` here, so the influence only moves when it would not change.
+            if *self.landing_cells.borrow() == current {
                 w.actor_map().remove_influence(self_, self);
                 *self.landing_cells.borrow_mut() = current;
                 w.actor_map().add_influence(self_, self);
