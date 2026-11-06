@@ -453,6 +453,7 @@ pub struct Client {
     loading_root: Option<rustora_ui::widget::WidgetId>,
     ui_tick_time: TickTime,
     world_tick_time: TickTime,
+    script_host: Rc<crate::script_host::ClientScriptHost>,
 }
 
 impl Client {
@@ -515,6 +516,9 @@ impl Client {
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
         let distance = services.settings.borrow().graphics.viewport_distance;
+        let assets = Rc::new(RefCell::new(assets));
+        let script_host = Rc::new(crate::script_host::ClientScriptHost::new(assets.clone()));
+        rustora_scripting::host::set_host(script_host.clone());
         let shell = if mod_data.content_available && content.is_none() {
             ShellWorld::load(engine, support, resolution, distance)
         } else {
@@ -524,7 +528,7 @@ impl Client {
             shell.world.pause_shellmap.set(pause_shellmap);
         }
         start_music(&services, shell.as_ref());
-        let mut ui = Ui::new(Rc::new(RefCell::new(assets)), Rc::new(loader), resolution, services.clone());
+        let mut ui = Ui::new(assets, Rc::new(loader), resolution, services.clone());
         ui.ui_scroll_speed = ui_scroll_speed;
         ui.cursor_names = Rc::new(cursors.names());
         let mut menu_args = WidgetArgs::default();
@@ -569,6 +573,41 @@ impl Client {
             world_tick_time: TickTime {
                 value: -(UI_TIMESTEP as i64),
             },
+            script_host,
+        }
+    }
+
+    /// Gives the scripts the camera position and the local player before a world tick.
+    fn update_script_host(&self) {
+        let Some(shell) = &self.shell else {
+            return;
+        };
+        let local_player = shell.ingame.as_ref().and_then(|i| i.local_player.clone()).or_else(|| shell.viewer.clone());
+        *self.script_host.local_player.borrow_mut() = local_player;
+        let (x, y) = shell.viewport.borrow().center;
+        self.script_host.camera.set(Some(px_to_world(x, y)));
+    }
+
+    /// Carries out what the scripts asked for during the last world tick.
+    fn drain_script_host(&self) {
+        if let Some(pos) = self.script_host.camera_request.take()
+            && let Some(shell) = &self.shell
+        {
+            let (x, y) = crate::scene::world_to_px(pos);
+            shell.viewport.borrow_mut().center_on((x as i32, y as i32));
+        }
+        let lines = std::mem::take(&mut *self.script_host.lines.borrow_mut());
+        let mut net = self.services.net.borrow_mut();
+        for line in lines {
+            net.notifications.push(rustora_ui::net::TextNotification {
+                pool: line.pool,
+                client_id: rustora_ui::net::SYSTEM_CLIENT_ID,
+                prefix: Some(line.prefix),
+                text: line.text,
+                prefix_color: line.prefix_color,
+                text_color: None,
+                time: rustora_ui::net::local_time(),
+            });
         }
     }
 
@@ -603,6 +642,7 @@ impl Client {
         let timestep = self.world_timestep();
         if self.world_tick_time.should_advance(now, timestep) {
             self.world_tick_time.advance(now, timestep);
+            self.update_script_host();
             if let Some(shell) = &mut self.shell {
                 shell.tick();
                 if shell.ingame.is_some() {
@@ -612,6 +652,7 @@ impl Client {
                 let assets = self.ui.assets.clone();
                 shell.update_audio(&self.services, &assets.borrow().messages);
             }
+            self.drain_script_host();
             self.finish_loading_game_save();
             self.services.sound.tick();
         }
@@ -904,6 +945,12 @@ impl Client {
         self.shell = Some(shell);
         start_music(&self.services, self.shell.as_ref());
         let root = self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
+        if let Some(label) = self.ui.find(root, "MISSION_TEXT") {
+            let (host, color_host) = (self.script_host.clone(), self.script_host.clone());
+            let mut label = self.ui.label(label);
+            label.get_text = Some(Rc::new(move || host.mission_text.borrow().0.clone()));
+            label.get_color = Some(Rc::new(move || color_host.mission_text.borrow().1));
+        }
         let world = self.shell.as_ref().map(|s| s.world.clone());
         if let Some(world) = world.filter(|w| w.is_loading_game_save()) {
             self.ui.set_visible_fn(root, || false);

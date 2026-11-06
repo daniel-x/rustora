@@ -21,6 +21,11 @@ pub enum MessageArg {
 }
 
 pub trait ScriptHost {
+    /// Called when `world` creates its script context, before any script runs.
+    fn script_context_created(&self, world: &Rc<World>) {
+        let _ = world;
+    }
+
     /// `FluentProvider.GetMessage` with the map messages.
     fn fluent_message(&self, key: &str, args: &[(String, MessageArg)]) -> String {
         let _ = args;

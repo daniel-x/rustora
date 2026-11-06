@@ -17,6 +17,7 @@ mod client;
 mod net;
 mod palettes;
 mod scene;
+mod script_host;
 mod sprites;
 mod ui_sprites;
 mod window;

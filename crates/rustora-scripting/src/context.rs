@@ -53,6 +53,7 @@ pub fn world(lua: &Lua) -> LuaResult<Rc<World>> {
 impl ScriptContext {
     /// `new ScriptContext(world, worldRenderer, scripts)`.
     pub fn new(world: &Rc<World>, scripts: &[String]) -> Rc<ScriptContext> {
+        crate::host::host().script_context_created(world);
         let actor_groups = Rc::new(crate::properties::actor_groups());
         let player_groups = Rc::new(crate::properties::player_groups());
         let player_members = match world.rules().actor("player") {
