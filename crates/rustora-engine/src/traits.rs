@@ -202,6 +202,16 @@ pub trait IVisibilityModifier {
     fn is_visible(&self, self_: &ActorRef, by_player: Option<&PlayerRef>) -> bool;
 }
 
+/// `IRadarColorModifier`; `local_player` stands for `World.LocalPlayer`.
+pub trait IRadarColorModifier {
+    fn radar_color_override(
+        &self,
+        self_: &ActorRef,
+        color: rustora_core::fieldloader::Color,
+        local_player: Option<&PlayerRef>,
+    ) -> rustora_core::fieldloader::Color;
+}
+
 pub trait ICreationActivity {
     fn is_trait_enabled(&self) -> bool;
     fn get_creation_activity(&self) -> Option<crate::activity::ActivityRef>;

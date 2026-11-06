@@ -76,6 +76,13 @@ fn rgba(c: Color) -> [u8; 4] {
     [c.r(), c.g(), c.b(), 255]
 }
 
+/// The actor layer drawn over `below` with the premultiplied alpha blend of the radar sheet.
+fn blend(c: Color, below: [u8; 4]) -> [u8; 4] {
+    let keep = 255 - c.a() as u32;
+    let f = |x: u8, y: u8| (x as u32 + y as u32 * keep / 255).min(255) as u8;
+    [f(c.r(), below[0]), f(c.g(), below[1]), f(c.b(), below[2]), 255]
+}
+
 /// `Exts.ColorLerp`.
 fn color_lerp(t: f32, a: Color, b: Color) -> Color {
     let l = |x: u8, y: u8| (x as f32 + t * (y as f32 - x as f32)) as u8;
@@ -147,10 +154,11 @@ impl RadarWidget {
                     continue;
                 }
                 cells.clear();
-                t.radar_signature_cells(&a, viewer, &mut cells);
+                t.radar_signature_cells(&a, viewer, ingame.local_player.as_ref(), &mut cells);
                 for (c, color) in &cells {
                     if b.contains(c.x(), c.y()) {
-                        px[((c.y() - b.y) * b.w + (c.x() - b.x)) as usize] = rgba(*color);
+                        let p = &mut px[((c.y() - b.y) * b.w + (c.x() - b.x)) as usize];
+                        *p = blend(*color, *p);
                     }
                 }
             }

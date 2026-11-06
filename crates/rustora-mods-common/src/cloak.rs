@@ -8,6 +8,7 @@ use std::cell::{Cell, OnceCell};
 use std::rc::Rc;
 
 use rustora_core::field_flags;
+use rustora_core::fieldloader::Color;
 use rustora_core::world_types::{CPos, WDist};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
@@ -153,6 +154,7 @@ register_traits!(
     INotifyAttack,
     rustora_engine::render::IRenderModifier,
     IVisibilityModifier,
+    IRadarColorModifier,
     INotifyDockClient,
     INotifyDockHost,
     INotifyCreated,
@@ -368,6 +370,15 @@ impl ITick for Cloak {
         }
         self.was_cloaked.set(is_cloaked);
         self.first_tick.set(false);
+    }
+}
+
+impl IRadarColorModifier for Cloak {
+    fn radar_color_override(&self, self_: &ActorRef, color: Color, local_player: Option<&PlayerRef>) -> Color {
+        if local_player.is_some_and(|p| Rc::ptr_eq(p, &self_.owner())) && self.cloaked() {
+            return Color { argb: (color.argb & 0x00ff_ffff) | 128 << 24 };
+        }
+        color
     }
 }
 

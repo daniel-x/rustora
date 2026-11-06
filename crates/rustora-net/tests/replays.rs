@@ -22,7 +22,7 @@ fn corpus_replays_parse_and_round_trip() {
         let replay = Replay::parse(&data).unwrap();
         assert!(replay.is_valid, "{:?}", e.path());
         let lobby = replay.lobby_info.as_ref().unwrap();
-        let is_mission = e.file_name().to_string_lossy().starts_with(['m', 'n', 'k']);
+        let is_mission = e.file_name().to_string_lossy().starts_with(['m', 'n', 'k', 'j', 'p']);
         assert!(is_mission || lobby.clients.iter().any(|c| c.bot.is_some()));
         assert!(replay.metadata.is_some());
         for c in &replay.chunks {

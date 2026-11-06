@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! `Traits/Radar/AppearsOnRadar.cs`. The trait keeps the sync shape of a `ConditionalTrait`; radar color
-//! modifiers are not ported.
+//! `Traits/Radar/AppearsOnRadar.cs`, `RadarColorFromTerrain.cs` and `RadarPings.cs`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,6 +20,34 @@ use rustora_engine::{conditional_simple, info_impl, load_info, register_traits};
 pub fn register(r: &mut TraitRegistry) {
     r.register("RadarPings", |n| load_info!(RadarPingsInfo, n));
     r.register("AppearsOnRadar", |n| load_info!(AppearsOnRadarInfo, n));
+    r.register("RadarColorFromTerrain", |n| load_info!(RadarColorFromTerrainInfo, n));
+}
+
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct RadarColorFromTerrainInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub terrain: String,
+}
+
+/// `RadarColorFromTerrain`: the radar color of the terrain type `Terrain`.
+pub struct RadarColorFromTerrain {
+    color: Color,
+}
+
+register_traits!(RadarColorFromTerrain: IRadarColorModifier);
+info_impl!(RadarColorFromTerrainInfo => |info, init| {
+    let world = init.world();
+    let terrain = &world.map().terrain;
+    let color = terrain.terrain_types[terrain.terrain_index(&info.terrain) as usize].color;
+    Some(Rc::new(RadarColorFromTerrain { color }))
+});
+
+impl IRadarColorModifier for RadarColorFromTerrain {
+    fn radar_color_override(&self, _self_: &ActorRef, _color: Color, _local_player: Option<&PlayerRef>) -> Color {
+        self.color
+    }
 }
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -61,14 +88,23 @@ conditional_simple!(AppearsOnRadar);
 
 impl AppearsOnRadar {
     /// `PopulateRadarSignatureCells`, where `viewer` is the render player, or the local player.
-    pub fn radar_signature_cells(&self, self_: &ActorRef, viewer: Option<&PlayerRef>, out: &mut Vec<(CPos, Color)>) {
+    pub fn radar_signature_cells(
+        &self,
+        self_: &ActorRef,
+        viewer: Option<&PlayerRef>,
+        local_player: Option<&PlayerRef>,
+        out: &mut Vec<(CPos, Color)>,
+    ) {
         let owner = self_.owner();
         if self.state.is_trait_disabled()
             || viewer.is_some_and(|v| !self.info.valid_relationships.has_relationship(owner.relationship_with(Some(v))))
         {
             return;
         }
-        let color = owner.color;
+        let mut color = owner.color;
+        if let Some(modifier) = self_.traits_implementing::<dyn IRadarColorModifier>().first() {
+            color = modifier.radar_color_override(self_, color, local_player);
+        }
         if self.info.use_location {
             out.push((self_.location(), color));
             return;
