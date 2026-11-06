@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu runner keeps the glibc requirement of the Linux binaries low.
+          - os: ubuntu-22.04
+            script: packaging/linux/package.sh openra target/dist
+          - os: windows-latest
+            script: pwsh packaging/windows/package.ps1 openra target/dist
+          - os: macos-latest
+            script: packaging/macos/package.sh openra target/dist
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenRA/OpenRA
+          ref: release-20250330
+          path: openra
+          sparse-checkout: |
+            mods/common
+            mods/common-content
+            mods/ra
+            mods/ra-content
+            global mix database.dat
+          sparse-checkout-cone-mode: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev pkg-config
+      - shell: bash
+        run: ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.os }}
+          path: |
+            target/dist/*.tar.gz
+            target/dist/*.zip
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/dist/*.tar.gz
+            target/dist/*.zip

@@ -143,8 +143,30 @@ fn ui_window(a: &[String]) {
     window::run(std::path::Path::new(&a[0]), &a[1], size, &settings);
 }
 
+/// Runs the menu like the OpenRA launcher: `rustora [Key=Value]...`, where `Engine.EngineDir` and
+/// `Engine.SupportDir` override the directories.
+fn launch(settings: &[String]) {
+    let value = |k: &str| {
+        settings
+            .iter()
+            .find_map(|s| s.strip_prefix(k)?.strip_prefix('='))
+            .map(PathBuf::from)
+    };
+    let engine = value("Engine.EngineDir").unwrap_or_else(rustora_fs::Platform::default_engine_dir);
+    let support = value("Engine.SupportDir").unwrap_or_else(|| rustora_fs::Platform::user_support_dir(&engine));
+    if let Err(e) = std::fs::create_dir_all(&support) {
+        eprintln!("cannot create the support directory {}: {e}", support.display());
+        std::process::exit(1);
+    }
+    window::run(&engine, &support.to_string_lossy(), None, settings);
+}
+
 fn main() {
     let raw: Vec<String> = std::env::args().collect();
+    if raw[1..].iter().all(|a| a.contains('=')) {
+        launch(&raw[1..]);
+        return;
+    }
     if raw.get(1).map(String::as_str) == Some("--ui") {
         ui_window(&raw[2..]);
         return;
