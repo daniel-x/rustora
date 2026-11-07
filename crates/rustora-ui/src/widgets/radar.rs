@@ -26,6 +26,9 @@ pub struct RadarWidget {
     pub world_interaction_controller: Option<String>,
     pub animation_length: i32,
     pub sound_up: String,
+    radar_online_sound: String,
+    radar_offline_sound: String,
+    cached_enabled: bool,
     pub sound_down: String,
     pub is_enabled: Option<Getter<bool>>,
     /// `Animating`, with the fraction of the open animation.
@@ -52,6 +55,9 @@ impl Default for RadarWidget {
             world_interaction_controller: None,
             animation_length: 5,
             sound_up: String::new(),
+            radar_online_sound: String::new(),
+            radar_offline_sound: String::new(),
+            cached_enabled: false,
             sound_down: String::new(),
             is_enabled: None,
             animating: None,
@@ -229,7 +235,8 @@ impl WidgetKind for RadarWidget {
             "AnimationLength" => self.animation_length = value.trim().parse().unwrap_or(5),
             "SoundUp" => self.sound_up = value.to_string(),
             "SoundDown" => self.sound_down = value.to_string(),
-            "RadarOnlineSound" | "RadarOfflineSound" => {}
+            "RadarOnlineSound" => self.radar_online_sound = value.to_string(),
+            "RadarOfflineSound" => self.radar_offline_sound = value.to_string(),
             _ => return false,
         }
         true
@@ -260,6 +267,17 @@ impl WidgetKind for RadarWidget {
     fn tick(&mut self, ui: &mut Ui, id: WidgetId) {
         let Some(ingame) = self.ingame.clone() else { return };
         let enabled = self.is_enabled.as_ref().is_none_or(|f| f());
+        if enabled != self.cached_enabled {
+            let sound = if enabled {
+                &self.radar_online_sound
+            } else {
+                &self.radar_offline_sound
+            };
+            if !sound.is_empty() {
+                rustora_engine::sound::play(&ingame.world, rustora_engine::sound::SoundType::Ui, sound, 1.0);
+            }
+        }
+        self.cached_enabled = enabled;
         self.compose(&ingame);
         let target = if enabled { self.animation_length } else { 0 };
         self.has_radar = enabled && self.frame == self.animation_length;

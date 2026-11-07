@@ -604,6 +604,7 @@ pub struct AttackBaseInfo {
     pub reload_delay: i32,
     pub initial_charge_delay: i32,
     pub charge_delay: i32,
+    pub charge_audio: Option<String>,
     pub cursor: Option<String>,
     pub outside_range_cursor: Option<String>,
     // AttackPopupTurreted
@@ -650,6 +651,7 @@ impl Default for AttackBaseInfo {
             reload_delay: 120,
             initial_charge_delay: 22,
             charge_delay: 3,
+            charge_audio: None,
             cursor: None,
             outside_range_cursor: None,
             close_delay: 125,
@@ -2188,6 +2190,10 @@ impl Activity for ChargeAttack {
         }
         for n in self_.traits_implementing::<dyn INotifyTeslaCharging>() {
             n.charging(self_, &self.target);
+        }
+        if let Some(audio) = self.attack.info.charge_audio.as_deref().filter(|a| !a.is_empty()) {
+            let world = self_.world();
+            rustora_engine::sound::play_at(&world, rustora_engine::sound::SoundType::World, audio, self_.center_position(), 1.0);
         }
         self.base.queue_child(Wait::new(self.attack.info.initial_charge_delay));
         self.base.queue_child(Rc::new(ChargeFire {

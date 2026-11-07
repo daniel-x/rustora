@@ -216,6 +216,19 @@ impl SupportPowersWidget {
             return;
         };
         if !icon.power.active() {
+            if let Some(info) = icon.power.info() {
+                let owner = manager.self_.owner();
+                let world = manager.self_.world();
+                if let Some(s) = &info.insufficient_power_sound {
+                    rustora_engine::sound::play_to_player(&world, rustora_engine::sound::SoundType::Ui, &owner, s);
+                }
+                rustora_engine::sound::notify_owner(
+                    &manager.self_,
+                    "Speech",
+                    info.insufficient_power_speech_notification.as_deref(),
+                    info.insufficient_power_text_notification.as_deref(),
+                );
+            }
             return;
         }
         let Some(instance) = icon.power.target_instance() else {

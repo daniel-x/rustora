@@ -429,7 +429,7 @@ pub fn create(
     }
     Some(match name {
         "StanceSelectorLogic" => ingame_hotkeys::stance_selector(ui, id),
-        "IngameTransientNotificationsLogic" => ingame_hotkeys::transient_notifications(ui, id),
+        "IngameTransientNotificationsLogic" => ingame_hotkeys::transient_notifications(ui, id, logic_args),
         "DisconnectWatcherLogic" => ingame_hotkeys::disconnect_watcher(ui, id),
         "MuteIndicatorLogic" => ingame_hotkeys::mute_indicator(ui, id),
         "MainMenuLogic" => main_menu::create(ui, id, args),

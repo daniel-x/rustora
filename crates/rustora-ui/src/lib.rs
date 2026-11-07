@@ -15,6 +15,7 @@ pub mod fluent;
 pub mod font;
 pub mod hotkeys;
 pub mod input;
+pub mod load_screen;
 pub mod loader;
 pub mod logic;
 pub mod map_repository;

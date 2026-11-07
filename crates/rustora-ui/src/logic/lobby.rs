@@ -18,7 +18,7 @@ use crate::logic::lobby_options::GetRules;
 use crate::logic::lobby_utils::{self as utils, Factions};
 use crate::logic::map_chooser::OnSelectMap;
 use crate::logic::map_preview::{GetMap, OnPreviewMouseDown};
-use crate::logic::{connection, cosmetic_random, message, message_with, services};
+use crate::logic::{connection, cosmetic_random, message, message_with, play_ui_sound, services};
 use crate::net::{ConnectionState, LobbyRules, Net, TextNotification, TextNotificationPool, is_ready};
 use crate::widget::{Action, ChromeLogic, Getter, KeyCallback, Ui, WidgetArgs, WidgetId};
 use crate::widgets::{DropDownButtonWidget, LabelWidget, ScrollItemWidget, SpawnOccupant, TextFieldWidget};
@@ -64,6 +64,7 @@ struct Lobby {
     chat_panel: WidgetId,
     chat_text_field: WidgetId,
     chat_templates: HashMap<TextNotificationPool, WidgetId>,
+    sounds: Rc<LobbySounds>,
     chat_enabled: Cell<bool>,
     disable_team_chat: Rc<Cell<bool>>,
     team_chat: Rc<Cell<bool>>,
@@ -352,6 +353,14 @@ impl Lobby {
         if at_bottom {
             ui.scroll_to_bottom(self.chat_panel, true);
         }
+        let sound = match notification.pool {
+            TextNotificationPool::Chat => &self.sounds.chat_line,
+            TextNotificationPool::System => &self.sounds.option_changed,
+            TextNotificationPool::Join => &self.sounds.player_joined,
+            TextNotificationPool::Leave => &self.sounds.player_left,
+            _ => return,
+        };
+        play_ui_sound(ui, sound);
     }
 
     /// `ConnectionStateChanged`.
@@ -517,6 +526,32 @@ impl ChromeLogic for LobbyHandle {
 }
 
 struct LobbyHandle(Rc<Lobby>);
+
+/// The lobby notification sounds: chrome metrics, overridden by the logic arguments of the same name.
+struct LobbySounds {
+    chat_line: String,
+    player_joined: String,
+    player_left: String,
+    option_changed: String,
+}
+
+impl LobbySounds {
+    fn new(ui: &Ui, logic_args: &[MiniYamlNode]) -> LobbySounds {
+        let get = |key: &str| {
+            logic_args
+                .iter()
+                .find(|n| n.key == key)
+                .map(|n| n.value.value_str().to_string())
+                .unwrap_or_else(|| ui.assets.borrow().metrics.string(key))
+        };
+        LobbySounds {
+            chat_line: get("ChatLineSound"),
+            player_joined: get("PlayerJoinedSound"),
+            player_left: get("PlayerLeftSound"),
+            option_changed: get("LobbyOptionChangedSound"),
+        }
+    }
+}
 
 pub(crate) fn pool_from_name(name: &str) -> Option<TextNotificationPool> {
     match name {
@@ -688,6 +723,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
 
     let chat_panel = ui.child(widget, "CHAT_DISPLAY");
     ui.remove_children(chat_panel);
+    let sounds = Rc::new(LobbySounds::new(ui, logic_args));
     let chat_text_field = ui.child(widget, "CHAT_TEXTFIELD");
 
     let lobby = Rc::new(Lobby {
@@ -712,6 +748,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
         chat_panel,
         chat_text_field,
         chat_templates,
+        sounds: sounds.clone(),
         chat_enabled: Cell::new(false),
         disable_team_chat: Rc::new(Cell::new(false)),
         team_chat: Rc::new(Cell::new(false)),
@@ -902,6 +939,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
     ui.button(disconnect).on_click = Some(Rc::new(move |ui| {
         ui.close_window();
         exit(ui);
+        play_ui_sound(ui, &sounds.player_left);
     }));
     if skirmish_mode {
         let back = message(ui, "button-back");

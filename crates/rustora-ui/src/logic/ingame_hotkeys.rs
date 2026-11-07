@@ -372,6 +372,7 @@ struct TransientNotifications {
     seen: usize,
     last_line: Option<TextNotification>,
     repetitions: u32,
+    transient_line_sound: String,
 }
 
 impl ChromeLogic for TransientNotifications {
@@ -401,13 +402,26 @@ impl ChromeLogic for TransientNotifications {
             }
             self.last_line = Some(notification);
             TextNotificationsDisplayWidget::add_notification(ui, self.display, &line);
+            if !self.transient_line_sound.is_empty() {
+                crate::logic::play_ui_sound(ui, &self.transient_line_sound);
+            }
         }
     }
 }
 
-pub fn transient_notifications(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
+pub fn transient_notifications(
+    ui: &mut Ui,
+    id: WidgetId,
+    logic_args: &[rustora_core::miniyaml::MiniYamlNode],
+) -> Rc<RefCell<dyn ChromeLogic>> {
     let seen = services(ui).net.borrow().notifications.len();
+    let transient_line_sound = logic_args
+        .iter()
+        .find(|n| n.key == "TransientLineSound")
+        .map(|n| n.value.value_str().to_string())
+        .unwrap_or_else(|| ui.assets.borrow().metrics.string("TransientLineSound"));
     cell(TransientNotifications {
+        transient_line_sound,
         display: ui.child(id, "TRANSIENTS_DISPLAY"),
         seen,
         last_line: None,

@@ -111,6 +111,26 @@ fn open_menu_panel(
     ui.run_after_tick(|ui: &mut Ui| ui.reset_tooltips());
 }
 
+/// The notification part of `IngameMenuLogic.OnQuit`. It goes straight to the audio system, because the world
+/// is left before its queued sounds would be played.
+pub(crate) fn play_leave_notification(ui: &mut Ui, world: &rustora_engine::world::World) {
+    if world.world_type != WorldType::Regular {
+        return;
+    }
+    let rules = world.rules();
+    let Some(moi) = rules
+        .actor("player")
+        .and_then(|p| p.trait_info::<rustora_mods_common::player::objectives::MissionObjectivesInfo>())
+    else {
+        return;
+    };
+    let faction = world.sound.local_player().map(|p| p.faction.clone());
+    if let Some(n) = &moi.leave_notification {
+        services(ui).sound.play_notification(rules.audio(), "Speech", n, faction.as_deref());
+    }
+    world.sound.add_transient_line(None, moi.leave_text_notification.as_deref());
+}
+
 /// `IngameMenuLogic`.
 pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[MiniYamlNode]) -> Rc<RefCell<dyn ChromeLogic>> {
     let Some(ingame) = services(ui).ingame.borrow().clone() else {
@@ -205,10 +225,13 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
                 let button = add_button(ui, name, label);
                 let (h, l, show) = (hide_menu.clone(), leaving.clone(), show_menu.clone());
                 let fade = fade.clone();
+                let world = world.clone();
                 ui.button(button).on_click = Some(Rc::new(move |ui: &mut Ui| {
                     h.set(true);
                     let (l, fade) = (l.clone(), fade.clone());
+                    let world = world.clone();
                     let on_confirm: Action = Rc::new(move |ui: &mut Ui| {
+                        play_leave_notification(ui, &world);
                         fade(rustora_mods_common::post_effects::MenuEffectType::Black);
                         ui.requests.push(AppRequest::LeaveGame);
                         l.set(true);

@@ -242,7 +242,9 @@ const DISPLAY_DELTA_PER_FRAME: i32 = 37;
 /// `IngameCashCounterLogic`.
 struct CashCounter {
     resources: Rc<PlayerResources>,
+    player: rustora_engine::player::PlayerRef,
     display: i32,
+    next_cash_tick_time: i32,
     text: Rc<RefCell<String>>,
     tooltip: Rc<RefCell<String>>,
     last_silo: Cell<(i32, i32)>,
@@ -250,15 +252,26 @@ struct CashCounter {
 
 impl ChromeLogic for CashCounter {
     fn tick(&mut self, ui: &mut Ui) {
+        if self.next_cash_tick_time > 0 {
+            self.next_cash_tick_time -= 1;
+        }
         let actual = self.resources.get_cash_and_resources();
         let diff = (actual - self.display).abs();
         let step = ((diff as f32 * DISPLAY_FRAC_PER_FRAME) as i32)
             .max(DISPLAY_DELTA_PER_FRAME)
             .min(diff);
+        let cash_ticks = services(ui).settings.borrow().sound.cash_ticks;
         if self.display < actual {
             self.display += step;
+            if cash_ticks {
+                self.play(&self.resources.info.cash_tick_up_notification);
+            }
         } else if self.display > actual {
             self.display -= step;
+            if cash_ticks && self.next_cash_tick_time == 0 {
+                self.play(&self.resources.info.cash_tick_down_notification);
+                self.next_cash_tick_time = 2;
+            }
         }
         let silo = (self.resources.resources.get(), self.resources.resource_capacity.get());
         if silo != self.last_silo.get() || self.tooltip.borrow().is_empty() {
@@ -273,6 +286,15 @@ impl ChromeLogic for CashCounter {
             );
         }
         *self.text.borrow_mut() = self.display.to_string();
+    }
+}
+
+impl CashCounter {
+    fn play(&self, notification: &Option<String>) {
+        if let Some(n) = notification {
+            let world = self.player.player_actor().world();
+            rustora_engine::sound::play_notification(&world, Some(&self.player), "Sounds", n, Some(&self.player.faction));
+        }
     }
 }
 
@@ -294,7 +316,9 @@ pub fn cash_counter(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     }
     cell(CashCounter {
         resources,
+        player,
         display,
+        next_cash_tick_time: 0,
         text,
         tooltip,
         last_silo: Cell::new((-1, -1)),
@@ -815,7 +839,7 @@ pub fn world_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs
     cell(NoLogic)
 }
 
-/// `IngameRadarDisplayLogic`, without the radar sounds.
+/// `IngameRadarDisplayLogic`.
 pub fn radar_display(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     use crate::widgets::radar::RadarWidget;
     let Some(player) = local_player(ui) else {
@@ -829,14 +853,25 @@ pub fn radar_display(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> 
     let e = enabled.clone();
     ui.get::<RadarWidget>(radar).is_enabled = Some(Rc::new(move || e.get()));
     let developer = player.player_actor().trait_::<DeveloperMode>();
+    let (sound_up, sound_down) = {
+        let r = ui.get::<RadarWidget>(radar);
+        (r.sound_up.clone(), r.sound_down.clone())
+    };
     let ticker = ui.child(id, "RADAR_TICKER");
     let e = enabled.clone();
+    let cached = Cell::new(false);
     ui.get::<LogicTickerWidget>(ticker).on_tick = Some(Rc::new(move |_ui: &mut Ui| {
         let any_radar = world
             .actors_with_trait::<rustora_mods_common::gps::ProvidesRadar>()
             .iter()
             .any(|(a, r)| !rustora_engine::traits::IDisabledTrait::is_trait_disabled(&**r) && a.is_owned_by(&player));
-        e.set(developer.disable_shroud() || any_radar);
+        let radar_enabled = developer.disable_shroud() || any_radar;
+        e.set(radar_enabled);
+        if radar_enabled != cached.get() {
+            let sound = if radar_enabled { &sound_up } else { &sound_down };
+            rustora_engine::sound::play_notification(&world, None, "Sounds", sound, None);
+        }
+        cached.set(radar_enabled);
     }));
     if let Some(block) = ui.find(id, "RADAR_FADETOBLACK") {
         let alpha = Rc::new(Cell::new(0u8));

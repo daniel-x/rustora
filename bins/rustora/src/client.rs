@@ -441,6 +441,12 @@ impl ShellWorld {
 }
 
 /// A loaded user interface with the shell root open.
+/// What starts once the load screen is visible.
+enum PendingLoad {
+    Game,
+    Replay(String),
+}
+
 pub struct Client {
     pub ui: Ui,
     pub cursors: Cursors,
@@ -456,6 +462,10 @@ pub struct Client {
     replay_path: Option<String>,
     /// The hidden in-game root while a game save loads.
     loading_root: Option<rustora_ui::widget::WidgetId>,
+    /// A world load that waits until the load screen was drawn once, and whether it was.
+    pending_load: Option<PendingLoad>,
+    load_screen_drawn: bool,
+    load_screen: rustora_ui::load_screen::LoadScreen,
     ui_tick_time: TickTime,
     world_tick_time: TickTime,
     script_host: Rc<crate::script_host::ClientScriptHost>,
@@ -486,6 +496,7 @@ impl Client {
             .is_none()
             .then(|| ModContent::load(&mod_data).expect("load mod content"));
         let mod_data = Rc::new(mod_data);
+        let load_screen = rustora_ui::load_screen::LoadScreen::new(&mod_data.manifest.load_screen);
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
         let mut assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
         assets.hotkeys.apply_settings(&settings.keys);
@@ -573,6 +584,9 @@ impl Client {
             net,
             replay_path: None,
             loading_root: None,
+            pending_load: None,
+            load_screen_drawn: false,
+            load_screen,
             ui_tick_time: TickTime {
                 value: -(UI_TIMESTEP as i64),
             },
@@ -704,6 +718,15 @@ impl Client {
 
     /// Port of `Game.InnerLogicTick`: the user interface ticks at `Ui.Timestep`, the world at its own timestep.
     pub fn logic_tick(&mut self) {
+        if self.load_screen_drawn
+            && let Some(load) = self.pending_load.take()
+        {
+            self.load_screen_drawn = false;
+            match load {
+                PendingLoad::Game => self.start_game(),
+                PendingLoad::Replay(path) => self.join_replay(&path),
+            }
+        }
         let now = self.ui.run_time();
         let ui_due = self.ui_tick_time.should_advance(now, UI_TIMESTEP);
         if ui_due {
@@ -736,6 +759,9 @@ impl Client {
 
     /// Carries out the network requests of the user interface, then receives and sends.
     fn pump_network(&mut self) {
+        if self.pending_load.is_some() {
+            return;
+        }
         let requests = std::mem::take(&mut self.ui.requests);
         let mut leave = false;
         let mut reload = None;
@@ -778,7 +804,7 @@ impl Client {
             }
         }
         if let Some(path) = replay {
-            self.join_replay(&path);
+            self.pending_load = Some(PendingLoad::Replay(path));
             return;
         }
         let (name, color) = {
@@ -789,7 +815,7 @@ impl Client {
         let assets = self.ui.assets.clone();
         let started = self.net.pump(&self.mod_data, &assets.borrow().messages, run_time, &name, color);
         if started {
-            self.start_game();
+            self.pending_load = Some(PendingLoad::Game);
         }
     }
 
@@ -1048,6 +1074,14 @@ impl Client {
 
     /// Fills the draw list of the current frame.
     pub fn prepare(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
+        if self.pending_load.is_some() {
+            self.list.clear();
+            let assets = self.ui.assets.clone();
+            let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
+            self.load_screen.draw(&mut dc, (size.0 as i32, size.1 as i32));
+            self.load_screen_drawn = true;
+            return;
+        }
         let loading = self.shell.as_ref().is_some_and(|s| s.world.is_loading_game_save());
         if let Some(shell) = self.shell.as_mut().filter(|_| !loading) {
             shell.prepare(renderer, size);
@@ -1064,7 +1098,7 @@ impl Client {
     }
 
     pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {
-        match &self.shell {
+        match self.shell.as_ref().filter(|_| self.pending_load.is_none()) {
             Some(shell) => renderer.render_with_passes(target, shell.camera(size), &shell.quads, &shell.passes),
             None => renderer.render(
                 target,

@@ -132,6 +132,9 @@ pub struct SupportPowerInfo {
     pub end_charge_sound: Option<String>,
     pub end_charge_speech_notification: Option<String>,
     pub end_charge_text_notification: Option<String>,
+    pub insufficient_power_sound: Option<String>,
+    pub insufficient_power_speech_notification: Option<String>,
+    pub insufficient_power_text_notification: Option<String>,
     pub select_target_sound: Option<String>,
     pub select_target_speech_notification: Option<String>,
     pub select_target_text_notification: Option<String>,
@@ -168,6 +171,8 @@ pub struct SupportPowerInfo {
     pub quantized_facings: i32,
     pub cordon: WDist,
     pub camera_actor: Option<String>,
+    pub reinforcements_arrived_speech_notification: Option<String>,
+    pub reinforcements_arrived_text_notification: Option<String>,
     pub camera_remove_delay: i32,
     // ParatroopersPower
     pub drop_items: Vec<String>,
@@ -248,6 +253,9 @@ impl Default for SupportPowerInfo {
             end_charge_sound: None,
             end_charge_speech_notification: None,
             end_charge_text_notification: None,
+            insufficient_power_sound: None,
+            insufficient_power_speech_notification: None,
+            insufficient_power_text_notification: None,
             select_target_sound: None,
             select_target_speech_notification: None,
             select_target_text_notification: None,
@@ -281,6 +289,8 @@ impl Default for SupportPowerInfo {
             quantized_facings: 32,
             cordon: WDist::new(5120),
             camera_actor: None,
+            reinforcements_arrived_speech_notification: None,
+            reinforcements_arrived_text_notification: None,
             camera_remove_delay: 0,
             drop_items: Vec::new(),
             allow_impassable_cells: false,
@@ -397,7 +407,33 @@ info_impl!(SupportPowerInfo => |info, init| {
     }))
 });
 
-rustora_engine::conditional_simple!(SupportPower);
+impl rustora_engine::conditional::ConditionalHooks for SupportPower {
+    fn conditional(&self) -> &ConditionalState {
+        &self.state
+    }
+}
+
+rustora_engine::conditional_plumbing!(SupportPower);
+
+impl INotifyCreated for SupportPower {
+    /// `SupportPower.Created`: the conditional trait setup, then the detected notifications for other players.
+    fn created(&self, self_: &ActorRef) {
+        rustora_engine::conditional::conditional_created(self, self_);
+        let world = self_.world();
+        let Some(player) = world.sound.local_player().filter(|p| !Rc::ptr_eq(p, &self_.owner())) else {
+            return;
+        };
+        if let Some(s) = &self.info.detected_sound {
+            sound::play(&world, SoundType::Ui, s, 1.0);
+        }
+        if let Some(n) = &self.info.detected_speech_notification {
+            sound::play_notification(&world, Some(&player), "Speech", n, Some(&player.faction));
+        }
+        world
+            .sound
+            .add_transient_line(Some(&player), self.info.detected_text_notification.as_deref());
+    }
+}
 
 impl SupportPower {
     pub fn is_trait_disabled(&self) -> bool {
@@ -931,7 +967,7 @@ impl FlyOverTracker {
         self.in_range.borrow().iter().any(|(_, v)| *v)
     }
 
-    fn on_enter_range(&self, a: &ActorRef, _paratroopers: bool) {
+    fn on_enter_range(&self, a: &ActorRef, paratroopers: bool) {
         if let Some(cam) = self.info.camera_actor.clone()
             && self.camera.borrow().is_none()
             && !self.any_in_range()
@@ -946,6 +982,14 @@ impl FlyOverTracker {
                     *t.camera.borrow_mut() = Some(c);
                 }
             }));
+        }
+        if paratroopers && !self.any_in_range() {
+            sound::notify_owner(
+                &self.owner_actor,
+                "Speech",
+                self.info.reinforcements_arrived_speech_notification.as_deref(),
+                self.info.reinforcements_arrived_text_notification.as_deref(),
+            );
         }
         self.set(a, true);
     }
