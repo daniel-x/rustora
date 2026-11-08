@@ -63,6 +63,7 @@ pub mod sound;
 pub mod support_powers;
 pub mod target_lines;
 pub mod targetable;
+pub mod terrain_lighting;
 pub mod tooltip;
 pub mod transforms;
 pub mod turreted;
@@ -83,6 +84,7 @@ pub fn register(r: &mut TraitRegistry) {
     gate::register(r);
     beacon::register(r);
     post_effects::register(r);
+    terrain_lighting::register(r);
     weather_overlay::register(r);
     carryall::register(r);
     cosmetic::register(r);

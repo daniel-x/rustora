@@ -83,6 +83,11 @@ impl Sequence {
     }
 
     /// `ISpriteSequence.Facings`.
+    /// `ISpriteSequence.IgnoreWorldTint`: the sprites are not lit by `ITerrainLighting`.
+    pub fn ignore_world_tint(&self) -> bool {
+        field_bool(&self.data, &self.defaults, "IgnoreWorldTint")
+    }
+
     pub fn facings_or_interpolated(&self) -> i32 {
         self.interpolated_facings.unwrap_or(self.facings)
     }

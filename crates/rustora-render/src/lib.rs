@@ -41,6 +41,9 @@ pub struct Quad {
     pub replace_color: bool,
     /// Solid lines: the four corners and the color of the last two, replacing `x`, `y`, `w`, `h`.
     pub line: Option<Line>,
+    /// RGB factors of the sprite colors at the top left, top right, bottom right and bottom left corner, the world
+    /// tint of `ITerrainLighting`.
+    pub tint: [[f32; 3]; 4],
 }
 
 /// The geometry of a solid line quad.
@@ -62,6 +65,7 @@ impl Quad {
             color: [1.0; 4],
             replace_color: false,
             line: None,
+            tint: [[1.0; 3]; 4],
         }
     }
 
@@ -76,6 +80,7 @@ impl Quad {
             color,
             replace_color: false,
             line: None,
+            tint: [[1.0; 3]; 4],
         }
     }
 
@@ -115,6 +120,7 @@ struct Vertex {
     uv: [f32; 2],
     palette: f32,
     color: [f32; 4],
+    tint: [f32; 3],
 }
 
 #[repr(C)]
@@ -199,7 +205,7 @@ impl Renderer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Float32x4];
+        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Float32x4, 4 => Float32x3];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sprite"),
             layout: Some(&pipeline_layout),
@@ -441,11 +447,12 @@ impl Renderer {
             } else {
                 q.color
             };
-            let v = |x: f32, y: f32, u: f32, w: f32| Vertex {
+            let v = |x: f32, y: f32, u: f32, w: f32, corner: usize| Vertex {
                 pos: [x, y],
                 uv: [u, w],
                 palette,
                 color,
+                tint: q.tint[corner],
             };
             if let Some(l) = &q.line {
                 let [a, b, c, d] = l.corners;
@@ -454,6 +461,7 @@ impl Renderer {
                     uv: [0.0, 0.0],
                     palette,
                     color,
+                    tint: [1.0; 3],
                 };
                 vertices.extend_from_slice(&[
                     p(a, q.color),
@@ -466,12 +474,12 @@ impl Renderer {
             } else {
                 let (x0, y0, x1, y1) = (q.x, q.y, q.x + q.w, q.y + q.h);
                 vertices.extend_from_slice(&[
-                    v(x0, y0, u0, v0),
-                    v(x1, y0, u1, v0),
-                    v(x1, y1, u1, v1),
-                    v(x0, y0, u0, v0),
-                    v(x1, y1, u1, v1),
-                    v(x0, y1, u0, v1),
+                    v(x0, y0, u0, v0, 0),
+                    v(x1, y0, u1, v0, 1),
+                    v(x1, y1, u1, v1, 2),
+                    v(x0, y0, u0, v0, 0),
+                    v(x1, y1, u1, v1, 2),
+                    v(x0, y1, u0, v1, 3),
                 ]);
             }
             let sheet = if q.palette.is_some() {

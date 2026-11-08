@@ -14,6 +14,7 @@ struct VertexIn {
     @location(1) uv: vec2<f32>,
     @location(2) palette: f32,
     @location(3) color: vec4<f32>,
+    @location(4) tint: vec3<f32>,
 };
 
 struct VertexOut {
@@ -21,6 +22,7 @@ struct VertexOut {
     @location(0) uv: vec2<f32>,
     @location(1) palette: f32,
     @location(2) color: vec4<f32>,
+    @location(3) tint: vec3<f32>,
 };
 
 @vertex
@@ -30,10 +32,12 @@ fn vs_main(v: VertexIn) -> VertexOut {
     o.uv = v.uv;
     o.palette = v.palette;
     o.color = v.color;
+    o.tint = v.tint;
     return o;
 }
 
-// A negative palette row draws the vertex color; otherwise the sheet texel indexes the palette row.
+// A negative palette row draws the vertex color; otherwise the sheet texel indexes the palette row, and the world
+// tint multiplies the color like `c *= vTint` of combined.frag.
 @fragment
 fn fs_main(v: VertexOut) -> @location(0) vec4<f32> {
     if (v.palette < 0.0) {
@@ -45,7 +49,7 @@ fn fs_main(v: VertexOut) -> @location(0) vec4<f32> {
     }
     let texel = textureLoad(palettes, vec2<i32>(i32(index), i32(v.palette)), 0);
     if (v.color.a < 0.0) {
-        return vec4<f32>(v.color.rgb, 1.0) * -v.color.a * texel.a;
+        return vec4<f32>(v.color.rgb * v.tint, 1.0) * -v.color.a * texel.a;
     }
-    return texel * v.color.a;
+    return vec4<f32>(texel.rgb * v.tint, texel.a) * v.color.a;
 }

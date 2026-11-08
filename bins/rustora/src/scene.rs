@@ -92,6 +92,16 @@ fn on_camera(q: &Quad, cam: &Camera) -> bool {
     q.x < cam.x + w && q.x + q.w > cam.x && q.y < cam.y + h && q.y + q.h > cam.y
 }
 
+/// `TerrainSpriteLayer.UpdateTint`: the lighting at the four corners of the cell under the center of a terrain quad,
+/// so the tint varies linearly across the cell.
+fn cell_corner_tints(l: &dyn rustora_engine::render::ITerrainLighting, q: &Quad) -> [[f32; 3]; 4] {
+    let cx = ((q.x + q.w / 2.0) / TILE_SIZE).floor() as i32;
+    let cy = ((q.y + q.h / 2.0) / TILE_SIZE).floor() as i32;
+    let center = WPos::new(cx * 1024 + 512, cy * 1024 + 512, 0);
+    let at = |dx: i32, dy: i32| l.tint_at(center + rustora_core::world_types::WVec::new(dx, dy, 0));
+    [at(-512, -512), at(512, -512), at(512, 512), at(-512, 512)]
+}
+
 pub struct Scene {
     sprites: SpriteCache,
     terrain: HashMap<u16, Rc<Vec<Option<Sprite>>>>,
@@ -104,6 +114,8 @@ pub struct Scene {
     /// The smallest zoom of the viewport, for `INotifyViewportZoomExtentsChanged` traits.
     pub min_zoom: f32,
     started: std::time::Instant,
+    /// The `ITerrainLighting` of the world while a frame is built.
+    lighting: Option<Rc<dyn rustora_engine::render::ITerrainLighting>>,
 }
 
 /// The `IRenderPostProcessPass` traits of the world actor as render passes, in the order of
@@ -163,6 +175,7 @@ impl Scene {
             after_world: 0,
             min_zoom: 1.0,
             started: std::time::Instant::now(),
+            lighting: None,
         }
     }
 
@@ -238,6 +251,11 @@ impl Scene {
                 quad.w = w;
                 quad.h = h;
                 quad.color[3] = s.alpha;
+                if let Some(l) = &self.lighting
+                    && !s.sequence.ignore_world_tint()
+                {
+                    quad.tint = [l.tint_at(s.pos); 4];
+                }
                 if let Some([r, g, b]) = s.replace_color {
                     quad.color = [r, g, b, s.alpha];
                     quad.replace_color = true;
@@ -311,6 +329,15 @@ impl Scene {
         }
         self.add_resources(renderer, world, &cells, &mut quads);
         self.add_smudges(renderer, world, viewer, &cells, &mut quads);
+        let lighting = world
+            .world_actor()
+            .trait_or_default::<dyn rustora_engine::render::ITerrainLighting>();
+        if let Some(l) = &lighting {
+            for q in &mut quads {
+                q.tint = cell_corner_tints(l.as_ref(), q);
+            }
+        }
+        self.lighting = lighting;
 
         let mut renderables = Vec::new();
         for a in world.actors() {

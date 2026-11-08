@@ -175,6 +175,11 @@ pub struct WorldRenderView {
     pub run_time: i64,
 }
 
+/// `ITerrainLighting`: the light of the world at a position, multiplied into terrain and sprite colors.
+pub trait ITerrainLighting {
+    fn tint_at(&self, pos: WPos) -> [f32; 3];
+}
+
 /// `IRenderAboveWorld`: drawn after the actors and effects, below the shroud.
 pub trait IRenderAboveWorld {
     fn render_above_world(&self, self_: &ActorRef, view: &WorldRenderView, out: &mut Vec<WorldPixelShape>);
