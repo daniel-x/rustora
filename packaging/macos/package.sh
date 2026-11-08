@@ -7,18 +7,18 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 openra="$(cd "$1" && pwd)"
-out="$(mkdir -p "${2:-$root/target/dist}" && cd "${2:-$root/target/dist}" && pwd)"
+out="$(mkdir -p "${2:-$root/target/distrib}" && cd "${2:-$root/target/distrib}" && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-macos"
 for t in x86_64-apple-darwin aarch64-apple-darwin; do
-  cargo build --release --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-server -p rustora-headless
+  cargo build --profile dist --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-dedicated -p rustora-headless
 done
 app="$out/$name/Rustora.app"
 rm -rf "$out/$name"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/mods"
 for b in rustora rustora-server rustora-headless; do
   lipo -create -output "$app/Contents/MacOS/$b" \
-    "$root/target/x86_64-apple-darwin/release/$b" "$root/target/aarch64-apple-darwin/release/$b"
+    "$root/target/x86_64-apple-darwin/dist/$b" "$root/target/aarch64-apple-darwin/dist/$b"
 done
 for m in common common-content ra ra-content; do
   cp -r "$openra/mods/$m" "$app/Contents/Resources/mods/"

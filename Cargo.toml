@@ -31,5 +31,13 @@ opt-level = 3
 [profile.release]
 debug = 1
 
+# Packaged builds: whole-program optimization and no debug info, for smaller and faster binaries.
+[profile.dist]
+inherits = "release"
+debug = 0
+strip = true
+lto = "fat"
+codegen-units = 1
+
 [profile.test]
 overflow-checks = false
