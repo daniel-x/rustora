@@ -19,6 +19,7 @@ pub mod capture;
 pub mod cargo;
 pub mod carryall;
 pub mod cash_repair;
+pub mod charged_condition;
 pub mod chrono;
 pub mod cloak;
 pub mod combat;
@@ -84,6 +85,7 @@ pub fn register(r: &mut TraitRegistry) {
     gate::register(r);
     beacon::register(r);
     post_effects::register(r);
+    charged_condition::register(r);
     terrain_lighting::register(r);
     weather_overlay::register(r);
     carryall::register(r);
