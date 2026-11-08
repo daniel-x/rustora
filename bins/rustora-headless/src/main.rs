@@ -455,6 +455,7 @@ fn main() {
             });
             let mut mismatch = None;
             let start = std::time::Instant::now();
+            let recorded = recorded_syncs(&replay);
             let om = run_replay(&world, replay, i32::MAX, |w, hash| {
                 let t = w.world_tick();
                 if let Some((_, h)) = dump.iter().find(|(k, _)| *k == t).or(dump.get((t - 1) as usize))
@@ -467,6 +468,11 @@ fn main() {
             });
             println!("ticks {} in {:?}", world.world_tick(), start.elapsed());
             if let Some(f) = om.out_of_sync {
+                let clients = recorded.get(&f).cloned().unwrap_or_default();
+                let distinct: std::collections::BTreeSet<_> = clients.values().collect();
+                if distinct.len() > 1 {
+                    println!("recorded clients disagree at frame {f}: {clients:?}");
+                }
                 println!("recorded sync hash differs at frame {f}: {:?}", om.out_of_sync_hashes);
             }
             match mismatch {
@@ -480,4 +486,20 @@ fn main() {
         "verify-bots" => verify_bots(&world, replay, &args[5], args.get(6)),
         c => panic!("unknown command {c}"),
     }
+}
+
+/// The recorded sync packets of each frame, as client id to (sync hash, defeat state).
+fn recorded_syncs(replay: &rustora_net::replay::Replay) -> std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> {
+    let mut out: std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> = Default::default();
+    for p in replay.chunks.iter().flat_map(|c| &c.packets) {
+        if let Ok(rustora_net::order::Packet::Sync {
+            frame,
+            sync_hash,
+            defeat_state,
+        }) = rustora_net::order::Packet::parse(p.client_id, &p.data)
+        {
+            out.entry(frame).or_default().insert(p.client_id, (sync_hash, defeat_state));
+        }
+    }
+    out
 }
