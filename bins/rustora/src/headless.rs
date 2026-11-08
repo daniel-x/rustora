@@ -1,19 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Headless rustora. Subcommands:
-//! `world <engine-dir> <support-dir> <replay> [tick]` prints the sync detail of a replay after world load (or after `tick`).
-//! `EXTRA_STEPS=n` runs n more replay steps after the last tick, e.g. to process the orders of a paused frame.
-//! `verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a recorded game and compares the sync hashes.
-//! `verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]` compares the Rust bots with a C# bot game.
-//! `skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]` hosts a bot game,
-//! writes `tick hash botrandomcount` per tick and compares all three columns with a C# sync dump.
-//! `map-uid <engine-dir> <map>` prints the uid of a map, given by uid or file name.
-//! `join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>]`
-//! joins a server. With bots it hosts them like the C# `Harness.Bots`, without them it spectates.
-//! `--save-at <tick>:<name>` requests a game save after that world tick, `--load-save <name>` loads a save.
-//! `lan-probe <seconds> [host:port]` lists the LAN games that answer, broadcasting unless a beacon address is given.
-//! `server-list <mod-version>` lists the RA games of the master server.
+//! `rustora --headless <command> ...`: replay verification and test games without window, graphics or sound.
+//! [`HELP`] lists the commands.
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -171,7 +160,7 @@ fn read_sync_dump(path: &str) -> std::collections::HashMap<i32, String> {
 fn skirmish(args: &[String]) {
     use rustora_launch::skirmish::{SkirmishDriver, parse_bots, skirmish_session};
     let [engine, support, map, bots, ticks, seed] = &args[2..8] else {
-        panic!("usage: rustora-headless skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]")
+        panic!("usage: rustora --headless skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]")
     };
     let engine = PathBuf::from(engine);
     let (ticks, seed): (i32, i32) = (ticks.parse().expect("ticks"), seed.parse().expect("seed"));
@@ -241,7 +230,7 @@ fn join(args: &[String]) {
     use rustora_launch::skirmish::{SkirmishDriver, parse_bots};
     let [engine, support, address, ticks] = &args[2..6] else {
         panic!(
-            "usage: rustora-headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>] [--save-at <tick>:<name>] [--load-save <name>]"
+            "usage: rustora --headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>] [--save-at <tick>:<name>] [--load-save <name>]"
         )
     };
     let engine = PathBuf::from(engine);
@@ -343,9 +332,61 @@ fn server_list(version: &str) {
     games.iter().take(5).for_each(print_game);
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+/// The synopsis of `rustora --headless --help`.
+const HELP: &str = "\
+rustora --headless - replay verification and test games without window, graphics or sound
+
+Usage:
+  rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]
+  rustora --headless world <engine-dir> <support-dir> <replay> [tick]
+  rustora --headless verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]
+  rustora --headless skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]
+  rustora --headless join <engine-dir> <support-dir> <host:port> <ticks> [join options]
+  rustora --headless map-uid <engine-dir> <map>
+  rustora --headless lan-probe <seconds> [host:port]
+  rustora --headless server-list <mod-version>
+  rustora --headless --help
+
+Commands:
+  verify-replay  Replays a recorded game, compares its recorded sync hashes and, with a sync dump of
+                 the C# reference (lines \"tick hash\"), every tick's hash.
+  world          Prints the per-actor and per-trait sync detail after world load or after <tick>.
+  verify-bots    Replays a C# bot game and compares the orders of the Rust bots with the C# order dump.
+  skirmish       Hosts a bot game, writes \"tick hash botrandomcount\" per tick to <sync-out> and
+                 compares all three columns with a C# sync dump. <bots> is Slot:BotType:Faction[:Spawn],...
+  join           Joins a server. With --bots it hosts the bots like the C# Harness.Bots, without them it
+                 spectates.
+  map-uid        Prints the uid of a map, given by uid or file name.
+  lan-probe      Lists the LAN games that answer within <seconds>, broadcasting unless a beacon address
+                 is given.
+  server-list    Lists the RA games of the master server for an engine version.
+
+Join options:
+  --bots <spec>         bots to host, as for skirmish
+  --wait-clients <n>    wait for n clients before starting
+  --sync-out <path>     write \"tick hash\" per tick
+  --name <text>         the player name
+  --save-at <tick>:<name>  request a game save after that world tick
+  --load-save <name>    load a game save
+
+Environment:
+  PROGRESS=<n>          replay commands: print the seconds per <n> ticks and the actor count
+  EXTRA_STEPS=<n>       world: run n more replay steps after the last tick
+  TRACE_ACTOR=<id>      world: print position, facing and activity chain of an actor each tick
+  TRACE_CELL=<x>,<y>    world: print the actors in a cell each tick
+  TRACE_FROZEN=<player-actor-id>:<frozen-id>
+                        world: print the state of a frozen actor of a player each tick
+  TRACE_RANDOM=<from>,<to>
+                        world: print a backtrace for each shared random call in that range
+";
+
+/// Runs a headless command. `args[0]` is the program name and `args[1]` the command, as in a separate binary.
+pub fn main(args: Vec<String>) {
     match args.get(1).map(String::as_str) {
+        None | Some("--help" | "-h") => {
+            print!("{HELP}");
+            return;
+        }
         Some("skirmish") => return skirmish(&args),
         Some("join") => return join(&args),
         Some("lan-probe") if args.len() >= 3 => return lan_probe(args[2].parse().expect("seconds"), args.get(3)),
@@ -358,7 +399,8 @@ fn main() {
         _ => {}
     }
     if args.len() < 5 {
-        eprintln!("usage: rustora-headless world|verify-replay <engine-dir> <support-dir> <replay> [...]");
+        eprintln!("unknown command or missing arguments: {}\n", args[1..].join(" "));
+        eprint!("{HELP}");
         std::process::exit(2);
     }
     let engine = PathBuf::from(&args[2]);
@@ -484,7 +526,11 @@ fn main() {
             }
         }
         "verify-bots" => verify_bots(&world, replay, &args[5], args.get(6)),
-        c => panic!("unknown command {c}"),
+        c => {
+            eprintln!("unknown command {c}\n");
+            eprint!("{HELP}");
+            std::process::exit(2);
+        }
     }
 }
 

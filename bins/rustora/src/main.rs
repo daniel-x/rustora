@@ -14,6 +14,7 @@
 
 mod app;
 mod client;
+mod headless;
 mod net;
 mod palettes;
 mod scene;
@@ -39,12 +40,51 @@ struct Args {
     zoom: f32,
 }
 
+/// The synopsis of `rustora --help`.
+const HELP: &str = "\
+rustora - an OpenRA compatible Red Alert game
+
+Usage:
+  rustora [Key=Value]...
+  rustora <engine-dir> <support-dir> <replay> [replay options]
+  rustora --ui <engine-dir> <support-dir> [WxH] [Key=Value]...
+  rustora --ui-screenshot <engine-dir> <support-dir> <out.webp> <WxH> [X,Y]...
+  rustora --headless <command> [arguments]...
+  rustora --help
+  rustora --headless --help
+
+Modes:
+  [Key=Value]...  Opens the main menu like the OpenRA launcher. Without arguments it uses the default
+                  directories and offers the content download when the game files are missing.
+                  Engine.EngineDir=<dir> and Engine.SupportDir=<dir> override the directories, other
+                  Section.Field=value arguments override settings, Launch.Connect=<host:port> joins a
+                  server, Launch.Replay=<file> plays a replay.
+  <replay>        Plays back a replay in a window: arrow keys or WASD scroll, the mouse wheel zooms,
+                  space pauses, + and - change the speed, Tab cycles the shroud, Escape quits.
+  --ui            Opens the menu with an explicit engine and support directory and window size.
+  --ui-screenshot Renders the menu offscreen after the given clicks and writes a WebP file.
+  --headless      Runs a command without window, graphics or sound; see rustora --headless --help.
+
+Replay options:
+  --screenshot <out.webp>  render one frame offscreen to a lossless WebP file instead of a window
+  --tick <n>               the tick of the screenshot (default 0)
+  --player <index>         render with the shroud of this player
+  --at <x>,<y>             center of the screenshot in world pixels (default map center)
+  --size <w>x<h>           screenshot size (default 1280x800)
+  --zoom <z>               screenshot zoom (default 1)
+
+Environment:
+  RUSTORA_ALSA_DEVICE      the ALSA output device on Linux (default \"default\")
+";
+
+fn print_help() {
+    print!("{HELP}");
+}
+
 fn parse_args() -> Args {
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 4 {
-        eprintln!(
-            "usage: rustora <engine-dir> <support-dir> <replay> [--screenshot out.webp] [--tick N] [--player I] [--at X,Y] [--size WxH] [--zoom Z]"
-        );
+        eprint!("{HELP}");
         std::process::exit(2);
     }
     let mut args = Args {
@@ -74,7 +114,11 @@ fn parse_args() -> Args {
                 let (w, h) = v.split_once('x').expect("WxH");
                 args.size = (w.parse().expect("width"), h.parse().expect("height"));
             }
-            o => panic!("unknown option {o}"),
+            o => {
+                eprintln!("unknown option {o}\n");
+                eprint!("{HELP}");
+                std::process::exit(2);
+            }
         }
         i += 2;
     }
@@ -163,6 +207,14 @@ fn launch(settings: &[String]) {
 
 fn main() {
     let raw: Vec<String> = std::env::args().collect();
+    if matches!(raw.get(1).map(String::as_str), Some("--help" | "-h")) {
+        print_help();
+        return;
+    }
+    if raw.get(1).map(String::as_str) == Some("--headless") {
+        headless::main(std::iter::once(raw[0].clone()).chain(raw[2..].iter().cloned()).collect());
+        return;
+    }
     if raw[1..].iter().all(|a| a.contains('=')) {
         launch(&raw[1..]);
         return;

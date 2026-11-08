@@ -9,11 +9,11 @@ openra="$(cd "$1" && pwd)"
 out="$(mkdir -p "${2:-$root/target/distrib}" && cd "${2:-$root/target/distrib}" && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-linux-$(uname -m)"
-cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-dedicated -p rustora-headless
+cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-dedicated
 stage="$out/$name"
 rm -rf "$stage"
 mkdir -p "$stage/mods"
-for b in rustora rustora-server rustora-headless; do
+for b in rustora rustora-server; do
   install -m 755 "$root/target/dist/$b" "$stage/"
   strip "$stage/$b"
 done

@@ -2642,19 +2642,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustora-headless"
-version = "0.1.0"
-dependencies = [
- "rustora-core",
- "rustora-engine",
- "rustora-fs",
- "rustora-game",
- "rustora-launch",
- "rustora-mods-common",
- "rustora-net",
-]
-
-[[package]]
 name = "rustora-launch"
 version = "0.1.0"
 dependencies = [

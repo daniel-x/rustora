@@ -25,8 +25,11 @@ live in the OpenRA support directory, or in a `Support` directory next to the mo
 scroll, the mouse wheel zooms, space pauses, `+` and `-` change the speed, Tab cycles the shroud of
 each player, Escape quits. `--screenshot <out.webp> --tick <n>` renders one frame offscreen instead.
 
-`rustora-headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]` replays a game
-without graphics and compares the sync hashes.
+`rustora --headless <command> ...` runs without window, graphics and sound, also on servers without
+ALSA or a GPU. `rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]`
+replays a game and compares the sync hashes; `bins/rustora/src/headless.rs` lists all commands.
+
+`rustora-server` is the dedicated server.
 
 ## Packaging
 

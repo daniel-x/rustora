@@ -10,12 +10,12 @@ if ($Out -eq "") { $Out = "$root/target/distrib" }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $version = (Select-String -Path "$root/Cargo.toml" -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 $name = "rustora-$version-windows-x86_64"
-cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-dedicated -p rustora-headless
+cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-dedicated
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $stage = Join-Path $Out $name
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force "$stage/mods" | Out-Null
-foreach ($b in "rustora", "rustora-server", "rustora-headless") { Copy-Item "$root/target/dist/$b.exe" $stage }
+foreach ($b in "rustora", "rustora-server") { Copy-Item "$root/target/dist/$b.exe" $stage }
 foreach ($m in "common", "common-content", "ra", "ra-content") { Copy-Item -Recurse "$OpenRA/mods/$m" "$stage/mods/" }
 Get-ChildItem "$stage/mods/*/mod.yaml" | ForEach-Object {
   (Get-Content -Raw $_.FullName).Replace("{DEV_VERSION}", "release-20250330") | Set-Content -NoNewline $_.FullName

@@ -11,12 +11,12 @@ out="$(mkdir -p "${2:-$root/target/distrib}" && cd "${2:-$root/target/distrib}" 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-macos"
 for t in x86_64-apple-darwin aarch64-apple-darwin; do
-  cargo build --profile dist --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-dedicated -p rustora-headless
+  cargo build --profile dist --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-dedicated
 done
 app="$out/$name/Rustora.app"
 rm -rf "$out/$name"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/mods"
-for b in rustora rustora-server rustora-headless; do
+for b in rustora rustora-server; do
   lipo -create -output "$app/Contents/MacOS/$b" \
     "$root/target/x86_64-apple-darwin/dist/$b" "$root/target/aarch64-apple-darwin/dist/$b"
 done
