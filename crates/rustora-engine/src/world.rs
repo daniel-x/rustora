@@ -502,6 +502,9 @@ impl World {
                 out.push(format!("# trait {} {} {}", a.id, name, s.sync_hash()));
             }
         }
+        for e in self.synced_effects.borrow().iter() {
+            out.push(format!("# effect {} {}", e.type_name(), e.sync_hash()));
+        }
         out
     }
 

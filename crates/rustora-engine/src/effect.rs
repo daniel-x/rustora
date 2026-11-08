@@ -21,6 +21,11 @@ pub trait Effect: Any {
     fn sync_hash(&self) -> i32 {
         0
     }
+    /// The type name without its module path, for the sync detail dump.
+    fn type_name(&self) -> &'static str {
+        let full = std::any::type_name::<Self>();
+        full.rsplit("::").next().unwrap_or(full)
+    }
     /// `IEffect.Render`.
     fn render(&self, _viewer: Option<&PlayerRef>, _out: &mut Vec<Renderable>) {}
     /// `IEffectAboveShroud.RenderAboveShroud`.
