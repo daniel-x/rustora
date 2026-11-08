@@ -632,8 +632,7 @@ impl Resupply {
                 self.base.queue_child(a);
             }
         }
-        if !is_host_invalid {
-            let host = self.host_actor();
+        if let Some(host) = self.host.actor() {
             for nd in &self.notify_dock_clients {
                 nd.undocked(self_, host);
             }
