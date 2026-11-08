@@ -446,6 +446,8 @@ impl ShellWorld {
 enum PendingLoad {
     Game,
     Replay(String),
+    /// The world is loaded; the first frame builds the scene and loads the sprites, after another load screen frame.
+    Scene,
 }
 
 pub struct Client {
@@ -720,13 +722,19 @@ impl Client {
     /// Port of `Game.InnerLogicTick`: the user interface ticks at `Ui.Timestep`, the world at its own timestep.
     pub fn logic_tick(&mut self) {
         if self.load_screen_drawn
-            && let Some(load) = self.pending_load.take()
+            && let Some(load) = self.pending_load.take_if(|l| !matches!(l, PendingLoad::Scene))
         {
             self.load_screen_drawn = false;
             match load {
                 PendingLoad::Game => self.start_game(),
                 PendingLoad::Replay(path) => self.join_replay(&path),
+                PendingLoad::Scene => {}
             }
+            self.pending_load = Some(PendingLoad::Scene);
+            return;
+        }
+        if self.pending_load.is_some() {
+            return;
         }
         let now = self.ui.run_time();
         let ui_due = self.ui_tick_time.should_advance(now, UI_TIMESTEP);
@@ -1075,6 +1083,10 @@ impl Client {
 
     /// Fills the draw list of the current frame.
     pub fn prepare(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
+        if matches!(self.pending_load, Some(PendingLoad::Scene)) && self.load_screen_drawn {
+            self.pending_load = None;
+            self.load_screen_drawn = false;
+        }
         if self.pending_load.is_some() {
             self.list.clear();
             let assets = self.ui.assets.clone();

@@ -12,10 +12,14 @@ use crate::draw::{DrawContext, Rect, TextStyle};
 
 const LOADING: &str = "loadscreen-loading";
 
+/// The time between two loading messages, the redraw interval of `SheetLoadScreen.Display`.
+const MESSAGE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// `LogoStripeLoadScreen`. Only the 1x image is used.
 pub struct LoadScreen {
     image: Option<String>,
     sheet: Option<Option<Sprite>>,
+    message: Option<(String, std::time::Instant)>,
 }
 
 impl LoadScreen {
@@ -26,10 +30,15 @@ impl LoadScreen {
             .iter()
             .find(|n| n.key == "Image")
             .map(|n| n.value.value_str().to_string());
-        LoadScreen { image, sheet: None }
+        LoadScreen {
+            image,
+            sheet: None,
+            message: None,
+        }
     }
 
-    /// `DisplayInner`: draws the stripe, the logo and one random loading message for the screen size.
+    /// `DisplayInner`: draws the stripe, the logo and a random loading message for the screen size. A new message is
+    /// picked when the last one is at least 200 ms old.
     pub fn draw(&mut self, dc: &mut DrawContext, resolution: (i32, i32)) {
         let sheet = *self.sheet.get_or_insert_with(|| {
             let data = dc.assets.fs.try_open(self.image.as_deref()?)?;
@@ -66,7 +75,11 @@ impl LoadScreen {
         if messages.is_empty() {
             return;
         }
-        let text = messages[crate::logic::cosmetic_random(messages.len())];
+        if self.message.as_ref().is_none_or(|(_, at)| at.elapsed() >= MESSAGE_INTERVAL) {
+            let text = messages[crate::logic::cosmetic_random(messages.len())].to_string();
+            self.message = Some((text, std::time::Instant::now()));
+        }
+        let text = self.message.as_ref().map_or("", |(t, _)| t.as_str());
         let (tw, th) = dc.measure("Bold", text);
         dc.draw_text(
             "Bold",
