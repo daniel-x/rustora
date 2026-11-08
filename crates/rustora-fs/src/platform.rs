@@ -39,14 +39,21 @@ impl Platform {
     /// `Platform.BinDir` as the default engine directory: the directory of the executable, or the first of
     /// `../share/rustora` (installed layout) and `../Resources` (macOS app bundle) that holds `mods`.
     pub fn default_engine_dir() -> PathBuf {
+        let candidates = Self::engine_dir_candidates();
+        candidates
+            .iter()
+            .find(|d| d.join("mods").is_dir())
+            .unwrap_or(&candidates[0])
+            .clone()
+    }
+
+    /// The directories [`Platform::default_engine_dir`] searches for `mods`, the executable's directory first.
+    pub fn engine_dir_candidates() -> Vec<PathBuf> {
         let bin = std::env::current_exe()
             .ok()
             .and_then(|e| e.parent().map(Path::to_path_buf))
             .unwrap_or_default();
-        [bin.clone(), bin.join("../share/rustora"), bin.join("../Resources")]
-            .into_iter()
-            .find(|d| d.join("mods").is_dir())
-            .unwrap_or(bin)
+        vec![bin.clone(), bin.join("../share/rustora"), bin.join("../Resources")]
     }
 
     /// `Platform.SupportDir` of `InitializeSupportDir`: a `Support` directory in the engine directory if it exists,

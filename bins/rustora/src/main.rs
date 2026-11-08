@@ -196,7 +196,24 @@ fn launch(settings: &[String]) {
             .find_map(|s| s.strip_prefix(k)?.strip_prefix('='))
             .map(PathBuf::from)
     };
-    let engine = value("Engine.EngineDir").unwrap_or_else(rustora_fs::Platform::default_engine_dir);
+    let explicit = value("Engine.EngineDir");
+    let engine = explicit.clone().unwrap_or_else(rustora_fs::Platform::default_engine_dir);
+    if !engine.join("mods/ra/mod.yaml").is_file() {
+        match explicit {
+            Some(dir) => eprintln!("No RA mod data (mods/ra/mod.yaml) in Engine.EngineDir={}.", dir.display()),
+            None => {
+                eprintln!("No RA mod data (mods/ra/mod.yaml) found. Searched:");
+                for d in rustora_fs::Platform::engine_dir_candidates() {
+                    eprintln!("  {}", d.display());
+                }
+            }
+        }
+        eprintln!(
+            "Run rustora from an unpacked release archive, or pass Engine.EngineDir=<dir> with the mods of an OpenRA \
+             release-20250330 source tree. See rustora --help."
+        );
+        std::process::exit(1);
+    }
     let support = value("Engine.SupportDir").unwrap_or_else(|| rustora_fs::Platform::user_support_dir(&engine));
     if let Err(e) = std::fs::create_dir_all(&support) {
         eprintln!("cannot create the support directory {}: {e}", support.display());
