@@ -69,6 +69,7 @@ pub mod turreted;
 pub mod util;
 pub mod visibility;
 pub mod weapons;
+pub mod weather_overlay;
 pub mod world;
 
 use rustora_engine::rules::TraitRegistry;
@@ -82,6 +83,7 @@ pub fn register(r: &mut TraitRegistry) {
     gate::register(r);
     beacon::register(r);
     post_effects::register(r);
+    weather_overlay::register(r);
     carryall::register(r);
     cosmetic::register(r);
     chrono::register(r);

@@ -149,6 +149,37 @@ pub trait IRender {
     fn render(&self, self_: &ActorRef, out: &mut Vec<Renderable>);
 }
 
+/// A shape in world pixel coordinates, drawn by `IRenderAboveWorld` traits with the world RGBA color renderer.
+/// Colors are premultiplied RGBA.
+pub enum WorldPixelShape {
+    /// `RgbaColorRenderer.FillRect` from the top left corner.
+    Rect { x: f32, y: f32, w: f32, h: f32, color: [f32; 4] },
+    /// `RgbaColorRenderer.DrawLine`.
+    Line {
+        from: [f32; 2],
+        to: [f32; 2],
+        width: f32,
+        color: [f32; 4],
+    },
+}
+
+/// The client state that `IRenderAboveWorld` traits read from the `WorldRenderer` and `Game`.
+pub struct WorldRenderView {
+    /// `Viewport.CenterLocation` in world pixels.
+    pub center: (i32, i32),
+    /// The smallest zoom of the viewport, as `INotifyViewportZoomExtentsChanged` passes it.
+    pub min_zoom: f32,
+    /// `Renderer.NativeResolution`.
+    pub native_resolution: (u32, u32),
+    /// `Game.RunTime` in milliseconds.
+    pub run_time: i64,
+}
+
+/// `IRenderAboveWorld`: drawn after the actors and effects, below the shroud.
+pub trait IRenderAboveWorld {
+    fn render_above_world(&self, self_: &ActorRef, view: &WorldRenderView, out: &mut Vec<WorldPixelShape>);
+}
+
 /// `IRenderModifier`.
 pub trait IRenderModifier {
     fn modify_render(&self, self_: &ActorRef, renderables: &mut Vec<Renderable>);

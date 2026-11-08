@@ -97,13 +97,18 @@ pub struct Scene {
     terrain: HashMap<u16, Rc<Vec<Option<Sprite>>>>,
     palettes: Palettes,
     variant_seed: u32,
-    /// The number of quads of the last frame before the shroud: the `AfterActors` and `AfterWorld` passes.
+    /// The number of quads of the last frame after the actors and effects: the `AfterActors` passes.
     pub after_actors: usize,
+    /// The number of quads of the last frame after the `IRenderAboveWorld` traits: the `AfterWorld` passes.
+    pub after_world: usize,
+    /// The smallest zoom of the viewport, for `INotifyViewportZoomExtentsChanged` traits.
+    pub min_zoom: f32,
+    started: std::time::Instant,
 }
 
 /// The `IRenderPostProcessPass` traits of the world actor as render passes, in the order of
-/// `WorldRenderer.Draw`: `AfterActors` and `AfterWorld` at `after_actors`, `AfterShroud` at `end`.
-pub fn post_passes(world: &World, after_actors: usize, end: usize) -> Vec<rustora_render::post::PostPass> {
+/// `WorldRenderer.Draw`: `AfterActors` at `after_actors`, `AfterWorld` at `after_world`, `AfterShroud` at `end`.
+pub fn post_passes(world: &World, after_actors: usize, after_world: usize, end: usize) -> Vec<rustora_render::post::PostPass> {
     use rustora_mods_common::post_effects::*;
     use rustora_render::post::{PostEffect, PostPass};
     let wa = world.world_actor();
@@ -117,7 +122,7 @@ pub fn post_passes(world: &World, after_actors: usize, end: usize) -> Vec<rustor
     for t in wa.traits_implementing::<ChronoshiftPostProcessEffect>() {
         if let Some(blend) = t.blend() {
             passes.push(PostPass {
-                at: after_actors,
+                at: after_world,
                 effect: PostEffect::Chronoshift { blend },
             });
         }
@@ -127,7 +132,7 @@ pub fn post_passes(world: &World, after_actors: usize, end: usize) -> Vec<rustor
             let c = t.info.color;
             let color = [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0];
             passes.push(PostPass {
-                at: after_actors,
+                at: after_world,
                 effect: PostEffect::Flash { blend: t.blend(), color },
             });
         }
@@ -155,6 +160,9 @@ impl Scene {
             terrain: HashMap::new(),
             variant_seed: 0x9e37_79b9,
             after_actors: 0,
+            after_world: 0,
+            min_zoom: 1.0,
+            started: std::time::Instant::now(),
         }
     }
 
@@ -331,6 +339,8 @@ impl Scene {
         }
         self.add_renderables(renderer, world, &renderables, cam, &mut quads);
         self.after_actors = quads.len();
+        self.add_above_world(world, cam, &mut quads);
+        self.after_world = quads.len();
 
         if let Some(v) = viewer {
             self.add_shroud(renderer, world, v, cam, &mut quads);
@@ -346,6 +356,28 @@ impl Scene {
         }
         quads.extend(unsorted.into_iter().map(|(_, q)| q));
         quads
+    }
+
+    /// `IRenderAboveWorld` of the actors, drawn without sorting.
+    fn add_above_world(&self, world: &World, cam: &Camera, quads: &mut Vec<Quad>) {
+        use rustora_engine::render::{IRenderAboveWorld, WorldPixelShape, WorldRenderView};
+        let view = WorldRenderView {
+            center: (
+                (cam.x + cam.width as f32 / cam.zoom / 2.0) as i32,
+                (cam.y + cam.height as f32 / cam.zoom / 2.0) as i32,
+            ),
+            min_zoom: self.min_zoom,
+            native_resolution: (cam.width, cam.height),
+            run_time: self.started.elapsed().as_millis() as i64,
+        };
+        let mut shapes = Vec::new();
+        for (a, t) in world.actors_with_trait::<dyn IRenderAboveWorld>() {
+            t.render_above_world(&a, &view, &mut shapes);
+        }
+        quads.extend(shapes.into_iter().map(|s| match s {
+            WorldPixelShape::Rect { x, y, w, h, color } => Quad::solid(x, y, w, h, color),
+            WorldPixelShape::Line { from, to, width, color } => Quad::line(from, to, width, color, color),
+        }));
     }
 
     /// `Actor.MouseBounds` of all actors in the world with `Interactable` or `Selectable`, the input of `ScreenMap`.

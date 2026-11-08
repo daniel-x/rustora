@@ -430,10 +430,11 @@ impl ShellWorld {
         let read_file = self.read_file.clone();
         let world = &self.world;
         let scene = self.scene.get_or_insert_with(|| Scene::new(renderer, world, read_file));
+        scene.min_zoom = self.viewport.borrow().min_zoom;
         let overlay = self.ingame.as_ref().map_or_else(Vec::new, |i| i.order_generator_renderables());
         let viewer = self.ingame.as_ref().map_or_else(|| self.viewer.clone(), |i| i.render_player());
         self.quads = scene.build(renderer, world, viewer.as_ref(), &cam, &overlay);
-        self.passes = crate::scene::post_passes(world, scene.after_actors, self.quads.len());
+        self.passes = crate::scene::post_passes(world, scene.after_actors, scene.after_world, self.quads.len());
         if let Some(ingame) = &self.ingame {
             ingame.screen_map.borrow_mut().set(scene.mouse_bounds(renderer, world));
         }
