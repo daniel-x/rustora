@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! The audio output: a software mixer with the behavior of `OpenAlSoundEngine.cs`, on a cpal output stream.
+//! The audio output: a software mixer with the behavior of `OpenAlSoundEngine.cs`, on ALSA loaded at runtime on
+//! Linux and on a cpal output stream elsewhere.
+
+#[cfg(target_os = "linux")]
+mod alsa;
 
 use std::io::Write;
 use std::path::Path;
@@ -10,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "linux"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustora_core::world_types::WPos;
 use rustora_engine::sound::{AudioDevice, Clip, PlayParams, VoiceId};
@@ -191,12 +196,33 @@ pub struct MixerDevice {
 
 #[allow(dead_code)]
 enum Output {
+    #[cfg(target_os = "linux")]
+    Alsa(alsa::AlsaOutput),
+    #[cfg(not(target_os = "linux"))]
     Stream(cpal::Stream),
     File(FileWriter),
 }
 
 impl MixerDevice {
+    /// Opens the default output device. `None` when there is none or it fails, and the game then runs silently. The
+    /// environment variable `RUSTORA_ALSA_DEVICE` names another ALSA device, such as `null` for a test without sound.
+    #[cfg(target_os = "linux")]
+    pub fn open() -> Option<MixerDevice> {
+        let device = std::env::var("RUSTORA_ALSA_DEVICE").unwrap_or_else(|_| "default".to_string());
+        match alsa::AlsaOutput::start(&device, |rate| Arc::new(Mutex::new(Mixer::new(rate)))) {
+            Ok((output, mixer)) => Some(MixerDevice {
+                mixer,
+                _output: Output::Alsa(output),
+            }),
+            Err(e) => {
+                log::warn!("Cannot open the audio output: {e}");
+                None
+            }
+        }
+    }
+
     /// Opens the default output device. `None` when there is none or it fails, and the game then runs silently.
+    #[cfg(not(target_os = "linux"))]
     pub fn open() -> Option<MixerDevice> {
         let device = cpal::default_host().default_output_device()?;
         let supported = match device.default_output_config() {
@@ -261,6 +287,7 @@ fn lock(mixer: &Mutex<Mixer>) -> MutexGuard<'_, Mixer> {
     mixer.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+#[cfg(not(target_os = "linux"))]
 fn build_stream<T>(device: &cpal::Device, config: &cpal::StreamConfig, mixer: &Arc<Mutex<Mixer>>) -> Result<cpal::Stream, cpal::Error>
 where
     T: cpal::SizedSample + cpal::FromSample<f32>,
@@ -461,6 +488,27 @@ mod tests {
             volume: 1.0,
             attenuate,
         }
+    }
+
+    /// Plays through the runtime-loaded ALSA output on its `null` device. Skipped without ALSA.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn alsa_output_plays_a_clip() {
+        let Ok((output, mixer)) = alsa::AlsaOutput::start("null", |rate| Arc::new(Mutex::new(Mixer::new(rate)))) else {
+            return;
+        };
+        let d = MixerDevice {
+            mixer,
+            _output: Output::Alsa(output),
+        };
+        let id = d
+            .play(&clip(48000, vec![1000; 4800]), params(true, WPos::new(0, 0, 0), false))
+            .unwrap();
+        let start = Instant::now();
+        while !d.is_complete(id) && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(d.is_complete(id));
     }
 
     #[test]

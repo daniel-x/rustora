@@ -2562,6 +2562,7 @@ name = "rustora-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "libloading",
  "log",
  "rustora-core",
  "rustora-engine",
