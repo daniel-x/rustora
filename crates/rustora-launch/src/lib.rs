@@ -199,7 +199,8 @@ pub fn load_world_with_sound(
         &tileset,
         read_file.clone(),
     )));
-    let world = World::new(map, rules, lobby, world_type, 40, 3);
+    let (timestep, order_latency) = game_speed(&md, &lobby);
+    let world = World::new(map, rules, lobby, world_type, timestep, order_latency);
     world.set_is_replay(is_replay);
     world.sound.set_enabled(sound);
     world.load_complete();
@@ -223,7 +224,7 @@ pub struct ReplayDriver {
 
 impl ReplayDriver {
     pub fn new(world: &Rc<World>, replay: Replay) -> ReplayDriver {
-        let mut orders = OrderManager::new(world.clone(), Box::new(ReplayConnection::new(replay.chunks, 3)));
+        let mut orders = OrderManager::new(world.clone(), Box::new(ReplayConnection::new(replay.chunks, world.order_latency)));
         orders.start_on_order = true;
         ReplayDriver {
             orders,
@@ -287,4 +288,28 @@ pub fn format_order(tick: i32, o: &rustora_engine::order::Order) -> String {
         cap(o.is_immediate),
         format_actors(&o.grouped_actors),
     )
+}
+
+/// The `Timestep` and `OrderLatency` of the lobby's `gamespeed` option, read from the mod's `GameSpeeds`, as in the
+/// `World` constructor.
+fn game_speed(md: &ModData, lobby: &rustora_net::session::Session) -> (i32, i32) {
+    let Some(speeds) = md.manifest.yaml.get("GameSpeeds") else {
+        return (40, 3);
+    };
+    let default = speeds
+        .node_with_key("DefaultSpeed")
+        .map(|n| n.value.value_str().to_string())
+        .unwrap_or_default();
+    let name = lobby.global_settings.option_str("gamespeed", &default);
+    let speed = speeds
+        .node_with_key("Speeds")
+        .ok()
+        .and_then(|s| s.value.nodes.iter().find(|n| n.key == name));
+    let int = |k: &str, fallback: i32| {
+        speed
+            .and_then(|n| n.value.nodes.iter().find(|c| c.key == k))
+            .and_then(|c| c.value.value_str().trim().parse().ok())
+            .unwrap_or(fallback)
+    };
+    (int("Timestep", 40), int("OrderLatency", 3))
 }
