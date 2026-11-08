@@ -238,14 +238,17 @@ pub fn resolve_case_insensitive(path: &Path) -> PathBuf {
             continue;
         };
         let wanted = name.to_string_lossy().to_lowercase();
-        let found = fs::read_dir(if resolved.as_os_str().is_empty() { Path::new(".") } else { &resolved })
-            .ok()
-            .and_then(|entries| {
-                entries
-                    .flatten()
-                    .map(|e| e.file_name())
-                    .find(|n| n.to_string_lossy().to_lowercase() == wanted)
-            });
+        let dir = if resolved.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            &resolved
+        };
+        let found = fs::read_dir(dir).ok().and_then(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name())
+                .find(|n| n.to_string_lossy().to_lowercase() == wanted)
+        });
         match found {
             Some(n) => resolved.push(n),
             None if resolved.join(name).exists() => resolved.push(name),
