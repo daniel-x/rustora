@@ -227,7 +227,8 @@ impl ModContent {
 
 /// Port of `FS.ResolveCaseInsensitivePath`: replaces each component of `path` by the directory entry whose name
 /// matches it ignoring case, so the result has the case on disk also on case-insensitive file systems. Returns `path`
-/// unchanged from the first component that does not exist.
+/// unchanged from the first component that does not exist. A component that exists without a matching entry, such as
+/// a Windows short name like `RUNNER~1`, is kept as given.
 pub fn resolve_case_insensitive(path: &Path) -> PathBuf {
     let mut resolved = PathBuf::new();
     let components: Vec<_> = path.components().collect();
@@ -247,6 +248,7 @@ pub fn resolve_case_insensitive(path: &Path) -> PathBuf {
             });
         match found {
             Some(n) => resolved.push(n),
+            None if resolved.join(name).exists() => resolved.push(name),
             None => {
                 resolved.extend(components[i..].iter());
                 return resolved;
