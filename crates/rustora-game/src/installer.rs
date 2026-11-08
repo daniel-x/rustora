@@ -225,33 +225,31 @@ impl ModContent {
     }
 }
 
-/// Port of `FS.ResolveCaseInsensitivePath`: follows `path` from its first existing directory, ignoring the case of
-/// each remaining component. Returns `path` unchanged where a component does not exist.
+/// Port of `FS.ResolveCaseInsensitivePath`: replaces each component of `path` by the directory entry whose name
+/// matches it ignoring case, so the result has the case on disk also on case-insensitive file systems. Returns `path`
+/// unchanged from the first component that does not exist.
 pub fn resolve_case_insensitive(path: &Path) -> PathBuf {
-    if path.exists() {
-        return path.to_path_buf();
-    }
     let mut resolved = PathBuf::new();
     let components: Vec<_> = path.components().collect();
     for (i, component) in components.iter().enumerate() {
-        let candidate = resolved.join(component);
-        if candidate.exists() {
-            resolved = candidate;
+        let std::path::Component::Normal(name) = component else {
+            resolved.push(component);
             continue;
-        }
-        let wanted = component.as_os_str().to_string_lossy().to_lowercase();
-        let found = fs::read_dir(&resolved).ok().and_then(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.file_name())
-                .find(|name| name.to_string_lossy().to_lowercase() == wanted)
-        });
+        };
+        let wanted = name.to_string_lossy().to_lowercase();
+        let found = fs::read_dir(if resolved.as_os_str().is_empty() { Path::new(".") } else { &resolved })
+            .ok()
+            .and_then(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.file_name())
+                    .find(|n| n.to_string_lossy().to_lowercase() == wanted)
+            });
         match found {
-            Some(name) => resolved.push(name),
+            Some(n) => resolved.push(n),
             None => {
-                let mut rest = resolved;
-                rest.extend(components[i..].iter());
-                return rest;
+                resolved.extend(components[i..].iter());
+                return resolved;
             }
         }
     }
