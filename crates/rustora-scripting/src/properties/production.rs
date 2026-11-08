@@ -182,8 +182,7 @@ fn actor_production() -> Vec<Group<ActorRef>> {
                         units: RefCell::new(Vec::new()),
                     };
                     let weak_triggers = Rc::downgrade(&triggers);
-                    let handler: ActorPairEvent = Rc::new_cyclic(|me: &Weak<_>| {
-                        let me: Weak<dyn Fn(&ActorRef, &ActorRef)> = me.clone();
+                    let handler = self_referencing_pair_event(move |me| {
                         move |factory: &ActorRef, unit: &ActorRef| {
                             let done = !Rc::ptr_eq(&player, &factory.owner()) || squad.add(unit);
                             if let (true, Some(t)) = (done, weak_triggers.upgrade()) {
@@ -336,4 +335,11 @@ pub fn actor_groups() -> Vec<Group<ActorRef>> {
 
 pub fn player_groups() -> Vec<Group<PlayerRef>> {
     vec![player_production()]
+}
+
+/// An `ActorPairEvent` built by `make`, which receives a weak reference to the event itself, e.g. to unsubscribe it.
+fn self_referencing_pair_event<F: Fn(&ActorRef, &ActorRef) + 'static>(
+    make: impl FnOnce(Weak<dyn Fn(&ActorRef, &ActorRef)>) -> F,
+) -> ActorPairEvent {
+    Rc::<F>::new_cyclic(|me: &Weak<F>| make(me.clone()))
 }
