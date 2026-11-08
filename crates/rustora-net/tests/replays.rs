@@ -8,16 +8,27 @@ use std::path::PathBuf;
 use rustora_net::order::Packet;
 use rustora_net::replay::Replay;
 
+/// The replays of the outer project's `testdata/replays`, when present.
 #[test]
-fn corpus_replays_parse_and_round_trip() {
+fn local_replays_parse_and_round_trip() {
     let home = std::env::var_os("RUSTORA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
-    let Ok(dir) = std::fs::read_dir(home.join("testdata/replays")) else {
-        return;
-    };
+    if let Ok(dir) = std::fs::read_dir(home.join("testdata/replays")) {
+        check_replays(dir);
+    }
+}
+
+/// The committed corpus in `testdata/corpus` of this repository.
+#[test]
+fn committed_corpus_parses_and_round_trips() {
+    let dir = std::fs::read_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/corpus")).unwrap();
+    check_replays(dir);
+}
+
+fn check_replays(dir: std::fs::ReadDir) {
     let mut n = 0;
-    for e in dir.flatten() {
+    for e in dir.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "orarep")) {
         let data = std::fs::read(e.path()).unwrap();
         let replay = Replay::parse(&data).unwrap();
         assert!(replay.is_valid, "{:?}", e.path());
