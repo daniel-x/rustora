@@ -14,7 +14,7 @@ use rustora_engine::player::PlayerRef;
 use rustora_engine::traits::{IHealth, ISelectionBar};
 use rustora_engine::world::WorldType;
 use rustora_game::settings::{Settings, StatusBarsType, TargetLinesType};
-use rustora_mods_common::decorations::{AnnotationCircle, IDecoration, IRenderCircles};
+use rustora_mods_common::decorations::{AnnotationCircle, DecorationLabel, IDecoration, IRenderCircles};
 use rustora_mods_common::selection::SelectableInfo;
 use rustora_mods_common::target_lines::DrawLineToTarget;
 
@@ -229,6 +229,17 @@ fn draw_decorations(
             };
             let pos = ((origin.0 + s.index * stride.0) as f32, (origin.1 + s.index * stride.1) as f32);
             dc.draw_frame_centered(f, pos);
+        }
+        if let Some(t) = &deco.text {
+            let text = match &t.label {
+                DecorationLabel::Text(text) => text.clone(),
+                DecorationLabel::OwnerName { max_length } => {
+                    let name = crate::logic::sidebar::resolve_player_name(&dc.assets.messages, &ingame.world, &a.owner());
+                    name.chars().take(*max_length).collect()
+                }
+            };
+            let (w, h) = dc.measure(&t.font, &text);
+            dc.draw_text(&t.font, &text, origin.0 - w / 2, origin.1 - h / 2, t.color, TextStyle::Plain);
         }
     }
 }

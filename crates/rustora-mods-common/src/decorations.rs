@@ -24,6 +24,8 @@ use crate::resupply::AmmoPool;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("WithDecoration", |n| load_info!(WithDecorationInfo, n));
+    r.register("WithTextDecoration", |n| load_info!(WithTextDecorationInfo, n));
+    r.register("WithNameTagDecoration", |n| load_info!(WithNameTagDecorationInfo, n));
     r.register("WithBuildingRepairDecoration", |n| load_info!(WithBuildingRepairDecorationInfo, n));
     r.register("WithAmmoPipsDecoration", |n| load_pips(n, PipsKind::Ammo));
     r.register("WithResourceStoragePipsDecoration", |n| load_pips(n, PipsKind::Storage));
@@ -60,11 +62,28 @@ pub struct DecorationSprite {
     pub stride: Int2,
 }
 
+/// The words of a decoration text.
+pub enum DecorationLabel {
+    Text(String),
+    /// `Player.ResolvedPlayerName` of the owner, cut to `max_length` characters. The client resolves bot names.
+    OwnerName {
+        max_length: usize,
+    },
+}
+
+/// A text centered on the decoration origin, as `UITextRenderable`.
+pub struct DecorationText {
+    pub font: String,
+    pub color: Color,
+    pub label: DecorationLabel,
+}
+
 /// A decoration at a named position of the decoration bounds.
 pub struct Decoration {
     pub position: String,
     pub margin: Int2,
     pub sprites: Vec<DecorationSprite>,
+    pub text: Option<DecorationText>,
 }
 
 /// `IDecoration`.
@@ -120,6 +139,16 @@ impl WithDecorationBaseInfo {
             position: self.position.clone(),
             margin: self.margin,
             sprites,
+            text: None,
+        })
+    }
+
+    fn text_decoration(&self, text: DecorationText) -> Option<Decoration> {
+        Some(Decoration {
+            position: self.position.clone(),
+            margin: self.margin,
+            sprites: Vec::new(),
+            text: Some(text),
         })
     }
 }
@@ -490,6 +519,7 @@ impl IDecoration for WithSpriteControlGroupDecoration {
                 index: 0,
                 stride: Int2::default(),
             }],
+            text: None,
         })
     }
 }
@@ -800,4 +830,135 @@ impl IRenderCircles for WithRangeCircle {
             trail: None,
         });
     }
+}
+
+/// `Traits/Render/WithTextDecoration.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithTextDecorationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub deco: WithDecorationBaseInfo,
+    #[field(require)]
+    pub text: String,
+    pub font: String,
+    pub color: Color,
+    pub use_player_color: bool,
+}
+
+impl Default for WithTextDecorationInfo {
+    fn default() -> Self {
+        WithTextDecorationInfo {
+            instance_name: None,
+            deco: WithDecorationBaseInfo::default(),
+            text: String::new(),
+            font: "TinyBold".into(),
+            color: Color::from_argb(255, 255, 255, 255),
+            use_player_color: false,
+        }
+    }
+}
+
+pub struct WithTextDecoration {
+    info: Rc<WithTextDecorationInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(WithTextDecoration: IDecoration, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithTextDecorationInfo => |info, _init| {
+    Some(Rc::new(WithTextDecoration { state: ConditionalState::new(&info.deco.base), info }))
+});
+conditional_simple!(WithTextDecoration);
+
+impl IDecoration for WithTextDecoration {
+    fn requires_selection(&self) -> bool {
+        self.info.deco.requires_selection
+    }
+
+    fn render_decoration(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> Option<Decoration> {
+        if !is_active(&self.state, self_) || !self.info.deco.should_render(self_, viewer) {
+            return None;
+        }
+        self.info.deco.text_decoration(DecorationText {
+            font: self.info.font.clone(),
+            color: if self.info.use_player_color {
+                self_.owner().color
+            } else {
+                self.info.color
+            },
+            label: DecorationLabel::Text(self.info.text.clone()),
+        })
+    }
+}
+
+/// `Traits/Render/WithNameTagDecoration.cs`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct WithNameTagDecorationInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub deco: WithDecorationBaseInfo,
+    pub max_length: i32,
+    pub font: String,
+    pub color: Color,
+    pub use_player_color: bool,
+}
+
+impl Default for WithNameTagDecorationInfo {
+    fn default() -> Self {
+        WithNameTagDecorationInfo {
+            instance_name: None,
+            deco: WithDecorationBaseInfo::default(),
+            max_length: 10,
+            font: "TinyBold".into(),
+            color: Color::from_argb(255, 255, 255, 255),
+            use_player_color: false,
+        }
+    }
+}
+
+pub struct WithNameTagDecoration {
+    info: Rc<WithNameTagDecorationInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(WithNameTagDecoration: IDecoration, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(WithNameTagDecorationInfo => |info, _init| {
+    Some(Rc::new(WithNameTagDecoration { state: ConditionalState::new(&info.deco.base), info }))
+});
+conditional_simple!(WithNameTagDecoration);
+
+impl IDecoration for WithNameTagDecoration {
+    fn requires_selection(&self) -> bool {
+        self.info.deco.requires_selection
+    }
+
+    fn render_decoration(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> Option<Decoration> {
+        if !is_active(&self.state, self_) || !self.info.deco.should_render(self_, viewer) {
+            return None;
+        }
+        self.info.deco.text_decoration(DecorationText {
+            font: self.info.font.clone(),
+            color: if self.info.use_player_color {
+                owner_color(self_, viewer)
+            } else {
+                self.info.color
+            },
+            label: DecorationLabel::OwnerName {
+                max_length: self.info.max_length.max(0) as usize,
+            },
+        })
+    }
+}
+
+/// `Exts.OwnerColor`: the color of the disguise owner while disguised and a render player exists.
+fn owner_color(self_: &ActorRef, viewer: Option<&PlayerRef>) -> Color {
+    if viewer.is_some()
+        && let Some(e) = &self_.cache().effective_owner
+        && e.disguised()
+        && let Some(o) = e.owner()
+    {
+        return o.color;
+    }
+    self_.owner().color
 }

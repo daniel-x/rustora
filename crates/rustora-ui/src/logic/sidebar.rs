@@ -709,6 +709,11 @@ pub fn bind_order_button(ui: &mut Ui, id: WidgetId, kind: crate::button_orders::
 
 /// `Player.ResolvedPlayerName`.
 pub fn resolved_player_name(ui: &Ui, world: &rustora_engine::world::World, player: &PlayerRef) -> String {
+    resolve_player_name(&ui.assets.borrow().messages, world, player)
+}
+
+/// `Player.ResolvedPlayerName` with the messages of `messages`.
+pub fn resolve_player_name(messages: &crate::fluent::Messages, world: &rustora_engine::world::World, player: &PlayerRef) -> String {
     let Some(bot_type) = player.bot_type.as_deref() else {
         return player.player_name.clone();
     };
@@ -718,7 +723,7 @@ pub fn resolved_player_name(ui: &Ui, world: &rustora_engine::world::World, playe
         .trait_infos::<rustora_mods_common::bots::ModularBotInfo>()
         .iter()
         .find(|b| b.ty == bot_type)
-        .and_then(|b| b.name.as_deref().map(|n| message(ui, n)))
+        .and_then(|b| b.name.as_deref().map(|n| messages.get(n)))
         .unwrap_or_else(|| bot_type.to_string());
     let number = world
         .players()
@@ -727,8 +732,7 @@ pub fn resolved_player_name(ui: &Ui, world: &rustora_engine::world::World, playe
         .position(|p| Rc::ptr_eq(p, player))
         .unwrap_or(0) as i64
         + 1;
-    message_with(
-        ui,
+    messages.get_with(
         "enumerated-bot-name",
         &[("name", MessageArg::Text(&name)), ("number", MessageArg::Number(number))],
     )
