@@ -331,6 +331,12 @@ pub fn saves_dir(support_dir: &Path, mod_id: &str, version: &str) -> std::path::
     support_dir.join("Saves").join(mod_id).join(version)
 }
 
+/// The rustora state snapshot that belongs to the game save `save`. It lets the client restore the game at once
+/// instead of replaying the orders of the save.
+pub fn snapshot_path(save: &Path) -> std::path::PathBuf {
+    save.with_extension("rsnap")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

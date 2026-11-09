@@ -4,7 +4,7 @@
 //! The menu client: loads the chrome of a mod and shows its user interface.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -188,7 +188,9 @@ fn world_viewport(world: &World, resolution: (i32, i32), distance: WorldViewport
 }
 
 impl ShellWorld {
-    /// `Game.StartGame`: the world of a game that the server started.
+    /// `Game.StartGame`: the world of a game that the server started. With `snapshot`, the world restores that
+    /// save game and continues from it.
+    #[allow(clippy::too_many_arguments)]
     fn start_game(
         engine: &Path,
         support: &str,
@@ -198,13 +200,28 @@ impl ShellWorld {
         mod_data: &ModData,
         view: (i32, i32),
         distance: WorldViewport,
+        snapshot: Option<Vec<u8>>,
     ) -> ShellWorld {
         let local_client = connection.local_client_id();
         let is_host = lobby.client_with_index(local_client).is_some_and(|c| c.is_admin);
-        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true);
+        let restored = snapshot.and_then(|save| {
+            rustora_launch::restore_game_from(engine, support, package.clone(), &save, false, true)
+                .inspect_err(|e| log::warn!("The state snapshot cannot be restored: {e}"))
+                .ok()
+        });
+        let resumed = restored.is_some();
+        if let Some((world, _, _)) = &restored {
+            log::info!("Restored the state snapshot at net frame {}", world.net_frame_number());
+        }
+        let (world, _, read_file) = restored
+            .unwrap_or_else(|| load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true));
         let manifest = &mod_data.manifest;
         connection.set_replay_metadata(create_game_information(&world, &manifest.id, &manifest.metadata.version));
-        let driver = SkirmishDriver::with_connection(&world, Box::new(connection), is_host);
+        let driver = if resumed {
+            SkirmishDriver::resumed_with_connection(&world, Box::new(connection))
+        } else {
+            SkirmishDriver::with_connection(&world, Box::new(connection), is_host)
+        };
         let viewport = world_viewport(&world, view, distance);
         let viewer = world
             .players()
@@ -320,12 +337,15 @@ impl ShellWorld {
     }
 
     /// Feeds the user interface with the orders that the world ignores, and sends the chat lines it wrote.
-    fn exchange_client_orders(&mut self, messages: &Messages, net: &rustora_ui::net::Net, run_time: i64) {
+    fn exchange_client_orders(&mut self, messages: &Messages, net: &rustora_ui::net::Net, run_time: i64, save_dir: &Path) {
         self.driver.orders.collect_client_orders = true;
         let client_orders = std::mem::take(&mut self.driver.orders.client_orders);
         let mut state = net.borrow_mut();
         for (client_id, order) in client_orders {
             if order.order_string == "GameSaved" {
+                if let Some(name) = order.target_string.as_deref().filter(|_| !self.world.is_replay()) {
+                    crate::snapshot::write(&self.world, &save_dir.join(name));
+                }
                 self.game_saved(messages, &mut state);
                 continue;
             }
@@ -463,6 +483,8 @@ pub struct Client {
     net: NetClient,
     /// The replay file of the running replay, for `Game.RestartGame`.
     replay_path: Option<String>,
+    /// The game save that the local server loads, whose state snapshot the client restores if it can.
+    loading_save: Option<PathBuf>,
     /// The hidden in-game root while a game save loads.
     loading_root: Option<rustora_ui::widget::WidgetId>,
     /// A world load that waits until the load screen was drawn once, and whether it was.
@@ -586,6 +608,7 @@ impl Client {
             services,
             net,
             replay_path: None,
+            loading_save: None,
             loading_root: None,
             pending_load: None,
             load_screen_drawn: false,
@@ -750,7 +773,7 @@ impl Client {
                 shell.tick();
                 if shell.ingame.is_some() {
                     let assets = self.ui.assets.clone();
-                    shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, now);
+                    shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, now, &self.services.save_dir);
                 }
                 let assets = self.ui.assets.clone();
                 shell.update_audio(&self.services, &assets.borrow().messages);
@@ -849,9 +872,7 @@ impl Client {
             fade.game_loaded(&world);
         }
         if !world.is_replay() {
-            let mut unpause = rustora_engine::order::Order::new("PauseGame", None, rustora_engine::target::Target::Invalid, false);
-            unpause.target_string = Some("UnPause".to_string());
-            world.issue_order(unpause);
+            world.set_pause_state(false);
             if let Some(options) = self.ui.find(root, "OPTIONS_BUTTON") {
                 let action = self.ui.button(options).on_click.clone();
                 if let Some(action) = action {
@@ -913,6 +934,11 @@ impl Client {
 
     /// `Game.CreateAndStartLocalServer`.
     fn create_and_start_local_server(&mut self, map: String, orders: Vec<RawOrder>) {
+        self.loading_save = orders
+            .iter()
+            .find(|o| o.order_string == "LoadGameSave")
+            .and_then(|o| o.target_string.as_deref())
+            .map(|name| self.services.save_dir.join(name));
         self.net.create_local_server(map, true);
         self.net.join(rustora_ui::net::LOCAL_SERVER_TARGET, "");
         self.net.set_setup_orders(orders);
@@ -958,6 +984,11 @@ impl Client {
             log::error!("The game cannot start without its map");
             return;
         };
+        let game_save_frames = self.net.take_game_save_frames();
+        let loading_save = self.loading_save.take();
+        let snapshot = game_save_frames
+            .zip(loading_save)
+            .and_then(|((last_frame, _), path)| crate::snapshot::read(&path, &session, last_frame));
         self.ui.reset_all();
         self.dispose_world();
         let distance = self.services.settings.borrow().graphics.viewport_distance;
@@ -970,8 +1001,9 @@ impl Client {
             &self.mod_data,
             self.ui.resolution,
             distance,
+            snapshot,
         );
-        if let Some((last_frame, last_sync_frame)) = self.net.take_game_save_frames() {
+        if let Some((last_frame, last_sync_frame)) = game_save_frames {
             shell.world.begin_loading_game_save(last_frame, last_sync_frame);
         }
         self.enter_game(shell, None);

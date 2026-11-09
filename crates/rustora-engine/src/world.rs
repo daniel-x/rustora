@@ -71,6 +71,8 @@ pub struct World {
     pub order_latency: i32,
     world_tick: Cell<i32>,
     paused: Cell<bool>,
+    /// `World.PredictedPaused`: the pause state after the pause orders this client issued.
+    predicted_paused: Cell<bool>,
     is_game_over: Cell<bool>,
     end_game_requests: RefCell<Vec<i32>>,
     pub disposing: Cell<bool>,
@@ -153,6 +155,7 @@ impl World {
             world_tick: Cell::new(0),
             pause_shellmap: Cell::new(false),
             paused: Cell::new(false),
+            predicted_paused: Cell::new(false),
             is_game_over: Cell::new(false),
             end_game_requests: RefCell::new(Vec::new()),
             disposing: Cell::new(false),
@@ -432,8 +435,26 @@ impl World {
         self.paused.get()
     }
 
+    /// Sets `Paused` and `PredictedPaused`, like a processed `PauseGame` order and `World.SetLocalPauseState`.
     pub fn set_paused(&self, p: bool) {
         self.paused.set(p);
+        self.predicted_paused.set(p);
+    }
+
+    /// `World.PredictedPaused`.
+    pub fn predicted_paused(&self) -> bool {
+        self.predicted_paused.get()
+    }
+
+    /// `World.SetPauseState`: issues the pause order and predicts its outcome.
+    pub fn set_pause_state(&self, paused: bool) {
+        if self.is_game_over() {
+            return;
+        }
+        let mut o = crate::order::Order::new("PauseGame", None, crate::target::Target::Invalid, false);
+        o.target_string = Some(if paused { "Pause" } else { "UnPause" }.to_string());
+        self.issue_order(o);
+        self.predicted_paused.set(paused);
     }
 
     pub fn is_game_over(&self) -> bool {

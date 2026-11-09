@@ -166,8 +166,21 @@ pub fn restore_game(
     sound: bool,
 ) -> Result<(Rc<World>, Rc<ModData>, ReadFile), String> {
     let (header, _) = rustora_engine::savegame::SaveHeader::read(save)?;
-    let lobby = rustora_net::session::Session::deserialize(&header.lobby, "save game").map_err(|e| e.to_string())?;
     let pkg = find_map(engine, support, &header.map_uid).ok_or_else(|| format!("map {} not found", header.map_uid))?;
+    restore_game_from(engine, support, pkg, save, is_replay, sound)
+}
+
+/// [`restore_game`] with the map package `pkg` of the save game.
+pub fn restore_game_from(
+    engine: &Path,
+    support: &str,
+    pkg: Arc<dyn Package>,
+    save: &[u8],
+    is_replay: bool,
+    sound: bool,
+) -> Result<(Rc<World>, Rc<ModData>, ReadFile), String> {
+    let (header, _) = rustora_engine::savegame::SaveHeader::read(save)?;
+    let lobby = rustora_net::session::Session::deserialize(&header.lobby, "save game").map_err(|e| e.to_string())?;
     let (world, md, read_file) = build_world(engine, support, pkg, lobby, is_replay, WorldType::Regular, sound, true);
     rustora_engine::savegame::restore(&world, save)?;
     Ok((world, md, read_file))

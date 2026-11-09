@@ -162,6 +162,9 @@ pub struct OrderManager {
     pub tick_scale: f32,
     /// Collects the orders that concern the client user interface in `client_orders`.
     pub collect_client_orders: bool,
+    /// The net frame a restored save game resumed at. Packets of earlier frames and `SaveTraitData` are dropped,
+    /// because the restored state already contains their effects.
+    resumed_frame: Option<i32>,
     /// Orders for the client user interface with the client they came from.
     pub client_orders: Vec<(i32, RawOrder)>,
 }
@@ -181,6 +184,7 @@ impl OrderManager {
             local_immediate_orders: Vec::new(),
             net_frame_interval,
             collect_client_orders: false,
+            resumed_frame: None,
             client_orders: Vec::new(),
             out_of_sync: None,
             out_of_sync_hashes: None,
@@ -201,6 +205,7 @@ impl OrderManager {
         self.world.set_net_frame_number(net_frame);
         self.local_frame_number = local_frame;
         self.sent_orders_frame = net_frame - 1;
+        self.resumed_frame = Some(net_frame);
         self.connection.start_game();
     }
 
@@ -269,6 +274,9 @@ impl OrderManager {
     }
 
     fn enqueue(&mut self, client_id: i32, frame: i32, orders: Option<OrderPacket>) {
+        if self.resumed_frame.is_some_and(|f| frame < f) {
+            return;
+        }
         self.pending_orders
             .get_mut(&client_id)
             .unwrap_or_else(|| panic!("Received packet from disconnected client '{client_id}'"))
@@ -351,7 +359,11 @@ impl OrderManager {
                     self.client_orders.push((client_id, raw.clone()));
                 }
             }
-            "SaveTraitData" => self.add_save_trait_data(raw),
+            "SaveTraitData" => {
+                if self.resumed_frame.is_none() {
+                    self.add_save_trait_data(raw);
+                }
+            }
             "PauseGame" => {
                 if self.world.lobby_info.client_with_index(client_id).is_some() {
                     let pause = raw.target_string.as_deref() == Some("Pause");

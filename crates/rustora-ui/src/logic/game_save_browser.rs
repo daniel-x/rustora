@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use rustora_engine::player::WinState;
 use rustora_engine::world::World;
-use rustora_net::game_save::GameSave;
+use rustora_net::game_save::{GameSave, snapshot_path};
 use rustora_net::order::RawOrder;
 
 use super::{button_prompt_with_cancel, message_with, services, text_input_prompt};
@@ -187,6 +187,7 @@ impl Browser {
         let new = self.base_path.join(format!("{new_name}.{SAVE_EXTENSION}"));
         match std::fs::rename(&old, &new) {
             Ok(()) => {
+                let _ = std::fs::rename(snapshot_path(&old), snapshot_path(&new));
                 *entry.path.borrow_mut() = new;
                 let title = ui.child(entry.item, "TITLE");
                 let name = new_name.to_string();
@@ -208,6 +209,7 @@ impl Browser {
             log::debug!("{e}");
             return;
         }
+        let _ = std::fs::remove_file(snapshot_path(&path));
         if self.selected.borrow().as_ref().is_some_and(|s| Rc::ptr_eq(s, entry)) {
             self.select(ui, None);
         }

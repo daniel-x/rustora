@@ -22,9 +22,7 @@ use crate::widgets::menu_button::MenuButtonWidget;
 
 /// `World.SetPauseState`.
 pub(crate) fn set_pause_state(world: &rustora_engine::world::World, paused: bool) {
-    let mut o = Order::new("PauseGame", None, Target::Invalid, false);
-    o.target_string = Some(if paused { "Pause" } else { "UnPause" }.to_string());
-    world.issue_order(o);
+    world.set_pause_state(paused);
 }
 
 fn single_non_bot_client(world: &rustora_engine::world::World) -> bool {
@@ -76,7 +74,7 @@ fn open_menu_panel(
         (b.menu_container.clone(), b.pause, b.hide_ingame_ui)
     };
     let world = ingame.world.clone();
-    let cached_pause = world.paused();
+    let cached_pause = world.predicted_paused();
     let world_root = ui.find(ui.root, "WORLD_ROOT");
     if hide_ingame_ui {
         ingame.cancel_input_mode();

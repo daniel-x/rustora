@@ -176,6 +176,18 @@ impl SkirmishDriver {
         }
     }
 
+    /// Continues the restored save game in `world` with the orders of `connection`. The bots keep the activation
+    /// state of the save.
+    pub fn resumed_with_connection(world: &Rc<World>, connection: Box<dyn Connection>) -> SkirmishDriver {
+        let mut orders = OrderManager::new(world.clone(), connection);
+        orders.resume(world.net_frame_number(), world.local_frame_number(), &[]);
+        SkirmishDriver {
+            orders,
+            world: world.clone(),
+            end_game_frame: None,
+        }
+    }
+
     /// Advances the world by one tick if the orders for it are available.
     pub fn step(&mut self) -> Step {
         self.orders.tick_immediate();

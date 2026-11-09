@@ -18,6 +18,7 @@ mod headless;
 mod net;
 mod palettes;
 mod scene;
+mod snapshot;
 mod script_host;
 mod sprites;
 mod ui_sprites;
