@@ -132,7 +132,7 @@ impl INotifyAddedToWorld for WithBuildingBib {
             } else {
                 self.info.sequence.as_str()
             };
-            anim.play_fetch_index(sequence, Rc::new(move || i));
+            anim.play_fetch_index_saved(sequence, Rc::new(crate::render::FrameIndex::Constant(i)));
             anim.is_decoration.set(true);
             let offset = map.center_of_cell(cell) - map.center_of_cell(location) - center_offset;
             let z = -(offset.y + center_offset.y + 512);
@@ -392,12 +392,13 @@ impl INotifyAttack for WithMuzzleOverlay {
         let Some(sequence) = &a.info.muzzle_sequence else {
             return;
         };
-        for f in self.flashes(self_) {
+        let me = crate::util::trait_rc(self_, self);
+        for (i, f) in self.flashes(self_).iter().enumerate() {
             if std::ptr::eq(Rc::as_ptr(&f.armament), a) && std::ptr::eq(&f.armament.barrels[f.barrel], barrel) {
                 f.visible.set(true);
                 f.animation
                     .animation
-                    .play_then_saved(sequence, Rc::new(SetFlag(f.visible.clone(), false)));
+                    .play_then_saved(sequence, Rc::new(OverlayDone::Muzzle(me.clone(), i)));
             }
         }
     }
@@ -1130,10 +1131,10 @@ impl ConditionalHooks for WithParachute {
         );
     }
 
-    fn trait_disabled(&self, _self_: &ActorRef) {
+    fn trait_disabled(&self, self_: &ActorRef) {
         let Some(anim) = &self.overlay else { return };
         self.render_prolonged.set(true);
-        let after = AfterAnim::saved(SetFlag(self.render_prolonged.clone(), false));
+        let after = AfterAnim::saved(OverlayDone::Parachute(crate::util::trait_rc(self_, self)));
         match self.info.closing_sequence.as_deref().filter(|c| !c.is_empty()) {
             Some(c) => anim.play_then_after(c, Some(after)),
             None => anim.play_backwards_then_after(self.info.opening_sequence.as_deref().unwrap_or_default(), Some(after)),
@@ -1852,40 +1853,42 @@ info_impl!(WithAttackOverlayInfo => |info, init| {
 });
 
 impl WithAttackOverlay {
-    fn play_overlay(&self) {
+    fn play_overlay(&self, self_: &ActorRef) {
         self.attacking.set(true);
-        self.overlay
-            .play_then_saved(&self.info.sequence, Rc::new(SetFlag(self.attacking.clone(), false)));
+        self.overlay.play_then_saved(
+            &self.info.sequence,
+            Rc::new(OverlayDone::Attack(crate::util::trait_rc(self_, self))),
+        );
     }
 
-    fn notify(&self, a: &Armament, relative_to: &str) {
+    fn notify(&self, self_: &ActorRef, a: &Armament, relative_to: &str) {
         if self.info.delay_relative_to != relative_to || self.info.armament.as_deref().is_some_and(|n| !n.is_empty() && n != a.info.name) {
             return;
         }
         if self.info.delay > 0 {
             self.tick.set(self.info.delay);
         } else {
-            self.play_overlay();
+            self.play_overlay(self_);
         }
     }
 }
 
 impl INotifyAttack for WithAttackOverlay {
-    fn attacking(&self, _self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
-        self.notify(a, "Attack");
+    fn attacking(&self, self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
+        self.notify(self_, a, "Attack");
     }
 
-    fn preparing_attack(&self, _self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
-        self.notify(a, "Preparation");
+    fn preparing_attack(&self, self_: &ActorRef, _target: &Target, a: &Armament, _barrel: &Barrel) {
+        self.notify(self_, a, "Preparation");
     }
 }
 
 impl ITick for WithAttackOverlay {
-    fn tick(&self, _self_: &ActorRef) {
+    fn tick(&self, self_: &ActorRef) {
         if self.info.delay > 0 {
             self.tick.set(self.tick.get() - 1);
             if self.tick.get() == 0 {
-                self.play_overlay();
+                self.play_overlay(self_);
             }
         }
     }
@@ -1932,8 +1935,8 @@ info_impl!(WithSupportPowerActivationOverlayInfo => |info, init| {
     let body = self_.trait_::<BodyOrientation>();
     let overlay = Animation::new(w.map().sequences().clone(), &rs.get_image(&self_), None, None);
     let visible = Rc::new(Cell::new(false));
-    overlay.play_then_saved(&info.sequence, Rc::new(SetFlag(visible.clone(), false)));
     let t = Rc::new(WithSupportPowerActivationOverlay { state: ConditionalState::new(&info.base), overlay, visible });
+    t.overlay.play_then_saved(&info.sequence, Rc::new(OverlayDone::Activation(t.clone())));
     let (b, a, off, weak) = (body, self_.clone(), info.offset, Rc::downgrade(&t));
     let center = self_.clone();
     rs.add(
@@ -1956,7 +1959,8 @@ impl INotifySupportPower for WithSupportPowerActivationOverlay {
     fn activated(&self, _self_: &ActorRef) {
         self.visible.set(true);
         if let Some(name) = self.overlay.current_sequence().map(|s| s.name.clone()) {
-            self.overlay.play_then_saved(&name, Rc::new(SetFlag(self.visible.clone(), false)));
+            self.overlay
+                .play_then_saved(&name, Rc::new(OverlayDone::Activation(crate::util::trait_rc(_self_, self))));
         }
     }
 }
@@ -2054,8 +2058,8 @@ impl Default for WithResourceLevelOverlayInfo {
 pub struct WithResourceLevelOverlay {
     info: Rc<WithResourceLevelOverlayInfo>,
     state: ConditionalState,
-    overlay: Rc<Animation>,
-    player_resources: Rc<RefCell<Rc<crate::player::PlayerResources>>>,
+    pub(crate) overlay: Rc<Animation>,
+    pub(crate) player_resources: Rc<RefCell<Rc<crate::player::PlayerResources>>>,
 }
 
 register_traits!(WithResourceLevelOverlay: INotifyOwnerChanged, INotifyDamageStateChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
@@ -2065,20 +2069,8 @@ info_impl!(WithResourceLevelOverlayInfo => |info, init| {
     let rs = self_.trait_::<RenderSprites>();
     let player_resources = Rc::new(RefCell::new(self_.owner().player_actor().trait_::<crate::player::PlayerResources>()));
     let overlay = Animation::new(w.map().sequences().clone(), &rs.get_image(&self_), None, None);
-    let (a, pr) = (overlay.clone(), player_resources.clone());
-    overlay.play_fetch_index(
-        &info.sequence,
-        Rc::new(move || {
-            let pr = pr.borrow();
-            let cap = pr.resource_capacity.get();
-            if cap == 0 {
-                return 0;
-            }
-            let len = a.current_sequence().map_or(0, |s| s.length());
-            (10 * len - 1).wrapping_mul(pr.resources.get()) / (10 * cap)
-        }),
-    );
     let t = Rc::new(WithResourceLevelOverlay { state: ConditionalState::new(&info.base), overlay, player_resources, info });
+    t.overlay.play_fetch_index_saved(&t.info.sequence, Rc::new(crate::render::FrameIndex::ResourceOverlay(t.clone())));
     let weak = Rc::downgrade(&t);
     rs.add(
         AnimationWithOffset {
@@ -2126,14 +2118,31 @@ impl rustora_engine::persist::SavedFn for PlayIfHasSequence {
     }
 }
 
-/// Sets a flag after an animation.
+/// Hides an overlay after its animation. It refers to the trait, not to its flag, because the animation may be
+/// loaded before the trait that owns the flag.
 #[derive(rustora_engine::persist::Persist)]
 #[persist(value)]
-pub struct SetFlag(pub Rc<Cell<bool>>, pub bool);
+pub enum OverlayDone {
+    Muzzle(Rc<WithMuzzleOverlay>, usize),
+    Parachute(Rc<WithParachute>),
+    Attack(Rc<WithAttackOverlay>),
+    Activation(Rc<WithSupportPowerActivationOverlay>),
+    Smoke(Rc<WithDamageOverlay>),
+}
 
-impl rustora_engine::persist::SavedFn for SetFlag {
+impl rustora_engine::persist::SavedFn for OverlayDone {
     fn call(&self) {
-        self.0.set(self.1);
+        match self {
+            OverlayDone::Muzzle(t, i) => {
+                if let Some(f) = t.flashes.get().and_then(|f| f.get(*i)) {
+                    f.visible.set(false);
+                }
+            }
+            OverlayDone::Parachute(t) => t.render_prolonged.set(false),
+            OverlayDone::Attack(t) => t.attacking.set(false),
+            OverlayDone::Activation(t) => t.visible.set(false),
+            OverlayDone::Smoke(t) => t.is_smoking.set(false),
+        }
     }
 }
 
@@ -2157,8 +2166,7 @@ impl rustora_engine::persist::SavedFn for SmokeStage {
                 }),
             );
         } else {
-            o.anim
-                .play_then_saved(&o.info.end_sequence, Rc::new(SetFlag(o.is_smoking.clone(), false)));
+            o.anim.play_then_saved(&o.info.end_sequence, Rc::new(OverlayDone::Smoke(o.clone())));
         }
     }
 }
@@ -2178,5 +2186,5 @@ impl rustora_engine::persist::SavedFn for ParachuteOpened {
 
 /// Registers the save game loaders of this module.
 pub(crate) fn register_persist() {
-    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: PlayIfHasSequence, SetFlag, SmokeStage, ParachuteOpened);
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: PlayIfHasSequence, OverlayDone, SmokeStage, ParachuteOpened);
 }

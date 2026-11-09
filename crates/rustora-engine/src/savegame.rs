@@ -373,6 +373,7 @@ fn read_state(world: &Rc<World>, data: &[u8]) {
 
 fn read_actor(r: &mut SaveReader, a: &ActorRef) {
     r.set_current_actor(Some(a.clone()));
+    r.label = format!("{a:?} core");
     a.load_core(r);
     let traits = a.trait_objects();
     let n = r.len_prefix();
@@ -390,6 +391,7 @@ fn read_actor(r: &mut SaveReader, a: &ActorRef) {
         }
         let len = r.u32() as usize;
         let start = r.position();
+        r.label = format!("{a:?} {name}");
         t.load_state(r);
         if r.position() - start != len {
             r.fail(format!(

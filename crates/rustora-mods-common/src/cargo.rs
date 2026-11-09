@@ -352,8 +352,7 @@ impl Cargo {
             self.take_off_after_load.set(true);
             self_.queue_activity(Land::new(self_));
         }
-        let locked = self.locked.clone();
-        self_.queue_activity(WaitFor::new(Box::new(move || !locked.get()), false));
+        self_.queue_activity(WaitFor::saved(Rc::new(CargoUnlocked(crate::util::trait_rc(self_, self))), false));
     }
 
     fn release_lock(&self) {
@@ -741,6 +740,17 @@ impl Default for ParaDropInfo {
 }
 
 pub use crate::support_powers::ActorEvent;
+
+/// True once the cargo lock of a passenger ends.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct CargoUnlocked(Rc<Cargo>);
+
+impl rustora_engine::persist::SavedPredicate for CargoUnlocked {
+    fn test(&self) -> bool {
+        !self.0.locked.get()
+    }
+}
 
 #[derive(rustora_engine::persist::Persist)]
 pub struct ParaDrop {
@@ -1324,4 +1334,5 @@ pub(crate) fn register_persist() {
     rustora_engine::persist_activities!(Enter, UnloadCargo);
     rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: RuntimeCargoInit, CargoInit);
     rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: RideTransportHooks);
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedPredicate: CargoUnlocked);
 }

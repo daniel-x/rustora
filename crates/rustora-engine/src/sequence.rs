@@ -260,6 +260,8 @@ enum TickFunc {
     Repeating,
     Then(Option<AfterAnim>),
     FetchIndex(Rc<dyn Fn() -> i32>),
+    /// `PlayFetchIndex` with a function that save games keep.
+    FetchSaved(Rc<dyn crate::persist::SavedIndex>),
     FetchDirection(Rc<dyn Fn() -> i32>),
 }
 
@@ -382,6 +384,15 @@ impl Animation {
         *self.tick_func.borrow_mut() = TickFunc::FetchIndex(func);
     }
 
+    /// `PlayFetchIndex` with a function that save games keep.
+    pub fn play_fetch_index_saved(&self, name: &str, func: Rc<dyn crate::persist::SavedIndex>) {
+        self.backwards.set(false);
+        self.tick_always.set(true);
+        self.play_sequence(name);
+        self.frame.set(func.index());
+        *self.tick_func.borrow_mut() = TickFunc::FetchSaved(func);
+    }
+
     pub fn play_fetch_direction(&self, name: &str, direction: Rc<dyn Fn() -> i32>) {
         self.tick_always.set(false);
         self.play_sequence(name);
@@ -411,6 +422,7 @@ impl Animation {
                 }
             }
             TickFunc::FetchIndex(func) => self.frame.set(func()),
+            TickFunc::FetchSaved(func) => self.frame.set(func.index()),
             TickFunc::FetchDirection(direction) => {
                 let d = direction();
                 if d > 0 {
@@ -507,6 +519,10 @@ impl crate::persist::PersistState for Animation {
                 f.save(w);
             }
             TickFunc::FetchIndex(_) => w.u8(4),
+            TickFunc::FetchSaved(f) => {
+                w.u8(6);
+                f.save(w);
+            }
             TickFunc::FetchDirection(_) => w.u8(5),
         }
     }
@@ -531,6 +547,7 @@ impl crate::persist::PersistState for Animation {
             1 => TickFunc::Repeating,
             2 => TickFunc::Then(None),
             3 => TickFunc::Then(Some(Persist::load(r))),
+            6 => TickFunc::FetchSaved(Persist::load(r)),
             4 | 5 if keep => return,
             4 | 5 => {
                 log::warn!("save game: the animation {} has no fetch function to restore", self.name.borrow());

@@ -227,7 +227,9 @@ impl Default for PlaceBeaconInfo {
 #[derive(rustora_engine::persist::Persist)]
 pub struct PlaceBeacon {
     info: Rc<PlaceBeaconInfo>,
+    #[persist(skip)]
     player_beacon: Rc<RefCell<Option<EffectRef>>>,
+    #[persist(skip)]
     player_radar_ping: Rc<RefCell<Option<Rc<RadarPing>>>>,
 }
 

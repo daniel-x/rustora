@@ -688,12 +688,11 @@ impl WithSpriteBody {
             self.default_animation.play_repeating(&self.normalize_sequence(self_, open));
             return;
         }
-        let (anim, gate) = (self.default_animation.clone(), gate.clone());
-        self.default_animation.play_fetch_index(
+        self.default_animation.play_fetch_index_saved(
             &self.normalize_sequence(self_, &self.info.sequence),
-            Rc::new(move || {
-                let len = anim.current_sequence().map_or(1, |s| s.length());
-                (len - 1) * gate.position() / gate.open_position()
+            Rc::new(FrameIndex::Gate {
+                body: crate::util::trait_rc(self_, self),
+                gate: gate.clone(),
             }),
         );
     }
@@ -742,11 +741,10 @@ impl WithSpriteBody {
 
 impl WithSpriteBody {
     fn play_wall_animation(&self, self_: &ActorRef) {
-        if let BodyVariant::Wall { adjacent, .. } = &self.variant {
-            let adjacent = adjacent.clone();
-            self.default_animation.play_fetch_index(
+        if let BodyVariant::Wall { .. } = &self.variant {
+            self.default_animation.play_fetch_index_saved(
                 &self.normalize_sequence(self_, &self.info.sequence),
-                Rc::new(move || adjacent.get()),
+                Rc::new(FrameIndex::Wall(crate::util::trait_rc(self_, self))),
             );
         }
     }
@@ -794,14 +792,13 @@ impl WithSpriteBody {
     }
 
     fn configure_animation(&self, self_: &ActorRef) {
+        let body = crate::util::trait_rc(self_, self);
         if let BodyVariant::Charge { attack } = &self.variant {
-            let (anim, attack) = (self.default_animation.clone(), attack.clone());
-            let a2 = anim.clone();
-            anim.play_fetch_index(
+            self.default_animation.play_fetch_index_saved(
                 &self.normalize_sequence(self_, &self.info.sequence),
-                Rc::new(move || {
-                    let len = a2.current_sequence().map_or(0, |s| s.length());
-                    len * attack.charge_level() / (attack.info.charge_level + 1)
+                Rc::new(BodyFrame::Charge {
+                    body,
+                    attack: attack.clone(),
                 }),
             );
             return;
@@ -809,18 +806,12 @@ impl WithSpriteBody {
         let BodyVariant::ResourceLevel { stages, player_resources } = &self.variant else {
             return;
         };
-        let (anim, stages, pr) = (self.default_animation.clone(), *stages, player_resources.borrow().clone());
-        let a2 = anim.clone();
-        anim.play_fetch_index(
+        self.default_animation.play_fetch_index_saved(
             &self.normalize_sequence(self_, &self.info.sequence),
-            Rc::new(move || {
-                let cap = pr.resource_capacity.get();
-                if cap != 0 {
-                    (stages.wrapping_mul(a2.current_sequence().expect("sequence").length()) - 1).wrapping_mul(pr.resources.get())
-                        / (stages.wrapping_mul(cap))
-                } else {
-                    0
-                }
+            Rc::new(BodyFrame::ResourceLevel {
+                body,
+                stages: *stages,
+                resources: player_resources.borrow().clone(),
             }),
         );
     }
@@ -1733,7 +1724,8 @@ pub struct ReverseThenActivity {
 impl rustora_engine::persist::SavedFn for ReverseThenActivity {
     fn call(&self) {
         if let Some(w) = self.make.first_enabled() {
-            w.default_animation.play_fetch_index(&self.make.info.sequence, Rc::new(|| 0));
+            w.default_animation
+                .play_fetch_index_saved(&self.make.info.sequence, Rc::new(FrameIndex::Constant(0)));
         }
         self.make
             .token
@@ -1801,7 +1793,82 @@ impl rustora_engine::persist::SavedFn for IdleOverlayStarted {
     }
 }
 
+/// The frame of a body that shows a level: the charge of `AttackCharges` or the stored resources of the owner.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub enum BodyFrame {
+    Charge {
+        body: Rc<WithSpriteBody>,
+        attack: Rc<crate::attack::AttackBase>,
+    },
+    ResourceLevel {
+        body: Rc<WithSpriteBody>,
+        stages: i32,
+        resources: Rc<crate::player::PlayerResources>,
+    },
+}
+
+impl rustora_engine::persist::SavedIndex for BodyFrame {
+    fn index(&self) -> i32 {
+        match self {
+            BodyFrame::Charge { body, attack } => {
+                let len = body.default_animation.current_sequence().map_or(0, |s| s.length());
+                len * attack.charge_level() / (attack.info.charge_level + 1)
+            }
+            BodyFrame::ResourceLevel { body, stages, resources } => {
+                let cap = resources.resource_capacity.get();
+                if cap != 0 {
+                    let len = body.default_animation.current_sequence().expect("sequence").length();
+                    (stages.wrapping_mul(len) - 1).wrapping_mul(resources.resources.get()) / (stages.wrapping_mul(cap))
+                } else {
+                    0
+                }
+            }
+        }
+    }
+}
+
+/// The frame of an animation that shows a state: a constant, the opening of a gate, the connections of a wall,
+/// or the stored resources of a resource level overlay.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub enum FrameIndex {
+    Constant(i32),
+    Gate {
+        body: Rc<WithSpriteBody>,
+        gate: Rc<crate::gate::Gate>,
+    },
+    Wall(Rc<WithSpriteBody>),
+    ResourceOverlay(Rc<crate::render_traits::WithResourceLevelOverlay>),
+}
+
+impl rustora_engine::persist::SavedIndex for FrameIndex {
+    fn index(&self) -> i32 {
+        match self {
+            FrameIndex::Constant(i) => *i,
+            FrameIndex::Gate { body, gate } => {
+                let len = body.default_animation.current_sequence().map_or(1, |s| s.length());
+                (len - 1) * gate.position() / gate.open_position()
+            }
+            FrameIndex::Wall(body) => match &body.variant {
+                BodyVariant::Wall { adjacent, .. } => adjacent.get(),
+                _ => 0,
+            },
+            FrameIndex::ResourceOverlay(o) => {
+                let pr = o.player_resources.borrow();
+                let cap = pr.resource_capacity.get();
+                if cap == 0 {
+                    return 0;
+                }
+                let len = o.overlay.current_sequence().map_or(0, |s| s.length());
+                (10 * len - 1).wrapping_mul(pr.resources.get()) / (10 * cap)
+            }
+        }
+    }
+}
+
 /// Registers the save game loaders of this module.
 pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedIndex: BodyFrame, FrameIndex);
     rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: CustomAnimDone, PlayBodySequence, MakeAnimDone, ReverseThenActivity, DeployAnimDone, DockAnimDone, IdleOverlayStarted);
 }

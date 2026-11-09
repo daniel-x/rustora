@@ -74,6 +74,20 @@ impl SavedFn for NoOp {
     fn call(&self) {}
 }
 
+/// A frame index function that save games can keep, registered with [`persist_values!`] for `dyn SavedIndex`.
+pub trait SavedIndex: PersistDyn {
+    fn index(&self) -> i32;
+}
+
+impl RcPersist for dyn SavedIndex {
+    fn save_rc(this: &Rc<Self>, w: &mut SaveWriter) {
+        w.value_dyn(&**this)
+    }
+    fn load_rc(r: &mut SaveReader) -> Rc<Self> {
+        r.value_dyn::<Self>()
+    }
+}
+
 /// A condition that save games can keep, registered with [`persist_values!`] for `dyn SavedPredicate`.
 pub trait SavedPredicate: PersistDyn {
     fn test(&self) -> bool;
@@ -438,6 +452,10 @@ pub struct SaveReader<'a> {
     pending: Option<usize>,
     /// The actor whose state is being read.
     current_actor: Option<ActorRef>,
+    /// Where the reader is, such as an actor and trait, for error messages.
+    pub label: String,
+    /// The labels where shared values were first read, by slot.
+    value_origins: HashMap<usize, String>,
 }
 
 type Loader<D> = fn(&mut SaveReader) -> Rc<D>;
@@ -475,6 +493,8 @@ impl<'a> SaveReader<'a> {
             slots: Vec::new(),
             pending: None,
             current_actor: None,
+            label: String::new(),
+            value_origins: HashMap::new(),
         }
     }
 
@@ -775,7 +795,12 @@ impl<'a> SaveReader<'a> {
         match self.shared_tag() {
             Ok(i) => match self.slots.get(i) {
                 Some(Slot::Value(v)) if v.downcast_ref::<Rc<T>>().is_some_and(|o| Rc::ptr_eq(o, rc)) => {}
-                _ => self.fail(format!("the shared {} was loaded before its owner", std::any::type_name::<T>())),
+                _ => self.fail(format!(
+                    "the shared {} of {} was loaded before its owner, by {}",
+                    std::any::type_name::<T>(),
+                    self.label,
+                    self.value_origins.get(&i).map_or("?", |s| s.as_str())
+                )),
             },
             Err(i) => {
                 self.slots[i] = Slot::Value(Box::new(rc.clone()));
@@ -795,6 +820,7 @@ impl<'a> SaveReader<'a> {
                 _ => self.fail(format!("object {i} is not a shared value")),
             },
             Err(i) => {
+                self.value_origins.insert(i, self.label.clone());
                 let v = load(self);
                 self.slots[i] = Slot::Value(Box::new(v.clone()));
                 v

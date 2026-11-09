@@ -951,7 +951,8 @@ impl Activity for Transform {
         let make_animation = self_.trait_or_default::<WithMakeAnimation>();
         if let Some(m) = make_animation.as_ref().filter(|_| !self.args.skip_make_anims) {
             self.base.is_interruptible.set(false);
-            self.base.queue_child(crate::activities::WaitFor::new(Box::new(|| false), true));
+            self.base
+                .queue_child(crate::activities::WaitFor::saved(Rc::new(crate::activities::Never), true));
             m.reverse(
                 self_,
                 AfterAnim::saved(TransformDone {
