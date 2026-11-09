@@ -11,7 +11,7 @@ out="$(mkdir -p "${2:-$root/target/distrib}" && cd "${2:-$root/target/distrib}" 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-macos"
 for t in x86_64-apple-darwin aarch64-apple-darwin; do
-  cargo build --profile dist --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-server-bin
+  cargo build --profile dist --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-server
 done
 app="$out/$name/Rustora.app"
 rm -rf "$out/$name"

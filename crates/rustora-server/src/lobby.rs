@@ -5,7 +5,7 @@
 //! `LobbyCommands` and `LobbySettingsNotification` traits do when a client joins or the server becomes empty.
 
 use rustora_core::fieldloader::Color;
-use rustora_mods_common::world::{make_slot, sync_client_to_player_reference};
+use rustora_game::players::{make_slot, sync_client_to_player_reference};
 use rustora_net::session::{Client, ClientState, LobbyOptionState, Session};
 
 use crate::server::{Server, ServerState, WHITE, sanitized_player_name};

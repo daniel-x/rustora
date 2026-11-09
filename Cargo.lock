@@ -2552,7 +2552,6 @@ dependencies = [
  "rustora-net",
  "rustora-render",
  "rustora-scripting",
- "rustora-server",
  "rustora-ui",
  "winit",
 ]
@@ -2630,7 +2629,9 @@ dependencies = [
  "indexmap",
  "log",
  "rustora-core",
+ "rustora-derive",
  "rustora-fs",
+ "rustora-net",
  "sha1 0.11.0",
  "thiserror 2.0.21",
  "zip",
@@ -2659,6 +2660,7 @@ dependencies = [
  "rustora-core",
  "rustora-derive",
  "rustora-engine",
+ "rustora-game",
  "rustora-net",
 ]
 
@@ -2711,22 +2713,11 @@ dependencies = [
  "rsa",
  "rustora-core",
  "rustora-derive",
- "rustora-engine",
  "rustora-fs",
  "rustora-game",
- "rustora-mods-common",
  "rustora-net",
  "sha1 0.10.7",
  "socket2",
-]
-
-[[package]]
-name = "rustora-server-bin"
-version = "0.1.0"
-dependencies = [
- "log",
- "rustora-core",
- "rustora-server",
 ]
 
 [[package]]

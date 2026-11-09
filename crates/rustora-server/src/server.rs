@@ -19,7 +19,7 @@ use indexmap::IndexSet;
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
-use rustora_mods_common::world::{make_slot, sync_client_to_player_reference};
+use rustora_game::players::{make_slot, sync_client_to_player_reference};
 use rustora_net::binary::Reader;
 use rustora_net::game_save::{GameSave, sanitized_file_name, saves_dir};
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
@@ -1274,13 +1274,13 @@ impl Server {
         self.create_world_players();
         self.sync_lobby_info();
 
-        let default_speed = self.game_mod.default_speed.clone();
+        let default_speed = self.game_mod.rules.default_speed.clone();
         let speed_name = self.lobby.global_settings.option_str("gamespeed", &default_speed).to_string();
         let speed = self
             .game_mod
-            .speeds
+            .rules.speeds
             .get(&speed_name)
-            .or_else(|| self.game_mod.speeds.get(&default_speed))
+            .or_else(|| self.game_mod.rules.speeds.get(&default_speed))
             .cloned()
             .expect("mod defines the default game speed");
         let players = self.validated_conn_indices();
@@ -1398,9 +1398,20 @@ impl Server {
     }
 }
 
+/// `WriteLineWithTimeStamp`: a console line with the local time.
+fn write_line_with_time_stamp(line: &str) {
+    println!("[{}] {line}", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn servers_neither_advertise_nor_forward_ports_by_default() {
+        assert!(!ServerSettings::default().advertise_online);
+        assert!(!ServerSettings::default().discover_nat_devices);
+    }
 
     #[test]
     fn last_side_standing_wins() {
@@ -1458,9 +1469,4 @@ mod tests {
         assert_eq!(anonymize_ip("10.1.2.3".parse().unwrap()).as_deref(), Some("10.1.2.*"));
         assert_eq!(anonymize_ip("::1".parse().unwrap()), None);
     }
-}
-
-/// `WriteLineWithTimeStamp`: a console line with the local time.
-fn write_line_with_time_stamp(line: &str) {
-    println!("[{}] {line}", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"));
 }

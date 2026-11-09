@@ -14,10 +14,8 @@ indexmap = "2"
 rsa = "0.9"
 rustora-core = { path = "../rustora-core" }
 rustora-derive = { path = "../rustora-derive" }
-rustora-engine = { path = "../rustora-engine" }
 rustora-fs = { path = "../rustora-fs" }
 rustora-game = { path = "../rustora-game" }
-rustora-mods-common = { path = "../rustora-mods-common" }
 rustora-net = { path = "../rustora-net" }
 sha1 = { version = "0.10", features = ["oid"] }
 socket2 = "0.5"

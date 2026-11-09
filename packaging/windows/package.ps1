@@ -10,7 +10,7 @@ if ($Out -eq "") { $Out = "$root/target/distrib" }
 New-Item -ItemType Directory -Force $Out | Out-Null
 $version = (Select-String -Path "$root/Cargo.toml" -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
 $name = "rustora-$version-windows-x86_64"
-cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-server-bin
+cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-server
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $stage = Join-Path $Out $name
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }

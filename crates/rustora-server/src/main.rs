@@ -9,7 +9,8 @@
 //! Usage: `rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
 //! [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>]
 //! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices]
-//! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]`.
+//! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]
+//! [--player-profile-url <url>] [--server-advertise-url <url>]`.
 
 use std::path::PathBuf;
 
@@ -23,7 +24,7 @@ fn usage(problem: &str) -> ! {
         "usage: rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
          [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>] \
          [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
-         [--profile-blacklist <id,id>]"
+         [--profile-blacklist <id,id>] [--player-profile-url <url>] [--server-advertise-url <url>]"
     );
     std::process::exit(2);
 }
@@ -76,6 +77,8 @@ fn main() {
             "--require-authentication" => settings.require_authentication = true,
             "--profile-whitelist" => settings.profile_id_whitelist = parse_ids(&value()),
             "--profile-blacklist" => settings.profile_id_blacklist = parse_ids(&value()),
+            "--player-profile-url" => settings.player_profile_url = value(),
+            "--server-advertise-url" => settings.server_advertise_url = value(),
             _ => usage(&format!("unknown argument {a}")),
         }
     }

@@ -9,7 +9,7 @@ openra="$(cd "$1" && pwd)"
 out="$(mkdir -p "${2:-$root/target/distrib}" && cd "${2:-$root/target/distrib}" && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-linux-$(uname -m)"
-cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-server-bin
+cargo build --profile dist --manifest-path "$root/Cargo.toml" -p rustora -p rustora-server
 stage="$out/$name"
 rm -rf "$stage"
 mkdir -p "$stage/mods"

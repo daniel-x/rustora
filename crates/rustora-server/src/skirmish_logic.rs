@@ -5,7 +5,7 @@
 
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
-use rustora_mods_common::world::sync_client_to_player_reference;
+use rustora_game::players::sync_client_to_player_reference;
 use rustora_net::session::{Client, ClientState, fmt_color};
 
 use crate::server::{Server, ServerType};

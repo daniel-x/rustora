@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Drives a real server over TCP with raw protocol clients. Skips without the OpenRA reference checkout.
+//! Drives the `rustora-server` binary over TCP with raw protocol clients. Skips without the OpenRA reference checkout.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -15,8 +16,6 @@ use rustora_net::binary::Reader;
 use rustora_net::handshake::{HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::order::{RawOrder, order_type};
 use rustora_net::session::{Client, ClientState, Session};
-use rustora_server::mod_info::ServerMod;
-use rustora_server::server::{Server, ServerSettings, ServerType};
 use sha1::{Digest, Sha1};
 
 const MAP: &str = "ore-lord.oramap";
@@ -26,24 +25,36 @@ fn engine_dir() -> Option<PathBuf> {
     p.join("mods/ra/mod.yaml").exists().then_some(p)
 }
 
-/// Starts a server thread on a free port and returns the port.
-fn start_server(engine: PathBuf, configure: impl FnOnce(&mut ServerSettings) + Send + 'static) -> u16 {
+/// A `rustora-server` process, started the way a client or an operator starts it. It is killed when dropped.
+struct ServerProcess {
+    child: Child,
+    port: u16,
+}
+
+impl Drop for ServerProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Starts the server binary on a free port with a test map, a fixed seed and a temporary support directory;
+/// `args` come after these and can override them.
+fn start_server(engine: &Path, args: &[&str]) -> ServerProcess {
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let support = std::env::temp_dir().join(format!("rustora-server-test-{port}"));
-    std::thread::spawn(move || {
-        let mut settings = ServerSettings {
-            listen_port: port,
-            map: Some(MAP.to_string()),
-            enable_singleplayer: true,
-            seed: Some(7),
-            support_dir: support.clone(),
-            ..Default::default()
-        };
-        configure(&mut settings);
-        let game_mod = ServerMod::load(&engine, support.to_str().unwrap(), "ra").unwrap();
-        Server::new(settings, game_mod).unwrap().run();
-    });
-    port
+    let child = Command::new(env!("CARGO_BIN_EXE_rustora-server"))
+        .arg("--engine-dir")
+        .arg(engine)
+        .arg("--support-dir")
+        .arg(&support)
+        .args(["--port", &port.to_string(), "--map", MAP, "--seed", "7", "--enable-singleplayer"])
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("start rustora-server");
+    ServerProcess { child, port }
 }
 
 /// One packet from the server.
@@ -247,7 +258,8 @@ fn join(port: u16) -> TestClient {
 #[test]
 fn wrong_version_is_rejected() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine, |_| {});
+    let server = start_server(&engine, &[]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     assert!(!c.pump("other-version", TestClient::joined));
     assert!(c.got("notification-incompatible-version"), "{:?}", c.messages);
@@ -256,7 +268,8 @@ fn wrong_version_is_rejected() {
 #[test]
 fn wrong_password_is_rejected() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine, |s| s.password = "secret".to_string());
+    let server = start_server(&engine, &["--password", "secret"]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     assert!(!c.pump(VERSION, TestClient::joined));
     assert!(c.got("notification-requires-password"), "{:?}", c.messages);
@@ -265,7 +278,8 @@ fn wrong_password_is_rejected() {
 #[test]
 fn lobby_has_map_settings_and_only_the_admin_changes_them() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine, |_| {});
+    let server = start_server(&engine, &[]);
+    let port = server.port;
     let mut admin = join(port);
     let mut other = join(port);
     let client = |c: &TestClient, i: i32| c.lobby.client_with_index(i).cloned().unwrap();
@@ -302,7 +316,8 @@ fn lobby_has_map_settings_and_only_the_admin_changes_them() {
 #[test]
 fn leaving_admin_hands_over_and_removes_bots() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine, |_| {});
+    let server = start_server(&engine, &[]);
+    let port = server.port;
     let mut admin = join(port);
     let mut other = join(port);
     assert!(admin.pump(VERSION, |c| c.lobby.client_in_slot("Multi1").is_some()));
@@ -319,7 +334,8 @@ fn leaving_admin_hands_over_and_removes_bots() {
 #[test]
 fn game_start_sends_empty_frames_and_acks_orders() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine, |_| {});
+    let server = start_server(&engine, &[]);
+    let port = server.port;
     let mut a = join(port);
     let mut b = join(port);
     b.command("spectate");
@@ -372,11 +388,8 @@ fn sync_packet(hash: i32) -> Vec<u8> {
     p
 }
 
-fn local_server(engine: PathBuf, support: PathBuf) -> u16 {
-    start_server(engine, move |s| {
-        s.server_type = ServerType::Local;
-        s.support_dir = support;
-    })
+fn local_server(engine: &Path, support: &Path) -> ServerProcess {
+    start_server(engine, &["--dependent", "local", "--support-dir", support.to_str().unwrap()])
 }
 
 #[test]
@@ -385,7 +398,8 @@ fn local_server_saves_a_game_and_loads_it_again() {
     let support = std::env::temp_dir().join(format!("rustora-save-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&support);
 
-    let mut a = join(local_server(engine.clone(), support.clone()));
+    let server_a = local_server(&engine, &support);
+    let mut a = join(server_a.port);
     a.command("spectate");
     a.command("slot_bot Multi0 0 normal");
     assert!(a.pump(VERSION, |c| c.lobby.client_in_slot("Multi0").is_some()));
@@ -405,7 +419,8 @@ fn local_server_saves_a_game_and_loads_it_again() {
     assert!(file.exists());
     drop(a);
 
-    let mut b = join(local_server(engine.clone(), support.clone()));
+    let server_b = local_server(&engine, &support);
+    let mut b = join(server_b.port);
     let load = RawOrder::from_target_string("LoadGameSave", "..test.orasav", true);
     b.send_packet(0, &load.serialize());
     assert!(b.pump(VERSION, |c| {
@@ -423,8 +438,8 @@ fn local_server_saves_a_game_and_loads_it_again() {
     );
     drop(b);
 
-    let independent = start_server(engine, move |s| s.support_dir = support);
-    let mut c = join(independent);
+    let independent = start_server(&engine, &["--support-dir", support.to_str().unwrap()]);
+    let mut c = join(independent.port);
     c.send_packet(0, &load.serialize());
     c.command("spectate");
     let index = c.index;
@@ -437,10 +452,8 @@ fn valid_signature_sets_the_fingerprint() {
     let Some(engine) = engine_dir() else { return };
     let ((fingerprint, key), yaml) = identity();
     let (url, requests) = start_http_stub(yaml);
-    let port = start_server(engine, move |s| {
-        s.player_profile_url = url;
-        s.require_authentication = true;
-    });
+    let server = start_server(&engine, &["--player-profile-url", &url, "--require-authentication"]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     c.identity = Some((fingerprint, key));
     assert!(c.pump(VERSION, TestClient::joined));
@@ -454,17 +467,15 @@ fn bad_signature_counts_as_not_authenticated() {
     let ((fingerprint, _), yaml) = identity();
     let ((_, other_key), _) = identity();
     let (url, _requests) = start_http_stub(yaml);
-    let url2 = url.clone();
-    let port = start_server(engine.clone(), move |s| {
-        s.player_profile_url = url;
-        s.require_authentication = true;
-    });
+    let server = start_server(&engine, &["--player-profile-url", &url, "--require-authentication"]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     c.identity = Some((fingerprint.clone(), other_key.clone()));
     assert!(!c.pump(VERSION, TestClient::joined));
     assert!(c.got("notification-requires-authentication"), "{:?}", c.messages);
 
-    let port = start_server(engine, move |s| s.player_profile_url = url2);
+    let server = start_server(&engine, &["--player-profile-url", &url]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     c.identity = Some((fingerprint, other_key));
     assert!(c.pump(VERSION, TestClient::joined));
@@ -474,17 +485,16 @@ fn bad_signature_counts_as_not_authenticated() {
 #[test]
 fn unsigned_client_and_blacklisted_profile_are_rejected() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine.clone(), |s| s.require_authentication = true);
+    let server = start_server(&engine, &["--require-authentication"]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     assert!(!c.pump(VERSION, TestClient::joined));
     assert!(c.got("notification-requires-authentication"), "{:?}", c.messages);
 
     let (identity, yaml) = identity();
     let (url, _requests) = start_http_stub(yaml);
-    let port = start_server(engine, move |s| {
-        s.player_profile_url = url;
-        s.profile_id_blacklist = vec![42];
-    });
+    let server = start_server(&engine, &["--player-profile-url", &url, "--profile-blacklist", "42"]);
+    let port = server.port;
     let mut c = TestClient::connect(port);
     c.identity = Some(identity);
     assert!(!c.pump(VERSION, TestClient::joined));
@@ -495,11 +505,8 @@ fn unsigned_client_and_blacklisted_profile_are_rejected() {
 fn advertising_posts_the_game_and_its_changes() {
     let Some(engine) = engine_dir() else { return };
     let (url, requests) = start_http_stub(String::new());
-    let port = start_server(engine, move |s| {
-        s.advertise_online = true;
-        s.server_advertise_url = url;
-        s.name = "Stub Game".to_string();
-    });
+    let server = start_server(&engine, &["--advertise-online", "--server-advertise-url", &url, "--name", "Stub Game"]);
+    let port = server.port;
     let timeout = Duration::from_secs(60);
     let (first, body) = requests.recv_timeout(timeout).unwrap();
     assert!(first.starts_with("POST "), "{first}");
@@ -522,9 +529,40 @@ fn advertising_posts_the_game_and_its_changes() {
 #[test]
 fn servers_are_silent_towards_the_master_server_by_default() {
     let Some(engine) = engine_dir() else { return };
-    let port = start_server(engine, |_| {});
-    let c = join(port);
+    let (url, requests) = start_http_stub(String::new());
+    let server = start_server(&engine, &["--server-advertise-url", &url]);
+    let c = join(server.port);
     assert!(c.joined());
-    assert!(!ServerSettings::default().advertise_online);
-    assert!(!ServerSettings::default().discover_nat_devices);
+    assert!(requests.recv_timeout(Duration::from_secs(3)).is_err());
+}
+
+#[test]
+fn a_dependent_server_ends_with_its_client_process() {
+    let Some(engine) = engine_dir() else { return };
+    let mut server = start_server(&engine, &["--dependent", "skirmish"]);
+    assert!(join(server.port).joined());
+    drop(server.child.stdin.take());
+    let start = Instant::now();
+    while server.child.try_wait().unwrap().is_none() {
+        assert!(start.elapsed() < Duration::from_secs(10), "the server still runs without its client");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn servers_write_their_log_channels() {
+    let Some(engine) = engine_dir() else { return };
+    let independent = start_server(&engine, &[]);
+    let dependent = start_server(&engine, &["--dependent", "local"]);
+    for (server, file) in [(&independent, "independent-server.log"), (&dependent, "server.log")] {
+        let log = std::env::temp_dir()
+            .join(format!("rustora-server-test-{}", server.port))
+            .join("Logs")
+            .join(file);
+        let start = Instant::now();
+        while !std::fs::read_to_string(&log).is_ok_and(|t| t.contains("Initial map")) {
+            assert!(start.elapsed() < Duration::from_secs(15), "{} lacks the initial map", log.display());
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
 }

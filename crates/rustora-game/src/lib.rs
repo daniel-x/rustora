@@ -3,13 +3,16 @@
 
 //! Mod data: manifest, mounted file system, maps and rule sets.
 
+pub mod actor_yaml;
 pub mod cab;
 pub mod color_picker;
 pub mod installer;
+pub mod lobby_rules;
 pub mod manifest;
 pub mod map;
 pub mod map_cache;
 pub mod moddata;
+pub mod players;
 pub mod settings;
 
 #[derive(Debug, thiserror::Error)]

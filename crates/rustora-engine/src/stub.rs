@@ -5,6 +5,7 @@
 //! trait (whether it is `ISync`, and the condition driven `IsTraitDisabled`/`IsTraitPaused`),
 //! so actors hash like in C# as long as the trait has no further synced state.
 
+use crate::actor_info::TraitNodeType;
 use std::any::Any;
 use std::rc::Rc;
 

@@ -1719,3 +1719,60 @@ impl<T: Persist> Persist for crate::map::CellLayer<T> {
         crate::map::CellLayer::from_raw(width, height, Persist::load(r))
     }
 }
+
+/// `PlayerReference` lives in `rustora-game`, which client and server share, so its `Persist` is written here.
+impl Persist for rustora_game::players::PlayerReference {
+    fn save(&self, w: &mut SaveWriter) {
+        self.name.save(w);
+        self.palette.save(w);
+        self.bot.save(w);
+        self.starting_units_class.save(w);
+        self.allow_bots.save(w);
+        self.playable.save(w);
+        self.required.save(w);
+        self.owns_world.save(w);
+        self.spectating.save(w);
+        self.non_combatant.save(w);
+        self.lock_faction.save(w);
+        self.faction.save(w);
+        self.lock_color.save(w);
+        self.color.save(w);
+        self.home_location.save(w);
+        self.lock_spawn.save(w);
+        self.spawn.save(w);
+        self.lock_team.save(w);
+        self.team.save(w);
+        self.lock_handicap.save(w);
+        self.handicap.save(w);
+        self.allies.save(w);
+        self.enemies.save(w);
+    }
+
+    fn load(r: &mut SaveReader) -> Self {
+        rustora_game::players::PlayerReference {
+            name: Persist::load(r),
+            palette: Persist::load(r),
+            bot: Persist::load(r),
+            starting_units_class: Persist::load(r),
+            allow_bots: Persist::load(r),
+            playable: Persist::load(r),
+            required: Persist::load(r),
+            owns_world: Persist::load(r),
+            spectating: Persist::load(r),
+            non_combatant: Persist::load(r),
+            lock_faction: Persist::load(r),
+            faction: Persist::load(r),
+            lock_color: Persist::load(r),
+            color: Persist::load(r),
+            home_location: Persist::load(r),
+            lock_spawn: Persist::load(r),
+            spawn: Persist::load(r),
+            lock_team: Persist::load(r),
+            team: Persist::load(r),
+            lock_handicap: Persist::load(r),
+            handicap: Persist::load(r),
+            allies: Persist::load(r),
+            enemies: Persist::load(r),
+        }
+    }
+}

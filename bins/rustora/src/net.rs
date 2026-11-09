@@ -5,6 +5,7 @@
 //! that matter before a game starts.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -20,7 +21,9 @@ use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_respo
 use rustora_net::game_information::timestamped_filename;
 use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
-use rustora_server::mod_info::ServerMod;
+use rustora_game::lobby_rules::{MapInfo, ModLobbyRules};
+use rustora_game::map::MapPackage;
+use rustora_game::map_cache::MapCache;
 use rustora_ui::fluent::{MessageArg, Messages};
 use rustora_ui::logic::color_picker::ColorRules;
 use rustora_ui::logic::{ColorRulesLookup, LobbyRulesLookup};
@@ -58,41 +61,54 @@ fn free_local_port() -> Option<u16> {
     Some(std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?.local_addr().ok()?.port())
 }
 
-/// The mod as the server reads it, loaded on first use.
+/// The lobby rules of the mod of the client and of the maps in its map cache, loaded on first use.
 #[derive(Clone)]
-pub struct LazyServerMod {
-    engine: PathBuf,
-    support: String,
-    game_mod: Rc<RefCell<Option<ServerMod>>>,
+pub struct LobbyData {
+    mod_data: Rc<ModData>,
+    maps: Rc<RefCell<MapCache>>,
+    rules: Rc<RefCell<Option<Rc<ModLobbyRules>>>>,
+    infos: Rc<RefCell<HashMap<String, Rc<MapInfo>>>>,
 }
 
-impl LazyServerMod {
-    pub fn new(engine: &Path, support: &str) -> LazyServerMod {
-        LazyServerMod {
-            engine: engine.to_path_buf(),
-            support: support.to_string(),
-            game_mod: Rc::default(),
+impl LobbyData {
+    pub fn new(mod_data: Rc<ModData>, maps: Rc<RefCell<MapCache>>) -> LobbyData {
+        LobbyData {
+            mod_data,
+            maps,
+            rules: Rc::default(),
+            infos: Rc::default(),
         }
     }
 
-    fn get(&self) -> Option<std::cell::RefMut<'_, Option<ServerMod>>> {
-        let mut game_mod = self.game_mod.borrow_mut();
-        if game_mod.is_none() {
-            *game_mod = ServerMod::load(&self.engine, &self.support, "ra")
-                .map_err(|e| log::error!("{e}"))
-                .ok();
+    fn rules(&self) -> Option<Rc<ModLobbyRules>> {
+        let mut rules = self.rules.borrow_mut();
+        if rules.is_none() {
+            *rules = ModLobbyRules::load(&self.mod_data).map(Rc::new).map_err(|e| log::error!("{e}")).ok();
         }
-        Some(game_mod)
+        rules.clone()
+    }
+
+    fn map_info(&self, uid: &str) -> Option<Rc<MapInfo>> {
+        if let Some(info) = self.infos.borrow().get(uid) {
+            return Some(info.clone());
+        }
+        let rules = self.rules()?;
+        let preview = self.maps.borrow().get(uid)?;
+        let package = preview.open_package(&self.mod_data.file_system)?;
+        let map = MapPackage::load(package.clone()).map_err(|e| log::warn!("{e}")).ok()?;
+        let info = Rc::new(rules.map_info(&self.mod_data, &package, &map).map_err(|e| log::warn!("{e}")).ok()?);
+        self.infos.borrow_mut().insert(uid.to_string(), info.clone());
+        Some(info)
     }
 }
 
 /// The color rules of the mod, read once.
-pub fn color_rules_lookup(game_mod: LazyServerMod) -> ColorRulesLookup {
+pub fn color_rules_lookup(lobby: LobbyData) -> ColorRulesLookup {
     let cached: RefCell<Option<Rc<ColorRules>>> = RefCell::default();
     Rc::new(move || {
         if cached.borrow().is_none() {
-            let game_mod = game_mod.get()?;
-            let (picker, terrain_colors) = game_mod.as_ref()?.default_color_rules().map_err(|e| log::error!("{e}")).ok()?;
+            let rules = lobby.rules()?;
+            let (picker, terrain_colors) = rules.default_color_rules(&lobby.mod_data).map_err(|e| log::error!("{e}")).ok()?;
             *cached.borrow_mut() = Some(Rc::new(ColorRules { picker, terrain_colors }));
         }
         cached.borrow().clone()
@@ -100,10 +116,9 @@ pub fn color_rules_lookup(game_mod: LazyServerMod) -> ColorRulesLookup {
 }
 
 /// The rules of maps for the lobby, read the way the server reads them.
-pub fn lobby_rules_lookup(game_mod: LazyServerMod) -> LobbyRulesLookup {
+pub fn lobby_rules_lookup(lobby: LobbyData) -> LobbyRulesLookup {
     Rc::new(move |uid| {
-        let mut game_mod = game_mod.get()?;
-        let info = game_mod.as_mut()?.map_info(uid).map_err(|e| log::warn!("{e}")).ok()?;
+        let info = lobby.map_info(uid)?;
         Some(Rc::new(LobbyRules {
             options: info
                 .options

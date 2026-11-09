@@ -9,6 +9,7 @@ license.workspace = true
 rustora-core = { path = "../rustora-core" }
 rustora-derive = { path = "../rustora-derive" }
 rustora-engine = { path = "../rustora-engine" }
+rustora-game = { path = "../rustora-game" }
 rustora-net = { path = "../rustora-net" }
 indexmap = "2"
 log = "0.4"

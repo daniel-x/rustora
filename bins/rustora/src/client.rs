@@ -45,7 +45,7 @@ use rustora_ui::music::MusicPlaylist;
 use rustora_ui::viewport::Viewport;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
 
-use crate::net::{LazyServerMod, NetClient, color_rules_lookup, lobby_rules_lookup};
+use crate::net::{LobbyData, NetClient, color_rules_lookup, lobby_rules_lookup};
 use crate::scene::{Scene, world_to_px};
 
 struct ModFs(Rc<ModData>);
@@ -176,6 +176,12 @@ fn start_music(services: &Rc<Services>, shell: Option<&ShellWorld>) {
             .play_notification(shell.world.rules().audio(), "Speech", notification, faction);
         shell.world.sound.add_transient_line(None, text);
     }
+}
+
+/// Whether a game that starts now still has to load a game save before `GameLoaded`. A game resumed from a state
+/// snapshot can start past the saved orders, and it still goes through `GameLoaded` once.
+fn awaits_game_loaded(world: &World) -> bool {
+    world.is_loading_game_save() || (world.game_save_last_frame() >= 0 && !world.is_replay())
 }
 
 /// The viewport of a world, centered on its map.
@@ -527,7 +533,8 @@ impl Client {
         assets.hotkeys.apply_settings(&settings.keys);
         let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
-        let server_mod = LazyServerMod::new(engine, support);
+        let maps = Rc::new(RefCell::new(MapCache::load(&mod_data)));
+        let lobby_data = LobbyData::new(mod_data.clone(), maps.clone());
         let sound = open_sound(&mod_data, &settings);
         let mod_audio = load_mod_audio(&mod_data);
         sound.load_music_files(&mod_audio);
@@ -542,12 +549,12 @@ impl Client {
             save_dir: rustora_net::game_save::saves_dir(Path::new(support), &mod_data.manifest.id, &mod_data.manifest.metadata.version),
             content_installer_mod: installer_mod,
             missions: mod_data.manifest.missions.clone(),
-            maps: Rc::new(RefCell::new(MapCache::load(&mod_data))),
+            maps,
             map_repository: Rc::default(),
             settings: Rc::new(RefCell::new(settings)),
             net: Rc::default(),
-            lobby_rules: RefCell::new(Some(lobby_rules_lookup(server_mod.clone()))),
-            color_rules: RefCell::new(Some(color_rules_lookup(server_mod))),
+            lobby_rules: RefCell::new(Some(lobby_rules_lookup(lobby_data.clone()))),
+            color_rules: RefCell::new(Some(color_rules_lookup(lobby_data))),
             ingame: RefCell::new(None),
             sound,
             mod_audio,
@@ -1092,7 +1099,11 @@ impl Client {
         shell.ingame = Some(ingame.clone());
         *self.services.ingame.borrow_mut() = Some(ingame);
         self.shell = Some(shell);
-        start_music(&self.services, self.shell.as_ref());
+        let world = self.shell.as_ref().map(|s| s.world.clone());
+        let loading = world.as_ref().is_some_and(|w| awaits_game_loaded(w));
+        if !loading {
+            start_music(&self.services, self.shell.as_ref());
+        }
         let root = self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
         if let Some(label) = self.ui.find(root, "MISSION_TEXT") {
             let (host, color_host) = (self.script_host.clone(), self.script_host.clone());
@@ -1100,8 +1111,7 @@ impl Client {
             label.get_text = Some(Rc::new(move || host.mission_text.borrow().0.clone()));
             label.get_color = Some(Rc::new(move || color_host.mission_text.borrow().1));
         }
-        let world = self.shell.as_ref().map(|s| s.world.clone());
-        if let Some(world) = world.filter(|w| w.is_loading_game_save()) {
+        if let Some(world) = world.filter(|_| loading) {
             self.ui.set_visible_fn(root, || false);
             self.ui
                 .open_window("GAMESAVE_LOADING_SCREEN", WidgetArgs::default().with_value("world", world));
