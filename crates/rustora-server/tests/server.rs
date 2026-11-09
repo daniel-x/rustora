@@ -415,7 +415,7 @@ fn local_server_saves_a_game_and_loads_it_again() {
     let create = RawOrder::from_target_string("CreateGameSave", "../test.orasav", true);
     a.send_packet(0, &create.serialize());
     assert!(a.pump(VERSION, |c| c.got("..test.orasav")));
-    let file = support.join("Saves/ra").join(VERSION).join("..test.orasav");
+    let file = rustora_core::own_files::saves_dir(&support, "ra", VERSION).join("..test.orasav");
     assert!(file.exists());
     drop(a);
 
@@ -561,10 +561,8 @@ fn servers_write_their_log_channels() {
     let independent = start_server(&engine, &[]);
     let dependent = start_server(&engine, &["--dependent", "local"]);
     for (server, file) in [(&independent, "independent-server.log"), (&dependent, "server.log")] {
-        let log = std::env::temp_dir()
-            .join(format!("rustora-server-test-{}", server.port))
-            .join("Logs")
-            .join(file);
+        let support = std::env::temp_dir().join(format!("rustora-server-test-{}", server.port));
+        let log = rustora_core::own_files::logs_dir(&support).join(file);
         let start = Instant::now();
         while !std::fs::read_to_string(&log).is_ok_and(|t| t.contains("Initial map")) {
             assert!(start.elapsed() < Duration::from_secs(15), "{} lacks the initial map", log.display());

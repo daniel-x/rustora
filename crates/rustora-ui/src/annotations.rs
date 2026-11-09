@@ -15,8 +15,9 @@ use rustora_engine::player::PlayerRef;
 use rustora_engine::traits::{IHealth, ISelectionBar};
 use rustora_engine::world::WorldType;
 use rustora_mods_common::decorations::{AnnotationCircle, DecorationLabel, IDecoration, IRenderCircles};
+use rustora_mods_common::production::RallyPointIndicator;
 use rustora_mods_common::selection::SelectableInfo;
-use rustora_mods_common::target_lines::DrawLineToTarget;
+use rustora_mods_common::target_lines::{DrawLineToTarget, TargetLine};
 
 use crate::draw::{DrawContext, Rect, TextStyle};
 use crate::logic::ingame::Ingame;
@@ -60,16 +61,30 @@ fn draw_target_lines(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings,
             continue;
         }
         for l in line.lines(a) {
-            let (from, to) = (view(l.from), view(l.to));
-            let color = crate::font::premultiplied(l.color);
-            dc.list.line([from.0, from.1], [to.0, to.1], l.line_width as f32, color);
-            for (x, y) in [to, from] {
-                let m = l.marker_width as f32;
-                dc.list.solid([x - m, y - m, 2.0 * m, 2.0 * m], color);
-            }
+            draw_target_line(dc, &l, &view);
         }
     }
     *previous = current;
+    if lines_enabled {
+        for e in ingame.world.effects() {
+            if let Some(indicator) = e.as_any().downcast_ref::<RallyPointIndicator>() {
+                for l in indicator.target_lines() {
+                    draw_target_line(dc, &l, &view);
+                }
+            }
+        }
+    }
+}
+
+/// `TargetLineRenderable.Render`: the line and a marker at both ends.
+fn draw_target_line(dc: &mut DrawContext, l: &TargetLine, view: &impl Fn(WPos) -> (f32, f32)) {
+    let (from, to) = (view(l.from), view(l.to));
+    let color = crate::font::premultiplied(l.color);
+    dc.list.line([from.0, from.1], [to.0, to.1], l.line_width as f32, color);
+    for (x, y) in [to, from] {
+        let m = l.marker_width as f32;
+        dc.list.solid([x - m, y - m, 2.0 * m, 2.0 * m], color);
+    }
 }
 
 /// `SelectionBoxAnnotationRenderable.Render`.

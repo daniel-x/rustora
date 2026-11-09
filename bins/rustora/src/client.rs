@@ -542,10 +542,11 @@ impl Client {
             mod_id: mod_data.manifest.id.clone(),
             mod_version: mod_data.manifest.metadata.version.clone(),
             installed_mods: mod_data.installed.clone(),
-            replay_dir: Path::new(support)
-                .join("Replays")
-                .join(&mod_data.manifest.id)
-                .join(&mod_data.manifest.metadata.version),
+            replay_dir: rustora_core::own_files::replays_dir(
+                Path::new(support),
+                &mod_data.manifest.id,
+                &mod_data.manifest.metadata.version,
+            ),
             save_dir: rustora_net::game_save::saves_dir(Path::new(support), &mod_data.manifest.id, &mod_data.manifest.metadata.version),
             content_installer_mod: installer_mod,
             missions: mod_data.manifest.missions.clone(),

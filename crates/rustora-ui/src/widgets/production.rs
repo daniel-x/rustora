@@ -11,7 +11,9 @@ use rustora_engine::order::Order;
 use rustora_engine::target::Target;
 use rustora_mods_common::player::PlayerResources;
 use rustora_mods_common::previews::{ProductionIconOverlayManagerInfo, WithProductionIconOverlayInfo};
-use rustora_mods_common::production::{BuildableInfo, ProductionItem, ProductionQueue};
+use rustora_mods_common::production::{
+    BuildableInfo, ProductionItem, ProductionQueue, ProductionQueueFromSelectionInfo, queue_from_selection,
+};
 use rustora_mods_common::render::RenderSpritesInfo;
 
 use super::{ButtonWidget, TooltipContainerWidget, impl_as_any};
@@ -190,6 +192,8 @@ pub struct ProductionPaletteWidget {
     pub max_icon_row_offset: i32,
     ingame: Option<Rc<Ingame>>,
     current_queue: Option<Rc<ProductionQueue>>,
+    /// The selection hash of the last tick, to notice selection changes for `ProductionQueueFromSelection`.
+    selection_hash: Option<i32>,
     icons: Vec<(Rect, ProductionIcon)>,
     icon_offset: (f32, f32),
     hold_offset: (f32, f32),
@@ -267,6 +271,7 @@ impl ProductionPaletteWidget {
             max_icon_row_offset: i32::MAX,
             ingame: None,
             current_queue: None,
+            selection_hash: None,
             icons: Vec::new(),
             icon_offset: (0.0, 0.0),
             hold_offset: (0.0, 0.0),
@@ -285,6 +290,34 @@ impl ProductionPaletteWidget {
     pub fn set_current_queue(&mut self, ui: &mut Ui, id: WidgetId, queue: Option<Rc<ProductionQueue>>) {
         self.current_queue = queue;
         self.refresh_icons(ui, id);
+    }
+
+    /// `ProductionQueueFromSelection` for this palette: when the selection changed, shows the queue of the selected
+    /// production building. It applies when the world names this widget and no tabs widget.
+    fn follow_selection(&mut self, ui: &mut Ui, id: WidgetId) {
+        let Some(ingame) = self.ingame.clone() else {
+            return;
+        };
+        let hash = ingame.selection.hash();
+        if self.selection_hash.replace(hash).is_none_or(|last| last == hash) {
+            return;
+        }
+        let Some(player) = ingame.local_player.as_ref() else {
+            return;
+        };
+        let follows = ingame
+            .world
+            .world_actor()
+            .info
+            .trait_infos::<ProductionQueueFromSelectionInfo>()
+            .iter()
+            .any(|i| {
+                i.production_tabs_widget.as_ref().is_none_or(|t| ui.find(ui.root, t).is_none())
+                    && i.production_palette_widget.as_ref().and_then(|p| ui.find(ui.root, p)) == Some(id)
+            });
+        if follows && let Some(queue) = queue_from_selection(&ingame.selection.actors(), player) {
+            self.set_current_queue(ui, id, Some(queue));
+        }
     }
 
     pub fn can_scroll_down(&self) -> bool {
@@ -663,6 +696,7 @@ impl WidgetKind for ProductionPaletteWidget {
     }
 
     fn tick(&mut self, ui: &mut Ui, id: WidgetId) {
+        self.follow_selection(ui, id);
         self.total_icon_count = self.all_buildables().len() as i32;
         if self.current_queue.as_ref().is_some_and(|q| !q.actor.is_in_world()) {
             self.current_queue = None;

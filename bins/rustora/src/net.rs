@@ -302,10 +302,8 @@ impl NetClient {
             match receive.try_recv() {
                 Ok(Ok(mut connection)) => {
                     let manifest = &mod_data.manifest;
-                    let directory = Path::new(&self.support)
-                        .join("Replays")
-                        .join(&manifest.id)
-                        .join(&manifest.metadata.version);
+                    let directory =
+                        rustora_core::own_files::replays_dir(Path::new(&self.support), &manifest.id, &manifest.metadata.version);
                     connection.start_recording(directory, timestamped_filename(&manifest.id, ""));
                     let mut net = self.net.borrow_mut();
                     net.local_client_id = connection.local_client_id();

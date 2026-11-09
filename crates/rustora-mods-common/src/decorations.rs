@@ -962,7 +962,7 @@ impl IDecoration for WithNameTagDecoration {
 }
 
 /// `Exts.OwnerColor`: the color of the disguise owner while disguised and a render player exists.
-fn owner_color(self_: &ActorRef, viewer: Option<&PlayerRef>) -> Color {
+pub(crate) fn owner_color(self_: &ActorRef, viewer: Option<&PlayerRef>) -> Color {
     if viewer.is_some()
         && let Some(e) = &self_.cache().effective_owner
         && e.disguised()

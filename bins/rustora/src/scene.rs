@@ -437,13 +437,15 @@ impl Scene {
         out
     }
 
-    /// `WithSpriteBody.AutoMouseoverBounds`: the bounds of the default animation's current sequence.
+    /// `Interactable.AutoBounds`: the first non-empty `WithSpriteBody.AutoMouseoverBounds`, the bounds of the default
+    /// animation's current sequence. Actors like the V2 launcher have several sprite bodies.
     fn auto_bounds(&mut self, renderer: &mut Renderer, a: &rustora_engine::actor::ActorRef, center: (i32, i32)) -> Option<Rect> {
-        let body = a.trait_or_default::<WithSpriteBody>()?;
-        let seq = body.default_animation.current_sequence()?;
-        let resolved = self.sprites.sequence(renderer, &seq)?;
-        let [l, t, r, b] = resolved.bounds;
-        Some(Rect::new(center.0 + l, center.1 + t, r - l, b - t))
+        a.traits_implementing::<WithSpriteBody>().iter().find_map(|body| {
+            let seq = body.default_animation.current_sequence()?;
+            let resolved = self.sprites.sequence(renderer, &seq)?;
+            let [l, t, r, b] = resolved.bounds;
+            Some(Rect::new(center.0 + l, center.1 + t, r - l, b - t)).filter(|r| r.w > 0 || r.h > 0)
+        })
     }
 
     /// `SmudgeLayer.IRenderOverlay`.

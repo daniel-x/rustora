@@ -326,9 +326,9 @@ pub fn sanitized_file_name(name: &str) -> Option<String> {
     (!clean.trim_matches(['.', ' ']).is_empty()).then_some(clean)
 }
 
-/// The directory of the saves of a mod version, relative to the support directory.
+/// The directory of the saves of a mod version, see [`rustora_core::own_files::saves_dir`].
 pub fn saves_dir(support_dir: &Path, mod_id: &str, version: &str) -> std::path::PathBuf {
-    support_dir.join("Saves").join(mod_id).join(version)
+    rustora_core::own_files::saves_dir(support_dir, mod_id, version)
 }
 
 /// The rustora state snapshot that belongs to the game save `save`. It lets the client restore the game at once

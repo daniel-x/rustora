@@ -25,7 +25,7 @@ const SHOW_PERCENTAGE_THRESHOLD: u64 = 26_214_400;
 
 /// `Log.Write("install", ...)`: appends a line to `install.log`, whose absence the installation does not depend on.
 pub fn write_install_log(platform: &Platform, line: &str) {
-    let dir = platform.support_dir.join("Logs");
+    let dir = rustora_core::own_files::logs_dir(&platform.support_dir);
     let result = fs::create_dir_all(&dir).and_then(|()| {
         let mut file = File::options().create(true).append(true).open(dir.join("install.log"))?;
         writeln!(file, "{line}")

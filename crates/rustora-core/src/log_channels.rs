@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Port of `OpenRA.Support.Log`: named log channels, each written to its own file in `<support dir>/Logs`.
+//! Port of `OpenRA.Support.Log`: named log channels, each written to its own file in `<support dir>/rustora/Logs`.
 //!
 //! The channels are a `log` logger. A record goes to the channel named by its target, like
 //! `log::info!(target: "lua", ...)`. Records with a module path as target go to the channel of their crate:
@@ -101,12 +101,12 @@ struct ChannelLogger {
 
 static LOGGER: OnceLock<ChannelLogger> = OnceLock::new();
 
-/// `Log.AddChannel` for `specs` with the files in `<support_dir>/Logs`, installed as the `log` logger. Only the
+/// `Log.AddChannel` for `specs` with the files in `<support_dir>/rustora/Logs`, installed as the `log` logger. Only the
 /// first call of a process has an effect.
 pub fn init(support_dir: &Path, specs: &'static [ChannelSpec]) {
     assert!(!specs.is_empty(), "a process logs to at least one channel");
     let logger = LOGGER.get_or_init(|| ChannelLogger {
-        dir: support_dir.join("Logs"),
+        dir: crate::own_files::logs_dir(support_dir),
         specs,
         state: Mutex::new(State { open: HashMap::new() }),
     });
@@ -140,7 +140,7 @@ pub fn set_panic_context(lines: Vec<String>) {
 /// Writes the report of a panic to `exception-<time>.log`, like `ExceptionHandler.HandleFatalError`, and then runs
 /// the previous panic hook.
 pub fn install_panic_hook(support_dir: &Path) {
-    let dir = support_dir.join("Logs");
+    let dir = crate::own_files::logs_dir(support_dir);
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         log::logger().flush();

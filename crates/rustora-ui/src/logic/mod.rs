@@ -58,9 +58,9 @@ pub struct Services {
     pub mod_version: String,
     /// `Game.Mods`: the installed mods by id.
     pub installed_mods: std::collections::HashMap<String, std::sync::Arc<dyn rustora_fs::Package>>,
-    /// `Platform.SupportDir/Replays/<mod>/<version>`: where the replays of this mod version are recorded.
+    /// `Platform.SupportDir/rustora/Replays/<mod>/<version>`: where the replays of this mod version are recorded.
     pub replay_dir: std::path::PathBuf,
-    /// `Platform.SupportDir/Saves/<mod>/<version>`: where the game saves of this mod version are written.
+    /// `Platform.SupportDir/rustora/Saves/<mod>/<version>`: where the game saves of this mod version are written.
     pub save_dir: std::path::PathBuf,
     /// `ContentInstallerFileSystemLoader.ContentInstallerMod`.
     pub content_installer_mod: Option<String>,

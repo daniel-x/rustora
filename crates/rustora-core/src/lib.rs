@@ -7,6 +7,7 @@ pub mod expression;
 pub mod fieldloader;
 pub mod log_channels;
 pub mod miniyaml;
+pub mod own_files;
 pub mod world_types;
 
 mod angle_tables;

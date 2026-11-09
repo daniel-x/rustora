@@ -18,9 +18,11 @@ cargo build --release
 `rustora` opens the main menu like the OpenRA launcher; `rustora <host>:<port>` joins a server. The mod
 data is looked up next to the executable, in `../share/rustora`, in `../Resources` (macOS app bundle), or,
 for a build in a source checkout, in an OpenRA release-20250330 source tree in a directory beside the
-executable's parent directories; `--engine-dir <dir>` overrides it. Settings, content, maps, replays and
-saves live in the OpenRA support directory, so they are shared with an OpenRA installation, or in a
-`Support` directory next to the mod data if one exists; `--support-dir <dir>` overrides it.
+executable's parent directories; `--engine-dir <dir>` overrides it. Settings, content and maps live in
+the OpenRA support directory, so they are shared with an OpenRA installation, or in a `Support`
+directory next to the mod data if one exists; `--support-dir <dir>` overrides it. The files rustora
+writes for itself, logs, exception reports, replays and saves, go to `rustora` in that directory, for
+example `~/.config/openra/rustora`.
 `Section.Field=value` arguments override settings. `rustora --help` lists all options.
 
 `rustora --replay <file> --viewer` plays back a replay in a debug viewer. Arrow keys or WASD scroll, the

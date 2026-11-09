@@ -9,16 +9,19 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use indexmap::{IndexMap, IndexSet};
-use rustora_core::world_types::{CPos, CVec, WAngle, WVec};
+use rustora_core::world_types::{CPos, CVec, WAngle, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::actor_init::{ActorInit, ActorInits, CenterPositionInit, FacingInit, FactionInit, LocationInit, OwnerInit};
 use rustora_engine::conditional::*;
 use rustora_engine::damage::AttackInfo;
+use rustora_engine::effect::Effect;
 use rustora_engine::order::Order;
 use rustora_engine::player::PlayerRef;
+use rustora_engine::render::{PaletteRef, Renderable};
 use rustora_engine::rules::TraitRegistry;
+use rustora_engine::sequence::Animation;
 use rustora_engine::sound::SoundType;
 use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
@@ -35,6 +38,7 @@ use crate::util;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("ProductionQueue", |n| load_info!(ProductionQueueInfo, n));
+    r.register("ProductionQueueFromSelection", |n| load_info!(ProductionQueueFromSelectionInfo, n));
     r.register("ClassicProductionQueue", |n| load_info!(ClassicProductionQueueInfo, n));
     r.register("TechTree", |n| load_info!(TechTreeInfo, n));
     r.register("Exit", |n| load_info!(ExitInfo, n));
@@ -2261,11 +2265,23 @@ pub struct RallyPointInfo {
     pub path: Vec<CVec>,
     pub force_set_type: Option<String>,
     pub cursor: String,
+    pub image: Option<String>,
+    pub line_width: i32,
+    pub flag_sequence: Option<String>,
+    pub circles_sequence: Option<String>,
+    pub palette: String,
+    pub is_player_palette: bool,
 }
 
 impl Default for RallyPointInfo {
     fn default() -> Self {
         RallyPointInfo {
+            image: Some("rallypoint".into()),
+            line_width: 1,
+            flag_sequence: Some("flag".into()),
+            circles_sequence: Some("circles".into()),
+            palette: "player".into(),
+            is_player_palette: true,
             notification: None,
             text_notification: None,
             instance_name: None,
@@ -2280,14 +2296,189 @@ impl Default for RallyPointInfo {
 pub struct RallyPoint {
     pub info: Rc<RallyPointInfo>,
     pub path: RefCell<Vec<CPos>>,
+    effect: std::cell::OnceCell<Rc<RallyPointIndicator>>,
 }
 
-register_traits!(RallyPoint: IResolveOrder, crate::orders::IIssueOrder, INotifyOwnerChanged);
+register_traits!(
+    RallyPoint: IResolveOrder,
+    crate::orders::IIssueOrder,
+    INotifyOwnerChanged,
+    INotifyCreated,
+    INotifyAddedToWorld,
+    INotifyRemovedFromWorld
+);
 info_impl!(RallyPointInfo => |info, init| {
     let loc = init.self_.location();
     let path = info.path.iter().map(|p| loc + *p).collect();
-    Some(Rc::new(RallyPoint { info, path: RefCell::new(path) }))
+    Some(Rc::new(RallyPoint { info, path: RefCell::new(path), effect: std::cell::OnceCell::new() }))
 });
+
+impl INotifyCreated for RallyPoint {
+    fn created(&self, self_: &ActorRef) {
+        let _ = self.effect.set(RallyPointIndicator::new(self_, self));
+    }
+}
+
+impl INotifyAddedToWorld for RallyPoint {
+    fn added_to_world(&self, self_: &ActorRef) {
+        if let Some(e) = self.effect.get().cloned() {
+            self_.world().add_frame_end_task(Box::new(move |w: &Rc<World>| w.add_effect(e)));
+        }
+    }
+}
+
+impl INotifyRemovedFromWorld for RallyPoint {
+    fn removed_from_world(&self, self_: &ActorRef) {
+        if let Some(e) = self.effect.get().cloned() {
+            self_
+                .world()
+                .add_frame_end_task(Box::new(move |w: &Rc<World>| w.remove_effect(&(e as Rc<dyn Effect>))));
+        }
+    }
+}
+
+/// `RallyPointIndicator`: the flag at the end of the rally point path and the line from the exit along the path,
+/// shown while the building is selected by an ally of the local player.
+pub struct RallyPointIndicator {
+    me: Weak<RallyPointIndicator>,
+    building: ActorRef,
+    rp: Weak<RallyPoint>,
+    flag: Option<Rc<Animation>>,
+    circles: Option<Rc<Animation>>,
+    target_line_nodes: RefCell<Vec<WPos>>,
+    cached_locations: RefCell<Option<Vec<CPos>>>,
+}
+
+rustora_engine::persist_never!(RallyPointIndicator);
+
+impl RallyPointIndicator {
+    fn new(building: &ActorRef, rp: &RallyPoint) -> Rc<RallyPointIndicator> {
+        let sequences = building.world().map().sequences().clone();
+        let animation = |sequence: &Option<String>, repeat: bool| {
+            let (image, sequence) = (rp.info.image.as_ref()?, sequence.as_ref()?);
+            let anim = Animation::new(sequences.clone(), image, None, None);
+            if repeat {
+                anim.play_repeating(sequence)
+            } else {
+                anim.play(sequence)
+            }
+            Some(anim)
+        };
+        let indicator = Rc::new_cyclic(|me| RallyPointIndicator {
+            me: me.clone(),
+            building: building.clone(),
+            rp: building
+                .traits_implementing::<RallyPoint>()
+                .iter()
+                .find(|r| std::ptr::eq(r.as_ref(), rp))
+                .map(Rc::downgrade)
+                .unwrap_or_default(),
+            flag: animation(&rp.info.flag_sequence, true),
+            circles: animation(&rp.info.circles_sequence, false),
+            target_line_nodes: RefCell::new(Vec::new()),
+            cached_locations: RefCell::new(None),
+        });
+        indicator.update_target_line_nodes(rp);
+        indicator
+    }
+
+    fn update_target_line_nodes(&self, rp: &RallyPoint) {
+        let path = rp.path.borrow().clone();
+        let world = self.building.world();
+        let mut nodes: Vec<WPos> = path.iter().map(|&c| world.map().center_of_cell(c)).collect();
+        if let Some(&first) = nodes.first() {
+            let exit = nearest_exit_or_default(&self.building, first, None, None);
+            nodes.insert(
+                0,
+                self.building.center_position() + exit.map_or(WVec::ZERO, |e| e.info.spawn_offset),
+            );
+        }
+        *self.target_line_nodes.borrow_mut() = nodes;
+        *self.cached_locations.borrow_mut() = Some(path);
+    }
+
+    /// Whether the indicator shows: the building is in the world, selected and owned by an ally of the local player.
+    fn visible(&self) -> bool {
+        let world = self.building.world();
+        self.building.is_in_world()
+            && self.building.owner().is_allied_with(world.sound.local_player().as_deref())
+            && crate::selection::Selection::of(&world).is_some_and(|s| s.contains(&self.building))
+    }
+
+    /// `IEffectAnnotation.RenderAnnotation`: the target line segments while the indicator shows.
+    pub fn target_lines(&self) -> Vec<crate::target_lines::TargetLine> {
+        let Some(rp) = self.rp.upgrade() else {
+            return Vec::new();
+        };
+        if !self.visible() {
+            return Vec::new();
+        }
+        let color = crate::decorations::owner_color(&self.building, None);
+        self.target_line_nodes
+            .borrow()
+            .windows(2)
+            .map(|w| crate::target_lines::TargetLine {
+                from: w[0],
+                to: w[1],
+                color,
+                line_width: rp.info.line_width,
+                marker_width: 1,
+            })
+            .collect()
+    }
+}
+
+impl Effect for RallyPointIndicator {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
+    fn tick(&self, world: &Rc<World>) {
+        if let Some(f) = &self.flag {
+            f.tick();
+        }
+        if let Some(c) = &self.circles {
+            c.tick();
+        }
+        if let Some(rp) = self.rp.upgrade()
+            && self.cached_locations.borrow().as_deref() != Some(rp.path.borrow().as_slice())
+        {
+            self.update_target_line_nodes(&rp);
+            if let (Some(c), Some(seq)) = (&self.circles, &rp.info.circles_sequence) {
+                c.play(seq);
+            }
+        }
+        if (!self.building.is_in_world() || self.building.is_dead())
+            && let Some(this) = self.me.upgrade()
+        {
+            world.add_frame_end_task(Box::new(move |w: &Rc<World>| w.remove_effect(&(this as Rc<dyn Effect>))));
+        }
+    }
+
+    fn render_above_shroud(&self, _viewer: Option<&PlayerRef>, out: &mut Vec<Renderable>) {
+        let Some(rp) = self.rp.upgrade() else {
+            return;
+        };
+        if !self.visible() || (self.circles.is_none() && self.flag.is_none()) {
+            return;
+        }
+        let Some(&end) = self.target_line_nodes.borrow().last() else {
+            return;
+        };
+        let palette = if rp.info.is_player_palette {
+            PaletteRef::player(&rp.info.palette, &self.building.owner())
+        } else {
+            PaletteRef::named(&rp.info.palette)
+        };
+        for anim in [&self.circles, &self.flag].into_iter().flatten() {
+            rustora_engine::render::render_animation(anim, end, WVec::ZERO, 0, &palette, out);
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 impl RallyPoint {
     pub fn is_force_set(order: &Order) -> bool {
@@ -2603,4 +2794,41 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
 /// Registers the save game loaders of this module.
 pub(crate) fn register_persist() {
     rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: PlaceBuildingInit);
+}
+
+/// `ProductionQueueFromSelection`: the production widgets that show the queue of the selected production building. The
+/// user interface applies it when the selection changes.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct ProductionQueueFromSelectionInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub production_tabs_widget: Option<String>,
+    pub production_palette_widget: Option<String>,
+}
+
+info_impl!(ProductionQueueFromSelectionInfo => |_info, _init| None);
+
+/// `ProductionQueueFromSelection.SelectionChanged`: the enabled queue of the first selected actor of `local_player`
+/// that has one, else the enabled queue of the player whose type an enabled `Production` of those actors produces.
+/// `None` when that queue has nothing to build.
+pub fn queue_from_selection(selected: &[ActorRef], local_player: &PlayerRef) -> Option<Rc<ProductionQueue>> {
+    let own: Vec<&ActorRef> = selected.iter().filter(|a| a.is_in_world() && a.is_owned_by(local_player)).collect();
+    let queue = own
+        .iter()
+        .flat_map(|a| a.traits_implementing::<ProductionQueue>())
+        .find(|q| q.enabled())
+        .or_else(|| {
+            let types: Vec<String> = own
+                .iter()
+                .flat_map(|a| a.traits_implementing::<Production>())
+                .filter(|p| !p.is_trait_disabled())
+                .flat_map(|p| p.info.produces.clone())
+                .collect();
+            local_player
+                .player_actor()
+                .traits_implementing::<ProductionQueue>()
+                .into_iter()
+                .find(|q| q.enabled() && types.contains(&q.info.ty))
+        })?;
+    queue.any_items_to_build().then_some(queue)
 }
