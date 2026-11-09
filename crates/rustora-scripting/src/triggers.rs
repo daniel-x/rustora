@@ -171,6 +171,9 @@ impl ScriptTriggers {
         if self.world_disposing() {
             return false;
         }
+        if self.triggerables.borrow()[trigger as usize].is_empty() {
+            return true;
+        }
         let list = self.triggerables.borrow()[trigger as usize].clone();
         for f in list {
             let Some(context) = f.context.upgrade() else { continue };

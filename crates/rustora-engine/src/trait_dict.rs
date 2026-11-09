@@ -10,7 +10,10 @@ use std::rc::Rc;
 
 use crate::actor::{Actor, ActorRef};
 
+/// The traits of one key, sorted by actor ID. `ids` repeats the actor IDs in one contiguous array, so searches do not
+/// read the actors.
 struct Container<T: ?Sized> {
+    ids: Vec<u32>,
     actors: Vec<ActorRef>,
     traits: Vec<Rc<T>>,
 }
@@ -18,7 +21,7 @@ struct Container<T: ?Sized> {
 impl<T: ?Sized> Container<T> {
     /// Index of the first entry with actor ID >= `id`.
     fn lower_bound(&self, id: u32) -> usize {
-        self.actors.partition_point(|a| a.id < id)
+        self.ids.partition_point(|&i| i < id)
     }
 }
 
@@ -32,6 +35,7 @@ impl<T: ?Sized + 'static> AnyContainer for RefCell<Container<T>> {
         let mut c = self.borrow_mut();
         let start = c.lower_bound(id);
         let end = c.lower_bound(id + 1);
+        c.ids.drain(start..end);
         c.actors.drain(start..end);
         c.traits.drain(start..end);
     }
@@ -54,6 +58,7 @@ impl TraitDict {
             return c.clone();
         }
         let c: Rc<dyn AnyContainer> = Rc::new(RefCell::new(Container::<T> {
+            ids: Vec::new(),
             actors: Vec::new(),
             traits: Vec::new(),
         }));
@@ -71,6 +76,7 @@ impl TraitDict {
         self.with::<T, _>(|c| {
             let mut c = c.borrow_mut();
             let idx = c.lower_bound(actor.id + 1);
+            c.ids.insert(idx, actor.id);
             c.actors.insert(idx, actor.clone());
             c.traits.insert(idx, trait_);
         })
@@ -81,10 +87,10 @@ impl TraitDict {
         self.with::<T, _>(|c| {
             let c = c.borrow();
             let idx = c.lower_bound(actor.id);
-            if idx >= c.actors.len() || c.actors[idx].id != actor.id {
+            if c.ids.get(idx) != Some(&actor.id) {
                 return None;
             }
-            if idx + 1 < c.actors.len() && c.actors[idx + 1].id == actor.id {
+            if c.ids.get(idx + 1) == Some(&actor.id) {
                 panic!(
                     "Actor {} has multiple traits of type `{}`",
                     actor.info.name,
@@ -134,13 +140,35 @@ impl TraitDict {
         })
     }
 
+    /// Whether `f` holds for an actor and trait pair of `T`, without copying the list. `f` must not add or remove
+    /// traits.
+    pub fn any_with_trait<T: ?Sized + 'static>(&self, mut f: impl FnMut(&ActorRef, &Rc<T>) -> bool) -> bool {
+        self.with::<T, _>(|c| {
+            let c = c.borrow();
+            c.actors.iter().zip(&c.traits).any(|(a, t)| f(a, t))
+        })
+    }
+
+    /// Calls `f` once for each distinct actor that has a trait implementing `T`, in actor ID order. `f` must not add
+    /// or remove traits.
+    pub fn for_each_actor_having_trait<T: ?Sized + 'static>(&self, mut f: impl FnMut(&ActorRef)) {
+        self.with::<T, _>(|c| {
+            let c = c.borrow();
+            for (i, a) in c.actors.iter().enumerate() {
+                if i == 0 || c.ids[i - 1] != c.ids[i] {
+                    f(a);
+                }
+            }
+        })
+    }
+
     /// Distinct actors that have a trait implementing `T`, in actor ID order.
     pub fn actors_having_trait<T: ?Sized + 'static>(&self) -> Vec<ActorRef> {
         self.with::<T, _>(|c| {
             let c = c.borrow();
             let mut out: Vec<ActorRef> = Vec::new();
-            for a in &c.actors {
-                if out.last().is_none_or(|l| l.id != a.id) {
+            for (i, a) in c.actors.iter().enumerate() {
+                if i == 0 || c.ids[i - 1] != c.ids[i] {
                     out.push(a.clone());
                 }
             }
@@ -153,10 +181,12 @@ impl TraitDict {
         self.with::<T, _>(|c| {
             let c = c.borrow();
             let mut out: Vec<ActorRef> = Vec::new();
-            for (a, t) in c.actors.iter().zip(&c.traits) {
-                if out.last().is_some_and(|l| l.id == a.id) || !pred(t) {
+            let mut last = None;
+            for ((a, t), &id) in c.actors.iter().zip(&c.traits).zip(&c.ids) {
+                if last == Some(id) || !pred(t) {
                     continue;
                 }
+                last = Some(id);
                 out.push(a.clone());
             }
             out

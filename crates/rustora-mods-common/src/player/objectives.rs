@@ -408,11 +408,10 @@ info_impl!(ConquestVictoryConditionsInfo => |info, init| {
 
 /// `PlayerExtensions.HasNoRequiredUnits`.
 pub fn has_no_required_units(world: &World, player: &PlayerRef, short_game: bool) -> bool {
-    let actors = world.actors_with_trait::<MustBeDestroyed>();
     if short_game {
-        return !actors.iter().any(|(a, t)| t.info.required_for_short_game && a.is_owned_by(player));
+        return !world.any_with_trait::<MustBeDestroyed>(|a, t| t.info.required_for_short_game && a.is_owned_by(player));
     }
-    !actors.iter().any(|(a, _)| a.is_owned_by(player) && a.is_in_world())
+    !world.any_with_trait::<MustBeDestroyed>(|a, _| a.is_owned_by(player) && a.is_in_world())
 }
 
 impl ITick for ConquestVictoryConditions {
@@ -597,12 +596,14 @@ info_impl!(StrategicVictoryConditionsInfo => |info, init| {
 impl StrategicVictoryConditions {
     /// `Total` and `Owned`: the count of all strategic points and of those owned by allies of `player`.
     fn points(&self, w: &World, player: &PlayerRef) -> (i32, i32) {
-        let points = w.actors_with_trait::<StrategicPoint>();
-        let owned = points
-            .iter()
-            .filter(|(a, _)| a.owner().relationship_with(Some(player)) == PlayerRelationship::ALLY)
-            .count();
-        (points.len() as i32, owned as i32)
+        let (mut total, mut owned) = (0, 0);
+        w.for_each_with_trait::<StrategicPoint>(|a, _| {
+            total += 1;
+            if a.owner().relationship_with(Some(player)) == PlayerRelationship::ALLY {
+                owned += 1;
+            }
+        });
+        (total, owned)
     }
 }
 

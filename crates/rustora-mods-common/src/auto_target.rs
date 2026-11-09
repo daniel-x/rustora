@@ -195,7 +195,12 @@ impl AutoTarget {
     }
 
     pub fn active_attack_bases(&self) -> Vec<Rc<AttackBase>> {
-        self.attack_bases.iter().filter(|t| !t.is_trait_disabled()).cloned().collect()
+        self.active_attack_bases_iter().cloned().collect()
+    }
+
+    /// The enabled attack traits, without copying them.
+    fn active_attack_bases_iter(&self) -> impl Iterator<Item = &Rc<AttackBase>> {
+        self.attack_bases.iter().filter(|t| !t.is_trait_disabled())
     }
 
     fn active_target_priorities(&self) -> Vec<Rc<AutoTargetPriorityInfo>> {
@@ -235,8 +240,8 @@ impl AutoTarget {
     }
 
     pub fn scan_for_target(&self, self_: &ActorRef, allow_move: bool, allow_turn: bool, ignore_scan_interval: bool) -> Target {
-        let active = self.active_attack_bases();
-        if (ignore_scan_interval || self.next_scan_time.get() <= 0) && !active.is_empty() {
+        if (ignore_scan_interval || self.next_scan_time.get() <= 0) && self.active_attack_bases_iter().next().is_some() {
+            let active = self.active_attack_bases();
             let overrides = self.override_auto_target.borrow().clone();
             for oat in overrides {
                 if let Some(t) = oat.try_get_auto_target_override(self_) {
@@ -452,8 +457,7 @@ impl INotifyDamage for AutoTarget {
         }
         let attacker_as_target = Target::from_actor(Some(&attacker));
         if !self
-            .active_attack_bases()
-            .iter()
+            .active_attack_bases_iter()
             .any(|a| a.has_any_valid_weapons(&attacker_as_target, false, false))
         {
             return;

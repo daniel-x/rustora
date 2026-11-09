@@ -561,6 +561,11 @@ impl World {
         self.trait_dict.actors_with_trait::<T>()
     }
 
+    /// See `TraitDict::any_with_trait`.
+    pub fn any_with_trait<T: ?Sized + 'static>(&self, f: impl FnMut(&ActorRef, &Rc<T>) -> bool) -> bool {
+        self.trait_dict.any_with_trait::<T>(f)
+    }
+
     /// See `TraitDict::for_each_with_trait`.
     pub fn for_each_with_trait<T: ?Sized + 'static>(&self, f: impl FnMut(&ActorRef, &Rc<T>)) {
         self.trait_dict.for_each_with_trait::<T>(f)
@@ -676,12 +681,7 @@ impl World {
             ret = ret.wrapping_add(n.wrapping_mul(1i32.wrapping_add(a.id as i32)).wrapping_mul(a.sync_hash_id()));
             n += 1;
         }
-        let mut last_id = None;
-        self.trait_dict.for_each_with_trait::<dyn ISync>(|a, _| {
-            if last_id == Some(a.id) {
-                return;
-            }
-            last_id = Some(a.id);
+        self.trait_dict.for_each_actor_having_trait::<dyn ISync>(|a| {
             for s in &a.cache().sync_hashes {
                 ret = ret.wrapping_add(n.wrapping_mul(1i32.wrapping_add(a.id as i32)).wrapping_mul(s.sync_hash()));
                 n += 1;
