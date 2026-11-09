@@ -37,7 +37,8 @@ value_init!(CreationActivityDelayInit, i32);
 value_init!(RallyPointInit, Vec<CPos>);
 value_init!(HuskSpeedInit, i32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum MoveResult {
     InProgress,
     CompleteCanceled,
@@ -129,6 +130,7 @@ impl MobileInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Mobile {
     pub info: Rc<MobileInfo>,
     state: ConditionalState,
@@ -972,10 +974,6 @@ impl Mobile {
         target
     }
 
-    pub fn move_to_path(&self, get_path: GetPathFn) -> ActivityRef {
-        Move::new_func(&self.self_, get_path)
-    }
-
     fn local_move_inner(&self, self_: &ActorRef, from: WPos, to: WPos, cell: CPos) -> ActivityRef {
         let speed = self.movement_speed_for_cell(cell);
         let length = if speed > 0 { (to - from).length() / speed } else { 0 };
@@ -1002,6 +1000,8 @@ pub fn mobile_of(a: &ActorRef) -> Option<&Mobile> {
 }
 
 /// `Mobile.ReturnToCellActivity`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct ReturnToCellActivity {
     base: ActivityBase,
     mobile: Rc<Mobile>,
@@ -1071,6 +1071,8 @@ impl Mobile {
 }
 
 /// `Mobile.LeaveProductionActivity`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct LeaveProductionActivity {
     base: ActivityBase,
     mobile: Rc<Mobile>,
@@ -1097,7 +1099,14 @@ impl Activity for LeaveProductionActivity {
                 let m = self.mobile.clone();
                 self.base.queue_child(crate::attack_move::AttackMoveActivity::new(
                     self_,
-                    Rc::new(move || m.move_to(cell, 1, None, true)),
+                    crate::attack_move::MoveOrder::To {
+                        mv: m,
+                        cell,
+                        near_enough: 1,
+                        ignore_actor: None,
+                        evaluate_nearest_movable_cell: true,
+                        line_color: None,
+                    },
                     false,
                 ));
             }
@@ -1117,4 +1126,10 @@ impl rustora_engine::sound::IOrderVoice for Mobile {
         };
         allowed.then(|| self.info.voice.clone())
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(ReturnToCellActivity, LeaveProductionActivity);
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: CreationActivityDelayInit, RallyPointInit, HuskSpeedInit);
 }

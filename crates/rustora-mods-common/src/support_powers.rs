@@ -353,6 +353,7 @@ impl Default for SupportPowerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SupportPower {
     pub info: Rc<SupportPowerInfo>,
     state: ConditionalState,
@@ -385,7 +386,11 @@ impl rustora_engine::traits::TraitObject for SupportPower {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(SupportPower: INotifyCreated, IObservesVariables, IDisabledTrait, INotifyKilled, INotifySold, INotifyOwnerChanged, ITick, ISync);
 }
+
+rustora_engine::persist_trait_refs!(SupportPower);
 
 info_impl!(SupportPowerInfo => |info, init| {
     let state = ConditionalState::new_pausable(&info.base);
@@ -839,18 +844,9 @@ impl SupportPower {
                 .expect("AttackBomber");
             attack.set_bomber_target(target + target_offset);
             let (t1, t2, t3) = (tracker.clone(), tracker.clone(), tracker.clone());
-            attack
-                .on_entered_attack_range
-                .borrow_mut()
-                .push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, false)));
-            attack
-                .on_exited_attack_range
-                .borrow_mut()
-                .push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
-            attack
-                .on_removed_from_world
-                .borrow_mut()
-                .push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
+            attack.on_entered_attack_range.borrow_mut().push(ActorEvent::EnterRange(t1, false));
+            attack.on_exited_attack_range.borrow_mut().push(ActorEvent::ExitRange(t2));
+            attack.on_removed_from_world.borrow_mut().push(ActorEvent::RemovedFromWorld(t3));
             aircraft.push(a);
         }
         let (list, indices) = (aircraft.clone(), self.squad_indices());
@@ -906,15 +902,9 @@ impl SupportPower {
                 let drop = a.trait_::<ParaDrop>();
                 drop.set_lz(w.map().cell_containing(target + target_offset), !info.allow_impassable_cells);
                 let (t1, t2, t3) = (tracker.clone(), tracker.clone(), tracker.clone());
-                drop.on_entered_drop_range
-                    .borrow_mut()
-                    .push(Rc::new(move |a: &ActorRef| t1.on_enter_range(a, true)));
-                drop.on_exited_drop_range
-                    .borrow_mut()
-                    .push(Rc::new(move |a: &ActorRef| t2.on_exit_range(a)));
-                drop.on_removed_from_world
-                    .borrow_mut()
-                    .push(Rc::new(move |a: &ActorRef| t3.on_removed_from_world(a)));
+                drop.on_entered_drop_range.borrow_mut().push(ActorEvent::EnterRange(t1, true));
+                drop.on_exited_drop_range.borrow_mut().push(ActorEvent::ExitRange(t2));
+                drop.on_removed_from_world.borrow_mut().push(ActorEvent::RemovedFromWorld(t3));
                 let cargo = a.trait_::<Cargo>();
                 for unit in units.iter().skip(added).take(per_plane) {
                     cargo.load(a, unit);
@@ -933,13 +923,35 @@ impl SupportPower {
     }
 }
 
+/// The camera bookkeeping of `SendAirstrike` and `SendParatroopers` that an aircraft calls.
+#[derive(Clone, rustora_engine::persist::Persist)]
+#[persist(value)]
+pub enum ActorEvent {
+    EnterRange(Rc<FlyOverTracker>, bool),
+    ExitRange(Rc<FlyOverTracker>),
+    RemovedFromWorld(Rc<FlyOverTracker>),
+}
+
+impl ActorEvent {
+    pub fn call(&self, a: &ActorRef) {
+        match self {
+            ActorEvent::EnterRange(t, paratroopers) => t.on_enter_range(a, *paratroopers),
+            ActorEvent::ExitRange(t) => t.on_exit_range(a),
+            ActorEvent::RemovedFromWorld(t) => t.on_removed_from_world(a),
+        }
+    }
+}
+
 /// The camera bookkeeping closures of `SendAirstrike` and `SendParatroopers`.
-struct FlyOverTracker {
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
+pub struct FlyOverTracker {
     info: Rc<SupportPowerInfo>,
     owner_actor: ActorRef,
     camera_cell: rustora_core::world_types::CPos,
     camera: RefCell<Option<ActorRef>>,
     in_range: RefCell<Vec<(ActorRef, bool)>>,
+    #[persist(me)]
     me: Weak<FlyOverTracker>,
 }
 
@@ -1016,6 +1028,8 @@ impl FlyOverTracker {
 }
 
 /// `SupportPowerInstance`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 pub struct SupportPowerInstance {
     manager: Weak<SupportPowerManager>,
     pub key: String,
@@ -1165,6 +1179,7 @@ pub struct SupportPowerManagerInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SupportPowerManager {
     pub self_: ActorRef,
     pub powers: RefCell<NetMap<String, Rc<SupportPowerInstance>>>,
@@ -1173,7 +1188,7 @@ pub struct SupportPowerManager {
     me: Weak<SupportPowerManager>,
 }
 
-register_traits!(SupportPowerManager: ITick, IResolveOrder);
+register_traits!(SupportPowerManager: ITick, IResolveOrder; cast: ITechTreeElement);
 info_impl!(SupportPowerManagerInfo => |_, init| {
     let self_ = init.self_.clone();
     let m = Rc::new_cyclic(|me| SupportPowerManager {
@@ -1396,7 +1411,10 @@ impl SupportPower {
 }
 
 /// `Projectiles/NukeLaunch.cs`, without the missile animation.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct NukeLaunch {
+    #[persist(me)]
     me: Weak<NukeLaunch>,
     fired_by: rustora_engine::player::PlayerRef,
     weapon: Rc<rustora_engine::weapon::WeaponInfo>,
@@ -1524,9 +1542,15 @@ impl rustora_engine::effect::Effect for NukeLaunch {
 }
 
 /// The Cnc `IonCannon` projectile: an animation whose weapon hits the target after `WeaponDelay` ticks.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct IonCannon {
+    #[persist(me)]
+    me: Weak<IonCannon>,
     target: Target,
-    anim: Rc<rustora_engine::sequence::Animation>,
+    /// The animation decides how long the effect lives; a loaded effect has none and ends after its impact.
+    #[persist(skip)]
+    anim: Option<Rc<rustora_engine::sequence::Animation>>,
     fired_by: rustora_engine::player::PlayerRef,
     palette: String,
     weapon: Rc<rustora_engine::weapon::WeaponInfo>,
@@ -1551,9 +1575,10 @@ impl IonCannon {
         if !weapon.report.is_empty() {
             sound::play_random_at(world, SoundType::World, &weapon.report, launch_pos, 1.0);
         }
-        let ion = Rc::new(IonCannon {
+        let ion = Rc::new_cyclic(|me| IonCannon {
+            me: me.clone(),
             target,
-            anim: anim.clone(),
+            anim: Some(anim.clone()),
             fired_by: fired_by.clone(),
             palette: palette.to_string(),
             weapon,
@@ -1575,8 +1600,17 @@ impl IonCannon {
 }
 
 impl rustora_engine::effect::Effect for IonCannon {
-    fn tick(&self, _world: &Rc<World>) {
-        self.anim.tick();
+    fn tick(&self, world: &Rc<World>) {
+        match &self.anim {
+            Some(a) => a.tick(),
+            None if self.impacted.get() => {
+                if let Some(me) = self.me.upgrade() {
+                    let me: rustora_engine::effect::EffectRef = me;
+                    world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+                }
+            }
+            None => {}
+        }
         if self.impacted.get() {
             return;
         }
@@ -1598,11 +1632,17 @@ impl rustora_engine::effect::Effect for IonCannon {
     }
 
     fn render(&self, _viewer: Option<&rustora_engine::player::PlayerRef>, out: &mut Vec<rustora_engine::render::Renderable>) {
+        let Some(anim) = &self.anim else { return };
         let palette = rustora_engine::render::PaletteRef::named(&self.palette);
-        rustora_engine::render::render_animation(&self.anim, self.target.center_position(), WVec::ZERO, 0, &palette, out);
+        rustora_engine::render::render_animation(anim, self.target.center_position(), WVec::ZERO, 0, &palette, out);
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_effects!(NukeLaunch, IonCannon);
 }

@@ -6,6 +6,7 @@
 //!
 //! The C# subclasses of `AttackBase` become one struct with an [`AttackKind`], and their infos one union struct.
 
+use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -59,7 +60,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("AttackTesla", |n| load_attack(n, AttackKind::Tesla));
 }
 
-#[derive(Clone)]
+#[derive(Clone, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct Barrel {
     pub offset: WVec,
     pub yaw: WAngle,
@@ -117,8 +119,23 @@ impl Default for ArmamentInfo {
     }
 }
 
-type DelayedAction = (i32, i32, Box<dyn Fn(i32)>);
+/// What an armament does after its fire delay.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+enum DelayedShot {
+    /// Launches the projectile and notifies the attack.
+    Fire {
+        args: Box<ProjectileArgs>,
+        target: Target,
+        barrel: Barrel,
+    },
+    AfterFireSound,
+}
 
+/// Remaining ticks, burst and shot.
+type DelayedAction = (i32, i32, DelayedShot);
+
+#[derive(rustora_engine::persist::Persist)]
 pub struct Armament {
     pub info: Rc<ArmamentInfo>,
     state: ConditionalState,
@@ -144,7 +161,7 @@ pub struct Armament {
     burst: Cell<i32>,
 }
 
-rustora_engine::register_traits!(Armament: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+rustora_engine::register_traits!(Armament: rustora_engine::weapon::IMuzzle, ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(ArmamentInfo => |info, init| {
     let w = init.world();
     let weapon = w.rules().weapon(&info.weapon.to_lowercase()).unwrap_or_else(|| panic!("Weapons Ruleset does not contain an entry '{}'", info.weapon));
@@ -228,7 +245,7 @@ impl ITick for Armament {
         for x in list.iter_mut() {
             x.0 -= 1;
             if x.0 <= 0 {
-                (x.2)(x.1);
+                self.run_delayed(x.1, &x.2);
             }
         }
         list.retain(|a| a.0 > 0);
@@ -291,11 +308,11 @@ impl Armament {
         }
     }
 
-    fn schedule_delayed_action(&self, t: i32, b: i32, a: Box<dyn Fn(i32)>) {
+    fn schedule_delayed_action(&self, t: i32, b: i32, a: DelayedShot) {
         if t > 0 {
             self.delayed_actions.borrow_mut().push((t, b, a));
         } else {
-            a(b);
+            self.run_delayed(b, &a);
         }
     }
 
@@ -374,7 +391,7 @@ impl Armament {
             let f = WVec::new(following.y, -following.x, following.z);
             passive_target = passive_target + (f * (self.weapon.burst - self.burst.get())).rotate(&muzzle_orientation);
         }
-        let make_args = {
+        let args = {
             let weapon = self.weapon.clone();
             let damage: Vec<i32> = self.damage_modifiers.borrow().iter().map(|m| m.get_firepower_modifier()).collect();
             let inaccuracy: Vec<i32> = self
@@ -386,47 +403,67 @@ impl Armament {
             let range: Vec<i32> = self.range_modifiers.borrow().iter().map(|m| m.get_range_modifier()).collect();
             let facing = muzzle_facing();
             let source = muzzle_position();
-            let (cur_f, cur_s) = (muzzle_facing.clone(), muzzle_position.clone());
-            let (s, t) = (self_.clone(), target.clone());
-            move || ProjectileArgs {
-                weapon: weapon.clone(),
-                damage_modifiers: damage.clone(),
-                inaccuracy_modifiers: inaccuracy.clone(),
-                range_modifiers: range.clone(),
+            let muzzle = rustora_engine::weapon::MuzzleSource::Barrel {
+                muzzle: me.clone(),
+                actor: self_.clone(),
+                offset: barrel.offset,
+                yaw: barrel.yaw,
+            };
+            ProjectileArgs {
+                weapon,
+                damage_modifiers: damage,
+                inaccuracy_modifiers: inaccuracy,
+                range_modifiers: range,
                 facing,
-                current_muzzle_facing: cur_f.clone(),
+                muzzle,
                 source,
-                current_source: cur_s.clone(),
-                source_actor: s.clone(),
+                source_actor: self_.clone(),
                 passive_target,
-                guided_target: t.clone(),
+                guided_target: target.clone(),
             }
         };
-        let delayed_target = target.clone();
-        let (m, s) = (me, self_.clone());
         self.schedule_delayed_action(
             self.info.fire_delay,
             self.burst.get(),
-            Box::new(move |burst| {
-                let args = make_args();
+            DelayedShot::Fire {
+                args: Box::new(args),
+                target: target.clone(),
+                barrel,
+            },
+        );
+    }
+
+    fn run_delayed(&self, burst: i32, shot: &DelayedShot) {
+        let s = &self.actor;
+        match shot {
+            DelayedShot::Fire { args, target, barrel } => {
                 if let Some(p) = &args.weapon.projectile.clone()
-                    && let Some(projectile) = p.create(args)
+                    && let Some(projectile) = p.create((**args).clone())
                 {
                     s.world().add_effect(projectile);
                     let world = s.world();
                     let center = s.center_position();
-                    sound::play_random_at(&world, SoundType::World, &m.weapon.report, center, 1.0);
-                    if burst == m.weapon.burst {
-                        sound::play_random_at(&world, SoundType::World, &m.weapon.start_burst_report, center, 1.0);
+                    sound::play_random_at(&world, SoundType::World, &self.weapon.report, center, 1.0);
+                    if burst == self.weapon.burst {
+                        sound::play_random_at(&world, SoundType::World, &self.weapon.start_burst_report, center, 1.0);
                     }
                 }
-                m.recoil.set(m.info.recoil);
-                let notifies = m.notify_attacks.borrow().clone();
+                self.recoil.set(self.info.recoil);
+                let notifies = self.notify_attacks.borrow().clone();
                 for (a, n) in &notifies {
-                    n.attacking(a, &delayed_target, &m, &barrel);
+                    n.attacking(a, target, self, barrel);
                 }
-            }),
-        );
+            }
+            DelayedShot::AfterFireSound => {
+                sound::play_random_at(
+                    &s.world(),
+                    SoundType::World,
+                    &self.weapon.after_fire_sound,
+                    s.center_position(),
+                    1.0,
+                );
+            }
+        }
     }
 
     fn update_burst(&self, self_: &ActorRef, target: &Target) {
@@ -446,15 +483,7 @@ impl Armament {
             self.fire_delay.set(if d <= 0 { 1 } else { d });
             self.burst.set(self.weapon.burst);
             if !self.weapon.after_fire_sound.is_empty() {
-                let s = self_.clone();
-                let weapon = self.weapon.clone();
-                self.schedule_delayed_action(
-                    weapon.after_fire_sound_delay,
-                    self.burst.get(),
-                    Box::new(move |_burst| {
-                        sound::play_random_at(&s.world(), SoundType::World, &weapon.after_fire_sound, s.center_position(), 1.0);
-                    }),
-                );
+                self.schedule_delayed_action(self.weapon.after_fire_sound_delay, self.burst.get(), DelayedShot::AfterFireSound);
             }
             let list = self.notify_burst_complete.borrow().clone();
             for nbc in list {
@@ -491,7 +520,18 @@ impl Armament {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+impl rustora_engine::weapon::IMuzzle for Armament {
+    fn muzzle_position(&self, self_: &ActorRef, offset: WVec, yaw: WAngle) -> WPos {
+        self_.center_position() + self.muzzle_offset(self_, &Barrel { offset, yaw })
+    }
+
+    fn muzzle_facing(&self, self_: &ActorRef, offset: WVec, yaw: WAngle) -> WAngle {
+        self.muzzle_orientation(self_, &Barrel { offset, yaw }).yaw
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum AttackSource {
     #[default]
     Default,
@@ -665,6 +705,7 @@ impl Default for AttackBaseInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AttackBase {
     pub info: Rc<AttackBaseInfo>,
     state: ConditionalState,
@@ -697,9 +738,9 @@ pub struct AttackBase {
     bomber_target: RefCell<Target>,
     in_attack_range: Cell<bool>,
     facing_target: Cell<bool>,
-    pub on_removed_from_world: RefCell<Vec<Rc<dyn Fn(&ActorRef)>>>,
-    pub on_entered_attack_range: RefCell<Vec<Rc<dyn Fn(&ActorRef)>>>,
-    pub on_exited_attack_range: RefCell<Vec<Rc<dyn Fn(&ActorRef)>>>,
+    pub on_removed_from_world: RefCell<Vec<crate::support_powers::ActorEvent>>,
+    pub on_entered_attack_range: RefCell<Vec<crate::support_powers::ActorEvent>>,
+    pub on_exited_attack_range: RefCell<Vec<crate::support_powers::ActorEvent>>,
     // AttackLeap
     leap_token: Cell<i32>,
     // AttackTesla
@@ -761,7 +802,11 @@ impl TraitObject for AttackBase {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(AttackBase: ITick, IResolveOrder, sound::IOrderVoice, crate::orders::IIssueOrder, INotifyCreated, IObservesVariables, IDisabledTrait, INotifyAttack, INotifyRemovedFromWorld, INotifySold, INotifyIdle, IDamageModifier, INotifyPassengerEntered, INotifyPassengerExited, INotifyOwnerChanged, IOverrideAutoTarget, INotifyStanceChanged, ISync);
 }
+
+rustora_engine::persist_trait_refs!(AttackBase);
 
 info_impl!(AttackBaseInfo => |info, init| {
     let state = ConditionalState::new_pausable(&info.base);
@@ -854,7 +899,7 @@ impl INotifyCreated for AttackBase {
         }
         conditional_created(self, self_);
         if self.info.kind == AttackKind::PopupTurreted && self.skipped_make_animation {
-            self.popup_closed(self_)();
+            self.popup_closed(self_);
         }
     }
 }
@@ -878,9 +923,13 @@ impl INotifyIdle for AttackBase {
             }
             PopupState::Rotating if turret.has_achieved_desired_facing() => {
                 self.popup_state.set(PopupState::Transitioning);
-                let closed = self.popup_closed(self_);
+                let done = AfterAnim::saved(PopupDone {
+                    attack: self.me.upgrade().expect("attack alive"),
+                    actor: self_.clone(),
+                    open: false,
+                });
                 self.popup_body(self_)
-                    .play_custom_animation(self_, &self.info.closing_sequence, Some(Rc::new(move || closed())));
+                    .play_custom_animation(self_, &self.info.closing_sequence, Some(done));
             }
             _ => {}
         }
@@ -1066,11 +1115,11 @@ impl AttackBase {
         }
         if self.in_attack_range.get() && !was_in_attack_range {
             let e = self.on_entered_attack_range.borrow().clone();
-            e.iter().for_each(|f| f(self_));
+            e.iter().for_each(|f| f.call(self_));
         }
         if !self.in_attack_range.get() && was_in_attack_range {
             let e = self.on_exited_attack_range.borrow().clone();
-            e.iter().for_each(|f| f(self_));
+            e.iter().for_each(|f| f.call(self_));
         }
     }
 
@@ -1168,21 +1217,19 @@ impl AttackBase {
     }
 
     /// The closing animation of `AttackPopupTurreted`, which leaves the turret closed.
-    fn popup_closed(&self, self_: &ActorRef) -> Rc<dyn Fn()> {
-        let (state, a, body, turret, seq) = (
-            self.popup_state.clone(),
-            self_.clone(),
-            self.popup_body(self_),
-            self.popup_turret(),
-            self.info.closed_idle_sequence.clone(),
-        );
-        Rc::new(move || {
-            state.set(PopupState::Closed);
-            body.play_custom_animation_repeating(&a, &seq);
-            if let Some(t) = &turret {
-                t.face_target(&a, &Target::Invalid);
-            }
-        })
+    fn popup_closed(&self, self_: &ActorRef) {
+        self.popup_state.set(PopupState::Closed);
+        self.popup_body(self_)
+            .play_custom_animation_repeating(self_, &self.info.closed_idle_sequence);
+        if let Some(t) = &self.popup_turret() {
+            t.face_target(self_, &Target::Invalid);
+        }
+    }
+
+    fn popup_opened(&self, self_: &ActorRef) {
+        self.popup_state.set(PopupState::Open);
+        let b = self.popup_body(self_);
+        b.play_custom_animation_repeating(self_, &b.info.sequence);
     }
 
     /// `AttackPopupTurreted.CanAttack`: a closed turret opens first.
@@ -1193,13 +1240,13 @@ impl AttackBase {
         if self.popup_state.get() == PopupState::Closed {
             self.popup_state.set(PopupState::Transitioning);
             let body = self.popup_body(self_);
-            let (state, a, b) = (self.popup_state.clone(), self_.clone(), body.clone());
             body.play_custom_animation(
                 self_,
                 &self.info.opening_sequence,
-                Some(Rc::new(move || {
-                    state.set(PopupState::Open);
-                    b.play_custom_animation_repeating(&a, &b.info.sequence);
+                Some(AfterAnim::saved(PopupDone {
+                    attack: self.me.upgrade().expect("attack alive"),
+                    actor: self_.clone(),
+                    open: true,
                 })),
             );
             self.idle_ticks.set(0);
@@ -1574,7 +1621,7 @@ impl INotifySold for AttackBase {
 impl INotifyRemovedFromWorld for AttackBase {
     fn removed_from_world(&self, self_: &ActorRef) {
         let e = self.on_removed_from_world.borrow().clone();
-        e.iter().for_each(|f| f(self_));
+        e.iter().for_each(|f| f.call(self_));
     }
 }
 
@@ -1691,6 +1738,8 @@ pub fn activity_stance_changed(a: &ActivityRef, self_: &ActorRef, auto_target: &
 }
 
 /// The `lastVisible*` state shared by the attack activities.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct LastVisible {
     target: RefCell<Target>,
     maximum_range: Cell<WDist>,
@@ -1752,6 +1801,8 @@ const STATUS_NEEDS_TO_MOVE: i32 = 2;
 const STATUS_ATTACKING: i32 = 3;
 
 /// `Activities/Attack.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Attack {
     base: ActivityBase,
     attack_traits: Vec<Rc<AttackBase>>,
@@ -1963,6 +2014,8 @@ impl Activity for Attack {
 }
 
 /// `AttackFollow.AttackActivity`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct AttackActivity {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2140,6 +2193,8 @@ impl Activity for AttackActivity {
 }
 
 /// `AttackOmni.SetTarget`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct SetTarget {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2167,6 +2222,8 @@ impl Activity for SetTarget {
 }
 
 /// `AttackTesla.ChargeAttack`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct ChargeAttack {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2205,6 +2262,8 @@ impl Activity for ChargeAttack {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct ChargeFire {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2225,6 +2284,8 @@ impl Activity for ChargeFire {
 }
 
 /// `Activities/Air/FlyAttack.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FlyAttack {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -2379,6 +2440,8 @@ impl Activity for FlyAttack {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct FlyAttackRun {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2434,6 +2497,8 @@ impl Activity for FlyAttackRun {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct StrafeAttackRun {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2489,6 +2554,8 @@ impl Activity for StrafeAttackRun {
 }
 
 /// `Activities/Hunt.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Hunt {
     base: ActivityBase,
     mv: Rc<dyn IMove>,
@@ -2527,14 +2594,12 @@ impl Activity for Hunt {
         let (mv, world) = (self.mv.clone(), w.clone());
         self.base.queue_child(crate::attack_move::AttackMoveActivity::new(
             self_,
-            Rc::new(move || {
-                mv.move_within_range(
-                    &Target::from_cell(&world, target_actor.location(), rustora_engine::traits::subcell::FULL_CELL),
-                    WDist::ZERO,
-                    WDist::from_cells(2),
-                    None,
-                )
-            }),
+            crate::attack_move::MoveOrder::WithinRange {
+                mv,
+                target: Target::from_cell(&world, target_actor.location(), rustora_engine::traits::subcell::FULL_CELL),
+                min_range: WDist::ZERO,
+                max_range: WDist::from_cells(2),
+            },
             false,
         ));
         self.base.queue_child(Wait::new(25));
@@ -2557,7 +2622,7 @@ pub struct EdibleByLeapInfo {
     pub instance_name: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct EdibleByLeap {
     leaper: RefCell<Option<ActorRef>>,
 }
@@ -2580,6 +2645,8 @@ impl EdibleByLeap {
 }
 
 /// `Mods.Cnc/Activities/LeapAttack.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct LeapAttack {
     base: ActivityBase,
     attack: Rc<AttackBase>,
@@ -2719,6 +2786,8 @@ impl Activity for LeapAttack {
 }
 
 /// `Mods.Cnc/Activities/Leap.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Leap {
     base: ActivityBase,
     mobile: Rc<Mobile>,
@@ -3005,4 +3074,41 @@ impl AttackBase {
     pub fn charge_level(&self) -> i32 {
         self.charge_level.get()
     }
+}
+
+/// After the opening or closing animation of `AttackPopupTurreted`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct PopupDone {
+    attack: Rc<AttackBase>,
+    actor: ActorRef,
+    open: bool,
+}
+
+impl rustora_engine::persist::SavedFn for PopupDone {
+    fn call(&self) {
+        if self.open {
+            self.attack.popup_opened(&self.actor);
+        } else {
+            self.attack.popup_closed(&self.actor);
+        }
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(
+        Attack,
+        AttackActivity,
+        SetTarget,
+        ChargeAttack,
+        ChargeFire,
+        FlyAttack,
+        FlyAttackRun,
+        StrafeAttackRun,
+        Hunt,
+        LeapAttack,
+        Leap
+    );
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: PopupDone);
 }

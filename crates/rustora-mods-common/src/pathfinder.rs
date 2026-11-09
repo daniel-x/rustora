@@ -49,7 +49,8 @@ impl Default for CellInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct GraphConnection {
     pub destination: CPos,
     pub cost: i32,

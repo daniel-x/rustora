@@ -6,6 +6,8 @@
 //! order therefore depends only on the add/remove sequence, not on hash codes.
 
 use std::collections::HashMap;
+
+use crate::persist::{Persist, SaveReader, SaveWriter};
 use std::hash::Hash;
 
 /// `Dictionary<K, V>` iteration semantics.
@@ -147,5 +149,33 @@ impl<T: Hash + Eq + Clone> NetSet<T> {
 
     pub fn to_vec(&self) -> Vec<T> {
         self.iter().cloned().collect()
+    }
+}
+
+/// The entries with their free slots and the free list are written, so that the iteration order and the order of
+/// later insertions stay the same after loading.
+impl<K: Hash + Eq + Clone + Persist, V: Persist> Persist for NetMap<K, V> {
+    fn save(&self, w: &mut SaveWriter) {
+        self.entries.save(w);
+        self.free.save(w);
+    }
+    fn load(r: &mut SaveReader) -> Self {
+        let entries: Vec<Option<(K, V)>> = Persist::load(r);
+        let free = Persist::load(r);
+        let index = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.as_ref().map(|(k, _)| (k.clone(), i)))
+            .collect();
+        NetMap { entries, free, index }
+    }
+}
+
+impl<T: Hash + Eq + Clone + Persist> Persist for NetSet<T> {
+    fn save(&self, w: &mut SaveWriter) {
+        self.map.save(w)
+    }
+    fn load(r: &mut SaveReader) -> Self {
+        NetSet { map: Persist::load(r) }
     }
 }

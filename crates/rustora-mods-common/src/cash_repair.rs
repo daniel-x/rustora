@@ -89,6 +89,7 @@ impl Default for DeliversCashInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct DeliversCash {
     info: Rc<DeliversCashInfo>,
 }
@@ -191,6 +192,8 @@ pub fn donate_cash_activity(
     )
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct DonateCashHooks {
     payload: i32,
     player_experience: i32,
@@ -239,6 +242,7 @@ impl Default for AcceptsDeliveredCashInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AcceptsDeliveredCash {
     info: Rc<AcceptsDeliveredCashInfo>,
 }
@@ -262,6 +266,7 @@ pub struct InstantlyRepairableInfo {
     pub types: BitSet<InstantlyRepairType>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InstantlyRepairable {
     pub info: Rc<InstantlyRepairableInfo>,
     state: ConditionalState,
@@ -302,6 +307,7 @@ impl Default for InstantlyRepairsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InstantlyRepairs {
     info: Rc<InstantlyRepairsInfo>,
     state: ConditionalState,
@@ -422,6 +428,8 @@ impl IResolveOrder for InstantlyRepairs {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct InstantRepairHooks {
     info: Rc<InstantlyRepairsInfo>,
 }
@@ -477,4 +485,9 @@ impl EnterHooks for InstantRepairHooks {
             EnterBehaviour::Exit => {}
         }
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: DonateCashHooks, InstantRepairHooks);
 }

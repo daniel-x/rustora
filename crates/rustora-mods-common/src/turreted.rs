@@ -66,7 +66,7 @@ impl Default for TakeCoverInfo {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 struct TakeCoverState {
     remaining_duration: Cell<i32>,
     is_prone: Cell<bool>,
@@ -102,6 +102,7 @@ impl Default for TurretedInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Turreted {
     pub info: Rc<TurretedInfo>,
     state: ConditionalState,
@@ -141,7 +142,11 @@ impl rustora_engine::traits::TraitObject for Turreted {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(Turreted: ITick, IDeathActorInitModifier, INotifyCreated, IObservesVariables, IDisabledTrait, INotifyDamage, IDamageModifier, ISpeedModifier, IRenderInfantrySequenceModifier, ISync);
 }
+
+rustora_engine::persist_trait_refs!(Turreted);
 info_impl!(TurretedInfo => |info, init| {
     let facing = init.inits.get_for::<TurretFacingInit>(info.instance_name.as_deref()).map_or(info.initial_facing, |f| f.value);
     let state = ConditionalState::new_pausable(&info.base);

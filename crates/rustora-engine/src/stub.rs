@@ -91,8 +91,13 @@ impl TraitInfo for StubInfo {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn as_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
+#[derive(crate::persist::Persist)]
 pub struct StubTrait {
     pub info: Rc<StubInfo>,
     state: ConditionalState,
@@ -151,6 +156,25 @@ impl TraitObject for StubTrait {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn cast_rc(self: Rc<Self>, t: std::any::TypeId) -> Option<Box<dyn Any>> {
+        if t == std::any::TypeId::of::<StubTrait>() {
+            return Some(Box::new(self));
+        }
+        if t == std::any::TypeId::of::<dyn ISync>() {
+            let rc: Rc<dyn ISync> = self;
+            return Some(Box::new(rc));
+        }
+        None
+    }
+
+    fn save_state(&self, w: &mut crate::persist::SaveWriter) {
+        crate::persist::PersistState::save_state(self, w)
+    }
+
+    fn load_state(&self, r: &mut crate::persist::SaveReader) {
+        crate::persist::PersistState::load_state(self, r)
     }
 }
 

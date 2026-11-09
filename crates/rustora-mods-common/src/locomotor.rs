@@ -116,7 +116,8 @@ fn load_speeds(y: &MiniYaml) -> Result<IndexMap<String, TerrainSpeedInfo>, LoadE
     Ok(ret)
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct CellCache {
     immovable: u64,
     crushable: u64,
@@ -125,6 +126,7 @@ struct CellCache {
 
 pub type CellCostChanged = Rc<dyn Fn(CPos, i16, i16)>;
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Locomotor {
     pub info: Rc<LocomotorInfo>,
     terrain_infos: Vec<TerrainSpeedInfo>,
@@ -132,6 +134,7 @@ pub struct Locomotor {
     dirty_cells: RefCell<HashSet<CPos>>,
     cells_cost: OnceCell<RefCell<CellLayer<i16>>>,
     blocking_cache: OnceCell<RefCell<CellLayer<CellCache>>>,
+    #[persist(skip)]
     cell_cost_changed: RefCell<Vec<CellCostChanged>>,
     me: std::rc::Weak<Locomotor>,
 }

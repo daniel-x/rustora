@@ -121,3 +121,23 @@ impl<K: Hash + Eq + Clone, V: Clone> SpatiallyPartitioned<K, V> {
         out
     }
 }
+
+impl<K: Hash + Eq + Clone + crate::persist::Persist, V: crate::persist::Persist> crate::persist::Persist for SpatiallyPartitioned<K, V> {
+    fn save(&self, w: &mut crate::persist::SaveWriter) {
+        self.rows.save(w);
+        self.cols.save(w);
+        self.bin_size.save(w);
+        self.bins.save(w);
+        self.item_bounds.save(w);
+    }
+    fn load(r: &mut crate::persist::SaveReader) -> Self {
+        use crate::persist::Persist;
+        SpatiallyPartitioned {
+            rows: Persist::load(r),
+            cols: Persist::load(r),
+            bin_size: Persist::load(r),
+            bins: Persist::load(r),
+            item_bounds: Persist::load(r),
+        }
+    }
+}

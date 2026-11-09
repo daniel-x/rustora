@@ -99,6 +99,7 @@ impl Default for CrateSpawnerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CrateSpawner {
     info: Rc<CrateSpawnerInfo>,
     enabled: Cell<bool>,
@@ -287,6 +288,7 @@ impl CrateInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Crate {
     info: Rc<CrateInfo>,
     self_: ActorRef,
@@ -637,6 +639,7 @@ impl Default for CrateActionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CrateAction {
     info: Rc<CrateActionInfo>,
     state: ConditionalState,
@@ -659,7 +662,11 @@ impl TraitObject for CrateAction {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(CrateAction: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 }
+
+rustora_engine::persist_trait_refs!(CrateAction);
 
 info_impl!(CrateActionInfo => |info, init| {
     let state = ConditionalState::new(&info.base);

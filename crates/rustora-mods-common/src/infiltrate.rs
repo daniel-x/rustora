@@ -88,6 +88,7 @@ impl Default for InfiltratesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Infiltrates {
     info: Rc<InfiltratesInfo>,
     state: ConditionalState,
@@ -212,6 +213,8 @@ impl Infiltrates {
 }
 
 /// `Infiltrate`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct InfiltrateHooks {
     infiltrates: Rc<Infiltrates>,
     notifiers: Vec<Rc<dyn INotifyInfiltration>>,
@@ -322,6 +325,7 @@ pub struct InfiltrateForSupportPowerInfo {
     pub notifications: InfiltrateNotifications,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForSupportPower {
     info: Rc<InfiltrateForSupportPowerInfo>,
 }
@@ -353,6 +357,7 @@ pub struct InfiltrateForSupportPowerResetInfo {
     pub notifications: InfiltrateNotifications,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForSupportPowerReset {
     info: Rc<InfiltrateForSupportPowerResetInfo>,
 }
@@ -399,6 +404,7 @@ impl Default for InfiltrateForTransformInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForTransform {
     info: Rc<InfiltrateForTransformInfo>,
     faction: String,
@@ -460,6 +466,7 @@ impl Default for InfiltrateForCashInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForCash {
     info: Rc<InfiltrateForCashInfo>,
 }
@@ -516,6 +523,7 @@ impl Default for InfiltrateForPowerOutageInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForPowerOutage {
     info: Rc<InfiltrateForPowerOutageInfo>,
 }
@@ -548,6 +556,7 @@ pub struct InfiltrateForExplorationInfo {
     pub notifications: InfiltrateNotifications,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForExploration {
     info: Rc<InfiltrateForExplorationInfo>,
 }
@@ -585,6 +594,7 @@ pub struct InfiltrateForDecorationInfo {
     pub player_experience: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct InfiltrateForDecoration {
     info: Rc<InfiltrateForDecorationInfo>,
     state: ConditionalState,
@@ -661,6 +671,7 @@ impl Default for DisguiseInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Disguise {
     info: Rc<DisguiseInfo>,
     self_: ActorRef,
@@ -876,4 +887,9 @@ impl ITick for Disguise {
         }
         self.last_pos.set(Some(location));
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: InfiltrateHooks);
 }

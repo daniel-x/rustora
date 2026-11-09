@@ -82,6 +82,7 @@ impl Default for GrantChargedConditionOnToggleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantChargedConditionOnToggle {
     info: Rc<GrantChargedConditionOnToggleInfo>,
     state: ConditionalState,
@@ -326,6 +327,8 @@ impl ISelectionBar for GrantChargedConditionOnToggle {
 }
 
 /// `ToggleChargedCondition`: toggles on its first run if possible.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct ToggleChargedCondition {
     base: ActivityBase,
     toggle: Rc<GrantChargedConditionOnToggle>,
@@ -348,4 +351,9 @@ impl Activity for ToggleChargedCondition {
             self.toggle.toggle_state(self_);
         }
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(ToggleChargedCondition);
 }

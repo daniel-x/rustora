@@ -89,6 +89,8 @@ impl Default for CargoInfo {
 }
 
 /// `RuntimeCargoInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct RuntimeCargoInit {
     pub value: Vec<ActorRef>,
     pub instance_name: Option<String>,
@@ -105,6 +107,8 @@ impl ActorInit for RuntimeCargoInit {
 }
 
 /// `CargoInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct CargoInit {
     pub value: Vec<String>,
     pub instance_name: Option<String>,
@@ -124,6 +128,7 @@ fn weight_of(a: &ActorRef) -> i32 {
     a.info.trait_info::<PassengerInfo>().expect("passenger info").weight
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Cargo {
     pub info: Rc<CargoInfo>,
     state: ConditionalState,
@@ -572,6 +577,7 @@ impl Default for PassengerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Passenger {
     pub info: Rc<PassengerInfo>,
     pub transport: RefCell<Option<ActorRef>>,
@@ -734,8 +740,9 @@ impl Default for ParaDropInfo {
     }
 }
 
-pub type ActorEvent = Rc<dyn Fn(&ActorRef)>;
+pub use crate::support_powers::ActorEvent;
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ParaDrop {
     info: Rc<ParaDropInfo>,
     self_: ActorRef,
@@ -787,11 +794,11 @@ impl ITick for ParaDrop {
         self.in_drop_range.set(in_range);
         if in_range && !was_in_drop_range {
             let events = self.on_entered_drop_range.borrow().clone();
-            events.iter().for_each(|e| e(self_));
+            events.iter().for_each(|e| e.call(self_));
         }
         if !in_range && was_in_drop_range {
             let events = self.on_exited_drop_range.borrow().clone();
-            events.iter().for_each(|e| e(self_));
+            events.iter().for_each(|e| e.call(self_));
         }
         let w = self_.world();
         if !in_range || self.cargo.is_empty() || !w.map().contains(self_.location()) {
@@ -832,12 +839,14 @@ impl ITick for ParaDrop {
 impl INotifyRemovedFromWorld for ParaDrop {
     fn removed_from_world(&self, self_: &ActorRef) {
         let events = self.on_removed_from_world.borrow().clone();
-        events.iter().for_each(|e| e(self_));
+        events.iter().for_each(|e| e.call(self_));
     }
 }
 
 /// Virtual members of the abstract C# `Enter` activity.
-pub trait EnterHooks {
+/// The type specific part of an [`Enter`] activity; registered for save games with
+/// `persist_values!(dyn EnterHooks: ...)`.
+pub trait EnterHooks: rustora_engine::persist::PersistDyn {
     fn type_name(&self) -> &'static str;
     fn tick_inner(&self, _enter: &Enter, _self_: &ActorRef, _target: &Target, _target_is_dead_or_hidden_actor: bool) {}
     fn try_start_enter(&self, _enter: &Enter, _self_: &ActorRef, _target_actor: &ActorRef) -> bool {
@@ -849,7 +858,8 @@ pub trait EnterHooks {
     fn on_actor_dispose(&self, _self_: &ActorRef) {}
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 enum EnterState {
     Approaching,
     Entering,
@@ -857,6 +867,8 @@ enum EnterState {
     Finished,
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Enter {
     base: ActivityBase,
     mv: Rc<dyn IMove>,
@@ -865,7 +877,16 @@ pub struct Enter {
     last_visible_target: RefCell<Target>,
     use_last_visible_target: Cell<bool>,
     last_state: Cell<EnterState>,
-    hooks: Box<dyn EnterHooks>,
+    hooks: Rc<dyn EnterHooks>,
+}
+
+impl rustora_engine::persist::RcPersist for dyn EnterHooks {
+    fn save_rc(this: &Rc<Self>, w: &mut rustora_engine::persist::SaveWriter) {
+        w.value_dyn(&**this)
+    }
+    fn load_rc(r: &mut rustora_engine::persist::SaveReader) -> Rc<Self> {
+        r.value_dyn::<Self>()
+    }
 }
 
 impl Enter {
@@ -882,7 +903,7 @@ impl Enter {
             last_visible_target: RefCell::new(Target::Invalid),
             use_last_visible_target: Cell::new(false),
             last_state: Cell::new(EnterState::Approaching),
-            hooks,
+            hooks: Rc::from(hooks),
         })
     }
 
@@ -1002,6 +1023,8 @@ impl Activity for Enter {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct RideTransportHooks {
     passenger: Rc<Passenger>,
     enter_actor: RefCell<Option<ActorRef>>,
@@ -1080,6 +1103,8 @@ impl EnterHooks for RideTransportHooks {
 }
 
 /// `Activities/UnloadCargo.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct UnloadCargo {
     base: ActivityBase,
     cargo: Rc<Cargo>,
@@ -1292,4 +1317,11 @@ impl rustora_engine::sound::IOrderVoice for Passenger {
         }
         self.can_enter(order.target.actor()?).then(|| self.info.voice.clone())
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(Enter, UnloadCargo);
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: RuntimeCargoInit, CargoInit);
+    rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: RideTransportHooks);
 }

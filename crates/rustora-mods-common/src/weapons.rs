@@ -71,6 +71,7 @@ impl Default for FireProjectilesOnDeathInfo {
 }
 
 /// Fires a random number of projectiles of each weapon in random directions when the actor dies.
+#[derive(rustora_engine::persist::Persist)]
 pub struct FireProjectilesOnDeath {
     info: Rc<FireProjectilesOnDeathInfo>,
     state: ConditionalState,
@@ -126,9 +127,8 @@ impl crate::interfaces::INotifyKilled for FireProjectilesOnDeath {
                         .map(|m| m.get_range_modifier())
                         .collect(),
                     facing,
-                    current_muzzle_facing: Rc::new(|| WAngle::ZERO),
+                    muzzle: rustora_engine::weapon::MuzzleSource::ActorCenter(me),
                     source: center,
-                    current_source: Rc::new(move || me.center_position()),
                     source_actor: self_.clone(),
                     passive_target: center + WVec::new(range, 0, 0).rotate(&rotation),
                     guided_target: Target::Invalid,
@@ -281,7 +281,8 @@ impl IWarhead for FlashTargetsInRadiusWarhead {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum InaccuracyType {
     #[default]
     Maximum,
@@ -405,6 +406,7 @@ pub struct ArmorInfo {
     pub ty: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Armor {
     pub info: Rc<ArmorInfo>,
     state: ConditionalState,
@@ -438,6 +440,7 @@ impl Default for BlocksProjectilesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct BlocksProjectiles {
     pub info: Rc<BlocksProjectilesInfo>,
     state: ConditionalState,
@@ -487,6 +490,7 @@ impl Default for JamsMissilesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct JamsMissiles {
     pub info: Rc<JamsMissilesInfo>,
     state: ConditionalState,
@@ -1153,16 +1157,14 @@ impl FireClusterWarhead {
         let source = target.center_position();
         let facing = (center - source).yaw();
         let t2 = target.clone();
-        let t3 = target.clone();
         let projectile_args = ProjectileArgs {
             weapon: weapon.clone(),
             damage_modifiers: args.damage_modifiers.clone(),
             inaccuracy_modifiers: Vec::new(),
             range_modifiers: Vec::new(),
             facing,
-            current_muzzle_facing: Rc::new(move || (center - t2.center_position()).yaw()),
+            muzzle: rustora_engine::weapon::MuzzleSource::TowardsCenter { target: t2, center },
             source,
-            current_source: Rc::new(move || t3.center_position()),
             source_actor: fired_by.clone(),
             passive_target: center,
             guided_target: tc,
@@ -1212,7 +1214,8 @@ fn random_sequence(w: &World, sequences: &[String]) -> String {
 }
 
 /// The palette and shadow fields of `BulletInfo`, `MissileInfo` and `GravityBombInfo`.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ProjectileVisuals {
     pub palette: String,
     pub is_player_palette: bool,
@@ -1277,7 +1280,8 @@ fn add_contrail_fader(world: &World, pos: WPos, contrail: &Option<SharedContrail
     }
 }
 
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(shared)]
 pub struct BulletInfo {
     pub bounce_sound: Option<String>,
     #[field(flatten)]
@@ -1408,9 +1412,14 @@ fn effective_facing(ticks: i32, length: i32, angle: WAngle, facing: WAngle) -> W
     } as i32)
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct Bullet {
+    #[persist(me)]
     me: Weak<Bullet>,
+    #[persist(skip)]
     anim: Option<Rc<Animation>>,
+    #[persist(skip)]
     contrail: Option<SharedContrail>,
     yaw: WAngle,
     /// A copy of `ticks` for the facing function of the animation.
@@ -1577,7 +1586,8 @@ impl Effect for Bullet {
     }
 }
 
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct InstantHitInfo {
     pub inaccuracy: WDist,
     pub inaccuracy_type: InaccuracyType,
@@ -1621,7 +1631,10 @@ impl IProjectileInfo for InstantHitInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct InstantHit {
+    #[persist(me)]
     me: Weak<InstantHit>,
     info: InstantHitInfo,
     args: ProjectileArgs,
@@ -1722,9 +1735,13 @@ impl IProjectileInfo for GravityBombInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct GravityBomb {
+    #[persist(me)]
     me: Weak<GravityBomb>,
     visuals: ProjectileVisuals,
+    #[persist(skip)]
     anim: Option<Rc<Animation>>,
     acceleration: WVec,
     velocity: Cell<WVec>,
@@ -1773,7 +1790,8 @@ impl Effect for GravityBomb {
     }
 }
 
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct TeslaZapInfo {
     pub image: String,
     pub bright_sequence: String,
@@ -1913,7 +1931,10 @@ fn draw_zap(from: [f32; 2], to: [f32; 2], seq: &Rc<Sequence>, palette: &PaletteR
     z
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct TeslaZap {
+    #[persist(me)]
     me: Weak<TeslaZap>,
     info: TeslaZapInfo,
     args: ProjectileArgs,
@@ -1993,7 +2014,8 @@ impl Effect for TeslaZap {
 }
 
 /// `LaserZapInfo`. `Shape` and `SecondaryBeamShape` only affect rendering and are kept as text.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct LaserZapInfo {
     pub width: WDist,
     pub shape: String,
@@ -2094,12 +2116,16 @@ impl IProjectileInfo for LaserZapInfo {
 }
 
 /// `LaserZap`: a beam that deals damage for `DamageDuration` ticks and fades over `Duration` ticks.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct LaserZap {
+    #[persist(me)]
     me: Weak<LaserZap>,
     info: LaserZapInfo,
     args: ProjectileArgs,
     color: Color,
     secondary_color: Color,
+    #[persist(skip)]
     hit_anim: Option<Rc<Animation>>,
     show_hit_anim: Rc<Cell<bool>>,
     ticks: Cell<i32>,
@@ -2127,13 +2153,13 @@ impl Effect for LaserZap {
     fn tick(&self, world: &Rc<World>) {
         let args = &self.args;
         let info = &self.info;
-        self.source.set((args.current_source)());
+        self.source.set(args.current_source());
         if self.ticks.get() == 0
             && let (Some(image), Some(sequence)) = (info.launch_effect_image.as_deref(), info.launch_effect_sequence.as_deref())
             && !image.is_empty()
             && !sequence.is_empty()
         {
-            let (pos, facing) = (self.source.get(), (args.current_muzzle_facing)());
+            let (pos, facing) = (self.source.get(), args.current_muzzle_facing());
             let (image, sequence, palette) = (image.to_string(), sequence.to_string(), info.launch_effect_palette.clone());
             world.add_frame_end_task(Box::new(move |w| {
                 w.add_effect(SpriteEffect::at(w, pos, facing, &image, &sequence, PaletteRef::named(&palette)));
@@ -2161,7 +2187,7 @@ impl Effect for LaserZap {
                 a.impact_orientation = WRot::new(
                     WAngle::ZERO,
                     util::get_vertical_angle(self.source.get(), target),
-                    (args.current_muzzle_facing)(),
+                    args.current_muzzle_facing(),
                 );
                 a.impact_position = target;
                 weapon_impact_args(&args.weapon, &Target::from_pos(target), &a);
@@ -2217,7 +2243,8 @@ impl Effect for LaserZap {
 }
 
 /// `RailgunInfo`. The helix is not drawn; the beam is drawn as a fading line.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct RailgunInfo {
     pub damage_actors_in_line: bool,
     pub inaccuracy: WDist,
@@ -2316,11 +2343,15 @@ impl IProjectileInfo for RailgunInfo {
 }
 
 /// `Railgun`: hits the target, or every actor on the line, on its first tick.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct Railgun {
+    #[persist(me)]
     me: Weak<Railgun>,
     info: RailgunInfo,
     args: ProjectileArgs,
     beam_color: Color,
+    #[persist(skip)]
     hit_anim: Option<Rc<Animation>>,
     animation_complete: Rc<Cell<bool>>,
     ticks: Cell<i32>,
@@ -2401,7 +2432,8 @@ impl Effect for Railgun {
     }
 }
 
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(shared)]
 pub struct MissileInfo {
     #[field(flatten)]
     pub visuals: ProjectileVisuals,
@@ -2609,7 +2641,8 @@ impl IProjectileInfo for MissileInfo {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 enum MissileState {
     Freefall,
     Homing,
@@ -2617,9 +2650,14 @@ enum MissileState {
 }
 
 /// `Missile`, without the `TerrainHeightAware` code paths that Red Alert does not use.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct Missile {
+    #[persist(me)]
     me: Weak<Missile>,
+    #[persist(skip)]
     anim: Option<Rc<Animation>>,
+    #[persist(skip)]
     contrail: Option<SharedContrail>,
     render_facing: Rc<Cell<WAngle>>,
     info: Rc<MissileInfo>,
@@ -2953,4 +2991,9 @@ impl Effect for Missile {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_effects!(Bullet, InstantHit, GravityBomb, TeslaZap, LaserZap, Railgun, Missile);
 }

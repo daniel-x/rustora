@@ -86,6 +86,10 @@ impl Beacon {
 }
 
 impl Effect for Beacon {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, world: &Rc<World>) {
         let delay = self.delay.get();
         self.delay.set(delay - 1);
@@ -163,6 +167,10 @@ impl FloatingText {
 }
 
 impl Effect for FloatingText {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, world: &Rc<World>) {
         let remaining = self.remaining.get() - 1;
         self.remaining.set(remaining);
@@ -216,6 +224,7 @@ impl Default for PlaceBeaconInfo {
 }
 
 /// `PlaceBeacon`: cosmetic, so its state stays out of the sync hash.
+#[derive(rustora_engine::persist::Persist)]
 pub struct PlaceBeacon {
     info: Rc<PlaceBeaconInfo>,
     player_beacon: Rc<RefCell<Option<EffectRef>>>,
@@ -266,3 +275,7 @@ impl IResolveOrder for PlaceBeacon {
         }));
     }
 }
+
+rustora_engine::persist_never!(Beacon);
+
+rustora_engine::persist_never!(FloatingText);

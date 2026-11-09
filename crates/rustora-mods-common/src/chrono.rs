@@ -69,6 +69,8 @@ fn play_active_animation(chronosphere: Option<&ActorRef>, self_: &ActorRef) {
 }
 
 /// `ChronoshiftReturnInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ChronoshiftReturnInit {
     pub ticks: i32,
     pub duration: i32,
@@ -109,6 +111,7 @@ impl Default for ChronoshiftableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Chronoshiftable {
     info: Rc<ChronoshiftableInfo>,
     state: ConditionalState,
@@ -272,6 +275,8 @@ impl ITransformActorInitModifier for Chronoshiftable {
 }
 
 /// Optional arguments of the `Teleport` constructor.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct TeleportOptions {
     pub kill_cargo: bool,
     pub screen_flash: bool,
@@ -282,6 +287,8 @@ pub struct TeleportOptions {
 }
 
 /// `Teleport`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Teleport {
     base: ActivityBase,
     teleporter: Option<ActorRef>,
@@ -420,6 +427,7 @@ impl Default for ConyardChronoReturnInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ConyardChronoReturn {
     info: Rc<ConyardChronoReturnInfo>,
     self_: ActorRef,
@@ -490,14 +498,7 @@ impl ConyardChronoReturn {
         let me = self.me.clone();
         let launcher = self_.clone();
         self_.world().add_frame_end_task(Box::new(move |w| {
-            w.add_effect(ConyardChronoVortex::new(Box::new(move || {
-                if let Some(t) = me.upgrade() {
-                    t.triggered.set(false);
-                    if t.condition_token.get() != INVALID_CONDITION_TOKEN && !launcher.disposed() {
-                        t.condition_token.set(launcher.revoke_condition(t.condition_token.get()));
-                    }
-                }
-            })));
+            w.add_effect(ConyardChronoVortex::new(me, launcher));
         }));
     }
 
@@ -617,23 +618,25 @@ impl ITransformActorInitModifier for ConyardChronoReturn {
 }
 
 /// `ConyardChronoVortex`, without its renderable: only the end of the animation affects the simulation.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 struct ConyardChronoVortex {
-    on_completion: RefCell<Option<Box<dyn FnOnce()>>>,
-    me: RefCell<Weak<ConyardChronoVortex>>,
+    /// The trait that started the vortex and its actor, notified on completion.
+    on_completion: RefCell<Option<(Weak<ConyardChronoReturn>, ActorRef)>>,
+    #[persist(me)]
+    me: Weak<ConyardChronoVortex>,
     loops: Cell<i32>,
     frame: Cell<i32>,
 }
 
 impl ConyardChronoVortex {
-    fn new(on_completion: Box<dyn FnOnce()>) -> Rc<ConyardChronoVortex> {
-        let v = Rc::new(ConyardChronoVortex {
-            on_completion: RefCell::new(Some(on_completion)),
-            me: RefCell::new(Weak::new()),
+    fn new(trait_: Weak<ConyardChronoReturn>, launcher: ActorRef) -> Rc<ConyardChronoVortex> {
+        Rc::new_cyclic(|me| ConyardChronoVortex {
+            on_completion: RefCell::new(Some((trait_, launcher))),
+            me: me.clone(),
             loops: Cell::new(3),
             frame: Cell::new(0),
-        });
-        *v.me.borrow_mut() = Rc::downgrade(&v);
-        v
+        })
     }
 }
 
@@ -651,14 +654,19 @@ impl Effect for ConyardChronoVortex {
             }
         }
         if self.frame.get() == 48 {
-            let me = self.me.borrow().upgrade();
+            let me = self.me.upgrade();
             let on_completion = self.on_completion.borrow_mut().take();
             world.add_frame_end_task(Box::new(move |w| {
                 if let Some(me) = me {
                     w.remove_effect(&(me as Rc<dyn Effect>));
                 }
-                if let Some(f) = on_completion {
-                    f();
+                if let Some((t, launcher)) = on_completion
+                    && let Some(t) = t.upgrade()
+                {
+                    t.triggered.set(false);
+                    if t.condition_token.get() != INVALID_CONDITION_TOKEN && !launcher.disposed() {
+                        t.condition_token.set(launcher.revoke_condition(t.condition_token.get()));
+                    }
                 }
             }));
         }
@@ -704,6 +712,7 @@ impl Default for PortableChronoInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PortableChrono {
     info: Rc<PortableChronoInfo>,
     state: ConditionalState,
@@ -914,6 +923,7 @@ impl Default for MadTankInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct MadTank {
     info: Rc<MadTankInfo>,
     me: Weak<MadTank>,
@@ -980,6 +990,8 @@ impl IResolveOrder for MadTank {
 }
 
 /// `MadTank.DetonationSequence`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct DetonationSequence {
     base: ActivityBase,
     mad: Rc<MadTank>,
@@ -1130,4 +1142,11 @@ impl ISelectionBar for PortableChrono {
     fn color(&self) -> rustora_core::fieldloader::Color {
         crate::cosmetic::magenta()
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(Teleport, DetonationSequence);
+    rustora_engine::persist_effects!(ConyardChronoVortex);
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: ChronoshiftReturnInit);
 }

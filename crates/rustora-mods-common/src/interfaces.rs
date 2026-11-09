@@ -244,8 +244,8 @@ pub trait INotifyDeployComplete {
 }
 
 pub trait IDockClientBody {
-    fn play_dock_animation(&self, self_: &ActorRef, after: std::rc::Rc<dyn Fn()>);
-    fn play_reverse_dock_animation(&self, self_: &ActorRef, after: std::rc::Rc<dyn Fn()>);
+    fn play_dock_animation(&self, self_: &ActorRef, after: rustora_engine::sequence::AfterAnim);
+    fn play_reverse_dock_animation(&self, self_: &ActorRef, after: rustora_engine::sequence::AfterAnim);
 }
 
 pub trait INotifyHarvestAction {
@@ -360,3 +360,36 @@ pub trait IAircraftCenterPositionOffset {
 pub trait IOverrideAircraftLanding {
     fn landable_terrain_types(&self) -> Option<std::rc::Rc<indexmap::IndexSet<String>>>;
 }
+
+rustora_engine::persist_trait_refs!(
+    dyn IDamageModifier,
+    dyn IDelayCarryallPickup,
+    dyn IDockClientBody,
+    dyn IFirepowerModifier,
+    dyn IInaccuracyModifier,
+    dyn IMove,
+    dyn INotifyAiming,
+    dyn INotifyAttack,
+    dyn INotifyBurstComplete,
+    dyn INotifyCenterPositionChanged,
+    dyn INotifyDeployTriggered,
+    dyn INotifyDockClient,
+    dyn INotifyDockHost,
+    dyn INotifyFinishedMoving,
+    dyn INotifyHarvestAction,
+    dyn INotifyMoving,
+    dyn INotifyUnloadCargo,
+    dyn IPositionable,
+    dyn IRangeModifier,
+    dyn IReloadModifier,
+    dyn IWrapMove
+);
+
+rustora_engine::persist_trait_refs!(
+    dyn ITechTreeElement,
+    dyn INotifyDamageStateChanged,
+    dyn INotifyDamage,
+    dyn INotifyKilled
+);
+rustora_engine::persist_trait_refs!(dyn INotifyDemolition, dyn INotifyInfiltration);
+rustora_engine::persist_trait_refs!(dyn INotifyDeployComplete);

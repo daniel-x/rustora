@@ -59,6 +59,7 @@ pub struct InteractableInfo {
 register_traits!(Interactable);
 info_impl!(InteractableInfo => |_info, _init| Some(Rc::new(Interactable)));
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Interactable;
 
 #[derive(Clone, Debug, FieldLoad)]
@@ -89,6 +90,7 @@ impl Default for SelectableInfo {
 register_traits!(Selectable);
 info_impl!(SelectableInfo => |_info, _init| Some(Rc::new(Selectable)));
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Selectable;
 
 /// `Actor.MouseBounds` trait info: the `Interactable` part of the first `Interactable` or `Selectable`.
@@ -154,7 +156,7 @@ pub struct SelectionInfo {
 }
 
 /// The world's `Selection`.
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct Selection {
     actors: RefCell<Vec<ActorRef>>,
     rollover: RefCell<Vec<ActorRef>>,
@@ -337,6 +339,7 @@ impl Default for ControlGroupsInfo {
 
 /// `Traits/World/ControlGroups.cs`: client state like [`Selection`]; the client sets the local player and calls
 /// [`ControlGroups::tick`] after each world tick.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ControlGroups {
     pub info: Rc<ControlGroupsInfo>,
     groups: RefCell<Vec<Vec<ActorRef>>>,

@@ -11,7 +11,7 @@ use rustora_engine::activity::ActivityRef;
 use rustora_engine::actor::INVALID_CONDITION_TOKEN;
 use rustora_engine::damage::{AttackInfo, DamageState};
 use rustora_engine::player::PlayerRef;
-use rustora_engine::sequence::{Animation, AnimationWithOffset};
+use rustora_engine::sequence::{AfterAnim, Animation, AnimationWithOffset};
 use rustora_engine::{conditional_plumbing, conditional_simple};
 
 use crate::actor_reference::SkipMakeAnimsInit;
@@ -99,6 +99,8 @@ impl RenderSpritesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(owned)]
 struct AnimationWrapper {
     animation: AnimationWithOffset,
     palette: Option<String>,
@@ -106,9 +108,11 @@ struct AnimationWrapper {
 }
 
 /// `RenderSprites`: owns and ticks the animations of an actor.
+#[derive(rustora_engine::persist::Persist)]
 pub struct RenderSprites {
     pub info: Rc<RenderSpritesInfo>,
     faction: String,
+    #[persist(in_place)]
     anims: RefCell<Vec<Rc<AnimationWrapper>>>,
 }
 
@@ -261,6 +265,7 @@ pub struct WithFacingSpriteBodyInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 enum BodyVariant {
     Plain,
     Wall {
@@ -295,6 +300,7 @@ enum BodyVariant {
     },
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithSpriteBody {
     pub info: Rc<WithSpriteBodyInfo>,
     class_name: &'static str,
@@ -329,7 +335,11 @@ impl TraitObject for WithSpriteBody {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(WithSpriteBody: INotifyDamageStateChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ITick, INotifyOwnerChanged, INotifyRemovedFromWorld, ISync);
 }
+
+rustora_engine::persist_trait_refs!(WithSpriteBody);
 
 fn new_sprite_body(
     info: Rc<WithSpriteBodyInfo>,
@@ -818,16 +828,19 @@ impl WithSpriteBody {
     fn base_trait_enabled(&self, self_: &ActorRef) {
         match &self.info.start_sequence {
             Some(start) => {
-                let (a, anim, seq, me) = (
-                    self_.clone(),
-                    self.default_animation.clone(),
-                    self.info.sequence.clone(),
-                    self.self_.clone(),
+                let body = self_
+                    .traits_implementing::<WithSpriteBody>()
+                    .into_iter()
+                    .find(|w| std::ptr::eq(Rc::as_ptr(w), self))
+                    .expect("body registered");
+                self.play_custom_animation(
+                    self_,
+                    start,
+                    Some(AfterAnim::saved(PlayBodySequence {
+                        body,
+                        actor: self_.clone(),
+                    })),
                 );
-                let _ = me;
-                let body_seq = move || normalize_sequence(&anim, get_damage_state(&a), &seq);
-                let anim2 = self.default_animation.clone();
-                self.play_custom_animation(self_, start, Some(Rc::new(move || anim2.play_repeating(&body_seq()))));
             }
             None => self
                 .default_animation
@@ -870,33 +883,31 @@ impl WithSpriteBody {
         normalize_sequence(&self.default_animation, get_damage_state(self_), sequence)
     }
 
-    fn after_custom(&self, self_: &ActorRef, after: Option<Rc<dyn Fn()>>) -> Rc<dyn Fn()> {
-        let a = self_.clone();
-        let me = a
+    fn after_custom(&self, self_: &ActorRef, after: Option<AfterAnim>) -> AfterAnim {
+        let body = self_
             .traits_implementing::<WithSpriteBody>()
             .into_iter()
             .find(|w| std::ptr::eq(Rc::as_ptr(w), self))
             .expect("body registered");
-        Rc::new(move || {
-            me.cancel_custom_animation(&a);
-            if let Some(f) = &after {
-                f();
-            }
+        AfterAnim::saved(CustomAnimDone {
+            body,
+            actor: self_.clone(),
+            then: after,
         })
     }
 
-    pub fn play_custom_animation(&self, self_: &ActorRef, name: &str, after: Option<Rc<dyn Fn()>>) {
+    pub fn play_custom_animation(&self, self_: &ActorRef, name: &str, after: Option<AfterAnim>) {
         self.default_animation
-            .play_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
+            .play_then_after(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
     }
 
     pub fn play_custom_animation_repeating(&self, self_: &ActorRef, name: &str) {
         self.default_animation.play_repeating(&self.normalize_sequence(self_, name));
     }
 
-    pub fn play_custom_animation_backwards(&self, self_: &ActorRef, name: &str, after: Option<Rc<dyn Fn()>>) {
+    pub fn play_custom_animation_backwards(&self, self_: &ActorRef, name: &str, after: Option<AfterAnim>) {
         self.default_animation
-            .play_backwards_then(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
+            .play_backwards_then_after(&self.normalize_sequence(self_, name), Some(self.after_custom(self_, after)));
     }
 
     pub fn cancel_custom_animation(&self, self_: &ActorRef) {
@@ -929,6 +940,7 @@ impl Default for WithMakeAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithMakeAnimation {
     info: Rc<WithMakeAnimationInfo>,
     wsbs: Vec<Rc<WithSpriteBody>>,
@@ -950,7 +962,7 @@ info_impl!(WithMakeAnimationInfo => |info, init| {
 impl INotifyCreated for WithMakeAnimation {
     fn created(&self, self_: &ActorRef) {
         if !self.skip_make_animation {
-            self.forward(self_, Rc::new(|| {}));
+            self.forward(self_, AfterAnim::saved(rustora_engine::persist::NoOp));
         }
     }
 }
@@ -966,26 +978,29 @@ impl WithMakeAnimation {
         }
     }
 
-    fn completion(&self, self_: &ActorRef, on_complete: Rc<dyn Fn()>) -> Rc<dyn Fn()> {
-        let (a, token) = (self_.clone(), self.token.clone());
-        Rc::new(move || {
-            let (a2, token, on_complete) = (a.clone(), token.clone(), on_complete.clone());
-            a.world().add_frame_end_task(Box::new(move |_| {
-                if token.get() != INVALID_CONDITION_TOKEN {
-                    token.set(a2.revoke_condition(token.get()));
-                }
-                on_complete();
-            }));
+    fn me(&self, self_: &ActorRef) -> Rc<WithMakeAnimation> {
+        self_
+            .traits_implementing::<WithMakeAnimation>()
+            .into_iter()
+            .find(|w| std::ptr::eq(Rc::as_ptr(w), self))
+            .expect("make animation registered")
+    }
+
+    fn completion(&self, self_: &ActorRef, on_complete: AfterAnim) -> AfterAnim {
+        AfterAnim::saved(MakeAnimDone {
+            make: self.me(self_),
+            actor: self_.clone(),
+            then: on_complete,
         })
     }
 
-    pub fn forward(&self, self_: &ActorRef, on_complete: Rc<dyn Fn()>) {
+    pub fn forward(&self, self_: &ActorRef, on_complete: AfterAnim) {
         self.grant(self_);
         let Some(wsb) = self.first_enabled() else { return };
         wsb.play_custom_animation(self_, &self.info.sequence, Some(self.completion(self_, on_complete)));
     }
 
-    pub fn reverse(&self, self_: &ActorRef, on_complete: Rc<dyn Fn()>) {
+    pub fn reverse(&self, self_: &ActorRef, on_complete: AfterAnim) {
         self.grant(self_);
         let Some(wsb) = self.first_enabled() else { return };
         wsb.play_custom_animation_backwards(self_, &self.info.sequence, Some(self.completion(self_, on_complete)));
@@ -993,21 +1008,13 @@ impl WithMakeAnimation {
 
     /// `Reverse(self, activity, queued)`.
     pub fn reverse_then_activity(&self, self_: &ActorRef, activity: ActivityRef, queued: bool) {
-        let (a, wsb, seq, token, cond) = (
-            self_.clone(),
-            self.first_enabled(),
-            self.info.sequence.clone(),
-            self.token.clone(),
-            self.info.condition.clone(),
-        );
         self.reverse(
             self_,
-            Rc::new(move || {
-                if let Some(w) = &wsb {
-                    w.default_animation.play_fetch_index(&seq, Rc::new(|| 0));
-                }
-                token.set(a.grant_condition(cond.as_deref().unwrap_or("")));
-                a.queue_activity_queued(queued, activity.clone());
+            AfterAnim::saved(ReverseThenActivity {
+                make: self.me(self_),
+                actor: self_.clone(),
+                queued,
+                activity,
             }),
         );
     }
@@ -1027,18 +1034,14 @@ impl INotifyDeployTriggered for WithMakeAnimation {
             if wsb.is_trait_disabled() {
                 continue;
             }
-            let (a, notified, notify) = (self_.clone(), notified.clone(), notify.clone());
             wsb.play_custom_animation(
                 self_,
                 &self.info.sequence,
-                Some(Rc::new(move || {
-                    if notified.get() {
-                        return;
-                    }
-                    for n in &notify {
-                        n.finished_deploy(&a);
-                        notified.set(true);
-                    }
+                Some(AfterAnim::saved(DeployAnimDone {
+                    actor: self_.clone(),
+                    notified: notified.clone(),
+                    notify: notify.clone(),
+                    undeploy: false,
                 })),
             );
         }
@@ -1057,18 +1060,14 @@ impl INotifyDeployTriggered for WithMakeAnimation {
             if wsb.is_trait_disabled() {
                 continue;
             }
-            let (a, notified, notify) = (self_.clone(), notified.clone(), notify.clone());
             wsb.play_custom_animation_backwards(
                 self_,
                 &self.info.sequence,
-                Some(Rc::new(move || {
-                    if notified.get() {
-                        return;
-                    }
-                    for n in &notify {
-                        n.finished_undeploy(&a);
-                        notified.set(true);
-                    }
+                Some(AfterAnim::saved(DeployAnimDone {
+                    actor: self_.clone(),
+                    notified: notified.clone(),
+                    notify: notify.clone(),
+                    undeploy: true,
                 })),
             );
         }
@@ -1104,6 +1103,7 @@ fn body_named(self_: &ActorRef, name: &str) -> Rc<WithSpriteBody> {
         .unwrap_or_else(|| panic!("{self_:?} has no sprite body named {name}"))
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithBuildingPlacedAnimation {
     info: Rc<WithBuildingPlacedAnimationInfo>,
     state: ConditionalState,
@@ -1160,6 +1160,7 @@ impl Default for WithDockingAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithDockingAnimation {
     info: Rc<WithDockingAnimationInfo>,
     wsb: Rc<WithSpriteBody>,
@@ -1172,19 +1173,20 @@ info_impl!(WithDockingAnimationInfo => |info, init| {
 });
 
 impl IDockClientBody for WithDockingAnimation {
-    fn play_dock_animation(&self, self_: &ActorRef, after: Rc<dyn Fn()>) {
-        let (w, a, l) = (self.wsb.clone(), self_.clone(), self.info.dock_loop_sequence.clone());
+    fn play_dock_animation(&self, self_: &ActorRef, after: AfterAnim) {
         self.wsb.play_custom_animation(
             self_,
             &self.info.dock_sequence,
-            Some(Rc::new(move || {
-                w.play_custom_animation_repeating(&a, &l);
-                after();
+            Some(AfterAnim::saved(DockAnimDone {
+                body: self.wsb.clone(),
+                actor: self_.clone(),
+                loop_sequence: self.info.dock_loop_sequence.clone(),
+                then: after,
             })),
         );
     }
 
-    fn play_reverse_dock_animation(&self, self_: &ActorRef, after: Rc<dyn Fn()>) {
+    fn play_reverse_dock_animation(&self, self_: &ActorRef, after: AfterAnim) {
         self.wsb
             .play_custom_animation_backwards(self_, &self.info.dock_sequence, Some(after));
     }
@@ -1208,6 +1210,7 @@ impl Default for WithHarvestAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithHarvestAnimation {
     info: Rc<WithHarvestAnimationInfo>,
     wsb: Rc<WithSpriteBody>,
@@ -1264,6 +1267,7 @@ impl Default for WithIdleOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithIdleOverlay {
     state: ConditionalState,
     overlay: Rc<Animation>,
@@ -1291,10 +1295,13 @@ info_impl!(WithIdleOverlayInfo => |info, init| {
     let ds = get_damage_state(&self_);
     match &info.start_sequence {
         Some(start) => {
-            let (o, a, seq) = (t.overlay.clone(), self_.clone(), info.sequence.clone());
-            t.overlay.play_then(
+            t.overlay.play_then_saved(
                 &normalize_sequence(&t.overlay, ds, start),
-                Some(Rc::new(move || o.play_repeating(&normalize_sequence(&o, get_damage_state(&a), &seq)))),
+                Rc::new(IdleOverlayStarted {
+                    overlay: t.clone(),
+                    actor: self_.clone(),
+                    sequence: info.sequence.clone(),
+                }),
             );
         }
         None => t.overlay.play_repeating(&normalize_sequence(&t.overlay, ds, &info.sequence)),
@@ -1348,6 +1355,7 @@ impl Default for BodyOrientationInfo {
 /// `ClassicFacingBodyOrientationInfo`: same data, different facing quantization (pending).
 pub struct ClassicFacingBodyOrientationInfo(pub BodyOrientationInfo);
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct BodyOrientation {
     pub info: BodyOrientationInfo,
     class_name: &'static str,
@@ -1367,7 +1375,11 @@ impl TraitObject for BodyOrientation {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(BodyOrientation: ISync);
 }
+
+rustora_engine::persist_trait_refs!(BodyOrientation);
 
 fn create_body(
     info: BodyOrientationInfo,
@@ -1406,7 +1418,12 @@ impl TraitInfo for ClassicFacingBodyOrientationInfo {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+    fn as_any_rc(self: Rc<Self>) -> Rc<dyn std::any::Any> {
+        self
+    }
 }
+
+rustora_engine::persist_rule_refs!(ClassicFacingBodyOrientationInfo);
 
 impl BodyOrientationInfo {
     /// `LocalToWorld`.
@@ -1492,6 +1509,7 @@ impl Default for QuantizeFacingsFromSequenceInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct QuantizeFacingsFromSequence {
     state: ConditionalState,
 }
@@ -1575,6 +1593,7 @@ impl Default for WithProductionDoorOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithProductionDoorOverlay {
     state: ConditionalState,
     door: Rc<Animation>,
@@ -1645,4 +1664,144 @@ impl crate::interfaces::INotifyProduction for WithProductionDoorOverlay {
         *self.exiting_actor.borrow_mut() = Some(other.clone());
         self.desired_frame.set(self.door.current_sequence().map_or(1, |s| s.length()) - 1);
     }
+}
+
+/// After a custom animation: `CancelCustomAnimation`, then `then`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct CustomAnimDone {
+    body: Rc<WithSpriteBody>,
+    actor: ActorRef,
+    then: Option<AfterAnim>,
+}
+
+impl rustora_engine::persist::SavedFn for CustomAnimDone {
+    fn call(&self) {
+        self.body.cancel_custom_animation(&self.actor);
+        if let Some(f) = &self.then {
+            f.call();
+        }
+    }
+}
+
+/// After the start sequence of a body: its sequence repeats.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct PlayBodySequence {
+    body: Rc<WithSpriteBody>,
+    actor: ActorRef,
+}
+
+impl rustora_engine::persist::SavedFn for PlayBodySequence {
+    fn call(&self) {
+        let anim = &self.body.default_animation;
+        anim.play_repeating(&normalize_sequence(anim, get_damage_state(&self.actor), &self.body.info.sequence));
+    }
+}
+
+/// After a make animation: revokes its condition at the end of the frame, then runs `then`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct MakeAnimDone {
+    make: Rc<WithMakeAnimation>,
+    actor: ActorRef,
+    then: AfterAnim,
+}
+
+impl rustora_engine::persist::SavedFn for MakeAnimDone {
+    fn call(&self) {
+        let (make, a, then) = (self.make.clone(), self.actor.clone(), self.then.clone());
+        self.actor.world().add_frame_end_task(Box::new(move |_| {
+            if make.token.get() != INVALID_CONDITION_TOKEN {
+                make.token.set(a.revoke_condition(make.token.get()));
+            }
+            then.call();
+        }));
+    }
+}
+
+/// After the reversed make animation of `Reverse(self, activity, queued)`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct ReverseThenActivity {
+    make: Rc<WithMakeAnimation>,
+    actor: ActorRef,
+    queued: bool,
+    activity: rustora_engine::activity::ActivityRef,
+}
+
+impl rustora_engine::persist::SavedFn for ReverseThenActivity {
+    fn call(&self) {
+        if let Some(w) = self.make.first_enabled() {
+            w.default_animation.play_fetch_index(&self.make.info.sequence, Rc::new(|| 0));
+        }
+        self.make
+            .token
+            .set(self.actor.grant_condition(self.make.info.condition.as_deref().unwrap_or("")));
+        self.actor.queue_activity_queued(self.queued, self.activity.clone());
+    }
+}
+
+/// After the make animation of a deploy or undeploy: notifies `INotifyDeployComplete` once for all bodies.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct DeployAnimDone {
+    actor: ActorRef,
+    notified: Rc<Cell<bool>>,
+    notify: Vec<Rc<dyn INotifyDeployComplete>>,
+    undeploy: bool,
+}
+
+impl rustora_engine::persist::SavedFn for DeployAnimDone {
+    fn call(&self) {
+        if self.notified.get() {
+            return;
+        }
+        for n in &self.notify {
+            if self.undeploy {
+                n.finished_undeploy(&self.actor);
+            } else {
+                n.finished_deploy(&self.actor);
+            }
+            self.notified.set(true);
+        }
+    }
+}
+
+/// After the dock animation: the dock loop sequence repeats, then `then` runs.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct DockAnimDone {
+    body: Rc<WithSpriteBody>,
+    actor: ActorRef,
+    loop_sequence: String,
+    then: AfterAnim,
+}
+
+impl rustora_engine::persist::SavedFn for DockAnimDone {
+    fn call(&self) {
+        self.body.play_custom_animation_repeating(&self.actor, &self.loop_sequence);
+        self.then.call();
+    }
+}
+
+/// After the start sequence of `WithIdleOverlay`: its sequence repeats.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct IdleOverlayStarted {
+    overlay: Rc<WithIdleOverlay>,
+    actor: ActorRef,
+    sequence: String,
+}
+
+impl rustora_engine::persist::SavedFn for IdleOverlayStarted {
+    fn call(&self) {
+        let o = &self.overlay.overlay;
+        o.play_repeating(&normalize_sequence(o, get_damage_state(&self.actor), &self.sequence));
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: CustomAnimDone, PlayBodySequence, MakeAnimDone, ReverseThenActivity, DeployAnimDone, DockAnimDone, IdleOverlayStarted);
 }

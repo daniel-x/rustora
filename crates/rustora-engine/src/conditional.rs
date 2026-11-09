@@ -50,6 +50,7 @@ pub trait ConditionalHooks: 'static {
 }
 
 /// Runtime state of a (pausable) conditional trait.
+#[derive(crate::persist::Persist)]
 pub struct ConditionalState {
     pub requires_condition: Option<BooleanExpression>,
     pub pause_on_condition: Option<BooleanExpression>,

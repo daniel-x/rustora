@@ -81,6 +81,20 @@ pub struct Actor {
     cache: OnceCell<ActorCache>,
     /// `OccupiesSpace`, available while later traits are being constructed.
     occupies_early: OnceCell<Rc<dyn IOccupySpace>>,
+    /// The traits in construction order; save games refer to traits by their index here.
+    traits: RefCell<Vec<Rc<dyn TraitObject>>>,
+    /// The inits the actor was created with, which save games recreate it with.
+    inits: ActorInits,
+}
+
+impl Drop for Actor {
+    fn drop(&mut self) {
+        if let Some(w) = self.world.upgrade() {
+            for t in self.traits.borrow().iter() {
+                w.unregister_trait_owner(Rc::as_ptr(t) as *const () as usize);
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for Actor {
@@ -98,13 +112,18 @@ impl PartialEq for Actor {
 impl Actor {
     /// `new Actor(world, name, initDict)`: assigns the next actor ID and creates the traits.
     pub fn new(world: &Rc<World>, name: &str, inits: ActorInits) -> ActorRef {
+        Actor::new_with_id(world, name, world.next_aid(), inits)
+    }
+
+    /// Creates the actor `id` and its traits, for save games and [`Actor::new`].
+    pub fn new_with_id(world: &Rc<World>, name: &str, id: u32, inits: ActorInits) -> ActorRef {
         let name = name.to_lowercase();
         let info = world
             .rules()
             .actor(&name)
             .unwrap_or_else(|| panic!("No rules definition for unit {name}"));
         let actor = Rc::new(Actor {
-            id: world.next_aid(),
+            id,
             info: info.clone(),
             world: Rc::downgrade(world),
             owner: RefCell::new(None),
@@ -121,6 +140,8 @@ impl Actor {
             }),
             cache: OnceCell::new(),
             occupies_early: OnceCell::new(),
+            traits: RefCell::new(Vec::new()),
+            inits: inits.clone(),
         });
 
         let init = ActorInitializer::new(actor.clone(), inits);
@@ -134,6 +155,11 @@ impl Actor {
             if let Some(t) = trait_info.clone().create(&init) {
                 let before = dict.with_interface::<dyn ISync>(&actor).len();
                 let name = t.type_name();
+                {
+                    let mut traits = actor.traits.borrow_mut();
+                    world.register_trait_owner(Rc::as_ptr(&t) as *const () as usize, &actor, traits.len() as u32);
+                    traits.push(t.clone());
+                }
                 t.register(dict, &actor);
                 if actor.occupies_early.get().is_none()
                     && let Some(o) = dict.get_or_default::<dyn IOccupySpace>(&actor)
@@ -164,6 +190,16 @@ impl Actor {
         };
         let _ = actor.cache.set(cache);
         actor
+    }
+
+    /// The traits in construction order.
+    pub fn trait_objects(&self) -> Vec<Rc<dyn TraitObject>> {
+        self.traits.borrow().clone()
+    }
+
+    /// The inits the actor was created with.
+    pub fn inits(&self) -> &ActorInits {
+        &self.inits
     }
 
     pub fn world(&self) -> Rc<World> {
@@ -209,6 +245,11 @@ impl Actor {
 
     pub fn disposed(&self) -> bool {
         self.disposed.get()
+    }
+
+    pub(crate) fn mark_disposed(&self) {
+        self.disposed.set(true);
+        self.is_in_world.set(false);
     }
 
     pub fn is_dead(&self) -> bool {
@@ -469,6 +510,64 @@ impl Actor {
 
     pub fn token_valid(&self, token: i32) -> bool {
         self.conditions.borrow().tokens.contains_key(&token)
+    }
+
+    /// Writes the state of the actor that is not part of its traits: flags, owner, conditions, activity.
+    pub(crate) fn save_core(&self, w: &mut crate::persist::SaveWriter) {
+        use crate::persist::Persist;
+        self.owner.save(w);
+        self.is_in_world.save(w);
+        self.will_dispose.save(w);
+        self.disposed.save(w);
+        self.created.save(w);
+        self.generation.save(w);
+        self.replaced_by_actor.save(w);
+        let c = self.conditions.borrow();
+        c.tokens.save(w);
+        c.next_token.save(w);
+        c.cache.save(w);
+        let mut states: Vec<(&String, &IndexSet<i32>)> = c.states.iter().map(|(k, s)| (k, &s.tokens)).collect();
+        states.sort_by(|a, b| a.0.cmp(b.0));
+        w.len_prefix(states.len());
+        for (k, t) in states {
+            k.save(w);
+            t.save(w);
+        }
+        drop(c);
+        self.current_activity.save(w);
+    }
+
+    /// Reads the state written by [`Actor::save_core`]. The condition notifiers set up by `initialize` stay.
+    pub(crate) fn load_core(&self, r: &mut crate::persist::SaveReader) {
+        use crate::persist::{Persist, PersistState};
+        self.owner.load_state(r);
+        self.is_in_world.load_state(r);
+        self.will_dispose.load_state(r);
+        self.disposed.load_state(r);
+        self.created.load_state(r);
+        self.generation.load_state(r);
+        self.replaced_by_actor.load_state(r);
+        let tokens = Persist::load(r);
+        let next_token = Persist::load(r);
+        let cache = Persist::load(r);
+        let n = r.len_prefix();
+        let mut states: Vec<(String, IndexSet<i32>)> = Vec::with_capacity(n);
+        for _ in 0..n {
+            states.push((Persist::load(r), Persist::load(r)));
+        }
+        {
+            let mut c = self.conditions.borrow_mut();
+            c.tokens = tokens;
+            c.next_token = next_token;
+            c.cache = cache;
+            for s in c.states.values_mut() {
+                s.tokens.clear();
+            }
+            for (k, t) in states {
+                c.states.entry(k).or_default().tokens = t;
+            }
+        }
+        self.current_activity.load_state(r);
     }
 
     /// `Sync.HashActor`.

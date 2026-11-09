@@ -116,6 +116,10 @@ impl Ruleset {
         self.weapons.get(name).cloned()
     }
 
+    pub fn weapons(&self) -> impl Iterator<Item = (&String, &Rc<WeaponInfo>)> {
+        self.weapons.iter()
+    }
+
     pub fn actors(&self) -> impl Iterator<Item = (&String, &Rc<ActorInfo>)> {
         self.actors.iter()
     }

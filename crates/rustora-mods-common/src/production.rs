@@ -64,6 +64,7 @@ pub struct ValuedInfo {
     pub cost: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Valued;
 register_traits!(Valued);
 info_impl!(ValuedInfo => |_, _| Some(Rc::new(Valued)));
@@ -76,6 +77,7 @@ pub struct CustomSellValueInfo {
     pub value: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CustomSellValue;
 register_traits!(CustomSellValue);
 info_impl!(CustomSellValueInfo => |_, _| Some(Rc::new(CustomSellValue)));
@@ -126,6 +128,7 @@ impl Default for BuildableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Buildable;
 register_traits!(Buildable);
 info_impl!(BuildableInfo => |_, _| Some(Rc::new(Buildable)));
@@ -143,10 +146,12 @@ pub struct TechTreeInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 struct Watcher {
     key: String,
     registered_by: Rc<dyn ITechTreeElement>,
-    registered_ptr: usize,
+    registered_ptr: rustora_engine::persist::AddrKey,
     prerequisites: Vec<String>,
     has_prerequisites: Cell<bool>,
     limit: i32,
@@ -189,6 +194,7 @@ impl Watcher {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TechTree {
     watchers: RefCell<Vec<Rc<Watcher>>>,
     owner: PlayerRef,
@@ -266,7 +272,7 @@ impl TechTree {
         self.watchers.borrow_mut().push(Rc::new(Watcher {
             key: key.to_string(),
             registered_by: tte,
-            registered_ptr,
+            registered_ptr: rustora_engine::persist::AddrKey(registered_ptr),
             prerequisites,
             has_prerequisites: Cell::new(false),
             limit,
@@ -280,7 +286,7 @@ impl TechTree {
     }
 
     pub fn remove_element(&self, tte: usize) {
-        self.watchers.borrow_mut().retain(|w| w.registered_ptr != tte);
+        self.watchers.borrow_mut().retain(|w| w.registered_ptr.0 != tte);
     }
 
     pub fn has_prerequisites(&self, prerequisites: &[String]) -> bool {
@@ -321,6 +327,7 @@ impl Default for ExitInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Exit {
     pub info: Rc<ExitInfo>,
     state: ConditionalState,
@@ -476,6 +483,7 @@ impl Default for ProductionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Production {
     pub info: Rc<ProductionInfo>,
     state: ConditionalState,
@@ -915,18 +923,58 @@ impl Default for ClassicProductionQueueInfo {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct ProductionState {
     visible: Cell<bool>,
     buildable: Cell<bool>,
 }
 
+/// What a production item does each tick once it is done: build the unit, or announce the building.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
+pub struct ProductionComplete {
+    queue: Weak<ProductionQueue>,
+    unit: Rc<ActorInfo>,
+    has_played_sound: Rc<Cell<bool>>,
+    time: i32,
+}
+
+impl ProductionComplete {
+    fn run(&self) {
+        let Some(q) = self.queue.upgrade() else { return };
+        let (weak, u, has_played_sound, time) = (self.queue.clone(), self.unit.clone(), self.has_played_sound.clone(), self.time);
+        q.actor.world().add_frame_end_task(Box::new(move |_| {
+            let Some(q) = weak.upgrade() else { return };
+            if !q.queue.borrow().iter().any(|i| i.done.get() && i.item == u.name) {
+                return;
+            }
+            let (owner, info) = (q.actor.clone(), q.info.clone());
+            let notify = |notification: &Option<String>, text: &Option<String>| {
+                rustora_engine::sound::notify_owner(&owner, "Speech", notification.as_deref(), text.as_deref());
+            };
+            let ready = || notify(&info.ready_audio, &info.ready_text_notification);
+            if u.has_trait_info::<BuildingInfo>() {
+                if !has_played_sound.replace(true) {
+                    ready();
+                }
+            } else if q.build_unit(&u) {
+                ready();
+            } else if time > 0 && !has_played_sound.replace(true) {
+                notify(&info.blocked_audio, &info.blocked_text_notification);
+            }
+        }));
+    }
+}
+
 /// `ProductionItem`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 pub struct ProductionItem {
     pub item: String,
     queue: Weak<ProductionQueue>,
     pub total_cost: i32,
-    on_complete: Rc<dyn Fn()>,
+    on_complete: Rc<ProductionComplete>,
     pub total_time: Cell<i32>,
     pub remaining_time: Cell<i32>,
     pub remaining_cost: Cell<i32>,
@@ -955,7 +1003,13 @@ impl ProductionItem {
         }
     }
 
-    fn new(queue: &ProductionQueue, item: &str, cost: i32, pm: Option<Rc<PowerManager>>, on_complete: Rc<dyn Fn()>) -> Rc<ProductionItem> {
+    fn new(
+        queue: &ProductionQueue,
+        item: &str,
+        cost: i32,
+        pm: Option<Rc<PowerManager>>,
+        on_complete: Rc<ProductionComplete>,
+    ) -> Rc<ProductionItem> {
         let ai = queue.actor.world().rules().actor(item).expect("item actor");
         let bi = ai.trait_info::<BuildableInfo>().expect("Buildable");
         Rc::new(ProductionItem {
@@ -990,7 +1044,7 @@ impl ProductionItem {
             self.started.set(true);
         }
         if self.done.get() {
-            (self.on_complete)();
+            self.on_complete.run();
             return;
         }
         if self.paused.get() {
@@ -1035,6 +1089,8 @@ impl ProductionItem {
 }
 
 /// Mutable per-owner references of a queue.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct QueueOwnerRefs {
     player_power: Option<Rc<PowerManager>>,
     player_resources: Rc<PlayerResources>,
@@ -1043,6 +1099,7 @@ struct QueueOwnerRefs {
 }
 
 /// `ProductionQueue` and, when `classic` is set, `ClassicProductionQueue`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProductionQueue {
     pub info: Rc<ProductionQueueInfo>,
     classic: Option<Rc<ClassicProductionQueueInfo>>,
@@ -1104,7 +1161,11 @@ impl TraitObject for ProductionQueue {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(ProductionQueue: ITechTreeElement, IResolveOrder, ITick, INotifyOwnerChanged, INotifyKilled, INotifySold, ISync, INotifyTransform, INotifyCreated);
 }
+
+rustora_engine::persist_trait_refs!(ProductionQueue);
 
 info_impl!(ProductionQueueInfo => |info, init| Some(new_queue(info, None, init)));
 info_impl!(ClassicProductionQueueInfo => |info, init| Some(new_queue(Rc::new(info.base.clone()), Some(info), init)));
@@ -1720,32 +1781,12 @@ impl IResolveOrder for ProductionQueue {
                     if self.info.pay_up_front && cost > self.player_resources().get_cash_and_resources() {
                         return;
                     }
-                    let (weak, u, world) = (self.me.clone(), unit.clone(), Rc::downgrade(&w));
-                    let has_played_sound = Rc::new(Cell::new(false));
                     let time = self.get_build_time(&unit, &unit.trait_info::<BuildableInfo>().expect("Buildable"));
-                    let on_complete: Rc<dyn Fn()> = Rc::new(move || {
-                        let (weak, u, has_played_sound) = (weak.clone(), u.clone(), has_played_sound.clone());
-                        let Some(world) = world.upgrade() else { return };
-                        world.add_frame_end_task(Box::new(move |_| {
-                            let Some(q) = weak.upgrade() else { return };
-                            if !q.queue.borrow().iter().any(|i| i.done.get() && i.item == u.name) {
-                                return;
-                            }
-                            let (owner, info) = (q.actor.clone(), q.info.clone());
-                            let notify = |notification: &Option<String>, text: &Option<String>| {
-                                rustora_engine::sound::notify_owner(&owner, "Speech", notification.as_deref(), text.as_deref());
-                            };
-                            let ready = || notify(&info.ready_audio, &info.ready_text_notification);
-                            if u.has_trait_info::<BuildingInfo>() {
-                                if !has_played_sound.replace(true) {
-                                    ready();
-                                }
-                            } else if q.build_unit(&u) {
-                                ready();
-                            } else if time > 0 && !has_played_sound.replace(true) {
-                                notify(&info.blocked_audio, &info.blocked_text_notification);
-                            }
-                        }));
+                    let on_complete = Rc::new(ProductionComplete {
+                        queue: self.me.clone(),
+                        unit: unit.clone(),
+                        has_played_sound: Rc::new(Cell::new(false)),
+                        time,
                     });
                     let item = ProductionItem::new(self, &name, cost, self.player_power(), on_complete);
                     self.begin_production(item, !order.queued);
@@ -1770,6 +1811,7 @@ pub struct ProvidesPrerequisiteInfo {
     pub reset_on_owner_change: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProvidesPrerequisite {
     info: Rc<ProvidesPrerequisiteInfo>,
     state: ConditionalState,
@@ -1856,6 +1898,7 @@ pub struct ProvidesTechPrerequisiteInfo {
     pub prerequisites: Vec<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProvidesTechPrerequisite {
     info: Rc<ProvidesTechPrerequisiteInfo>,
     enabled: bool,
@@ -1889,6 +1932,7 @@ pub struct LobbyPrerequisiteCheckboxInfo {
     pub prerequisites: IndexSet<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct LobbyPrerequisiteCheckbox {
     info: Rc<LobbyPrerequisiteCheckboxInfo>,
     enabled: Cell<bool>,
@@ -1929,6 +1973,7 @@ pub struct GrantConditionOnPrerequisiteInfo {
     pub prerequisites: Vec<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnPrerequisite {
     info: Rc<GrantConditionOnPrerequisiteInfo>,
     me: Weak<GrantConditionOnPrerequisite>,
@@ -1996,13 +2041,14 @@ pub struct GrantConditionOnPrerequisiteManagerInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnPrerequisiteManager {
     me: Weak<GrantConditionOnPrerequisiteManager>,
     upgradables: RefCell<HashMap<String, Vec<(ActorRef, Rc<GrantConditionOnPrerequisite>)>>>,
     tech_tree: Rc<TechTree>,
 }
 
-register_traits!(GrantConditionOnPrerequisiteManager);
+register_traits!(GrantConditionOnPrerequisiteManager: ITechTreeElement);
 info_impl!(GrantConditionOnPrerequisiteManagerInfo => |_, init| Some(Rc::new_cyclic(|me| GrantConditionOnPrerequisiteManager {
     me: me.clone(),
     upgradables: RefCell::new(HashMap::new()),
@@ -2091,6 +2137,7 @@ impl Default for PrimaryBuildingInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PrimaryBuilding {
     info: Rc<PrimaryBuildingInfo>,
     state: ConditionalState,
@@ -2229,6 +2276,7 @@ impl Default for RallyPointInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RallyPoint {
     pub info: Rc<RallyPointInfo>,
     pub path: RefCell<Vec<CPos>>,
@@ -2368,6 +2416,8 @@ impl IResolveOrder for RallyPoint {
 }
 
 /// `PlaceBuildingInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct PlaceBuildingInit;
 
 impl ActorInit for PlaceBuildingInit {
@@ -2400,6 +2450,7 @@ impl Default for PlaceBuildingInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PlaceBuilding {
     info: Rc<PlaceBuildingInfo>,
     trigger_notification: Cell<bool>,
@@ -2547,4 +2598,9 @@ fn place_building(self_: &ActorRef, order: &Order, w: &Rc<World>) {
     {
         bp.begin_cooldown();
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: PlaceBuildingInit);
 }

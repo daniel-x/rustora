@@ -183,6 +183,7 @@ impl Default for WithDecorationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithDecoration {
     info: Rc<WithDecorationInfo>,
     state: ConditionalState,
@@ -241,6 +242,7 @@ pub struct WithBuildingRepairDecorationInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithBuildingRepairDecoration {
     info: Rc<WithBuildingRepairDecorationInfo>,
     state: ConditionalState,
@@ -355,6 +357,7 @@ impl Default for WithPipsDecorationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithPipsDecoration {
     info: Rc<WithPipsDecorationInfo>,
     state: ConditionalState,
@@ -493,6 +496,7 @@ impl Default for WithSpriteControlGroupDecorationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithSpriteControlGroupDecoration {
     info: Rc<WithSpriteControlGroupDecorationInfo>,
 }
@@ -588,6 +592,7 @@ impl Default for RenderRangeCircleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RenderRangeCircle {
     info: Rc<RenderRangeCircleInfo>,
 }
@@ -653,6 +658,7 @@ impl Default for RenderDetectionCircleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RenderDetectionCircle {
     info: Rc<RenderDetectionCircleInfo>,
     line_angle: Cell<WAngle>,
@@ -721,6 +727,7 @@ impl Default for RenderShroudCircleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RenderShroudCircle {
     info: Rc<RenderShroudCircleInfo>,
     state: ConditionalState,
@@ -795,6 +802,7 @@ impl Default for WithRangeCircleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithRangeCircle {
     info: Rc<WithRangeCircleInfo>,
     state: ConditionalState,
@@ -859,6 +867,7 @@ impl Default for WithTextDecorationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithTextDecoration {
     info: Rc<WithTextDecorationInfo>,
     state: ConditionalState,
@@ -917,6 +926,7 @@ impl Default for WithNameTagDecorationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithNameTagDecoration {
     info: Rc<WithNameTagDecorationInfo>,
     state: ConditionalState,

@@ -65,6 +65,7 @@ impl Default for MinelayerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Minelayer {
     pub info: Rc<MinelayerInfo>,
     minefield_start: Cell<CPos>,
@@ -168,6 +169,8 @@ impl ITick for Minelayer {
 }
 
 /// `Activities/LayMines.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct LayMines {
     base: ActivityBase,
     minelayer: Rc<Minelayer>,
@@ -365,6 +368,7 @@ impl Default for MineInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Mine {
     info: Rc<MineInfo>,
 }
@@ -437,4 +441,9 @@ impl rustora_engine::sound::IOrderVoice for Minelayer {
     fn voice_phrase_for_order(&self, _self_: &ActorRef, order: &Order) -> Option<String> {
         matches!(order.order_string.as_str(), "PlaceMine" | "PlaceMinefield").then(|| self.info.voice.clone())
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(LayMines);
 }

@@ -51,6 +51,8 @@ pub trait IHuskModifier {
 }
 
 /// `EffectiveOwnerInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct EffectiveOwnerInit {
     pub value: PlayerRef,
 }
@@ -65,6 +67,8 @@ impl ActorInit for EffectiveOwnerInit {
 }
 
 /// `ParentActorInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ParentActorInit {
     pub value: ActorRef,
 }
@@ -143,6 +147,7 @@ impl Default for FireWarheadsOnDeathInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct FireWarheadsOnDeath {
     info: Rc<FireWarheadsOnDeathInfo>,
     state: ConditionalState,
@@ -308,6 +313,7 @@ impl Default for SpawnActorOnDeathInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SpawnActorOnDeath {
     info: Rc<SpawnActorOnDeathInfo>,
     state: ConditionalState,
@@ -433,6 +439,7 @@ impl HuskInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Husk {
     info: Rc<HuskInfo>,
     self_: ActorRef,
@@ -609,6 +616,8 @@ impl IEffectiveOwner for Husk {
 }
 
 /// `DragAndCrush` of `Husk.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct DragAndCrush {
     base: ActivityBase,
     info: Option<Rc<LocomotorInfo>>,
@@ -678,6 +687,7 @@ impl Default for HarvesterHuskModifierInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct HarvesterHuskModifier {
     info: Rc<HarvesterHuskModifierInfo>,
 }
@@ -718,6 +728,7 @@ impl Default for FallsToEarthInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct FallsToEarth {
     info: Rc<FallsToEarthInfo>,
     effective_owner: PlayerRef,
@@ -753,6 +764,8 @@ impl INotifyCreated for FallsToEarth {
 }
 
 /// `Activities/Air/FallToEarth.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FallToEarth {
     base: ActivityBase,
     aircraft: Rc<crate::aircraft::Aircraft>,
@@ -846,6 +859,7 @@ impl Default for EjectOnDeathInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct EjectOnDeath {
     info: Rc<EjectOnDeathInfo>,
     state: ConditionalState,
@@ -934,6 +948,7 @@ impl Default for RevealOnDeathInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RevealOnDeath {
     info: Rc<RevealOnDeathInfo>,
     state: ConditionalState,
@@ -983,7 +998,10 @@ impl INotifyKilled for RevealOnDeath {
 }
 
 /// `Effects/RevealShroudEffect.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct RevealShroudEffect {
+    #[persist(me)]
     me: std::rc::Weak<RevealShroudEffect>,
     pos: WPos,
     player: PlayerRef,
@@ -1060,4 +1078,11 @@ impl rustora_engine::effect::Effect for RevealShroudEffect {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(DragAndCrush, FallToEarth);
+    rustora_engine::persist_effects!(RevealShroudEffect);
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: EffectiveOwnerInit, ParentActorInit);
 }

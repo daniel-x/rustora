@@ -3,6 +3,7 @@
 
 //! Port of `Traits/Transforms.cs`, `Activities/Transform.cs`, `Traits/Sellable.cs` and `Activities/Sell.cs`.
 
+use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -88,6 +89,7 @@ impl Default for TransformsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Transforms {
     pub info: Rc<TransformsInfo>,
     state: ConditionalState,
@@ -262,6 +264,7 @@ impl Default for TransformsIntoMobileInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TransformsIntoMobile {
     info: Rc<TransformsIntoMobileInfo>,
     state: ConditionalState,
@@ -478,6 +481,7 @@ impl Default for TransformsIntoPassengerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TransformsIntoPassenger {
     info: Rc<TransformsIntoPassengerInfo>,
     state: ConditionalState,
@@ -598,6 +602,7 @@ impl Default for TransformsIntoRepairableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TransformsIntoRepairable {
     info: Rc<TransformsIntoRepairableInfo>,
     state: ConditionalState,
@@ -702,6 +707,7 @@ impl Default for TransformsIntoTransformsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TransformsIntoTransforms {
     info: Rc<TransformsIntoTransformsInfo>,
     state: ConditionalState,
@@ -746,6 +752,7 @@ pub struct TransferTimedExternalConditionOnTransformInfo {
     pub condition: String,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TransferTimedExternalConditionOnTransform {
     info: Rc<TransferTimedExternalConditionOnTransformInfo>,
     duration: Cell<i32>,
@@ -787,6 +794,8 @@ impl INotifyTransform for TransferTimedExternalConditionOnTransform {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct TransformArgs {
     pub offset: CVec,
     pub facing: WAngle,
@@ -814,8 +823,11 @@ impl Default for TransformArgs {
 }
 
 /// `Activities/Transform.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Transform {
     base: ActivityBase,
+    #[persist(me)]
     me: Weak<Transform>,
     to_actor: String,
     args: TransformArgs,
@@ -842,12 +854,12 @@ impl Transform {
             if transforms.as_ref().is_some_and(|t| !t.can_deploy()) {
                 match make_animation.as_ref().filter(|_| !me.args.skip_make_anims) {
                     Some(m) => {
-                        let (me2, a2) = (me.clone(), a.clone());
                         m.forward(
                             &a,
-                            Rc::new(move || {
-                                me2.base.is_interruptible.set(true);
-                                me2.cancel(&a2, true);
+                            AfterAnim::saved(TransformDone {
+                                activity: me.clone(),
+                                actor: a.clone(),
+                                reverse: None,
                             }),
                         );
                     }
@@ -940,13 +952,14 @@ impl Activity for Transform {
         if let Some(m) = make_animation.as_ref().filter(|_| !self.args.skip_make_anims) {
             self.base.is_interruptible.set(false);
             self.base.queue_child(crate::activities::WaitFor::new(Box::new(|| false), true));
-            let (me, a, t, m2) = (
-                self.me.upgrade().expect("activity alive"),
-                self_.clone(),
-                transforms.clone(),
-                m.clone(),
+            m.reverse(
+                self_,
+                AfterAnim::saved(TransformDone {
+                    activity: self.me.upgrade().expect("activity alive"),
+                    actor: self_.clone(),
+                    reverse: Some((transforms.clone(), m.clone())),
+                }),
             );
-            m.reverse(self_, Rc::new(move || me.do_transform(&a, t.clone(), Some(m2.clone()))));
             return false;
         }
         self.do_transform(self_, transforms, None);
@@ -955,6 +968,8 @@ impl Activity for Transform {
 }
 
 /// `IssueOrderAfterTransform`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct IssueOrderAfterTransform {
     base: ActivityBase,
     order_string: String,
@@ -1012,6 +1027,7 @@ impl Default for SellableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Sellable {
     pub info: Rc<SellableInfo>,
     state: ConditionalState,
@@ -1085,6 +1101,8 @@ impl Sellable {
 }
 
 /// `Activities/Sell.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Sell {
     base: ActivityBase,
     health: Option<Rc<dyn IHealth>>,
@@ -1125,4 +1143,32 @@ impl Activity for Sell {
         self_.dispose();
         false
     }
+}
+
+/// After the make animation of a `Transform`: the transform proceeds after the reversed animation, or the canceled
+/// transform ends after the forward one.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct TransformDone {
+    activity: Rc<Transform>,
+    actor: ActorRef,
+    reverse: Option<(Option<Rc<Transforms>>, Rc<WithMakeAnimation>)>,
+}
+
+impl rustora_engine::persist::SavedFn for TransformDone {
+    fn call(&self) {
+        match &self.reverse {
+            Some((transforms, make)) => self.activity.do_transform(&self.actor, transforms.clone(), Some(make.clone())),
+            None => {
+                self.activity.base.is_interruptible.set(true);
+                self.activity.cancel(&self.actor, true);
+            }
+        }
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(Transform, IssueOrderAfterTransform, Sell);
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: TransformDone);
 }

@@ -31,7 +31,23 @@ pub struct LuaScript {
     context: RefCell<Option<Rc<ScriptContext>>>,
 }
 
-register_traits!(LuaScript: ITick, IWorldLoaded, INotifyActorDisposing);
+register_traits!(LuaScript: ITick, IWorldLoaded, INotifyActorDisposing, rustora_engine::savegame::IPreventsSaveGame);
+
+/// The state of a Lua script cannot be saved; [`IPreventsSaveGame`](rustora_engine::savegame::IPreventsSaveGame)
+/// refuses saving a game that runs one.
+impl rustora_engine::persist::PersistState for LuaScript {
+    fn save_state(&self, _w: &mut rustora_engine::persist::SaveWriter) {}
+    fn load_state(&self, _r: &mut rustora_engine::persist::SaveReader) {}
+}
+
+impl rustora_engine::savegame::IPreventsSaveGame for LuaScript {
+    fn save_game_blocker(&self) -> Option<String> {
+        self.context
+            .borrow()
+            .is_some()
+            .then(|| "games that run a Lua script cannot be saved".to_string())
+    }
+}
 
 impl LuaScript {
     pub fn context(&self) -> Option<Rc<ScriptContext>> {

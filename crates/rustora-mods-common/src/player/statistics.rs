@@ -51,7 +51,7 @@ pub struct PlayerStatisticsInfo {
 }
 
 /// The counters shown by the observer panels and the game info page.
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct PlayerStatistics {
     pub order_count: Cell<i32>,
     pub income_samples: RefCell<Vec<i32>>,
@@ -185,6 +185,7 @@ impl Default for UpdatesPlayerStatisticsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct UpdatesPlayerStatistics {
     info: Rc<UpdatesPlayerStatisticsInfo>,
     actor_name: String,

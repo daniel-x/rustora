@@ -4,6 +4,7 @@
 //! Port of `Traits/Render/Hovers.cs` (its offset moves weapon muzzles), `Traits/Huntable.cs` and
 //! `Traits/Render/WithInfantryBody.cs` (its idle timers draw from the shared random).
 
+use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -70,6 +71,7 @@ impl Default for HoversInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Hovers {
     info: Rc<HoversInfo>,
     state: ConditionalState,
@@ -151,6 +153,7 @@ pub struct HuntableInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Huntable;
 
 register_traits!(Huntable);
@@ -194,7 +197,8 @@ impl Default for WithInfantryBodyInfo {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 enum AnimationState {
     Idle,
     Attacking,
@@ -203,6 +207,7 @@ enum AnimationState {
     IdleAnimating,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithInfantryBody {
     info: Rc<WithInfantryBodyInfo>,
     state: ConditionalState,
@@ -366,13 +371,8 @@ impl WithInfantryBody {
         }
     }
 
-    fn stand_callback(&self) -> Option<Rc<dyn Fn()>> {
-        let me = self.me.clone();
-        Some(Rc::new(move || {
-            if let Some(b) = me.upgrade() {
-                b.play_stand_animation();
-            }
-        }))
+    fn stand_callback(&self) -> Option<AfterAnim> {
+        Some(AfterAnim::saved(PlayStand(self.me.clone())))
     }
 
     fn attacking(&self, a: &Armament, barrel: &Barrel) {
@@ -391,7 +391,7 @@ impl WithInfantryBody {
         if let Some(s) = sequence.filter(|s| !s.is_empty() && self.default_animation.has_sequence(&self.normalize_infantry_sequence(s))) {
             self.anim_state.set(AnimationState::Attacking);
             self.default_animation
-                .play_then(&self.normalize_infantry_sequence(&s), self.stand_callback());
+                .play_then_after(&self.normalize_infantry_sequence(&s), self.stand_callback());
         }
     }
 }
@@ -453,7 +453,7 @@ impl INotifyIdle for WithInfantryBody {
             if self.idle_delay.get() == 0 {
                 self.anim_state.set(AnimationState::IdleAnimating);
                 let seq = self.idle_sequence.borrow().clone();
-                self.default_animation.play_then(&seq, self.stand_callback());
+                self.default_animation.play_then_after(&seq, self.stand_callback());
             }
         }
     }
@@ -488,6 +488,7 @@ impl Default for WithSpriteTurretInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithSpriteTurret {
     pub info: Rc<WithSpriteTurretInfo>,
     state: ConditionalState,
@@ -538,15 +539,13 @@ rustora_engine::conditional_simple!(WithSpriteTurret);
 impl WithSpriteTurret {
     /// `WithSpriteTurret.PlayCustomAnimation`.
     pub fn play_custom_animation(self: &Rc<Self>, self_: &ActorRef, name: &str) {
-        let (me, a) = (self.clone(), self_.clone());
         let seq = crate::render::normalize_sequence(&self.default_animation, crate::render::get_damage_state(self_), name);
-        self.default_animation.play_then(
+        self.default_animation.play_then_saved(
             &seq,
-            Some(Rc::new(move || {
-                let ds = crate::render::get_damage_state(&a);
-                me.default_animation
-                    .play_repeating(&crate::render::normalize_sequence(&me.default_animation, ds, &me.info.sequence));
-            })),
+            Rc::new(TurretAnimDone {
+                turret: self.clone(),
+                actor: self_.clone(),
+            }),
         );
     }
 }
@@ -588,6 +587,7 @@ impl Default for ScaredyCatInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ScaredyCat {
     info: Rc<ScaredyCatInfo>,
     self_: ActorRef,
@@ -711,6 +711,7 @@ impl Default for WandersInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Wanders {
     info: Rc<WandersInfo>,
     state: ConditionalState,
@@ -798,6 +799,7 @@ pub struct RejectsOrdersInfo {
     pub remove_orders: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RejectsOrders {
     info: Rc<RejectsOrdersInfo>,
     state: ConditionalState,
@@ -855,6 +857,7 @@ pub struct ValidateOrderInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ValidateOrder;
 
 register_traits!(ValidateOrder: IValidateOrder);
@@ -874,4 +877,38 @@ impl IValidateOrder for ValidateOrder {
         }
         accepts_order(subject, &order.order_string)
     }
+}
+
+/// After an infantry animation: the stand animation.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct PlayStand(Weak<WithInfantryBody>);
+
+impl rustora_engine::persist::SavedFn for PlayStand {
+    fn call(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.play_stand_animation();
+        }
+    }
+}
+
+/// After a custom turret animation: the turret sequence repeats.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct TurretAnimDone {
+    turret: Rc<WithSpriteTurret>,
+    actor: ActorRef,
+}
+
+impl rustora_engine::persist::SavedFn for TurretAnimDone {
+    fn call(&self) {
+        let ds = crate::render::get_damage_state(&self.actor);
+        let anim = &self.turret.default_animation;
+        anim.play_repeating(&crate::render::normalize_sequence(anim, ds, &self.turret.info.sequence));
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: PlayStand, TurretAnimDone);
 }

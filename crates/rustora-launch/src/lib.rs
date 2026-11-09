@@ -154,6 +154,42 @@ pub fn load_world_with_sound(
     world_type: WorldType,
     sound: bool,
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
+    build_world(engine, support, pkg, lobby, is_replay, world_type, sound, false)
+}
+
+/// Creates the world of the save game `save` and restores its state, see `rustora_engine::savegame`.
+pub fn restore_game(
+    engine: &Path,
+    support: &str,
+    save: &[u8],
+    is_replay: bool,
+    sound: bool,
+) -> Result<(Rc<World>, Rc<ModData>, ReadFile), String> {
+    let (header, _) = rustora_engine::savegame::SaveHeader::read(save)?;
+    let lobby = rustora_net::session::Session::deserialize(&header.lobby, "save game").map_err(|e| e.to_string())?;
+    let pkg = find_map(engine, support, &header.map_uid).ok_or_else(|| format!("map {} not found", header.map_uid))?;
+    let (world, md, read_file) = build_world(engine, support, pkg, lobby, is_replay, WorldType::Regular, sound, true);
+    rustora_engine::savegame::restore(&world, save)?;
+    Ok((world, md, read_file))
+}
+
+/// Writes the save game of `world`.
+pub fn save_game(world: &Rc<World>) -> Result<Vec<u8>, String> {
+    rustora_engine::savegame::save(world, "ra")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_world(
+    engine: &Path,
+    support: &str,
+    pkg: Arc<dyn Package>,
+    lobby: rustora_net::session::Session,
+    is_replay: bool,
+    world_type: WorldType,
+    sound: bool,
+    restoring: bool,
+) -> (Rc<World>, Rc<ModData>, ReadFile) {
+    rustora_mods_common::register_persist();
     let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
 
@@ -203,6 +239,7 @@ pub fn load_world_with_sound(
     let world = World::new(map, rules, lobby, world_type, timestep, order_latency);
     world.set_is_replay(is_replay);
     world.sound.set_enabled(sound);
+    world.set_restoring(restoring);
     world.load_complete();
     (world, md, read_file)
 }
@@ -226,6 +263,20 @@ impl ReplayDriver {
     pub fn new(world: &Rc<World>, replay: Replay) -> ReplayDriver {
         let mut orders = OrderManager::new(world.clone(), Box::new(ReplayConnection::new(replay.chunks, world.order_latency)));
         orders.start_on_order = true;
+        ReplayDriver {
+            orders,
+            world: world.clone(),
+            idle: 0,
+        }
+    }
+
+    /// The driver of a replay whose world was restored from a save game: it continues with the orders of the
+    /// frames after the save.
+    pub fn resumed(world: &Rc<World>, replay: Replay) -> ReplayDriver {
+        let net_frame = world.net_frame_number();
+        let (connection, disconnected) = ReplayConnection::resumed(replay.chunks, world.order_latency, net_frame);
+        let mut orders = OrderManager::new(world.clone(), Box::new(connection));
+        orders.resume(net_frame, world.local_frame_number(), &disconnected);
         ReplayDriver {
             orders,
             world: world.clone(),

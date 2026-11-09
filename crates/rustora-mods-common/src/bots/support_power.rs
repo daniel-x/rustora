@@ -35,7 +35,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("SupportPowerBotModule", |n| load_info!(SupportPowerBotModuleInfo, n));
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum DecisionMetric {
     Health,
     Value,
@@ -46,7 +47,8 @@ pub enum DecisionMetric {
 rustora_core::field_enum!(DecisionMetric, [Health, Value, None]);
 
 /// `SupportPowerDecision.Consideration`: how to evaluate a target.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct Consideration {
     pub against: PlayerRelationship,
     pub types: BitSet<TargetableType>,
@@ -106,7 +108,8 @@ impl Consideration {
 }
 
 /// `SupportPowerDecision`: bot metadata for using one support power.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct SupportPowerDecision {
     pub minimum_attractiveness: i32,
     pub order_name: String,
@@ -223,6 +226,7 @@ fn load_decisions(y: &MiniYaml) -> Result<Vec<SupportPowerDecision>, LoadError> 
 }
 
 /// `SupportPowerBotModule`: fires ready support powers at the most attractive locations.
+#[derive(rustora_engine::persist::Persist)]
 pub struct SupportPowerBotModule {
     info: Rc<SupportPowerBotModuleInfo>,
     state: ConditionalState,

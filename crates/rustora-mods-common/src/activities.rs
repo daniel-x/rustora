@@ -22,6 +22,8 @@ use crate::locomotor::BlockedByActor;
 use crate::mobile::{Mobile, MoveResult, mobile_of};
 use crate::util;
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Wait {
     base: ActivityBase,
     remaining_ticks: Cell<i32>,
@@ -58,17 +60,45 @@ impl Activity for Wait {
     }
 }
 
+/// The function of a [`CallFunc`]: a closure, which save games cannot hold, or a function they keep.
+pub enum ActivityFn {
+    Closure(Box<dyn FnOnce()>),
+    Saved(Rc<dyn rustora_engine::persist::SavedFn>),
+}
+
+impl rustora_engine::persist::Persist for ActivityFn {
+    fn save(&self, w: &mut rustora_engine::persist::SaveWriter) {
+        match self {
+            ActivityFn::Closure(_) => panic!("save game: an activity holds a closure"),
+            ActivityFn::Saved(f) => f.save(w),
+        }
+    }
+    fn load(r: &mut rustora_engine::persist::SaveReader) -> Self {
+        ActivityFn::Saved(rustora_engine::persist::Persist::load(r))
+    }
+}
+
 /// `Activities/CallFunc.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct CallFunc {
     base: ActivityBase,
-    f: RefCell<Option<Box<dyn FnOnce()>>>,
+    f: RefCell<Option<ActivityFn>>,
 }
 
 impl CallFunc {
     pub fn new(f: Box<dyn FnOnce()>) -> ActivityRef {
         Rc::new(CallFunc {
             base: ActivityBase::default(),
-            f: RefCell::new(Some(f)),
+            f: RefCell::new(Some(ActivityFn::Closure(f))),
+        })
+    }
+
+    /// A `CallFunc` that save games keep.
+    pub fn saved(f: Rc<dyn rustora_engine::persist::SavedFn>) -> ActivityRef {
+        Rc::new(CallFunc {
+            base: ActivityBase::default(),
+            f: RefCell::new(Some(ActivityFn::Saved(f))),
         })
     }
 }
@@ -77,14 +107,19 @@ impl Activity for CallFunc {
     activity_common!("CallFunc");
 
     fn tick(&self, _self_: &ActorRef) -> bool {
-        if let Some(f) = self.f.borrow_mut().take() {
-            f();
+        let f = self.f.borrow_mut().take();
+        match f {
+            Some(ActivityFn::Closure(f)) => f(),
+            Some(ActivityFn::Saved(f)) => f.call(),
+            None => {}
         }
         true
     }
 }
 
 /// `Activities/SimpleTeleport.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct SimpleTeleport {
     base: ActivityBase,
     destination: CPos,
@@ -111,13 +146,62 @@ impl Activity for SimpleTeleport {
     }
 }
 
+/// The condition of a [`WaitFor`]: a closure, which save games cannot hold, or a condition they keep.
+pub enum WaitCondition {
+    Closure(Box<dyn Fn() -> bool>),
+    Saved(Rc<dyn rustora_engine::persist::SavedPredicate>),
+}
+
+impl WaitCondition {
+    fn test(&self) -> bool {
+        match self {
+            WaitCondition::Closure(f) => f(),
+            WaitCondition::Saved(f) => f.test(),
+        }
+    }
+}
+
+impl rustora_engine::persist::Persist for WaitCondition {
+    fn save(&self, w: &mut rustora_engine::persist::SaveWriter) {
+        match self {
+            WaitCondition::Closure(_) => panic!("save game: a WaitFor activity holds a closure"),
+            WaitCondition::Saved(f) => f.save(w),
+        }
+    }
+    fn load(r: &mut rustora_engine::persist::SaveReader) -> Self {
+        WaitCondition::Saved(rustora_engine::persist::Persist::load(r))
+    }
+}
+
+/// A condition that never holds.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct Never;
+
+impl rustora_engine::persist::SavedPredicate for Never {
+    fn test(&self) -> bool {
+        false
+    }
+}
+
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct WaitFor {
     base: ActivityBase,
-    f: Option<Box<dyn Fn() -> bool>>,
+    f: Option<WaitCondition>,
 }
 
 impl WaitFor {
     pub fn new(f: Box<dyn Fn() -> bool>, interruptible: bool) -> ActivityRef {
+        Self::with(WaitCondition::Closure(f), interruptible)
+    }
+
+    /// A `WaitFor` that save games keep.
+    pub fn saved(f: Rc<dyn rustora_engine::persist::SavedPredicate>, interruptible: bool) -> ActivityRef {
+        Self::with(WaitCondition::Saved(f), interruptible)
+    }
+
+    fn with(f: WaitCondition, interruptible: bool) -> ActivityRef {
         let base = ActivityBase::default();
         base.is_interruptible.set(interruptible);
         Rc::new(WaitFor { base, f: Some(f) })
@@ -131,10 +215,12 @@ impl Activity for WaitFor {
         if self.base.is_canceling() {
             return true;
         }
-        self.f.as_ref().is_none_or(|f| f())
+        self.f.as_ref().is_none_or(|f| f.test())
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Turn {
     base: ActivityBase,
     mobile: Option<Rc<Mobile>>,
@@ -175,6 +261,8 @@ impl Activity for Turn {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Drag {
     base: ActivityBase,
     positionable: Rc<dyn IPositionable>,
@@ -239,13 +327,14 @@ impl Activity for Drag {
     }
 }
 
-pub type GetPathFn = Rc<dyn Fn(BlockedByActor) -> (bool, Vec<CPos>)>;
-
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 enum PathSource {
     /// Scriptable move order, ignores lane bias.
     Script(CPos),
     Destination,
-    Func(GetPathFn),
+    /// The path of the parent [`MoveAdjacentTo`].
+    AdjacentTo(Weak<MoveAdjacentTo>),
 }
 
 const PATH_SEARCH_ORDER: [BlockedByActor; 4] = [
@@ -255,8 +344,11 @@ const PATH_SEARCH_ORDER: [BlockedByActor; 4] = [
     BlockedByActor::None,
 ];
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Move {
     base: ActivityBase,
+    #[persist(me)]
     me: Weak<Move>,
     pub actor_facing_modifier: Cell<WAngle>,
     mobile: Rc<Mobile>,
@@ -328,8 +420,9 @@ impl Move {
         )
     }
 
-    pub fn new_func(self_: &ActorRef, get_path: GetPathFn) -> ActivityRef {
-        Self::make(self_, PathSource::Func(get_path), None, WDist::ZERO, None, false)
+    /// A move along the path that the parent `MoveAdjacentTo` calculates.
+    pub fn new_adjacent_to(self_: &ActorRef, parent: Weak<MoveAdjacentTo>) -> ActivityRef {
+        Self::make(self_, PathSource::AdjacentTo(parent), None, WDist::ZERO, None, false)
     }
 
     fn get_path(&self, check: BlockedByActor) -> (bool, Vec<CPos>) {
@@ -358,7 +451,10 @@ impl Move {
                         .find_path_to_target_cell(&self.self_, &[m.to_cell()], d, check, None, self.ignore_actor.as_ref(), true),
                 )
             }
-            PathSource::Func(f) => f(check),
+            PathSource::AdjacentTo(parent) => parent
+                .upgrade()
+                .expect("parent activity alive")
+                .calculate_path_to_target(&self.self_, check),
         }
     }
 
@@ -641,9 +737,12 @@ fn cell_is_evacuating(w: &World, cell: CPos) -> bool {
 }
 
 /// `Move.MovePart` with its `MoveFirstHalf` and `MoveSecondHalf` variants.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct MovePart {
     base: ActivityBase,
-    mv: Rc<Move>,
+    /// The parent `Move`, weak because it holds this part as its child.
+    mv: Weak<Move>,
     first_half: bool,
     from: WPos,
     to: WPos,
@@ -661,6 +760,10 @@ struct MovePart {
 }
 
 impl MovePart {
+    fn mv(&self) -> Rc<Move> {
+        self.mv.upgrade().expect("the parent move is alive")
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         mv: Rc<Move>,
@@ -691,7 +794,7 @@ impl MovePart {
             distance: (to - from).length(),
             turns_while_moving,
             progress: Cell::new(carryover),
-            mv,
+            mv: Rc::downgrade(&mv),
         };
         if should_arc {
             let u = WVec::new(1024, 0, 0).rotate(&WRot::from_yaw(from_facing));
@@ -717,7 +820,8 @@ impl MovePart {
         if m.info.always_turn_in_place || self.turns_while_moving {
             return false;
         }
-        if self.mv.actor_facing_modifier.get() != WAngle::ZERO && w.world_tick() - self.mv.start_ticks.get() >= m.info.backward_duration {
+        if self.mv().actor_facing_modifier.get() != WAngle::ZERO && w.world_tick() - self.mv().start_ticks.get() >= m.info.backward_duration
+        {
             return false;
         }
         let map = w.map();
@@ -730,24 +834,24 @@ impl MovePart {
     fn on_complete(&self, self_: &ActorRef, m: &Mobile) -> Option<ActivityRef> {
         if !self.first_half {
             m.set_position_cell(self_, m.to_cell(), rustora_engine::traits::subcell::ANY);
-            self.mv.carryover_progress.set(self.progress.get() - self.distance);
+            self.mv().carryover_progress.set(self.progress.get() - self.distance);
             return None;
         }
         let w = self_.world();
         let map = w.map();
         let from_off = map.offset_of_subcell(m.from_subcell.get());
         let to_off = map.offset_of_subcell(m.to_subcell.get());
-        let (next, _) = self.mv.pop_path(self_);
+        let (next, _) = self.mv().pop_path(self_);
         if let Some((next_cell, next_sub)) = next {
             if !m.is_trait_paused() && !m.is_trait_disabled() && self.is_turn(m, &w, next_cell) {
                 let next_off = map.offset_of_subcell(next_sub);
                 let ret = MovePart::new(
-                    self.mv.clone(),
+                    self.mv(),
                     true,
                     util::between_cells(&w, m.from_cell(), m.to_cell()) + (from_off + to_off) / 2,
                     util::between_cells(&w, m.to_cell(), next_cell) + (to_off + next_off) / 2,
                     m.facing(),
-                    map.facing_between(m.to_cell(), next_cell, m.facing()) + self.mv.actor_facing_modifier.get(),
+                    map.facing_between(m.to_cell(), next_cell, m.facing()) + self.mv().actor_facing_modifier.get(),
                     self.progress.get() - self.distance,
                     true,
                 );
@@ -755,17 +859,17 @@ impl MovePart {
                 m.set_location(m.to_cell(), m.to_subcell.get(), next_cell, next_sub);
                 return Some(ret);
             }
-            self.mv.path_add(next_cell);
+            self.mv().path_add(next_cell);
         }
         let to_pos = map.center_of_cell(m.to_cell());
         let ret2 = MovePart::new(
-            self.mv.clone(),
+            self.mv(),
             false,
             util::between_cells(&w, m.from_cell(), m.to_cell()) + (from_off + to_off) / 2,
             to_pos + to_off,
             m.facing(),
             if self.turns_while_moving {
-                map.facing_between(m.from_cell(), m.to_cell(), m.facing()) + self.mv.actor_facing_modifier.get()
+                map.facing_between(m.from_cell(), m.to_cell(), m.facing()) + self.mv().actor_facing_modifier.get()
             } else {
                 m.facing()
             },
@@ -782,9 +886,9 @@ impl Activity for MovePart {
     activity_common!("MovePart");
 
     fn tick(&self, self_: &ActorRef) -> bool {
-        let m = self.mv.mobile.clone();
+        let m = self.mv().mobile.clone();
         let w = self_.world();
-        if self.mv.last_move_part_completed_tick.get() < w.world_tick() {
+        if self.mv().last_move_part_completed_tick.get() < w.world_tick() {
             self.progress.set(self.progress.get() + m.movement_speed_for_cell(m.to_cell()));
         }
         let progress = self.progress.get();
@@ -796,7 +900,7 @@ impl Activity for MovePart {
             } else {
                 self.to_facing
             });
-            self.mv.last_move_part_completed_tick.set(w.world_tick());
+            self.mv().last_move_part_completed_tick.set(w.world_tick());
             self.base.queue(self.on_complete(self_, &m));
             return true;
         }
@@ -819,11 +923,13 @@ impl Activity for MovePart {
     }
 
     fn get_targets(&self, self_: &ActorRef) -> Vec<Target> {
-        self.mv.get_targets(self_)
+        self.mv().get_targets(self_)
     }
 }
 
 /// `MoveCooldownHelper`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct MoveCooldownHelper {
     pub retry_if_destination_blocked: Cell<bool>,
     pub cooldown: Cell<(i32, i32)>,
@@ -885,6 +991,8 @@ impl MoveCooldownHelper {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Follow {
     base: ActivityBase,
     min_range: WDist,
@@ -970,6 +1078,8 @@ impl Activity for Follow {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct LocalMoveIntoTarget {
     base: ActivityBase,
     mobile: Rc<Mobile>,
@@ -1039,6 +1149,8 @@ impl Activity for LocalMoveIntoTarget {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 enum AdjacentMode {
     Adjacent,
     Onto {
@@ -1055,8 +1167,11 @@ enum AdjacentMode {
 }
 
 /// `MoveAdjacentTo` and its subclasses `MoveOnto`, `MoveOntoAndTurn` and `MoveWithinRange`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct MoveAdjacentTo {
     base: ActivityBase,
+    #[persist(me)]
     me: Weak<MoveAdjacentTo>,
     pub mobile: Rc<Mobile>,
     self_: ActorRef,
@@ -1259,11 +1374,7 @@ impl MoveAdjacentTo {
     }
 
     fn queue_move(&self) {
-        let me = self.me.clone();
-        let self_ = self.self_.clone();
-        self.base.queue_child(self.mobile.move_to_path(Rc::new(move |check| {
-            me.upgrade().expect("activity alive").calculate_path_to_target(&self_, check)
-        })));
+        self.base.queue_child(Move::new_adjacent_to(&self.self_, self.me.clone()));
     }
 
     fn base_tick(&self, self_: &ActorRef) -> bool {
@@ -1337,6 +1448,8 @@ impl Activity for MoveAdjacentTo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Nudge {
     base: ActivityBase,
     nudger: ActorRef,
@@ -1388,6 +1501,8 @@ impl Activity for Nudge {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Parachute {
     base: ActivityBase,
     pos: Rc<dyn IPositionable>,
@@ -1434,4 +1549,24 @@ impl Activity for Parachute {
             n.on_landed(self_);
         }
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(
+        Wait,
+        CallFunc,
+        SimpleTeleport,
+        WaitFor,
+        Turn,
+        Drag,
+        Move,
+        MovePart,
+        Follow,
+        LocalMoveIntoTarget,
+        MoveAdjacentTo,
+        Nudge,
+        Parachute
+    );
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedPredicate: Never);
 }

@@ -54,6 +54,7 @@ impl Default for PlayerResourcesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PlayerResources {
     pub info: Rc<PlayerResourcesInfo>,
     pub cash: Cell<i32>,
@@ -62,6 +63,7 @@ pub struct PlayerResources {
     pub earned: Cell<i32>,
     pub spent: Cell<i32>,
     self_: ActorRef,
+    #[persist(skip)]
     last_notification_time: Cell<Option<std::time::Instant>>,
 }
 
@@ -183,6 +185,7 @@ pub struct GrantConditionOnBotOwnerInfo {
     pub bots: Vec<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnBotOwner {
     info: Rc<GrantConditionOnBotOwnerInfo>,
     token: Cell<i32>,

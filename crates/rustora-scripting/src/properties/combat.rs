@@ -27,7 +27,9 @@ fn attack_move(a: &ActorRef, cell: CPos, close_enough: i32) {
     let mv = a.trait_::<dyn IMove>();
     a.queue_activity(AttackMoveActivity::new(
         a,
-        Rc::new(move || mv.move_to(cell, close_enough, None, false)),
+        rustora_mods_common::attack_move::MoveOrder::Closure(rustora_engine::persist::Unsaved(Rc::new(move || {
+            mv.move_to(cell, close_enough, None, false)
+        }))),
         false,
     ));
 }

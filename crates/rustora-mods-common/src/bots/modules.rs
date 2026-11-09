@@ -76,6 +76,7 @@ impl Default for McvManagerBotModuleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct McvManagerBotModule {
     info: Rc<McvManagerBotModuleInfo>,
     state: ConditionalState,
@@ -278,6 +279,8 @@ impl Default for HarvesterBotModuleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 struct HarvesterTraitWrapper {
     actor: ActorRef,
     harvester: Rc<Harvester>,
@@ -287,6 +290,7 @@ struct HarvesterTraitWrapper {
     no_resources_cooldown: Cell<i32>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct HarvesterBotModule {
     info: Rc<HarvesterBotModuleInfo>,
     state: ConditionalState,
@@ -543,6 +547,7 @@ pub struct BuildingRepairBotModuleInfo {
     pub base: ConditionalTraitInfo,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct BuildingRepairBotModule {
     state: ConditionalState,
 }
@@ -612,6 +617,7 @@ const MAX_POSITION_CACHE_LENGTH: usize = 5;
 const REPEATED_ALERT_TICKS: i32 = 40;
 
 /// `MinelayerBotModule`: lays mines at recent conflict positions and keeps a few favorite positions.
+#[derive(rustora_engine::persist::Persist)]
 pub struct MinelayerBotModule {
     info: Rc<MinelayerBotModuleInfo>,
     state: ConditionalState,
@@ -933,6 +939,7 @@ impl Default for CaptureManagerBotModuleInfo {
 }
 
 /// `CaptureManagerBotModule`: sends idle capturers to the most valuable capturable actors of a random player.
+#[derive(rustora_engine::persist::Persist)]
 pub struct CaptureManagerBotModule {
     info: Rc<CaptureManagerBotModuleInfo>,
     state: ConditionalState,

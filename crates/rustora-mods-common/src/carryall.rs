@@ -87,7 +87,8 @@ impl Default for CarryallInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum CarryallState {
     Idle,
     Reserved,
@@ -95,6 +96,7 @@ pub enum CarryallState {
 }
 
 /// Transports actors that have `Carryable`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct Carryall {
     pub info: Rc<CarryallInfo>,
     state: ConditionalState,
@@ -501,7 +503,8 @@ pub enum LockResponse {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 enum CarryableState {
     Free,
     Reserved,
@@ -509,6 +512,7 @@ enum CarryableState {
 }
 
 /// Can be carried by actors with `Carryall`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct Carryable {
     pub info: Rc<CarryableInfo>,
     state: ConditionalState,
@@ -642,7 +646,8 @@ impl Carryable {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 enum PickupState {
     Intercept,
     LockCarryable,
@@ -650,6 +655,8 @@ enum PickupState {
 }
 
 /// `Activities/PickupUnit.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct PickupUnit {
     base: ActivityBase,
     cargo: ActorRef,
@@ -780,6 +787,8 @@ impl Activity for PickupUnit {
 }
 
 /// `PickupUnit.AttachUnit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct AttachUnit {
     base: ActivityBase,
     cargo: ActorRef,
@@ -820,6 +829,8 @@ impl Activity for AttachUnit {
 }
 
 /// `Activities/DeliverUnit.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct DeliverUnit {
     base: ActivityBase,
     carryall: Rc<Carryall>,
@@ -876,6 +887,8 @@ impl Activity for DeliverUnit {
 }
 
 /// `DeliverUnit.ReleaseUnit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct ReleaseUnit {
     base: ActivityBase,
     carryall: Rc<Carryall>,
@@ -939,6 +952,7 @@ pub struct FreeActorWithDeliveryInfo {
 }
 
 /// `Traits/Buildings/FreeActorWithDelivery.cs`: a free actor that a carryall brings in.
+#[derive(rustora_engine::persist::Persist)]
 pub struct FreeActorWithDelivery {
     info: Rc<FreeActorWithDeliveryInfo>,
     state: ConditionalState,
@@ -1026,4 +1040,9 @@ impl FreeActorWithDelivery {
         carrier.queue_activity(crate::aircraft::RemoveSelf::new());
         w.add_frame_end_task(Box::new(move |w| w.add(&carrier)));
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(PickupUnit, AttachUnit, DeliverUnit, ReleaseUnit);
 }

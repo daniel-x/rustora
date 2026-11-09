@@ -78,6 +78,7 @@ impl Default for AmmoPoolInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AmmoPool {
     pub info: Rc<AmmoPoolInfo>,
     tokens: RefCell<Vec<i32>>,
@@ -181,6 +182,7 @@ impl Default for RearmableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Rearmable {
     pub info: Rc<RearmableInfo>,
     rearmable_ammo_pools: RefCell<Vec<Rc<AmmoPool>>>,
@@ -281,6 +283,7 @@ impl Default for RepairableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Repairable {
     pub info: Rc<RepairableInfo>,
     rearmable: OnceCell<Option<Rc<Rearmable>>>,
@@ -408,6 +411,7 @@ impl Default for RepairableNearInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RepairableNear {
     pub info: Rc<RepairableNearInfo>,
     require_force_move: Cell<bool>,
@@ -478,6 +482,7 @@ impl Default for RepairsUnitsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RepairsUnits {
     pub info: Rc<RepairsUnitsInfo>,
     state: ConditionalState,
@@ -499,6 +504,8 @@ pub trait INotifyResupply {
     fn resupply_tick(&self, self_: &ActorRef, target: &ActorRef, types: u8);
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Resupply {
     base: ActivityBase,
     played: Cell<bool>,
@@ -595,7 +602,14 @@ impl Resupply {
                 let (mv, c, ignore) = (self.mv.clone(), *cell, ignore_host.clone());
                 self.base.queue_child(AttackMoveActivity::new(
                     self_,
-                    Rc::new(move || mv.move_to(c, 1, ignore.clone(), evaluate)),
+                    crate::attack_move::MoveOrder::To {
+                        mv,
+                        cell: c,
+                        near_enough: 1,
+                        ignore_actor: ignore,
+                        evaluate_nearest_movable_cell: evaluate,
+                        line_color: None,
+                    },
                     false,
                 ));
             }
@@ -848,6 +862,7 @@ impl Default for ReloadAmmoPoolInfo {
 }
 
 /// Refills an `AmmoPool` by `Count` every `Delay` ticks.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ReloadAmmoPool {
     info: Rc<ReloadAmmoPoolInfo>,
     state: ConditionalState,
@@ -935,4 +950,9 @@ impl ITick for ReloadAmmoPool {
             pool.give_ammo(self_, self.info.count);
         }
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(Resupply);
 }

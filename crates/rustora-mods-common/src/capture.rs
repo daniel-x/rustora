@@ -24,7 +24,7 @@ use rustora_engine::target::{Target, TargetType};
 use rustora_engine::traits::*;
 use rustora_engine::{conditional_plumbing, info_impl, load_info, register_traits};
 
-use crate::actor_map::WorldExt;
+use crate::actor_map::{ActorCallback, WorldExt};
 use crate::auto_target::IDisableEnemyAutoTarget;
 use crate::base::PlayerExperience;
 use crate::cargo::{Enter, EnterHooks};
@@ -75,6 +75,7 @@ impl Default for CaptureManagerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CaptureManager {
     info: Rc<CaptureManagerInfo>,
     self_: ActorRef,
@@ -351,6 +352,7 @@ pub struct CapturableInfo {
     pub cancel_activity: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Capturable {
     info: Rc<CapturableInfo>,
     state: ConditionalState,
@@ -437,6 +439,7 @@ impl Default for CapturesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Captures {
     pub info: Rc<CapturesInfo>,
     state: ConditionalState,
@@ -559,6 +562,8 @@ pub fn capture_activity(self_: &ActorRef, target: &Target) -> rustora_engine::ac
 }
 
 /// `CaptureActor`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct CaptureActorHooks {
     manager: Rc<CaptureManager>,
     enter_actor: RefCell<Option<ActorRef>>,
@@ -721,6 +726,7 @@ impl Default for ProximityCapturableInfo {
 
 /// `ProximityCapturable` with `ProximityCapturableBase`: the actor goes to the owner of the captor that has been in
 /// range the longest.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProximityCapturable {
     info: Rc<ProximityCapturableInfo>,
     me: Weak<ProximityCapturable>,
@@ -732,7 +738,7 @@ pub struct ProximityCapturable {
     skip_trigger_update: Cell<bool>,
 }
 
-register_traits!(ProximityCapturable: ITick, INotifyAddedToWorld, INotifyRemovedFromWorld, INotifyOwnerChanged);
+register_traits!(ProximityCapturable: crate::actor_map::ITriggerWatcher, ITick, INotifyAddedToWorld, INotifyRemovedFromWorld, INotifyOwnerChanged);
 info_impl!(ProximityCapturableInfo => |info, init| Some(Rc::new_cyclic(|me| ProximityCapturable {
     info,
     me: me.clone(),
@@ -756,16 +762,8 @@ impl ProximityCapturable {
             self_.center_position(),
             self.info.range,
             rustora_core::world_types::WDist::ZERO,
-            Some(Rc::new(move |a: &ActorRef| {
-                if let Some(t) = entered.upgrade() {
-                    t.actor_entered(a);
-                }
-            })),
-            Some(Rc::new(move |a: &ActorRef| {
-                if let Some(t) = exited.upgrade() {
-                    t.actor_left(a);
-                }
-            })),
+            Some(ActorCallback::Entered(entered.upgrade().expect("trait alive"))),
+            Some(ActorCallback::Exited(exited.upgrade().expect("trait alive"))),
         )
     }
 
@@ -929,6 +927,7 @@ impl Default for TransformOnCaptureInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TransformOnCapture {
     info: Rc<TransformOnCaptureInfo>,
     faction: String,
@@ -983,6 +982,7 @@ impl Default for GivesCashOnCaptureInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GivesCashOnCapture {
     info: Rc<GivesCashOnCaptureInfo>,
     state: ConditionalState,
@@ -1009,6 +1009,7 @@ pub struct CapturableProgressBarInfo {
     pub base: ConditionalTraitInfo,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CapturableProgressBar {
     state: ConditionalState,
     progress: RefCell<indexmap::IndexMap<u32, (i32, i32)>>,
@@ -1069,6 +1070,7 @@ impl Default for CapturableProgressBlinkInfo {
 
 /// `CapturableProgressBlink` draws `FlashTarget` effects only, which the renderer doesn't have yet; the trait keeps
 /// the sync shape of the conditional base.
+#[derive(rustora_engine::persist::Persist)]
 pub struct CapturableProgressBlink {
     state: ConditionalState,
 }
@@ -1076,3 +1078,19 @@ pub struct CapturableProgressBlink {
 register_traits!(CapturableProgressBlink: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(CapturableProgressBlinkInfo => |info, _init| Some(Rc::new(CapturableProgressBlink { state: ConditionalState::new(&info.base) })));
 rustora_engine::conditional_simple!(CapturableProgressBlink);
+
+rustora_engine::persist_trait_refs!(dyn ICaptureProgressWatcher);
+
+impl crate::actor_map::ITriggerWatcher for ProximityCapturable {
+    fn actor_entered(&self, a: &ActorRef) {
+        ProximityCapturable::actor_entered(self, a)
+    }
+    fn actor_exited(&self, a: &ActorRef) {
+        self.actor_left(a)
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: CaptureActorHooks);
+}

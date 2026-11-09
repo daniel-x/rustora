@@ -22,12 +22,20 @@ pub trait TraitObject: Any {
     fn register(self: Rc<Self>, dict: &TraitDict, actor: &ActorRef);
     fn type_name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    /// `Box<Rc<T>>` of this trait as `T`, its concrete type or one of its registered interfaces.
+    fn cast_rc(self: Rc<Self>, t: std::any::TypeId) -> Option<Box<dyn Any>>;
+    /// Writes the state of the trait to a save game.
+    fn save_state(&self, w: &mut crate::persist::SaveWriter);
+    /// Reads the state written by [`TraitObject::save_state`].
+    fn load_state(&self, r: &mut crate::persist::SaveReader);
 }
 
 /// Implements [`TraitObject`] for a trait struct: `register_traits!(Health: IHealth, ISync, ITick);`
+/// Interfaces after `; cast:` are not added to the trait dictionary, but save games can refer to the trait as
+/// them.
 #[macro_export]
 macro_rules! register_traits {
-    ($ty:ty $(: $($iface:path),* $(,)?)?) => {
+    ($ty:ty $(: $($iface:path),* $(,)?)? $(; cast: $($cast:path),* $(,)?)?) => {
         impl $crate::traits::TraitObject for $ty {
             fn register(self: ::std::rc::Rc<Self>, dict: &$crate::trait_dict::TraitDict, actor: &$crate::actor::ActorRef) {
                 dict.add::<$ty>(actor, self.clone());
@@ -39,7 +47,38 @@ macro_rules! register_traits {
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self
             }
+            $crate::trait_object_persist!(@methods $ty: $($($iface),*)? $(, $($cast),*)?);
         }
+        $crate::persist_trait_refs!($ty);
+    };
+}
+
+/// The save game methods of [`TraitObject`] for a hand written implementation:
+/// `trait_object_persist!(Turreted: ITick, ISync);` inside the `impl TraitObject` block, with all interfaces the
+/// trait may register.
+#[macro_export]
+macro_rules! trait_object_persist {
+    (@methods $ty:ty: $($iface:path),* $(,)?) => {
+        fn cast_rc(self: ::std::rc::Rc<Self>, t: ::std::any::TypeId) -> Option<Box<dyn ::std::any::Any>> {
+            if t == ::std::any::TypeId::of::<$ty>() {
+                let rc: ::std::rc::Rc<$ty> = self;
+                return Some(Box::new(rc));
+            }
+            $(if t == ::std::any::TypeId::of::<dyn $iface>() {
+                let rc: ::std::rc::Rc<dyn $iface> = self;
+                return Some(Box::new(rc));
+            })*
+            None
+        }
+        fn save_state(&self, w: &mut $crate::persist::SaveWriter) {
+            $crate::persist::PersistState::save_state(self, w)
+        }
+        fn load_state(&self, r: &mut $crate::persist::SaveReader) {
+            $crate::persist::PersistState::load_state(self, r)
+        }
+    };
+    ($ty:ty $(: $($iface:path),* $(,)?)?) => {
+        $crate::trait_object_persist!(@methods $ty: $($($iface),*)?);
     };
 }
 
@@ -52,6 +91,7 @@ pub trait TraitInfo: Any {
     fn instance_name(&self) -> Option<&str>;
     fn info_type_name(&self) -> &'static str;
     fn as_any(&self) -> &dyn Any;
+    fn as_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
 /// Implements [`TraitInfo`] for an info struct with an `instance_name: Option<String>` field.
@@ -77,7 +117,11 @@ macro_rules! info_impl {
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self
             }
+            fn as_any_rc(self: ::std::rc::Rc<Self>) -> ::std::rc::Rc<dyn ::std::any::Any> {
+                self
+            }
         }
+        $crate::persist_rule_refs!($ty);
     };
 }
 
@@ -267,3 +311,11 @@ pub trait IObservesVariables {
 pub trait ObservesVariablesDyn {
     fn observers(&self) -> Vec<VariableObserver>;
 }
+
+crate::persist_trait_refs!(
+    dyn IDisabledTrait,
+    dyn IFacing,
+    dyn IHealth,
+    dyn INotifyIdle,
+    dyn IVisibilityModifier
+);

@@ -69,6 +69,7 @@ impl Default for VoicedInfo {
 }
 
 /// `Voiced`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct Voiced {
     info: Rc<VoicedInfo>,
     state: ConditionalState,
@@ -143,6 +144,7 @@ pub struct MusicPlaylistInfo {
 }
 
 /// The sync-free world trait; the client runs the playlist from the info.
+#[derive(rustora_engine::persist::Persist)]
 pub struct MusicPlaylistTrait;
 register_traits!(MusicPlaylistTrait);
 info_impl!(MusicPlaylistInfo => |_info, _init| Some(Rc::new(MusicPlaylistTrait)));
@@ -201,6 +203,7 @@ impl Default for ActorLostNotificationInfo {
 }
 
 /// `ActorLostNotification`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ActorLostNotification {
     info: Rc<ActorLostNotificationInfo>,
     state: ConditionalState,
@@ -249,8 +252,10 @@ impl Default for AnnounceOnKillInfo {
 }
 
 /// `AnnounceOnKill`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct AnnounceOnKill {
     info: Rc<AnnounceOnKillInfo>,
+    #[persist(skip)]
     last_announce: Cell<Option<Instant>>,
 }
 
@@ -299,6 +304,7 @@ pub struct AttackSoundsInfo {
 }
 
 /// `AttackSounds`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct AttackSounds {
     info: Rc<AttackSoundsInfo>,
     state: ConditionalState,
@@ -379,6 +385,7 @@ impl Default for CaptureNotificationInfo {
 }
 
 /// `CaptureNotification`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct CaptureNotification {
     info: Rc<CaptureNotificationInfo>,
 }
@@ -444,6 +451,7 @@ impl Default for DeathSoundsInfo {
 }
 
 /// `DeathSounds`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct DeathSounds {
     info: Rc<DeathSoundsInfo>,
     state: ConditionalState,
@@ -478,6 +486,7 @@ pub struct SoundOnDamageTransitionInfo {
 }
 
 /// `SoundOnDamageTransition`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct SoundOnDamageTransition {
     info: Rc<SoundOnDamageTransitionInfo>,
 }
@@ -528,6 +537,7 @@ impl Default for VoiceAnnouncementInfo {
 }
 
 /// `VoiceAnnouncement`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct VoiceAnnouncement {
     info: Rc<VoiceAnnouncementInfo>,
     state: ConditionalState,
@@ -616,6 +626,7 @@ impl Default for BaseAttackNotifierInfo {
 }
 
 /// `BaseAttackNotifier`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct BaseAttackNotifier {
     info: Rc<BaseAttackNotifierInfo>,
     last_attack: AdviceTimer,
@@ -698,6 +709,7 @@ impl Default for HarvesterAttackNotifierInfo {
 }
 
 /// `HarvesterAttackNotifier`, without the radar ping.
+#[derive(rustora_engine::persist::Persist)]
 pub struct HarvesterAttackNotifier {
     info: Rc<HarvesterAttackNotifierInfo>,
     last_attack: AdviceTimer,
@@ -758,6 +770,7 @@ impl Default for ResourceStorageWarningInfo {
 }
 
 /// `ResourceStorageWarning`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ResourceStorageWarning {
     info: Rc<ResourceStorageWarningInfo>,
     last_advice: AdviceTimer,
@@ -807,6 +820,7 @@ impl Default for EnemyWatcherInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct EnemyWatcher {
     info: Rc<EnemyWatcherInfo>,
     discovered_players: RefCell<Vec<PlayerRef>>,
@@ -886,6 +900,7 @@ pub struct AnnounceOnSeenInfo {
     pub ping_radar: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AnnounceOnSeen {
     info: Rc<AnnounceOnSeenInfo>,
 }
@@ -947,10 +962,12 @@ impl Default for AmbientSoundInfo {
 
 /// `Traits/Sound/AmbientSound.cs`: plays a looping or repeating sound at the actor. The delays draw from the
 /// shared random, so they are part of the simulation.
+#[derive(rustora_engine::persist::Persist)]
 pub struct AmbientSound {
     info: Rc<AmbientSoundInfo>,
     state: ConditionalState,
     looped: bool,
+    #[persist(skip)]
     current_sounds: RefCell<Vec<sound::SoundHandle>>,
     cached_position: Cell<rustora_core::world_types::WPos>,
     delay: Cell<i32>,

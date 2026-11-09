@@ -28,6 +28,7 @@ pub fn register(r: &mut TraitRegistry) {
 }
 
 /// A trait without runtime state, whose info is read by the client.
+#[derive(rustora_engine::persist::Persist)]
 pub struct PaletteTrait;
 register_traits!(PaletteTrait);
 

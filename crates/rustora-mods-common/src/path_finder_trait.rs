@@ -33,9 +33,11 @@ pub struct PathFinderInfo {
     pub instance_name: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct PathFinder {
+    #[persist(in_place)]
     by_none: RefCell<HashMap<String, Rc<HierarchicalPathFinder>>>,
+    #[persist(in_place)]
     by_immovable: RefCell<HashMap<String, Rc<HierarchicalPathFinder>>>,
 }
 

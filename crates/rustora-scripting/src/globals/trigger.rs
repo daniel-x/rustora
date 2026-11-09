@@ -11,8 +11,8 @@ use rustora_core::world_types::{CPos, WDist, WPos};
 use rustora_engine::actor::ActorRef;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::world::World;
-use rustora_mods_common::actor_map::WorldExt;
-use rustora_mods_common::bridges::DelayedAction;
+use rustora_mods_common::actor_map::{ActorCallback, WorldExt};
+use rustora_mods_common::bridges::{BridgeAction, DelayedAction};
 
 use crate::context::{ScriptContext, ctx};
 use crate::members::Group;
@@ -112,9 +112,9 @@ fn footprint(lua: &Lua, args: &Args, entry: bool) -> LuaResult<i32> {
     let callback: Rc<dyn Fn(&ActorRef)> = Rc::new(move |a| call(&context, &f, (LuaActor(a.clone()), trigger_id.get())));
     let actor_map = world.actor_map();
     let value = if entry {
-        actor_map.add_cell_trigger(cells, Some(callback), None)
+        actor_map.add_cell_trigger(cells, Some(ActorCallback::Closure(callback)), None)
     } else {
-        actor_map.add_cell_trigger(cells, None, Some(callback))
+        actor_map.add_cell_trigger(cells, None, Some(ActorCallback::Closure(callback)))
     };
     id.set(value);
     Ok(value)
@@ -131,9 +131,9 @@ fn proximity(lua: &Lua, args: &Args, entry: bool) -> LuaResult<i32> {
     let callback: Rc<dyn Fn(&ActorRef)> = Rc::new(move |a| call(&context, &f, (LuaActor(a.clone()), trigger_id.get())));
     let actor_map = world.actor_map();
     let value = if entry {
-        actor_map.add_proximity_trigger(pos, range, WDist::ZERO, Some(callback), None)
+        actor_map.add_proximity_trigger(pos, range, WDist::ZERO, Some(ActorCallback::Closure(callback)), None)
     } else {
-        actor_map.add_proximity_trigger(pos, range, WDist::ZERO, None, Some(callback))
+        actor_map.add_proximity_trigger(pos, range, WDist::ZERO, None, Some(ActorCallback::Closure(callback)))
     };
     id.set(value);
     Ok(value)
@@ -147,7 +147,12 @@ pub fn global() -> Group<()> {
             let context = Rc::downgrade(&ctx(lua)?);
             let world = crate::context::world(lua)?;
             world.add_frame_end_task(Box::new(move |w: &Rc<World>| {
-                w.add_effect(DelayedAction::new(delay, Box::new(move |_| call(&context, &f, ()))));
+                w.add_effect(DelayedAction::new(
+                    delay,
+                    BridgeAction::Closure(rustora_engine::persist::Unsaved(Rc::new(RefCell::new(Some(Box::new(move || {
+                        call(&context, &f, ())
+                    })))))),
+                ));
             }));
             Ok(())
         })

@@ -46,6 +46,7 @@ impl Default for DrawLineToTargetInfo {
 }
 
 /// `DrawLineToTarget`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct DrawLineToTarget {
     pub info: Rc<DrawLineToTargetInfo>,
     lifetime: Cell<u64>,

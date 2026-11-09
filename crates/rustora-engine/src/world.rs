@@ -81,11 +81,16 @@ pub struct World {
     pub actor_map_slot: OnceCell<Rc<dyn std::any::Any>>,
     is_replay: Cell<bool>,
     net_frame_number: Cell<i32>,
+    local_frame_number: Cell<i32>,
     game_save_last_frame: Cell<i32>,
     game_save_last_sync_frame: Cell<i32>,
     was_loading_game_save: Cell<bool>,
     game_save_trait_data: RefCell<IndexMap<i32, MiniYaml>>,
     game_info: RefCell<Option<GameInfoTracker>>,
+    /// The actor and trait index of each trait, by the address of the trait, for save games.
+    trait_owners: RefCell<std::collections::HashMap<usize, (std::rc::Weak<Actor>, u32)>>,
+    /// True while a save game is restored: the world loaded hooks create no actors.
+    restoring: Cell<bool>,
 }
 
 /// `RustoraHarness.BotSeed`: the seed of the bot random numbers, derived from the lobby random seed.
@@ -157,11 +162,14 @@ impl World {
             actor_map_slot: OnceCell::new(),
             is_replay: Cell::new(false),
             net_frame_number: Cell::new(0),
+            local_frame_number: Cell::new(0),
             game_save_last_frame: Cell::new(-1),
             game_save_last_sync_frame: Cell::new(-1),
             was_loading_game_save: Cell::new(false),
             game_save_trait_data: RefCell::new(IndexMap::new()),
             game_info: RefCell::new(None),
+            trait_owners: RefCell::new(std::collections::HashMap::new()),
+            restoring: Cell::new(false),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -174,6 +182,72 @@ impl World {
             cmp.create_players(&world, &mut player_random);
         }
         world
+    }
+
+    pub(crate) fn register_trait_owner(&self, addr: usize, actor: &ActorRef, index: u32) {
+        self.trait_owners.borrow_mut().insert(addr, (Rc::downgrade(actor), index));
+    }
+
+    pub(crate) fn unregister_trait_owner(&self, addr: usize) {
+        self.trait_owners.borrow_mut().remove(&addr);
+    }
+
+    /// The actors that have traits and are not yet dropped, in id order.
+    pub(crate) fn registered_actors(&self) -> Vec<ActorRef> {
+        let mut out: Vec<ActorRef> = self.trait_owners.borrow().values().filter_map(|(a, _)| a.upgrade()).collect();
+        out.sort_by_key(|a| a.id);
+        out.dedup_by_key(|a| a.id);
+        out
+    }
+
+    pub(crate) fn set_in_world_actors(&self, actors: Vec<ActorRef>) {
+        *self.actors.borrow_mut() = actors.into_iter().map(|a| (a.id, a)).collect();
+    }
+
+    /// The actor and trait index of the trait at `addr`.
+    pub fn trait_owner(&self, addr: usize) -> Option<(ActorRef, u32)> {
+        let owners = self.trait_owners.borrow();
+        let (a, i) = owners.get(&addr)?;
+        Some((a.upgrade()?, *i))
+    }
+
+    /// True while a save game is restored, see [`crate::savegame`].
+    pub fn is_restoring(&self) -> bool {
+        self.restoring.get()
+    }
+
+    pub fn set_restoring(&self, v: bool) {
+        self.restoring.set(v);
+    }
+
+    pub(crate) fn set_next_aid(&self, id: u32) {
+        self.next_aid.set(id);
+    }
+
+    pub(crate) fn peek_next_aid(&self) -> u32 {
+        self.next_aid.get()
+    }
+
+    pub(crate) fn set_world_tick(&self, t: i32) {
+        self.world_tick.set(t);
+    }
+
+    pub(crate) fn set_game_over(&self, v: bool) {
+        self.is_game_over.set(v);
+    }
+
+    pub(crate) fn frame_end_task_count(&self) -> usize {
+        self.frame_end_actions.borrow().len()
+    }
+
+    pub(crate) fn clear_frame_end_tasks(&self) {
+        self.frame_end_actions.borrow_mut().clear();
+    }
+
+    /// Replaces the effects; the synced effects are those of `effects` that implement `ISync`, in their order.
+    pub(crate) fn replace_effects(&self, effects: Vec<EffectRef>) {
+        *self.synced_effects.borrow_mut() = effects.iter().filter(|e| e.is_sync()).cloned().collect();
+        *self.effects.borrow_mut() = effects;
     }
 
     pub fn trait_dict(&self) -> &TraitDict {
@@ -237,6 +311,15 @@ impl World {
 
     pub fn set_net_frame_number(&self, frame: i32) {
         self.net_frame_number.set(frame);
+    }
+
+    /// `OrderManager.LocalFrameNumber`, which counts paused frames too.
+    pub fn local_frame_number(&self) -> i32 {
+        self.local_frame_number.get()
+    }
+
+    pub fn set_local_frame_number(&self, frame: i32) {
+        self.local_frame_number.set(frame);
     }
 
     /// Marks the world as restoring a game save, from the `SaveLastOrdersFrame` and `SaveSyncFrame` of `StartGame`.

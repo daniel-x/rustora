@@ -12,7 +12,7 @@ use crate::actor::ActorRef;
 use crate::player::PlayerRef;
 use crate::world::World;
 
-pub trait ActorInit: Any {
+pub trait ActorInit: Any + crate::persist::PersistDyn {
     fn instance_name(&self) -> Option<&str> {
         None
     }
@@ -85,7 +85,8 @@ impl ActorInitializer {
 #[macro_export]
 macro_rules! value_init {
     ($name:ident, $t:ty) => {
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Debug, $crate::persist::Persist)]
+        #[persist(value)]
         pub struct $name {
             pub value: $t,
             pub instance_name: Option<String>,
@@ -118,7 +119,8 @@ value_init!(SubCellInit, u8);
 value_init!(FactionInit, String);
 
 /// Owner by player object or by internal name.
-#[derive(Clone)]
+#[derive(Clone, crate::persist::Persist)]
+#[persist(value)]
 pub struct OwnerInit {
     pub internal_name: String,
     player: Option<PlayerRef>,
@@ -154,4 +156,9 @@ impl ActorInit for OwnerInit {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    crate::persist_values!(dyn crate::actor_init::ActorInit: OwnerInit, LocationInit, FacingInit, CenterPositionInit, SubCellInit, FactionInit);
 }

@@ -29,10 +29,11 @@ fn div_away(a: i32, b: i32) -> i32 {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct GridInfo {
     single_abstract_cell: Option<CPos>,
-    local_cell_to_abstract_cell: HashMap<CPos, CPos>,
+    local_cell_to_abstract_cell: indexmap::IndexMap<CPos, CPos>,
 }
 
 impl GridInfo {
@@ -100,6 +101,8 @@ impl AbstractGraphWithInsertedEdges {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(owned)]
 pub struct HierarchicalPathFinder {
     world: Weak<World>,
     locomotor: Rc<Locomotor>,

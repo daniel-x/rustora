@@ -66,6 +66,7 @@ impl Default for UnitBuilderBotModuleInfo {
 
 const FEEDBACK_TIME: i32 = 30;
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct UnitBuilderBotModule {
     info: Rc<UnitBuilderBotModuleInfo>,
     state: ConditionalState,

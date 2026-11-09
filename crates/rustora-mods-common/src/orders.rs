@@ -41,6 +41,7 @@ impl Default for CommandBarBlacklistInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CommandBarBlacklist;
 
 register_traits!(CommandBarBlacklist);

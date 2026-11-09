@@ -44,6 +44,7 @@ macro_rules! multiplier {
             pub modifier: i32,
         }
 
+        #[derive(rustora_engine::persist::Persist)]
         pub struct $name {
             info: Rc<$info>,
             state: ConditionalState,
@@ -148,6 +149,7 @@ impl Default for GainsExperienceInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GainsExperience {
     info: Rc<GainsExperienceInfo>,
     self_: ActorRef,
@@ -302,6 +304,7 @@ impl Default for GivesExperienceInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GivesExperience {
     info: Rc<GivesExperienceInfo>,
     exp: Cell<i32>,
@@ -387,6 +390,7 @@ impl Default for ChangesHealthInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ChangesHealth {
     info: Rc<ChangesHealthInfo>,
     state: ConditionalState,
@@ -463,6 +467,7 @@ pub struct GrantConditionOnTileSetInfo {
     pub tile_sets: Vec<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnTileSet {
     info: Rc<GrantConditionOnTileSetInfo>,
 }
@@ -489,6 +494,7 @@ pub struct GrantConditionInfo {
     pub grant_permanently: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantCondition {
     info: Rc<GrantConditionInfo>,
     state: ConditionalState,
@@ -557,6 +563,7 @@ impl GrantConditionOnDamageStateInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnDamageState {
     info: Rc<GrantConditionOnDamageStateInfo>,
     health: Rc<dyn IHealth>,
@@ -622,6 +629,8 @@ pub struct ExternalConditionInfo {
     pub total_cap: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct TimedToken {
     expires: i32,
     token: i32,
@@ -629,6 +638,7 @@ struct TimedToken {
 }
 
 /// `ExternalCondition`; sources are identified by a key because C# compares them by reference.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ExternalCondition {
     pub info: Rc<ExternalConditionInfo>,
     permanent_tokens: RefCell<IndexMap<usize, IndexSet<i32>>>,
@@ -851,6 +861,7 @@ impl Default for GrantConditionOnAttackInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnAttack {
     info: Rc<GrantConditionOnAttackInfo>,
     state: ConditionalState,
@@ -999,6 +1010,7 @@ pub struct GrantConditionWhileAimingInfo {
     pub condition: String,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionWhileAiming {
     info: Rc<GrantConditionWhileAimingInfo>,
     token: Cell<i32>,
@@ -1040,6 +1052,7 @@ impl Default for ProducibleWithLevelInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProducibleWithLevel {
     info: Rc<ProducibleWithLevelInfo>,
 }
@@ -1078,6 +1091,7 @@ pub struct GrantConditionOnFactionInfo {
 }
 
 /// Grants a condition while the faction of the actor is one of `Factions`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnFaction {
     info: Rc<GrantConditionOnFactionInfo>,
     state: ConditionalState,
@@ -1132,4 +1146,11 @@ impl INotifyOwnerChanged for GrantConditionOnFaction {
             self.trait_enabled(self_);
         }
     }
+}
+
+rustora_engine::persist_trait_refs!(dyn IConditionTimerWatcher);
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: ExperienceInit);
 }

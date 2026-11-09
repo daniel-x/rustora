@@ -22,6 +22,7 @@ pub struct ScriptTagsInfo {
 }
 
 /// `ScriptTags`: `None` stands for the C# null tag, which Lua scripts add by passing nil.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ScriptTags {
     tags: RefCell<IndexSet<Option<String>>>,
 }
@@ -89,6 +90,7 @@ impl Default for ScriptLobbyDropdownInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ScriptLobbyDropdown {
     pub info: Rc<ScriptLobbyDropdownInfo>,
     value: RefCell<String>,

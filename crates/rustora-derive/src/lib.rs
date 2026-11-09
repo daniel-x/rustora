@@ -12,6 +12,8 @@
 //! - `#[field(from_key)]`: parse the value from the node value itself
 //! - `#[field(allow_empty)]`: keep empty entries when splitting arrays
 
+mod persist;
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, LitStr, parse_macro_input};
@@ -154,4 +156,28 @@ fn expand(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             }
         }
     })
+}
+
+/// `#[derive(Persist)]` implements the save game traits of `rustora_engine::persist`.
+///
+/// Without a container attribute it implements `PersistState`: the `Cell` and `RefCell` fields are saved and loaded
+/// in place, other fields only when their type implements `PersistState`. Container attributes add by value
+/// serialization:
+/// - `#[persist(value)]`: `Persist` by value.
+/// - `#[persist(shared)]`: like `value`, and `Rc`s of the type keep their identity (`RcPersist`).
+/// - `#[persist(activity)]`, `#[persist(effect)]`: like `shared`, loaded through the `dyn Activity` or `dyn Effect`
+///   registry.
+///
+/// `#[persist(owned)]` additionally marks `Rc`s of the type as owned by their holder, which writes them in place.
+///
+/// Field attributes: `#[persist(skip)]` is not saved and loads as `Default`; `#[persist(me)]` is the `Weak` self
+/// reference of a shared type; `#[persist(in_place)]` on a `RefCell` writes its content in place
+/// instead of replacing it.
+#[proc_macro_derive(Persist, attributes(persist))]
+pub fn derive_persist(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match persist::expand(&input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
 }

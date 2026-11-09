@@ -52,6 +52,34 @@ impl ReplayConnection {
             order_latency,
         }
     }
+
+    /// The connection of a replay resumed at `net_frame` from a save game: the packets of earlier frames are
+    /// dropped. Returns it with the clients that disconnected before `net_frame`.
+    pub fn resumed(chunks: Vec<Chunk>, order_latency: i32, net_frame: i32) -> (Self, Vec<i32>) {
+        let mut disconnected = Vec::new();
+        let mut kept = Vec::new();
+        for mut chunk in chunks {
+            let chunk_frame = chunk.frame;
+            chunk.packets.retain(|p| {
+                let frame = match Packet::parse(p.client_id, &p.data) {
+                    Ok(Packet::Disconnect { frame, client_id }) => {
+                        if frame < net_frame {
+                            disconnected.push(client_id);
+                        }
+                        frame
+                    }
+                    Ok(Packet::Sync { frame, .. }) => frame,
+                    Ok(Packet::Orders(orders)) if orders.frame != 0 => orders.frame,
+                    _ => chunk_frame,
+                };
+                frame >= net_frame
+            });
+            if !chunk.packets.is_empty() {
+                kept.push(chunk);
+            }
+        }
+        (Self::new(kept, order_latency), disconnected)
+    }
 }
 
 impl Connection for ReplayConnection {
@@ -161,6 +189,21 @@ impl OrderManager {
         }
     }
 
+    /// Continues a game restored from a save game at `net_frame` and `local_frame`, with the orders of the
+    /// clients except `disconnected` still to come.
+    pub fn resume(&mut self, net_frame: i32, local_frame: i32, disconnected: &[i32]) {
+        for c in &self.world.lobby_info.clients {
+            if !c.is_bot() && !disconnected.contains(&c.index) {
+                self.pending_orders.insert(c.index, Default::default());
+            }
+        }
+        self.net_frame_number = net_frame;
+        self.world.set_net_frame_number(net_frame);
+        self.local_frame_number = local_frame;
+        self.sent_orders_frame = net_frame - 1;
+        self.connection.start_game();
+    }
+
     pub fn game_started(&self) -> bool {
         self.net_frame_number != 0
     }
@@ -177,6 +220,7 @@ impl OrderManager {
         self.net_frame_number = 1;
         self.world.set_net_frame_number(1);
         self.local_frame_number = 0;
+        self.world.set_local_frame_number(0);
         self.connection.start_game();
     }
 
@@ -394,6 +438,7 @@ impl OrderManager {
         }
         if will_tick {
             self.local_frame_number += 1;
+            self.world.set_local_frame_number(self.local_frame_number);
         }
         will_tick
     }

@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use rustora_core::world_types::WDist;
 use rustora_derive::FieldLoad;
-use rustora_engine::activity::{LINE_ORANGE_RED, with_line_color};
+use rustora_engine::activity::LINE_ORANGE_RED;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN, hash_actor};
 use rustora_engine::actor_ext::enabled_target_types;
 use rustora_engine::bitset::BitSet;
@@ -36,7 +36,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Guardable", |n| load_info!(GuardableInfo, n));
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum UnitStance {
     #[default]
     HoldFire,
@@ -115,6 +116,7 @@ impl AutoTargetInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AutoTarget {
     pub info: Rc<AutoTargetInfo>,
     state: ConditionalState,
@@ -516,6 +518,7 @@ impl Default for AutoTargetPriorityInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AutoTargetPriority {
     pub info: Rc<AutoTargetPriorityInfo>,
     state: ConditionalState,
@@ -544,6 +547,7 @@ impl Default for GuardInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Guard {
     info: Rc<GuardInfo>,
     mv: OnceCell<Rc<dyn IMove>>,
@@ -575,7 +579,14 @@ impl Guard {
             queued,
             AttackMoveActivity::new(
                 self_,
-                Rc::new(move || with_line_color(mv.move_follow(&me, &t, WDist::ZERO, range, None), LINE_ORANGE_RED)),
+                crate::attack_move::MoveOrder::Follow {
+                    mv,
+                    self_: me,
+                    target: t,
+                    min_range: WDist::ZERO,
+                    max_range: range,
+                    line_color: Some(LINE_ORANGE_RED),
+                },
                 false,
             ),
         );
@@ -607,7 +618,15 @@ impl Default for GuardableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Guardable;
 
 register_traits!(Guardable);
 info_impl!(GuardableInfo => |_info, _init| Some(Rc::new(Guardable)));
+
+rustora_engine::persist_trait_refs!(dyn INotifyStanceChanged, dyn IOverrideAutoTarget);
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: StanceInit);
+}

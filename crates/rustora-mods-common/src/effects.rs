@@ -88,6 +88,10 @@ impl SpriteEffect {
 }
 
 impl Effect for SpriteEffect {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, world: &Rc<World>) {
         let delay = self.delay.get();
         self.delay.set(delay - 1);
@@ -121,7 +125,8 @@ impl Effect for SpriteEffect {
 }
 
 /// The contrail fields shared by `BulletInfo` and `MissileInfo`.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ContrailFields {
     pub contrail_length: i32,
     pub contrail_delay: i32,
@@ -336,6 +341,10 @@ impl ContrailFader {
 }
 
 impl Effect for ContrailFader {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, world: &Rc<World>) {
         let t = self.ticks.get();
         self.ticks.set(t + 1);
@@ -460,6 +469,10 @@ impl FlashTarget {
 }
 
 impl Effect for FlashTarget {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, world: &Rc<World>) {
         self.tick.set(self.tick.get() + 1);
         if self.tick.get() >= self.count * self.interval || !self.target.is_in_world() {
@@ -525,6 +538,10 @@ impl SpriteAnnotation {
 }
 
 impl Effect for SpriteAnnotation {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, _world: &Rc<World>) {
         self.animation.tick();
     }
@@ -539,7 +556,10 @@ impl Effect for SpriteAnnotation {
 }
 
 /// `Effects/SpawnActorEffect.cs`: adds an actor to the world after a delay and queues its path.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct SpawnActorEffect {
+    #[persist(me)]
     me: Weak<SpawnActorEffect>,
     actor: ActorRef,
     path_after_spawn: Vec<rustora_core::world_types::CPos>,
@@ -591,4 +611,17 @@ impl Effect for SpawnActorEffect {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+rustora_engine::persist_never!(SpriteEffect);
+
+rustora_engine::persist_never!(ContrailFader);
+
+rustora_engine::persist_never!(FlashTarget);
+
+rustora_engine::persist_never!(SpriteAnnotation);
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_effects!(SpawnActorEffect);
 }

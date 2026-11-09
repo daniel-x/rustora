@@ -167,6 +167,7 @@ struct QueueManager {
     water_state: Cell<WaterCheck>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct BaseBuilderBotModule {
     pub info: Rc<BaseBuilderBotModuleInfo>,
     state: ConditionalState,

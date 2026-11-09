@@ -54,6 +54,7 @@ impl Default for AttackMoveInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AttackMove {
     pub info: Rc<AttackMoveInfo>,
     mv: Rc<dyn IMove>,
@@ -91,7 +92,14 @@ impl IResolveOrder for AttackMove {
             order.queued,
             AttackMoveActivity::new(
                 self_,
-                Rc::new(move || with_line_color(mv.move_to(target_location, 8, None, false), LINE_ORANGE_RED)),
+                MoveOrder::To {
+                    mv,
+                    cell: target_location,
+                    near_enough: 8,
+                    ignore_actor: None,
+                    evaluate_nearest_movable_cell: false,
+                    line_color: Some(LINE_ORANGE_RED),
+                },
                 assault,
             ),
         );
@@ -99,9 +107,11 @@ impl IResolveOrder for AttackMove {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct AttackMoveActivity {
     base: ActivityBase,
-    get_move: Rc<dyn Fn() -> ActivityRef>,
+    get_move: MoveOrder,
     is_assault_move: bool,
     auto_target: Option<Rc<AutoTarget>>,
     attack_move: Option<Rc<AttackMove>>,
@@ -110,8 +120,83 @@ pub struct AttackMoveActivity {
     target: RefCell<Target>,
 }
 
+/// The move of an [`AttackMoveActivity`], created anew whenever the activity moves on.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub enum MoveOrder {
+    /// `IMove.MoveTo`, with an optional target line color.
+    To {
+        mv: Rc<dyn IMove>,
+        cell: rustora_core::world_types::CPos,
+        near_enough: i32,
+        ignore_actor: Option<ActorRef>,
+        evaluate_nearest_movable_cell: bool,
+        line_color: Option<rustora_core::fieldloader::Color>,
+    },
+    /// `IMove.MoveWithinRange` of a cell target.
+    WithinRange {
+        mv: Rc<dyn IMove>,
+        target: Target,
+        min_range: rustora_core::world_types::WDist,
+        max_range: rustora_core::world_types::WDist,
+    },
+    /// `IMove.MoveFollow`, with an optional target line color.
+    Follow {
+        mv: Rc<dyn IMove>,
+        self_: ActorRef,
+        target: Target,
+        min_range: rustora_core::world_types::WDist,
+        max_range: rustora_core::world_types::WDist,
+        line_color: Option<rustora_core::fieldloader::Color>,
+    },
+    /// A closure, which save games cannot hold.
+    Closure(rustora_engine::persist::Unsaved<dyn Fn() -> ActivityRef>),
+}
+
+impl MoveOrder {
+    fn activity(&self) -> ActivityRef {
+        match self {
+            MoveOrder::To {
+                mv,
+                cell,
+                near_enough,
+                ignore_actor,
+                evaluate_nearest_movable_cell,
+                line_color,
+            } => {
+                let a = mv.move_to(*cell, *near_enough, ignore_actor.clone(), *evaluate_nearest_movable_cell);
+                match line_color {
+                    Some(c) => with_line_color(a, *c),
+                    None => a,
+                }
+            }
+            MoveOrder::WithinRange {
+                mv,
+                target,
+                min_range,
+                max_range,
+            } => mv.move_within_range(target, *min_range, *max_range, None),
+            MoveOrder::Follow {
+                mv,
+                self_,
+                target,
+                min_range,
+                max_range,
+                line_color,
+            } => {
+                let a = mv.move_follow(self_, target, *min_range, *max_range, None);
+                match line_color {
+                    Some(c) => with_line_color(a, *c),
+                    None => a,
+                }
+            }
+            MoveOrder::Closure(f) => (f.0)(),
+        }
+    }
+}
+
 impl AttackMoveActivity {
-    pub fn new(self_: &ActorRef, get_move: Rc<dyn Fn() -> ActivityRef>, assault_moving: bool) -> ActivityRef {
+    pub fn new(self_: &ActorRef, get_move: MoveOrder, assault_moving: bool) -> ActivityRef {
         let base = ActivityBase::default();
         base.child_has_priority.set(false);
         Rc::new(AttackMoveActivity {
@@ -131,12 +216,12 @@ impl Activity for AttackMoveActivity {
     activity_common!("AttackMoveActivity");
 
     fn target_line_nodes(&self, self_: &ActorRef) -> Vec<TargetLineNode> {
-        (self.get_move)().target_line_nodes(self_)
+        self.get_move.activity().target_line_nodes(self_)
     }
 
     fn on_first_run(&self, self_: &ActorRef) {
         let (Some(attack_move), true) = (&self.attack_move, self.auto_target.is_some()) else {
-            self.base.queue_child((self.get_move)());
+            self.base.queue_child(self.get_move.activity());
             return;
         };
         let condition = if self.is_assault_move {
@@ -170,7 +255,7 @@ impl Activity for AttackMoveActivity {
             }
             if self.base.child_activity().is_none() {
                 self.running_move_activity.set(true);
-                self.base.queue_child((self.get_move)());
+                self.base.queue_child(self.get_move.activity());
             }
         }
         self.base.tick_child(self_) && self.running_move_activity.get()
@@ -185,4 +270,9 @@ impl Activity for AttackMoveActivity {
     fn get_targets(&self, self_: &ActorRef) -> Vec<Target> {
         self.base.child_activity().map_or_else(Vec::new, |c| c.get_targets(self_))
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(AttackMoveActivity);
 }

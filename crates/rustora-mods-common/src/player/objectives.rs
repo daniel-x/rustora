@@ -90,14 +90,16 @@ pub trait INotifyOwnerLost {
     fn on_owner_lost(&self, self_: &ActorRef);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum ObjectiveState {
     Incomplete,
     Completed,
     Failed,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct MissionObjective {
     pub required: bool,
     pub description: String,
@@ -137,6 +139,7 @@ impl Default for MissionObjectivesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct MissionObjectives {
     pub info: Rc<MissionObjectivesInfo>,
     player: PlayerRef,
@@ -382,6 +385,7 @@ impl Default for ConquestVictoryConditionsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ConquestVictoryConditions {
     info: Rc<ConquestVictoryConditionsInfo>,
     mo: Rc<MissionObjectives>,
@@ -536,6 +540,7 @@ pub struct StrategicPointInfo {
 }
 
 /// Marks a place that needs to be in possession for `StrategicVictoryConditions`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct StrategicPoint;
 
 register_traits!(StrategicPoint);
@@ -568,6 +573,7 @@ impl Default for StrategicVictoryConditionsInfo {
 }
 
 /// King of the Hill: a player wins by holding `RatioRequired` percent of the strategic points for `HoldDuration` ticks.
+#[derive(rustora_engine::persist::Persist)]
 pub struct StrategicVictoryConditions {
     info: Rc<StrategicVictoryConditionsInfo>,
     mo: Rc<MissionObjectives>,
@@ -732,6 +738,7 @@ impl Default for OwnerLostActionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct OwnerLostAction {
     info: Rc<OwnerLostActionInfo>,
     state: ConditionalState,
@@ -779,6 +786,7 @@ pub struct MustBeDestroyedInfo {
     pub required_for_short_game: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct MustBeDestroyed {
     pub info: Rc<MustBeDestroyedInfo>,
 }
@@ -815,6 +823,7 @@ impl Default for TimeLimitManagerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TimeLimitManager {
     info: Rc<TimeLimitManagerInfo>,
     ticks_per_second: i32,

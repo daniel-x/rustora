@@ -32,6 +32,7 @@ pub struct RadarColorFromTerrainInfo {
 }
 
 /// `RadarColorFromTerrain`: the radar color of the terrain type `Terrain`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct RadarColorFromTerrain {
     color: Color,
 }
@@ -73,6 +74,7 @@ impl Default for AppearsOnRadarInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AppearsOnRadar {
     pub info: Rc<AppearsOnRadarInfo>,
     state: ConditionalState,
@@ -190,8 +192,10 @@ impl Default for RadarPingsInfo {
 }
 
 /// `RadarPings`: cosmetic state, not part of the sync hash.
+#[derive(rustora_engine::persist::Persist)]
 pub struct RadarPings {
     info: Rc<RadarPingsInfo>,
+    #[persist(skip)]
     pub pings: RefCell<Vec<Rc<RadarPing>>>,
     pub last_ping_position: Cell<Option<WPos>>,
 }

@@ -132,6 +132,7 @@ impl Default for CloakInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Cloak {
     pub info: Rc<CloakInfo>,
     state: ConditionalState,
@@ -496,6 +497,7 @@ impl Default for DetectCloakedInfo {
 }
 
 /// `DetectCloaked`; RA has no `IDetectCloakedModifier`, so the range is not modified.
+#[derive(rustora_engine::persist::Persist)]
 pub struct DetectCloaked {
     pub info: Rc<DetectCloakedInfo>,
     state: ConditionalState,

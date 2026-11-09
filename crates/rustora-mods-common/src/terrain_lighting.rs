@@ -48,6 +48,8 @@ impl Default for TerrainLightingInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct LightSource {
     pos: WPos,
     range: WDist,
@@ -56,6 +58,7 @@ struct LightSource {
 }
 
 /// `TerrainLighting`. The light sources are kept in insertion order; C# bins them only to find them faster.
+#[derive(rustora_engine::persist::Persist)]
 pub struct TerrainLighting {
     info: Rc<TerrainLightingInfo>,
     world: std::rc::Weak<World>,
@@ -147,6 +150,7 @@ impl Default for TerrainLightSourceInfo {
 }
 
 /// `TerrainLightSource`: a light while the actor is in the world.
+#[derive(rustora_engine::persist::Persist)]
 pub struct TerrainLightSource {
     info: Rc<TerrainLightSourceInfo>,
     token: Cell<i32>,

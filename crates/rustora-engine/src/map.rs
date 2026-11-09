@@ -66,6 +66,17 @@ pub struct CellLayer<T> {
     data: Vec<T>,
 }
 
+impl<T> CellLayer<T> {
+    /// The values in row order, for save games.
+    pub fn raw(&self) -> &Vec<T> {
+        &self.data
+    }
+
+    pub fn from_raw(width: i32, height: i32, data: Vec<T>) -> Self {
+        CellLayer { width, height, data }
+    }
+}
+
 impl<T: Clone> CellLayer<T> {
     pub fn new(width: i32, height: i32, value: T) -> Self {
         CellLayer {
@@ -514,4 +525,16 @@ fn edge_cells(b: &Rectangle) -> Vec<CPos> {
         out.push(CPos::new(b.right() - 1, v));
     }
     out
+}
+
+/// The terrain types that the simulation changes, such as cells whose resources are gone.
+impl crate::persist::PersistState for Map {
+    fn save_state(&self, w: &mut crate::persist::SaveWriter) {
+        self.custom_terrain.save_state(w);
+        self.cached_terrain_index.save_state(w);
+    }
+    fn load_state(&self, r: &mut crate::persist::SaveReader) {
+        self.custom_terrain.load_state(r);
+        self.cached_terrain_index.load_state(r);
+    }
 }

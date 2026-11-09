@@ -52,6 +52,8 @@ pub struct ScreenShakerInfo {
 
 const MAX_MULTIPLIER: f32 = 3.0;
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct ShakeEffect {
     expiry_time: i32,
     position: WPos,
@@ -60,6 +62,7 @@ struct ShakeEffect {
 }
 
 /// `ScreenShaker`. The client publishes its view center and applies the offset, which only it can do.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ScreenShaker {
     effects: RefCell<Vec<ShakeEffect>>,
     ticks: Cell<i32>,
@@ -145,6 +148,7 @@ impl Default for ShakeOnDeathInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ShakeOnDeath {
     info: Rc<ShakeOnDeathInfo>,
 }
@@ -194,6 +198,7 @@ impl Default for ThrowsParticleInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ThrowsParticle {
     pos: Rc<Cell<WVec>>,
     initial_pos: WVec,
@@ -297,6 +302,7 @@ impl Default for GpsDotInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GpsDot {
     info: Rc<GpsDotInfo>,
     effect: OnceCell<Rc<GpsDotEffect>>,
@@ -350,6 +356,8 @@ impl INotifyRemovedFromWorld for GpsDot {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct DotState {
     player: PlayerRef,
     watcher: Rc<GpsWatcher>,
@@ -392,6 +400,10 @@ impl GpsDotEffect {
 }
 
 impl Effect for GpsDotEffect {
+    fn is_cosmetic(&self) -> bool {
+        true
+    }
+
     fn tick(&self, _world: &Rc<World>) {
         for state in &self.states {
             state.visible.set(self.should_render(state));
@@ -446,6 +458,7 @@ impl Default for TimedConditionBarInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TimedConditionBar {
     info: Rc<TimedConditionBarInfo>,
     value: Cell<f32>,
@@ -497,6 +510,7 @@ impl Default for CapturableProgressBarInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CapturableProgressBar {
     info: Rc<CapturableProgressBarInfo>,
     state: ConditionalState,
@@ -563,6 +577,7 @@ impl Default for ProductionBarInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProductionBar {
     info: Rc<ProductionBarInfo>,
     state: ConditionalState,
@@ -678,6 +693,7 @@ impl Default for SupportPowerChargeBarInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SupportPowerChargeBar {
     info: Rc<SupportPowerChargeBarInfo>,
     state: ConditionalState,
@@ -712,3 +728,5 @@ impl ISelectionBar for SupportPowerChargeBar {
         self.info.color
     }
 }
+
+rustora_engine::persist_never!(GpsDotEffect);

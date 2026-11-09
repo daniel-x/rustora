@@ -13,7 +13,8 @@ use crate::target::Target;
 
 pub type ActivityRef = Rc<dyn Activity>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, crate::persist::Persist)]
+#[persist(value)]
 pub enum ActivityState {
     Queued,
     Active,
@@ -22,6 +23,8 @@ pub enum ActivityState {
 }
 
 /// State shared by all activities (the private fields of the C# base class).
+#[derive(crate::persist::Persist)]
+#[persist(value)]
 pub struct ActivityBase {
     state: Cell<ActivityState>,
     child: RefCell<Option<ActivityRef>>,
@@ -144,7 +147,7 @@ pub fn chain_target_line_nodes(first: Option<ActivityRef>, self_: &ActorRef) -> 
     out
 }
 
-pub trait Activity: Any {
+pub trait Activity: Any + crate::persist::PersistDyn {
     fn base(&self) -> &ActivityBase;
 
     /// Returns true when the activity is complete.

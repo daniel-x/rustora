@@ -612,6 +612,24 @@ impl Default for WRot {
 }
 
 impl WRot {
+    /// The Euler angles and the quaternion, for save games.
+    pub fn to_raw(self) -> [i32; 7] {
+        [self.roll.angle, self.pitch.angle, self.yaw.angle, self.x, self.y, self.z, self.w]
+    }
+
+    /// The inverse of [`WRot::to_raw`].
+    pub fn from_raw(r: [i32; 7]) -> Self {
+        WRot {
+            roll: WAngle { angle: r[0] },
+            pitch: WAngle { angle: r[1] },
+            yaw: WAngle { angle: r[2] },
+            x: r[3],
+            y: r[4],
+            z: r[5],
+            w: r[6],
+        }
+    }
+
     pub const NONE: WRot = WRot {
         roll: WAngle::ZERO,
         pitch: WAngle::ZERO,
@@ -1051,6 +1069,22 @@ pub struct MersenneTwister {
 }
 
 impl MersenneTwister {
+    /// The generator state and its position, for save games.
+    pub fn state(&self) -> (&[u32; 624], usize) {
+        (&self.mt, self.index)
+    }
+
+    /// Restores a state of [`MersenneTwister::state`] with its `last` and `total_count`.
+    pub fn from_state(mt: [u32; 624], index: usize, last: i32, total_count: i32) -> Self {
+        MersenneTwister {
+            mt,
+            index,
+            last,
+            total_count,
+            trace: None,
+        }
+    }
+
     pub fn new(seed: i32) -> Self {
         let mut mt = [0u32; 624];
         mt[0] = seed as u32;

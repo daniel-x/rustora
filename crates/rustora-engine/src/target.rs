@@ -11,7 +11,8 @@ use crate::actor::ActorRef;
 use crate::frozen::FrozenActorRef;
 use crate::world::World;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, crate::persist::Persist)]
+#[persist(value)]
 pub enum TargetType {
     Invalid,
     Actor,
@@ -19,7 +20,8 @@ pub enum TargetType {
     FrozenActor,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, crate::persist::Persist)]
+#[persist(value)]
 pub enum Target {
     #[default]
     Invalid,

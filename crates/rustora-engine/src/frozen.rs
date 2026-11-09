@@ -26,10 +26,14 @@ use crate::{info_impl, register_traits};
 
 pub type FrozenActorRef = Rc<FrozenActor>;
 
+crate::persist_trait_refs!(dyn ICreatesFrozenActors);
+
 pub trait ICreatesFrozenActors {
     fn on_visibility_changed(&self, frozen: &FrozenActor);
 }
 
+#[derive(crate::persist::Persist)]
+#[persist(shared)]
 pub struct FrozenActor {
     pub footprint: Vec<PPos>,
     pub center_position: WPos,
@@ -51,6 +55,7 @@ pub struct FrozenActor {
     /// Whether `TickRender` would have captured renderables, see [`FrozenActor::has_renderables`].
     rendered: Cell<bool>,
     /// `FrozenActor.Renderables`: what the client draws while the actor is hidden.
+    #[persist(skip)]
     pub renderables: RefCell<Rc<Vec<crate::render::Renderable>>>,
     pub update_visibility_next_tick: Cell<bool>,
 }
@@ -234,6 +239,7 @@ impl Default for FrozenActorLayerInfo {
     }
 }
 
+#[derive(crate::persist::Persist)]
 pub struct FrozenActorLayer {
     visibility_hash: Cell<i32>,
     frozen_hash: Cell<i32>,

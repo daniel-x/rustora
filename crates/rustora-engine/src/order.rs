@@ -11,7 +11,8 @@ use crate::player::PlayerRef;
 use crate::target::Target;
 use crate::world::World;
 
-#[derive(Clone)]
+#[derive(Clone, crate::persist::Persist)]
+#[persist(value)]
 pub struct Order {
     pub order_string: String,
     pub subject: Option<ActorRef>,

@@ -54,12 +54,14 @@ impl Default for SmudgeLayerInfo {
 }
 
 /// One drawn smudge: frame `depth` of sequence `kind` of the image `SmudgeLayerInfo.sequence`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct Smudge {
     pub kind: String,
     pub depth: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SmudgeLayer {
     pub info: Rc<SmudgeLayerInfo>,
     actor: ActorRef,

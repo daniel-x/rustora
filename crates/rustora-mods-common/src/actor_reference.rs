@@ -14,6 +14,8 @@ use rustora_engine::value_init;
 value_init!(HealthInit, i32);
 
 /// The `allowZero` argument of `HealthInit`: a value of 0 creates a dead actor instead of one with 1%.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct AllowZeroHealthInit;
 
 impl ActorInit for AllowZeroHealthInit {
@@ -24,6 +26,8 @@ impl ActorInit for AllowZeroHealthInit {
 value_init!(TurretFacingInit, WAngle);
 
 /// `SkipMakeAnimsInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct SkipMakeAnimsInit;
 impl ActorInit for SkipMakeAnimsInit {
     fn as_any(&self) -> &dyn std::any::Any {
@@ -32,6 +36,8 @@ impl ActorInit for SkipMakeAnimsInit {
 }
 
 /// `SpawnedByMapInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct SpawnedByMapInit;
 impl ActorInit for SpawnedByMapInit {
     fn as_any(&self) -> &dyn std::any::Any {
@@ -40,6 +46,8 @@ impl ActorInit for SpawnedByMapInit {
 }
 
 /// An init type not ported yet; kept so lookups by name still work.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct UnknownInit {
     pub name: String,
     pub instance_name: Option<String>,
@@ -108,4 +116,9 @@ impl ActorReference {
     pub fn owner_name(&self) -> Option<String> {
         self.inits.get::<OwnerInit>().map(|o| o.internal_name.clone())
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: AllowZeroHealthInit, SkipMakeAnimsInit, SpawnedByMapInit, UnknownInit, HealthInit, TurretFacingInit);
 }

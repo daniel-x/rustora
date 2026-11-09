@@ -38,10 +38,58 @@ impl Default for ActorMapInfo {
     }
 }
 
-type ActorCallback = Rc<dyn Fn(&ActorRef)>;
+/// A trait that a proximity trigger notifies, which save games keep, unlike a closure.
+pub trait ITriggerWatcher {
+    fn actor_entered(&self, a: &ActorRef);
+    fn actor_exited(&self, a: &ActorRef);
+}
+
+rustora_engine::persist_trait_refs!(dyn ITriggerWatcher);
+
+/// The function a trigger calls with an actor that enters or leaves it.
+#[derive(Clone)]
+pub enum ActorCallback {
+    Closure(Rc<dyn Fn(&ActorRef)>),
+    Entered(Rc<dyn ITriggerWatcher>),
+    Exited(Rc<dyn ITriggerWatcher>),
+}
+
+impl ActorCallback {
+    fn call(&self, a: &ActorRef) {
+        match self {
+            ActorCallback::Closure(f) => f(a),
+            ActorCallback::Entered(t) => t.actor_entered(a),
+            ActorCallback::Exited(t) => t.actor_exited(a),
+        }
+    }
+}
+
+impl rustora_engine::persist::Persist for ActorCallback {
+    fn save(&self, w: &mut rustora_engine::persist::SaveWriter) {
+        match self {
+            ActorCallback::Closure(_) => panic!("save game: a trigger holds a closure"),
+            ActorCallback::Entered(t) => {
+                w.u8(0);
+                t.save(w)
+            }
+            ActorCallback::Exited(t) => {
+                w.u8(1);
+                t.save(w)
+            }
+        }
+    }
+    fn load(r: &mut rustora_engine::persist::SaveReader) -> Self {
+        match r.u8() {
+            0 => ActorCallback::Entered(rustora_engine::persist::Persist::load(r)),
+            1 => ActorCallback::Exited(rustora_engine::persist::Persist::load(r)),
+            t => r.fail(format!("invalid trigger callback {t}")),
+        }
+    }
+}
 
 /// `Actor` by ID for sets.
-#[derive(Clone)]
+#[derive(Clone, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ById(pub ActorRef);
 impl PartialEq for ById {
     fn eq(&self, o: &ById) -> bool {
@@ -55,6 +103,8 @@ impl std::hash::Hash for ById {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 struct CellTrigger {
     footprint: Vec<CPos>,
     dirty: Cell<bool>,
@@ -64,6 +114,8 @@ struct CellTrigger {
     current_actors: RefCell<NetSet<ById>>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 struct ProximityTrigger {
     top_left: Cell<WPos>,
     bottom_right: Cell<WPos>,
@@ -89,7 +141,8 @@ impl ProximityTrigger {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct Bin {
     actors: Vec<ActorRef>,
     proximity_triggers: Vec<Rc<ProximityTrigger>>,
@@ -98,6 +151,7 @@ struct Bin {
 /// Nodes of one cell, oldest first (C# keeps a linked list with the newest at the head).
 type CellNodes = Vec<(u8, ActorRef)>;
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ActorMap {
     info: Rc<ActorMapInfo>,
     map: Rc<rustora_engine::map::Map>,
@@ -106,6 +160,7 @@ pub struct ActorMap {
     proximity_triggers: RefCell<NetMap<i32, Rc<ProximityTrigger>>>,
     next_trigger_id: Cell<i32>,
     influence: RefCell<CellLayer<CellNodes>>,
+    #[persist(skip)]
     cell_updated: RefCell<Vec<Rc<dyn Fn(CPos)>>>,
     bins: RefCell<Vec<Bin>>,
     rows: i32,
@@ -188,14 +243,14 @@ fn notify_diff(old: &NetSet<ById>, current: &NetSet<ById>, entered: &Option<Acto
     if let Some(f) = entered {
         for a in current.iter() {
             if !old.contains(a) {
-                f(&a.0);
+                f.call(&a.0);
             }
         }
     }
     if let Some(f) = exited {
         for a in old.iter() {
             if !current.contains(a) {
-                f(&a.0);
+                f.call(&a.0);
             }
         }
     }
@@ -534,7 +589,7 @@ impl ActorMap {
         if let Some(f) = &t.on_exited {
             let cur = t.current_actors.borrow().clone();
             for a in cur.iter() {
-                f(&a.0);
+                f.call(&a.0);
             }
         }
     }

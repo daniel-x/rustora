@@ -12,7 +12,7 @@ use crate::world::World;
 
 pub type EffectRef = Rc<dyn Effect>;
 
-pub trait Effect: Any {
+pub trait Effect: Any + crate::persist::PersistDyn {
     fn tick(&self, world: &Rc<World>);
     /// Whether the effect implements `ISync`.
     fn is_sync(&self) -> bool {
@@ -20,6 +20,10 @@ pub trait Effect: Any {
     }
     fn sync_hash(&self) -> i32 {
         0
+    }
+    /// True for effects that only show something and do not change the simulation; save games leave them out.
+    fn is_cosmetic(&self) -> bool {
+        false
     }
     /// The type name without its module path, for the sync detail dump.
     fn type_name(&self) -> &'static str {

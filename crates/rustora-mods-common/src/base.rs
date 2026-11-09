@@ -85,6 +85,7 @@ impl Default for DeveloperModeInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct DeveloperMode {
     info: Rc<DeveloperModeInfo>,
     enabled: Cell<bool>,
@@ -254,7 +255,7 @@ pub struct PlayerExperienceInfo {
     pub instance_name: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct PlayerExperience {
     experience: Cell<i32>,
 }
@@ -298,6 +299,7 @@ impl Default for MapOptionsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct MapOptions {
     info: Rc<MapOptionsInfo>,
     short_game: Cell<bool>,
@@ -345,6 +347,7 @@ impl Default for MapBuildRadiusInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct MapBuildRadius {
     info: Rc<MapBuildRadiusInfo>,
     pub ally_build_radius_enabled: Cell<bool>,
@@ -389,8 +392,10 @@ pub struct PowerManagerInfo {
     pub advice_interval: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PowerManager {
     self_: ActorRef,
+    #[persist(skip)]
     last_power_advice: Cell<Option<std::time::Instant>>,
     dev_mode: Rc<DeveloperMode>,
     power_drain: RefCell<NetMap<u32, i32>>,
@@ -618,6 +623,7 @@ pub struct PowerInfo {
     pub amount: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Power {
     info: Rc<PowerInfo>,
     state: ConditionalState,
@@ -693,6 +699,7 @@ pub struct ScalePowerWithHealthInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ScalePowerWithHealth {
     health: Rc<dyn IHealth>,
     power: RefCell<Rc<PowerManager>>,
@@ -731,6 +738,7 @@ pub struct AffectedByPowerOutageInfo {
     pub condition: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AffectedByPowerOutage {
     info: Rc<AffectedByPowerOutageInfo>,
     state: ConditionalState,
@@ -812,6 +820,7 @@ pub struct GrantConditionOnPowerStateInfo {
     pub valid_power_states: PowerState,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnPowerState {
     info: Rc<GrantConditionOnPowerStateInfo>,
     state: ConditionalState,
@@ -895,6 +904,7 @@ impl Default for BaseProviderInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct BaseProvider {
     pub info: Rc<BaseProviderInfo>,
     state: ConditionalState,
@@ -942,6 +952,7 @@ pub struct BaseBuildingInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct BaseBuilding;
 register_traits!(BaseBuilding);
 info_impl!(BaseBuildingInfo => |_, _| Some(Rc::new(BaseBuilding)));
@@ -956,6 +967,7 @@ pub struct GivesBuildableAreaInfo {
     pub area_types: IndexSet<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GivesBuildableArea {
     info: Rc<GivesBuildableAreaInfo>,
     state: ConditionalState,
@@ -988,11 +1000,13 @@ impl Default for RequiresBuildableAreaInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RequiresBuildableArea;
 register_traits!(RequiresBuildableArea);
 info_impl!(RequiresBuildableAreaInfo => |_, _| Some(Rc::new(RequiresBuildableArea)));
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum LineBuildDirection {
     #[default]
     Unset,
@@ -1003,6 +1017,8 @@ pub enum LineBuildDirection {
 value_init!(LineBuildDirectionInit, LineBuildDirection);
 
 /// `LineBuildParentInit`: parents by actor, or by map actor name.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct LineBuildParentInit {
     pub actors: Option<Vec<Option<ActorRef>>>,
     pub names: Vec<String>,
@@ -1036,6 +1052,7 @@ impl Default for LineBuildInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct LineBuild {
     info: Rc<LineBuildInfo>,
     parent_nodes: Vec<ActorRef>,
@@ -1126,6 +1143,7 @@ impl Default for LineBuildNodeInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct LineBuildNode;
 register_traits!(LineBuildNode);
 info_impl!(LineBuildNodeInfo => |_, _| Some(Rc::new(LineBuildNode)));
@@ -1133,6 +1151,8 @@ info_impl!(LineBuildNodeInfo => |_, _| Some(Rc::new(LineBuildNode)));
 value_init!(FreeActorInit, bool);
 
 /// `ParentActorInit`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ParentActorInit(pub ActorRef);
 
 impl ActorInit for ParentActorInit {
@@ -1154,6 +1174,7 @@ pub struct FreeActorInfo {
     pub allow_respawn: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct FreeActor {
     info: Rc<FreeActorInfo>,
     state: ConditionalState,
@@ -1451,6 +1472,7 @@ impl Default for RepairableBuildingInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RepairableBuilding {
     info: Rc<RepairableBuildingInfo>,
     state: ConditionalState,
@@ -1626,6 +1648,7 @@ pub struct AllyRepairInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AllyRepair;
 
 register_traits!(AllyRepair: IResolveOrder);
@@ -1653,6 +1676,7 @@ pub struct DebugPauseStateInfo {
 }
 
 /// Adds the pause state of the world to the sync hash.
+#[derive(rustora_engine::persist::Persist)]
 pub struct DebugPauseState {
     world: std::rc::Weak<rustora_engine::world::World>,
 }
@@ -1666,4 +1690,9 @@ impl ISync for DebugPauseState {
     fn sync_hash(&self) -> i32 {
         self.world.upgrade().is_some_and(|w| w.paused()) as i32
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: LineBuildParentInit, ParentActorInit, LineBuildDirectionInit, FreeActorInit);
 }

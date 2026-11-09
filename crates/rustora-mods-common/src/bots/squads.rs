@@ -101,7 +101,8 @@ impl Default for SquadManagerBotModuleInfo {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum SquadType {
     Assault,
     Air,
@@ -111,6 +112,8 @@ pub enum SquadType {
 }
 
 /// The squad states. Ground states carry the elected leader and the stall detection of the attack states.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 enum State {
     GroundIdle {
         leader: Option<ActorRef>,
@@ -162,6 +165,8 @@ impl State {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 pub struct Squad {
     pub units: RefCell<NetMap<u32, ActorRef>>,
     pub ty: SquadType,
@@ -170,6 +175,7 @@ pub struct Squad {
     state: RefCell<State>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SquadManagerBotModule {
     pub info: Rc<SquadManagerBotModuleInfo>,
     state: ConditionalState,

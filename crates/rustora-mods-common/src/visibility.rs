@@ -119,6 +119,7 @@ enum Modifiers {
 }
 
 /// `AffectsShroud`, shared by `RevealsShroud` and `CreatesShroud`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct AffectsShroud {
     info: AffectsShroudInfo,
     valid_relationships: PlayerRelationship,
@@ -130,6 +131,7 @@ pub struct AffectsShroud {
     cached_trait_disabled: Cell<bool>,
     cached_pos: Cell<WPos>,
     modifiers: OnceCell<Modifiers>,
+    #[persist(skip)]
     key: Cell<usize>,
 }
 
@@ -153,7 +155,11 @@ impl TraitObject for AffectsShroud {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    rustora_engine::trait_object_persist!(AffectsShroud: ISync, INotifyAddedToWorld, INotifyRemovedFromWorld, INotifyMoving, INotifyCenterPositionChanged, ITick, INotifyCreated, IObservesVariables, IDisabledTrait);
 }
+
+rustora_engine::persist_trait_refs!(AffectsShroud);
 
 fn new_affects(a: &AffectsShroudInfo, valid: PlayerRelationship, source_type: SourceType, creates: bool) -> Rc<AffectsShroud> {
     Rc::new(AffectsShroud {
@@ -372,6 +378,8 @@ impl Default for FrozenUnderFogInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct HiddenUnderFogInit;
 
 impl ActorInit for HiddenUnderFogInit {
@@ -380,11 +388,14 @@ impl ActorInit for HiddenUnderFogInit {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 struct FrozenState {
     frozen_actor: FrozenActorRef,
     is_visible: Cell<bool>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct FrozenUnderFog {
     info: Rc<FrozenUnderFogInfo>,
     me: Weak<FrozenUnderFog>,
@@ -395,7 +406,7 @@ pub struct FrozenUnderFog {
     created: Cell<bool>,
 }
 
-register_traits!(FrozenUnderFog: IDefaultVisibility, ISync, INotifyCreated, INotifyOwnerChanged, INotifyActorDisposing);
+register_traits!(FrozenUnderFog: IDefaultVisibility, ISync, INotifyCreated, INotifyOwnerChanged, INotifyActorDisposing; cast: ICreatesFrozenActors);
 info_impl!(FrozenUnderFogInfo => |info, init| {
     let w = init.world();
     let shroud_info = w.rules().actor("player").expect("player actor").trait_info::<ShroudInfo>().expect("Shroud");
@@ -562,6 +573,7 @@ pub struct HiddenUnderFogInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct HiddenUnderShroud {
     always_visible: PlayerRelationship,
     ty: VisibilityType,
@@ -634,6 +646,7 @@ pub struct AlwaysVisibleInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct AlwaysVisible;
 
 register_traits!(AlwaysVisible: IDefaultVisibility);
@@ -643,4 +656,9 @@ impl IDefaultVisibility for AlwaysVisible {
     fn is_visible(&self, _self_: &ActorRef, _by_player: Option<&PlayerRef>) -> bool {
         true
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::actor_init::ActorInit: HiddenUnderFogInit);
 }

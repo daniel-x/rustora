@@ -199,6 +199,7 @@ pub fn is_available_for(reservable: &ActorRef, for_actor: &ActorRef) -> bool {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Aircraft {
     pub info: Rc<AircraftInfo>,
     state: ConditionalState,
@@ -1233,6 +1234,8 @@ impl IResolveOrder for Aircraft {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 struct AssociateWithAirfieldActivity {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -1301,8 +1304,18 @@ impl Activity for AssociateWithAirfieldActivity {
         if let Some(rally) = &self.rally_point {
             for cell in rally {
                 let (a, c) = (self.aircraft.clone(), *cell);
-                self.base
-                    .queue_child(AttackMoveActivity::new(self_, Rc::new(move || a.move_to(c, 1, None, true)), false));
+                self.base.queue_child(AttackMoveActivity::new(
+                    self_,
+                    crate::attack_move::MoveOrder::To {
+                        mv: a,
+                        cell: c,
+                        near_enough: 1,
+                        ignore_actor: None,
+                        evaluate_nearest_movable_cell: true,
+                        line_color: None,
+                    },
+                    false,
+                ));
             }
         }
         if !self.creation_by_map {
@@ -1322,6 +1335,7 @@ pub struct ReservableInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Reservable {
     reserved_for: RefCell<Option<ActorRef>>,
     reserved_for_aircraft: RefCell<Option<Rc<Aircraft>>>,
@@ -1370,7 +1384,18 @@ impl Reservable {
             if !path.is_empty() {
                 for cell in path {
                     let a = aircraft.clone();
-                    let act = AttackMoveActivity::new(&reserved_for, Rc::new(move || a.move_to(cell, 1, None, false)), false);
+                    let act = AttackMoveActivity::new(
+                        &reserved_for,
+                        crate::attack_move::MoveOrder::To {
+                            mv: a,
+                            cell,
+                            near_enough: 1,
+                            ignore_actor: None,
+                            evaluate_nearest_movable_cell: false,
+                            line_color: None,
+                        },
+                        false,
+                    );
                     reserved_for.queue_activity(act);
                 }
             } else {
@@ -1425,6 +1450,8 @@ impl INotifySold for Reservable {
 }
 
 /// `Activities/RemoveSelf.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct RemoveSelf {
     base: ActivityBase,
 }
@@ -1547,6 +1574,8 @@ pub struct FlyArgs {
 
 const PREVIOUS_POSITIONS_CAPACITY: usize = 5;
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Fly {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -1720,6 +1749,8 @@ impl Activity for Fly {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FlyForward {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -1784,6 +1815,8 @@ impl FlyForward {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FlyIdle {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -1835,6 +1868,8 @@ impl Activity for FlyIdle {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FlyOffMap {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -1891,6 +1926,8 @@ impl Activity for FlyOffMap {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FlyFollow {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -1981,6 +2018,8 @@ impl Default for LandArgs {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct Land {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -2196,6 +2235,8 @@ impl Land {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct TakeOff {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -2246,6 +2287,8 @@ impl Activity for TakeOff {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct ReturnToBase {
     base: ActivityBase,
     aircraft: Rc<Aircraft>,
@@ -2524,4 +2567,20 @@ impl rustora_engine::sound::IOrderVoice for Aircraft {
         };
         allowed.then(|| self.info.voice.clone())
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(
+        AssociateWithAirfieldActivity,
+        RemoveSelf,
+        Fly,
+        FlyForward,
+        FlyIdle,
+        FlyOffMap,
+        FlyFollow,
+        Land,
+        TakeOff,
+        ReturnToBase
+    );
 }

@@ -30,7 +30,8 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("ResourceRenderer", |n| load_info!(ResourceRendererInfo, n));
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ResourceLayerContents {
     pub ty: Option<Rc<str>>,
     pub density: i32,
@@ -98,6 +99,7 @@ fn load_resource_names(yaml: &MiniYaml) -> Result<IndexMap<String, String>, Load
     Ok(ret)
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ResourceRenderer {
     pub info: Rc<ResourceRendererInfo>,
 }
@@ -107,6 +109,7 @@ info_impl!(ResourceRendererInfo => |info, _init| Some(Rc::new(ResourceRenderer {
 
 pub type ResourceCellChanged = Rc<dyn Fn(CPos, Option<&str>)>;
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ResourceLayer {
     pub info: Rc<ResourceLayerInfo>,
     world: std::rc::Weak<World>,
@@ -114,6 +117,7 @@ pub struct ResourceLayer {
     content: RefCell<CellLayer<ResourceLayerContents>>,
     types_by_index: HashMap<u8, Rc<str>>,
     res_cells: Cell<i32>,
+    #[persist(skip)]
     cell_changed: RefCell<Vec<ResourceCellChanged>>,
 }
 
@@ -334,6 +338,7 @@ impl Default for SeedsResourceInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SeedsResource {
     info: Rc<SeedsResourceInfo>,
     state: ConditionalState,

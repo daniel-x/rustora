@@ -45,6 +45,7 @@ impl Default for FlashPostProcessEffectInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct FlashPostProcessEffect {
     pub info: Rc<FlashPostProcessEffectInfo>,
     remaining_frames: Cell<i32>,
@@ -108,6 +109,7 @@ impl Default for ChronoshiftPostProcessEffectInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ChronoshiftPostProcessEffect {
     info: Rc<ChronoshiftPostProcessEffectInfo>,
     remaining_frames: Cell<i32>,
@@ -170,6 +172,7 @@ impl Default for TintPostProcessEffectInfo {
 }
 
 /// `TintPostProcessEffect`, always enabled.
+#[derive(rustora_engine::persist::Persist)]
 pub struct TintPostProcessEffect {
     pub red: Cell<f32>,
     pub green: Cell<f32>,
@@ -194,7 +197,8 @@ impl TintPostProcessEffect {
 }
 
 /// `MenuPostProcessEffect.EffectType`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum MenuEffectType {
     #[default]
     None,
@@ -228,6 +232,7 @@ impl Default for MenuPostProcessEffectInfo {
 const UI_TIMESTEP: i64 = 40;
 
 /// `MenuPostProcessEffect`. `Game.RunTime` is the time since the process started.
+#[derive(rustora_engine::persist::Persist)]
 pub struct MenuPostProcessEffect {
     pub info: Rc<MenuPostProcessEffectInfo>,
     from: Cell<MenuEffectType>,

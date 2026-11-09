@@ -57,6 +57,7 @@ impl Default for GateInfo {
 }
 
 /// A building that opens for friendly actors and closes when nothing stands in it.
+#[derive(rustora_engine::persist::Persist)]
 pub struct Gate {
     info: Rc<GateInfo>,
     state: ConditionalState,

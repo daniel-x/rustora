@@ -141,3 +141,41 @@ pub fn register(r: &mut TraitRegistry) {
     render::register(r);
     world::register(r);
 }
+
+/// Registers the save game loaders of the activities, effects, inits and other trait objects of this crate.
+pub fn register_persist() {
+    rustora_engine::persist::register_engine_loaders();
+    activities::register_persist();
+    actor_reference::register_persist();
+    aircraft::register_persist();
+    attack::register_persist();
+    attack_move::register_persist();
+    auto_target::register_persist();
+    base::register_persist();
+    bridges::register_persist();
+    capture::register_persist();
+    cargo::register_persist();
+    carryall::register_persist();
+    cash_repair::register_persist();
+    charged_condition::register_persist();
+    chrono::register_persist();
+    condition_traits::register_persist();
+    conditions::register_persist();
+    death::register_persist();
+    demolition::register_persist();
+    effects::register_persist();
+    experience::register_persist();
+    gps::register_persist();
+    harvester::register_persist();
+    infiltrate::register_persist();
+    minelayer::register_persist();
+    mobile::register_persist();
+    production::register_persist();
+    render::register_persist();
+    render_traits::register_persist();
+    resupply::register_persist();
+    support_powers::register_persist();
+    transforms::register_persist();
+    visibility::register_persist();
+    weapons::register_persist();
+}

@@ -3,6 +3,8 @@
 
 //! Simulation engine: port of the synced parts of `OpenRA.Game` plus the conditional trait base.
 
+extern crate self as rustora_engine;
+
 pub mod activity;
 pub mod actor;
 pub mod actor_ext;
@@ -18,9 +20,11 @@ pub mod map;
 pub mod net_collections;
 pub mod order;
 pub mod order_manager;
+pub mod persist;
 pub mod player;
 pub mod render;
 pub mod rules;
+pub mod savegame;
 pub mod sequence;
 pub mod shroud;
 pub mod sound;

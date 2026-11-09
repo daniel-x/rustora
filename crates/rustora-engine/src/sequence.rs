@@ -155,7 +155,7 @@ impl Sequence {
 
 /// `SequenceSet`.
 pub struct SequenceSet {
-    images: HashMap<String, HashMap<String, Rc<Sequence>>>,
+    images: HashMap<String, indexmap::IndexMap<String, Rc<Sequence>>>,
 }
 
 impl SequenceSet {
@@ -167,7 +167,7 @@ impl SequenceSet {
                 continue;
             }
             let defaults = node(&img.value, "Defaults").map_or(&empty, |n| &n.value);
-            let mut seqs = HashMap::new();
+            let mut seqs = indexmap::IndexMap::new();
             for s in &img.value.nodes {
                 if s.key == "Defaults" {
                     continue;
@@ -209,11 +209,56 @@ impl SequenceSet {
     }
 }
 
+/// The function that runs after an animation, either a closure, which save games cannot keep, or a
+/// [`crate::persist::SavedFn`].
+#[derive(Clone)]
+pub enum AfterAnim {
+    Closure(Rc<dyn Fn()>),
+    Saved(Rc<dyn crate::persist::SavedFn>),
+}
+
+/// A closure cannot be saved: it is dropped with a warning and loads as a function that does nothing.
+impl crate::persist::Persist for AfterAnim {
+    fn save(&self, w: &mut crate::persist::SaveWriter) {
+        match self {
+            AfterAnim::Saved(f) => {
+                w.u8(1);
+                f.save(w);
+            }
+            AfterAnim::Closure(_) => {
+                log::warn!("save game: a function after an animation is a closure and is dropped");
+                w.u8(0);
+            }
+        }
+    }
+    fn load(r: &mut crate::persist::SaveReader) -> Self {
+        match r.u8() {
+            1 => AfterAnim::Saved(crate::persist::Persist::load(r)),
+            0 => AfterAnim::Closure(Rc::new(|| {})),
+            t => r.fail(format!("invalid animation function tag {t}")),
+        }
+    }
+}
+
+impl AfterAnim {
+    /// A function that save games keep.
+    pub fn saved(f: impl crate::persist::SavedFn + 'static) -> AfterAnim {
+        AfterAnim::Saved(Rc::new(f))
+    }
+
+    pub fn call(&self) {
+        match self {
+            AfterAnim::Closure(f) => f(),
+            AfterAnim::Saved(f) => f.call(),
+        }
+    }
+}
+
 #[derive(Clone)]
 enum TickFunc {
     None,
     Repeating,
-    Then(Option<Rc<dyn Fn()>>),
+    Then(Option<AfterAnim>),
     FetchIndex(Rc<dyn Fn() -> i32>),
     FetchDirection(Rc<dyn Fn() -> i32>),
 }
@@ -304,6 +349,15 @@ impl Animation {
     }
 
     pub fn play_then(&self, name: &str, after: Option<Rc<dyn Fn()>>) {
+        self.play_then_after(name, after.map(AfterAnim::Closure));
+    }
+
+    /// `PlayThen` with a function that save games keep.
+    pub fn play_then_saved(&self, name: &str, after: Rc<dyn crate::persist::SavedFn>) {
+        self.play_then_after(name, Some(AfterAnim::Saved(after)));
+    }
+
+    pub fn play_then_after(&self, name: &str, after: Option<AfterAnim>) {
         self.backwards.set(false);
         self.tick_always.set(false);
         self.play_sequence(name);
@@ -312,7 +366,11 @@ impl Animation {
     }
 
     pub fn play_backwards_then(&self, name: &str, after: Option<Rc<dyn Fn()>>) {
-        self.play_then(name, after);
+        self.play_backwards_then_after(name, after.map(AfterAnim::Closure));
+    }
+
+    pub fn play_backwards_then_after(&self, name: &str, after: Option<AfterAnim>) {
+        self.play_then_after(name, after);
         self.backwards.set(true);
     }
 
@@ -348,7 +406,7 @@ impl Animation {
                     self.frame.set(len - 1);
                     *self.tick_func.borrow_mut() = TickFunc::None;
                     if let Some(a) = after {
-                        a();
+                        a.call();
                     }
                 }
             }
@@ -427,8 +485,67 @@ impl Animation {
     }
 }
 
+/// The animation state is written in place. The facing and pause functions and the fetch functions of
+/// `PlayFetchIndex` and `PlayFetchDirection` are set up by the owner when it is created, so the loaded animation
+/// keeps its own. A closure passed to `PlayThen` cannot be saved and is dropped with a warning.
+impl crate::persist::PersistState for Animation {
+    fn save_state(&self, w: &mut crate::persist::SaveWriter) {
+        use crate::persist::Persist;
+        self.name.save(w);
+        self.is_decoration.save(w);
+        self.current.borrow().as_ref().map(|s| s.name.clone()).save(w);
+        self.frame.save(w);
+        self.backwards.save(w);
+        self.tick_always.save(w);
+        self.time_until_next_frame.save(w);
+        match &*self.tick_func.borrow() {
+            TickFunc::None => w.u8(0),
+            TickFunc::Repeating => w.u8(1),
+            TickFunc::Then(None) => w.u8(2),
+            TickFunc::Then(Some(f)) => {
+                w.u8(3);
+                f.save(w);
+            }
+            TickFunc::FetchIndex(_) => w.u8(4),
+            TickFunc::FetchDirection(_) => w.u8(5),
+        }
+    }
+
+    fn load_state(&self, r: &mut crate::persist::SaveReader) {
+        use crate::persist::Persist;
+        self.name.load_state(r);
+        self.is_decoration.load_state(r);
+        let current: Option<String> = Persist::load(r);
+        *self.current.borrow_mut() = current.map(|s| self.get_sequence(&s));
+        self.frame.load_state(r);
+        self.backwards.load_state(r);
+        self.tick_always.load_state(r);
+        self.time_until_next_frame.load_state(r);
+        let kind = r.u8();
+        let keep = matches!(
+            (kind, &*self.tick_func.borrow()),
+            (4, TickFunc::FetchIndex(_)) | (5, TickFunc::FetchDirection(_))
+        );
+        let f = match kind {
+            0 => TickFunc::None,
+            1 => TickFunc::Repeating,
+            2 => TickFunc::Then(None),
+            3 => TickFunc::Then(Some(Persist::load(r))),
+            4 | 5 if keep => return,
+            4 | 5 => {
+                log::warn!("save game: the animation {} has no fetch function to restore", self.name.borrow());
+                TickFunc::None
+            }
+            k => r.fail(format!("invalid animation tick function {k}")),
+        };
+        *self.tick_func.borrow_mut() = f;
+    }
+}
+
+impl crate::persist::OwnedState for Animation {}
+
 /// `AnimationWithOffset`.
-#[derive(Clone)]
+#[derive(Clone, crate::persist::Persist)]
 pub struct AnimationWithOffset {
     pub animation: Rc<Animation>,
     pub offset_func: Option<Rc<dyn Fn() -> rustora_core::world_types::WVec>>,

@@ -34,7 +34,7 @@ use rustora_engine::{
 };
 
 use crate::activities::Turn;
-use crate::actor_map::WorldExt;
+use crate::actor_map::{ActorCallback, WorldExt};
 use crate::base::PowerManager;
 use crate::building::BuildingInfo;
 use crate::experience::ExternalCondition;
@@ -99,6 +99,7 @@ impl Default for SpreadsConditionInfo {
 }
 
 /// Grants `SpreadCondition` to a random nearby actor with this trait every `Delay` ticks, with `Probability` percent.
+#[derive(rustora_engine::persist::Persist)]
 pub struct SpreadsCondition {
     info: Rc<SpreadsConditionInfo>,
     state: ConditionalState,
@@ -152,6 +153,7 @@ pub struct GrantConditionOnTerrainInfo {
 }
 
 /// Grants a condition while the actor stands on one of `TerrainTypes`. RA has no custom movement layers.
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnTerrain {
     info: Rc<GrantConditionOnTerrainInfo>,
     token: Cell<i32>,
@@ -201,6 +203,7 @@ pub struct DamagedByTerrainInfo {
 }
 
 /// Damages the actor every `DamageInterval` ticks while it stands on one of `Terrain`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct DamagedByTerrain {
     info: Rc<DamagedByTerrainInfo>,
     state: ConditionalState,
@@ -267,6 +270,7 @@ pub struct ChangesTerrainInfo {
 }
 
 /// Overrides the terrain type of the cell of the actor while it is in the world.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ChangesTerrain {
     info: Rc<ChangesTerrainInfo>,
     previous_terrain: Cell<u8>,
@@ -369,6 +373,7 @@ pub struct GrantRandomConditionInfo {
 }
 
 /// Grants a random condition of `Conditions` when the actor is created.
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantRandomCondition {
     info: Rc<GrantRandomConditionInfo>,
 }
@@ -437,6 +442,7 @@ impl Default for GrantConditionOnMovementInfo {
 }
 
 /// Grants a condition while the actor moves in one of `ValidMovementTypes`.
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnMovement {
     info: Rc<GrantConditionOnMovementInfo>,
     state: ConditionalState,
@@ -517,6 +523,7 @@ pub struct ToggleConditionOnOrderInfo {
     pub disabled_text_notification: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ToggleConditionOnOrder {
     info: Rc<ToggleConditionOnOrderInfo>,
     state: ConditionalState,
@@ -649,7 +656,8 @@ impl Default for GrantConditionOnDeployInfo {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub enum DeployState {
     Undeployed,
     Deploying,
@@ -659,6 +667,7 @@ pub enum DeployState {
 
 const DEPLOY_ORDER: &str = "GrantConditionOnDeploy";
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnDeploy {
     info: Rc<GrantConditionOnDeployInfo>,
     state: ConditionalState,
@@ -859,6 +868,8 @@ impl IOrderVoice for GrantConditionOnDeploy {
 }
 
 /// `DeployForGrantedCondition`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct DeployForGrantedCondition {
     base: ActivityBase,
     deploy: Rc<GrantConditionOnDeploy>,
@@ -904,6 +915,8 @@ impl Activity for DeployForGrantedCondition {
 }
 
 /// `DeployInner`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct DeployInner {
     base: ActivityBase,
     deployment: Rc<GrantConditionOnDeploy>,
@@ -968,6 +981,7 @@ impl Default for KillsSelfInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct KillsSelf {
     info: Rc<KillsSelfInfo>,
     state: ConditionalState,
@@ -1074,6 +1088,7 @@ impl Default for ProximityExternalConditionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProximityExternalCondition {
     info: Rc<ProximityExternalConditionInfo>,
     state: ConditionalState,
@@ -1088,7 +1103,7 @@ pub struct ProximityExternalCondition {
     desired_v_range: Cell<WDist>,
 }
 
-register_traits!(ProximityExternalCondition: ITick, INotifyAddedToWorld, INotifyRemovedFromWorld, INotifyOtherProduction, INotifyProximityOwnerChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(ProximityExternalCondition: crate::actor_map::ITriggerWatcher, ITick, INotifyAddedToWorld, INotifyRemovedFromWorld, INotifyOtherProduction, INotifyProximityOwnerChanged, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(ProximityExternalConditionInfo => |info, init| Some(Rc::new_cyclic(|me| ProximityExternalCondition {
     state: ConditionalState::new(&info.base),
     info,
@@ -1190,16 +1205,8 @@ impl INotifyAddedToWorld for ProximityExternalCondition {
             self.cached_position.get(),
             self.cached_range.get(),
             self.cached_v_range.get(),
-            Some(Rc::new(move |a: &ActorRef| {
-                if let Some(t) = entered.upgrade() {
-                    t.actor_entered(a);
-                }
-            })),
-            Some(Rc::new(move |a: &ActorRef| {
-                if let Some(t) = exited.upgrade() {
-                    t.actor_exited(a);
-                }
-            })),
+            Some(ActorCallback::Entered(entered.upgrade().expect("trait alive"))),
+            Some(ActorCallback::Exited(exited.upgrade().expect("trait alive"))),
         );
         self.trigger.set(id);
     }
@@ -1278,6 +1285,7 @@ pub struct GrantExternalConditionToProducedInfo {
     pub duration: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantExternalConditionToProduced {
     info: Rc<GrantExternalConditionToProducedInfo>,
     state: ConditionalState,
@@ -1310,6 +1318,7 @@ pub struct GrantConditionOnCombatantOwnerInfo {
     pub condition: String,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GrantConditionOnCombatantOwner {
     info: Rc<GrantConditionOnCombatantOwnerInfo>,
     token: Cell<i32>,
@@ -1347,6 +1356,7 @@ pub struct PowerMultiplierInfo {
     pub modifier: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PowerMultiplier {
     info: Rc<PowerMultiplierInfo>,
     state: ConditionalState,
@@ -1398,6 +1408,7 @@ pub struct HandicapFirepowerMultiplierInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct HandicapFirepowerMultiplier {
     self_: ActorRef,
 }
@@ -1417,6 +1428,7 @@ pub struct HandicapDamageMultiplierInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct HandicapDamageMultiplier {
     self_: ActorRef,
 }
@@ -1469,6 +1481,7 @@ impl Default for GivesBountyInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GivesBounty {
     info: Rc<GivesBountyInfo>,
     state: ConditionalState,
@@ -1526,6 +1539,7 @@ impl Default for SpawnActorsOnSellInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SpawnActorsOnSell {
     info: Rc<SpawnActorsOnSellInfo>,
     state: ConditionalState,
@@ -1625,4 +1639,18 @@ impl IDelayCarryallPickup for GrantConditionOnDeploy {
     fn is_trait_enabled(&self) -> bool {
         !self.state.is_trait_disabled()
     }
+}
+
+impl crate::actor_map::ITriggerWatcher for ProximityExternalCondition {
+    fn actor_entered(&self, a: &ActorRef) {
+        ProximityExternalCondition::actor_entered(self, a)
+    }
+    fn actor_exited(&self, a: &ActorRef) {
+        ProximityExternalCondition::actor_exited(self, a)
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(DeployForGrantedCondition, DeployInner);
 }

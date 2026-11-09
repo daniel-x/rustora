@@ -80,6 +80,7 @@ impl Default for DemolitionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Demolition {
     info: Rc<DemolitionInfo>,
     state: ConditionalState,
@@ -194,6 +195,8 @@ impl Demolition {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct DemolishHooks {
     info: Rc<DemolitionInfo>,
     notifiers: Vec<Rc<dyn INotifyDemolition>>,
@@ -253,6 +256,8 @@ pub struct DemolishableInfo {
     pub condition: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
+#[persist(shared)]
 struct DemolishAction {
     saboteur: ActorRef,
     token: i32,
@@ -260,6 +265,7 @@ struct DemolishAction {
     damage_types: BitSet<DamageTypeTag>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Demolishable {
     info: Rc<DemolishableInfo>,
     state: ConditionalState,
@@ -357,4 +363,10 @@ impl ITick for Demolishable {
         }
         self.actions.borrow_mut().retain(|a| !remove.iter().any(|r| Rc::ptr_eq(r, a)));
     }
+}
+rustora_engine::persist_trait_refs!(dyn IDemolishable);
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: DemolishHooks);
 }

@@ -84,7 +84,8 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct Particle {
     pos: [f32; 2],
     size: i32,
@@ -128,12 +129,15 @@ impl Particle {
 }
 
 /// The particles and the size of the viewport they live in, created for the first viewport size.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct ParticleField {
     size: (i32, i32),
     particles: Vec<Particle>,
     last_render: i64,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WeatherOverlay {
     info: Rc<WeatherOverlayInfo>,
     state: ConditionalState,

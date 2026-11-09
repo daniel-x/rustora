@@ -50,8 +50,12 @@ fn print_detail(world: &World) {
 
 /// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick. `PROGRESS=n` prints the time and
 /// actor count of every n ticks.
-fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, mut on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
-    let mut driver = ReplayDriver::new(world, replay);
+fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
+    run_driver(world, ReplayDriver::new(world, replay), max_ticks, on_tick)
+}
+
+/// [`run_replay`] with a given driver, such as one resumed from a save game.
+fn run_driver(world: &Rc<World>, mut driver: ReplayDriver, max_ticks: i32, mut on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
     let progress: i32 = std::env::var("PROGRESS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut last = std::time::Instant::now();
     while world.world_tick() < max_ticks && driver.orders.out_of_sync.is_none() {
@@ -337,7 +341,8 @@ const HELP: &str = "\
 rustora --headless - replay verification and test games without window, graphics or sound
 
 Usage:
-  rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]
+  rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump] [save options]
+  rustora --headless verify-save <engine-dir> <support-dir> <replay> <tick> [ticks]
   rustora --headless world <engine-dir> <support-dir> <replay> [tick]
   rustora --headless verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]
   rustora --headless skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]
@@ -350,6 +355,8 @@ Usage:
 Commands:
   verify-replay  Replays a recorded game, compares its recorded sync hashes and, with a sync dump of
                  the C# reference (lines \"tick hash\"), every tick's hash.
+  verify-save    Replays to <tick>, saves and restores the world, then replays both worlds [ticks]
+                 more ticks (default 100) and compares their sync hashes and sync details.
   world          Prints the per-actor and per-trait sync detail after world load or after <tick>.
   verify-bots    Replays a C# bot game and compares the orders of the Rust bots with the C# order dump.
   skirmish       Hosts a bot game, writes \"tick hash botrandomcount\" per tick to <sync-out> and
@@ -360,6 +367,12 @@ Commands:
   lan-probe      Lists the LAN games that answer within <seconds>, broadcasting unless a beacon address
                  is given.
   server-list    Lists the RA games of the master server for an engine version.
+
+Save options of verify-replay:
+  --save-every-ticks <n>  write a save game after every world tick that is a multiple of n
+  --save-every-secs <s>   write a save game after a tick when s seconds passed since the last one
+  --save-dir <dir>        where the save games go, as <replay-name>-<tick>.rsave (default: .)
+  --from-save <file>      continue the replay from a save game of it instead of its start
 
 Join options:
   --bots <spec>         bots to host, as for skirmish
@@ -484,7 +497,8 @@ pub fn main(args: Vec<String>) {
             print_detail(&world);
         }
         "verify-replay" => {
-            let dump: Vec<(i32, i32)> = args.get(5).map_or_else(Vec::new, |p| {
+            let options = SaveOptions::parse(&args[5..]);
+            let dump: Vec<(i32, i32)> = options.positional.first().map_or_else(Vec::new, |p| {
                 std::fs::read_to_string(p)
                     .expect("read sync dump")
                     .lines()
@@ -498,7 +512,22 @@ pub fn main(args: Vec<String>) {
             let mut mismatch = None;
             let start = std::time::Instant::now();
             let recorded = recorded_syncs(&replay);
-            let om = run_replay(&world, replay, i32::MAX, |w, hash| {
+            let (world, driver) = match &options.from_save {
+                None => (world.clone(), ReplayDriver::new(&world, replay)),
+                Some(path) => {
+                    let replay = Replay::parse(&std::fs::read(&args[4]).expect("read replay")).expect("parse replay");
+                    let data = std::fs::read(path).unwrap_or_else(|e| panic!("read save game {path}: {e}"));
+                    let (w, _, _) = rustora_launch::restore_game(&engine, &args[3], &data, true, false)
+                        .unwrap_or_else(|e| panic!("restore {path}: {e}"));
+                    println!("restored {path} at tick {}", w.world_tick());
+                    (w.clone(), ReplayDriver::resumed(&w, replay))
+                }
+            };
+            let stem = std::path::Path::new(&args[4])
+                .file_stem()
+                .map_or_else(|| "replay".to_string(), |s| s.to_string_lossy().into_owned());
+            let mut saver = options.saver(&stem);
+            let om = run_driver(&world, driver, i32::MAX, |w, hash| {
                 let t = w.world_tick();
                 if let Some((_, h)) = dump.iter().find(|(k, _)| *k == t).or(dump.get((t - 1) as usize))
                     && *h != hash
@@ -506,6 +535,7 @@ pub fn main(args: Vec<String>) {
                     mismatch = Some(t);
                     return false;
                 }
+                saver.after_tick(&world);
                 true
             });
             println!("ticks {} in {:?}", world.world_tick(), start.elapsed());
@@ -526,12 +556,227 @@ pub fn main(args: Vec<String>) {
             }
         }
         "verify-bots" => verify_bots(&world, replay, &args[5], args.get(6)),
+        "verify-save" => {
+            let tick: i32 = args.get(5).expect("tick").parse().expect("tick");
+            let after: i32 = args.get(6).map_or(100, |t| t.parse().expect("ticks"));
+            verify_save(&engine, &args[3], &args[4], world, replay, tick, after);
+        }
         c => {
             eprintln!("unknown command {c}\n");
             eprint!("{HELP}");
             std::process::exit(2);
         }
     }
+}
+
+/// The save game options of `verify-replay`.
+struct SaveOptions {
+    positional: Vec<String>,
+    every_ticks: Option<i32>,
+    every_secs: Option<f64>,
+    dir: PathBuf,
+    from_save: Option<String>,
+}
+
+impl SaveOptions {
+    fn parse(args: &[String]) -> SaveOptions {
+        let mut o = SaveOptions {
+            positional: Vec::new(),
+            every_ticks: None,
+            every_secs: None,
+            dir: PathBuf::from("."),
+            from_save: None,
+        };
+        let mut it = args.iter();
+        while let Some(a) = it.next() {
+            let mut value = |name: &str| it.next().unwrap_or_else(|| panic!("{name} needs a value")).clone();
+            match a.as_str() {
+                "--save-every-ticks" => o.every_ticks = Some(value(a).parse().expect("ticks")),
+                "--save-every-secs" => o.every_secs = Some(value(a).parse().expect("seconds")),
+                "--save-dir" => o.dir = PathBuf::from(value(a)),
+                "--from-save" => o.from_save = Some(value(a)),
+                _ if a.starts_with("--") => panic!("unknown option {a}"),
+                _ => o.positional.push(a.clone()),
+            }
+        }
+        o
+    }
+
+    fn saver(&self, stem: &str) -> Saver {
+        if self.every_ticks.is_some() || self.every_secs.is_some() {
+            std::fs::create_dir_all(&self.dir).unwrap_or_else(|e| panic!("create {}: {e}", self.dir.display()));
+        }
+        Saver {
+            every_ticks: self.every_ticks,
+            every_secs: self.every_secs,
+            dir: self.dir.clone(),
+            stem: stem.to_string(),
+            last: std::time::Instant::now(),
+        }
+    }
+}
+
+/// Writes save games at tick or wall clock time intervals while a replay runs.
+struct Saver {
+    every_ticks: Option<i32>,
+    every_secs: Option<f64>,
+    dir: PathBuf,
+    stem: String,
+    last: std::time::Instant,
+}
+
+impl Saver {
+    fn after_tick(&mut self, world: &Rc<World>) {
+        let t = world.world_tick();
+        let by_ticks = self.every_ticks.is_some_and(|n| n > 0 && t % n == 0);
+        let by_time = self.every_secs.is_some_and(|s| self.last.elapsed().as_secs_f64() >= s);
+        if !by_ticks && !by_time {
+            return;
+        }
+        self.last = std::time::Instant::now();
+        let path = self.dir.join(format!("{}-{t}.rsave", self.stem));
+        match rustora_launch::save_game(world) {
+            Ok(data) => match std::fs::write(&path, &data) {
+                Ok(()) => println!("saved {} ({} bytes)", path.display(), data.len()),
+                Err(e) => eprintln!("save game {}: {e}", path.display()),
+            },
+            Err(e) => eprintln!("save game at tick {t}: {e}"),
+        }
+    }
+}
+
+/// Runs the replay to `tick`, saves and restores the world, then runs both worlds `after` more ticks and compares
+/// their sync hashes and sync details each tick.
+fn verify_save(engine: &std::path::Path, support: &str, replay_path: &str, world: Rc<World>, replay: Replay, tick: i32, after: i32) {
+    let mut a = ReplayDriver::new(&world, replay);
+    while world.world_tick() < tick {
+        if a.step() == Step::Ended {
+            println!("replay ended at tick {}", world.world_tick());
+            std::process::exit(1);
+        }
+    }
+    let start = std::time::Instant::now();
+    let data = rustora_launch::save_game(&world).unwrap_or_else(|e| {
+        println!("save failed: {e}");
+        std::process::exit(1)
+    });
+    let saved = start.elapsed();
+    let start = std::time::Instant::now();
+    let (restored, _, _) = rustora_launch::restore_game(engine, support, &data, true, false).unwrap_or_else(|e| {
+        println!("restore failed: {e}");
+        std::process::exit(1)
+    });
+    println!(
+        "tick {tick}: {} bytes, saved in {saved:?}, restored in {:?}",
+        data.len(),
+        start.elapsed()
+    );
+    match rustora_launch::save_game(&restored) {
+        Ok(again) if again == data => {}
+        Ok(again) => {
+            let at = data
+                .iter()
+                .zip(&again)
+                .position(|(x, y)| x != y)
+                .unwrap_or(data.len().min(again.len()));
+            println!(
+                "the save of the restored world differs at byte {at} ({} / {} bytes)",
+                data.len(),
+                again.len()
+            );
+        }
+        Err(e) => println!("saving the restored world failed: {e}"),
+    }
+    let second = Replay::parse(&std::fs::read(replay_path).expect("read replay")).expect("parse replay");
+    let mut b = ReplayDriver::resumed(&restored, second);
+    if !compare_worlds(&world, &restored) {
+        std::process::exit(1);
+    }
+    while world.world_tick() < tick + after {
+        let (sa, sb) = (a.step(), b.step());
+        if sa != sb {
+            println!(
+                "tick {}: the original world steps {sa:?}, the restored one {sb:?}",
+                world.world_tick()
+            );
+            std::process::exit(1);
+        }
+        if sa == Step::Ended {
+            break;
+        }
+        if sa == Step::Ticked && !compare_worlds(&world, &restored) {
+            std::process::exit(1);
+        }
+    }
+    println!("ticks {tick} to {}: the restored world matches", world.world_tick());
+}
+
+/// Compares the tick, sync hash and saved state of two worlds and prints the first differences.
+fn compare_worlds(a: &Rc<World>, b: &Rc<World>) -> bool {
+    let (la, lb) = (a.local_random.borrow().total_count, b.local_random.borrow().total_count);
+    if la != lb {
+        println!("tick {}: local random draws {la} / {lb}", a.world_tick());
+    }
+    let (ba, bb) = (
+        rustora_engine::savegame::debug_blocks(a).expect("save blocks"),
+        rustora_engine::savegame::debug_blocks(b).expect("save blocks"),
+    );
+    if let Some(((la, da), (lb, db))) = ba.iter().zip(&bb).find(|((la, da), (lb, db))| la != lb || da != db) {
+        println!("tick {}: the saved state differs first in {la} / {lb}", a.world_tick());
+        let at = da.iter().zip(db).position(|(x, y)| x != y).unwrap_or(da.len().min(db.len()));
+        println!("  {} / {} bytes, first difference at byte {at}", da.len(), db.len());
+        let show = |d: &[u8]| {
+            d[at.saturating_sub(8)..(at + 24).min(d.len())]
+                .iter()
+                .map(|x| format!("{x:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        println!("  original: {}", show(da));
+        println!("  restored: {}", show(db));
+        if let Some(id) = la
+            .strip_prefix("actor ")
+            .and_then(|s| s.split(' ').next())
+            .and_then(|s| s.parse().ok())
+            && let (Some(x), Some(y)) = (a.get_actor_by_id(id), b.get_actor_by_id(id))
+        {
+            println!("  original activities: {}", activity_chain(&x, x.current_activity()));
+            println!("  restored activities: {}", activity_chain(&y, y.current_activity()));
+        }
+        return false;
+    }
+    if ba.len() != bb.len() {
+        println!("tick {}: {} saved blocks differ from {}", a.world_tick(), ba.len(), bb.len());
+        return false;
+    }
+    if a.world_tick() == b.world_tick() && a.sync_hash() == b.sync_hash() {
+        return true;
+    }
+    println!(
+        "tick {} / {}: sync hash {} differs from {}",
+        a.world_tick(),
+        b.world_tick(),
+        a.sync_hash(),
+        b.sync_hash()
+    );
+    let (da, db) = (a.sync_detail(), b.sync_detail());
+    let mut shown = 0;
+    for l in da.iter().filter(|l| !db.contains(l)) {
+        println!("  original: {l}");
+        shown += 1;
+        if shown >= 20 {
+            break;
+        }
+    }
+    shown = 0;
+    for l in db.iter().filter(|l| !da.contains(l)) {
+        println!("  restored: {l}");
+        shown += 1;
+        if shown >= 20 {
+            break;
+        }
+    }
+    false
 }
 
 /// The recorded sync packets of each frame, as client id to (sync hash, defeat state).

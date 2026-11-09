@@ -40,6 +40,7 @@ pub struct GpsWatcherInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GpsWatcher {
     owner: PlayerRef,
     launched: Cell<bool>,
@@ -157,6 +158,7 @@ pub struct FrozenUnderFogUpdatedByGpsInfo {
 
 /// `FrozenUnderFogUpdatedByGps`. Its `Refresh` action only acts on frozen actors with renderables, which the C#
 /// renderer fills; see [`rustora_engine::frozen::FrozenActor::has_renderables`].
+#[derive(rustora_engine::persist::Persist)]
 pub struct FrozenUnderFogUpdatedByGps {
     self_: ActorRef,
     me: Weak<FrozenUnderFogUpdatedByGps>,
@@ -235,6 +237,7 @@ pub struct ProvidesRadarInfo {
     pub base: ConditionalTraitInfo,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ProvidesRadar {
     state: ConditionalState,
 }
@@ -251,10 +254,16 @@ impl ProvidesRadar {
 }
 
 /// `SatelliteLaunch`: the door animation decides how long the effect lives.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct SatelliteLaunch {
+    #[persist(me)]
+    me: Weak<SatelliteLaunch>,
     launcher_owner: PlayerRef,
     reveal_delay: i32,
-    doors: Rc<Animation>,
+    /// The door animation decides how long the effect lives; a loaded effect has none and ends after the launch.
+    #[persist(skip)]
+    doors: Option<Rc<Animation>>,
     pos: WPos,
     frame: Cell<i32>,
 }
@@ -262,10 +271,11 @@ pub struct SatelliteLaunch {
 impl SatelliteLaunch {
     pub fn new(world: &World, launcher: &ActorRef, door_image: &str, door_sequence: &str, reveal_delay: i32) -> EffectRef {
         let doors = Animation::new(world.map().sequences().clone(), door_image, None, None);
-        let e = Rc::new(SatelliteLaunch {
+        let e = Rc::new_cyclic(|me| SatelliteLaunch {
+            me: me.clone(),
             launcher_owner: launcher.owner(),
             reveal_delay,
-            doors: doors.clone(),
+            doors: Some(doors.clone()),
             pos: launcher.center_position(),
             frame: Cell::new(0),
         });
@@ -289,7 +299,16 @@ impl SatelliteLaunch {
 
 impl Effect for SatelliteLaunch {
     fn tick(&self, world: &Rc<World>) {
-        self.doors.tick();
+        match &self.doors {
+            Some(d) => d.tick(),
+            None if self.frame.get() > 19 => {
+                if let Some(me) = self.me.upgrade() {
+                    let me: EffectRef = me;
+                    world.add_frame_end_task(Box::new(move |w| w.remove_effect(&me)));
+                }
+            }
+            None => {}
+        }
         self.frame.set(self.frame.get() + 1);
         if self.frame.get() == 19 {
             let (owner, pos, delay) = (self.launcher_owner.clone(), self.pos, self.reveal_delay);
@@ -303,7 +322,10 @@ impl Effect for SatelliteLaunch {
 }
 
 /// `GpsSatellite`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct GpsSatellite {
+    #[persist(me)]
     me: Weak<GpsSatellite>,
     launcher: PlayerRef,
     reveal_delay: i32,
@@ -337,4 +359,11 @@ impl Effect for GpsSatellite {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+rustora_engine::persist_trait_refs!(dyn IOnGpsRefreshed);
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_effects!(SatelliteLaunch, GpsSatellite);
 }

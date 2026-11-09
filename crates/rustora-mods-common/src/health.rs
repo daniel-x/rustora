@@ -40,7 +40,8 @@ impl Default for HealthInfo {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct Notifiers {
     damage_state_changed: Vec<Rc<dyn INotifyDamageStateChanged>>,
     damage: Vec<Rc<dyn INotifyDamage>>,
@@ -51,6 +52,7 @@ struct Notifiers {
     killed_player: Vec<Rc<dyn INotifyKilled>>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Health {
     pub info: Rc<HealthInfo>,
     hp: Cell<i32>,

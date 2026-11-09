@@ -36,6 +36,7 @@ pub struct TargetableInfo {
     pub requires_force_fire: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Targetable {
     pub info: Rc<TargetableInfo>,
     state: ConditionalState,
@@ -131,6 +132,7 @@ impl Default for CrushableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Crushable {
     info: Rc<CrushableInfo>,
     state: ConditionalState,

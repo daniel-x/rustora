@@ -248,3 +248,12 @@ pub fn closest_to_with_path_from(actors: impl IntoIterator<Item = ActorRef>, sou
     }
     best.map(|b| b.0)
 }
+
+/// The `Rc` of the trait `t` of `actor`, for traits without a `Weak` self reference.
+pub fn trait_rc<T: 'static>(actor: &rustora_engine::actor::ActorRef, t: &T) -> std::rc::Rc<T> {
+    actor
+        .traits_implementing::<T>()
+        .into_iter()
+        .find(|x| std::ptr::eq(std::rc::Rc::as_ptr(x), t))
+        .expect("trait of the actor")
+}

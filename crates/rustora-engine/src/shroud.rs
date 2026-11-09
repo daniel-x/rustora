@@ -35,7 +35,8 @@ impl Default for ShroudInfo {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, crate::persist::Persist)]
+#[persist(value)]
 pub enum SourceType {
     PassiveVisibility,
     Shroud,
@@ -52,7 +53,8 @@ enum CellType {
 pub const VISIBILITY_EXPLORED: u8 = 1;
 pub const VISIBILITY_VISIBLE: u8 = 2;
 
-#[derive(Default)]
+#[derive(Default, crate::persist::Persist)]
+#[persist(value)]
 struct Layers {
     passive_visible: Vec<i16>,
     visible: Vec<i16>,
@@ -60,17 +62,19 @@ struct Layers {
     explored: Vec<bool>,
     touched: Vec<bool>,
     resolved: Vec<u8>,
-    sources: HashMap<usize, (SourceType, Rc<[PPos]>)>,
+    sources: HashMap<crate::persist::AddrKey, (SourceType, Rc<[PPos]>)>,
 }
 
 pub type ShroudChanged = Rc<dyn Fn(PPos)>;
 
+#[derive(crate::persist::Persist)]
 pub struct Shroud {
     info: Rc<ShroudInfo>,
     map: Rc<Map>,
     width: i32,
     height: i32,
     l: RefCell<Layers>,
+    #[persist(skip)]
     listeners: RefCell<Vec<ShroudChanged>>,
     any_cell_touched: Cell<bool>,
     disabled_changed: Cell<bool>,
@@ -280,7 +284,9 @@ impl Shroud {
     pub fn add_source(&self, key: usize, ty: SourceType, projected_cells: Rc<[PPos]>) {
         let mut l = self.l.borrow_mut();
         assert!(
-            l.sources.insert(key, (ty, projected_cells.clone())).is_none(),
+            l.sources
+                .insert(crate::persist::AddrKey(key), (ty, projected_cells.clone()))
+                .is_none(),
             "Attempting to add duplicate shroud source"
         );
         for &puv in projected_cells.iter() {
@@ -310,7 +316,9 @@ impl Shroud {
 
     pub fn remove_source(&self, key: usize) {
         let mut l = self.l.borrow_mut();
-        let Some((ty, cells)) = l.sources.remove(&key) else { return };
+        let Some((ty, cells)) = l.sources.remove(&crate::persist::AddrKey(key)) else {
+            return;
+        };
         for &puv in cells.iter() {
             if self.map.contains_ppos(puv) {
                 let i = self.index(puv);

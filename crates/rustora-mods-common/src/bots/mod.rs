@@ -99,6 +99,7 @@ impl Default for ModularBotInfo {
 }
 
 /// `ModularBot`: ticks the bot modules of an activated bot and issues their queued orders.
+#[derive(rustora_engine::persist::Persist)]
 pub struct ModularBot {
     pub info: Rc<ModularBotInfo>,
     enabled: Cell<bool>,
@@ -215,6 +216,8 @@ impl INotifyDamage for ModularBot {
 
 /// `ActorIndex`: actors matching a filter, kept up to date by the world's actor added and removed events.
 /// Iterates like the C# `HashSet<Actor>` (actor hash codes are their ids).
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct ActorIndex {
     actors: Rc<RefCell<NetMap<u32, ActorRef>>>,
 }
@@ -365,3 +368,5 @@ pub fn count_actors_with_name_and_trait<T: ?Sized + 'static>(name: &str, owner: 
 pub fn first_enabled_unit_production(list: &[Rc<dyn IBotRequestUnitProduction>]) -> Option<Rc<dyn IBotRequestUnitProduction>> {
     list.iter().find(|t| t.bot_module_enabled()).cloned()
 }
+
+rustora_engine::persist_trait_refs!(dyn IBotRespondToAttack, dyn IBotTick);

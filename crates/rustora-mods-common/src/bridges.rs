@@ -44,14 +44,91 @@ pub fn register(r: &mut TraitRegistry) {
 }
 
 /// `DelayedAction`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(effect)]
 pub struct DelayedAction {
+    #[persist(me)]
     me: Weak<DelayedAction>,
     delay: Cell<i32>,
-    action: RefCell<Option<Box<dyn FnOnce(&Rc<World>)>>>,
+    action: RefCell<Option<BridgeAction>>,
+}
+
+/// What a [`DelayedAction`] does when its delay is over.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub enum BridgeAction {
+    /// Repairs the next bridge segment; `hut` counts the finished directions.
+    Repair {
+        bridge: Rc<Bridge>,
+        by: ActorRef,
+        direction: i32,
+        hut: Rc<LegacyBridgeHut>,
+    },
+    /// Demolishes the next bridge segment.
+    Demolish {
+        bridge: Rc<Bridge>,
+        by: ActorRef,
+        direction: i32,
+        damage_types: DamageTypes,
+    },
+    /// A function of a Lua script, which save games cannot keep.
+    Closure(rustora_engine::persist::Unsaved<RefCell<Option<Box<dyn FnOnce()>>>>),
+    /// The demolition charge of a hut goes off.
+    HutDemolish {
+        hut: ActorRef,
+        by: ActorRef,
+        bridge: Rc<Bridge>,
+        damage_types: DamageTypes,
+    },
+}
+
+impl BridgeAction {
+    fn run(self) {
+        match self {
+            BridgeAction::Closure(f) => {
+                let f = f.0.borrow_mut().take();
+                if let Some(f) = f {
+                    f();
+                }
+            }
+            BridgeAction::Repair {
+                bridge,
+                by,
+                direction,
+                hut,
+            } => bridge.repair(&by, direction, hut),
+            BridgeAction::Demolish {
+                bridge,
+                by,
+                direction,
+                damage_types,
+            } => bridge.demolish(&by, direction, damage_types),
+            BridgeAction::HutDemolish {
+                hut,
+                by,
+                bridge,
+                damage_types,
+            } => {
+                if hut.is_dead() {
+                    return;
+                }
+                let damage = Damage::new(0, DamageTypes::default());
+                let modifiers = hut
+                    .traits_implementing::<dyn IDamageModifier>()
+                    .into_iter()
+                    .chain(hut.owner().player_actor().traits_implementing::<dyn IDamageModifier>())
+                    .map(|t| t.get_damage_modifier(None, &damage))
+                    .collect::<Vec<_>>();
+                if apply_percentage_modifiers(100, modifiers) > 0 {
+                    bridge.for_each(|b, d| b.demolish(&by, d, damage_types));
+                }
+            }
+        }
+    }
 }
 
 impl DelayedAction {
-    pub fn new(delay: i32, action: Box<dyn FnOnce(&Rc<World>)>) -> Rc<DelayedAction> {
+    pub fn new(delay: i32, action: BridgeAction) -> Rc<DelayedAction> {
         Rc::new_cyclic(|me| DelayedAction {
             me: me.clone(),
             delay: Cell::new(delay),
@@ -71,8 +148,9 @@ impl Effect for DelayedAction {
         };
         world.add_frame_end_task(Box::new(move |w: &Rc<World>| {
             w.remove_effect(&(me.clone() as Rc<dyn Effect>));
-            if let Some(action) = me.action.borrow_mut().take() {
-                action(w);
+            let action = me.action.borrow_mut().take();
+            if let Some(action) = action {
+                action.run();
             }
         }));
     }
@@ -139,6 +217,7 @@ impl BridgeInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Bridge {
     info: Rc<BridgeInfo>,
     self_: ActorRef,
@@ -346,7 +425,7 @@ impl Bridge {
         }
     }
 
-    fn repair(self: &Rc<Self>, repairer: &ActorRef, direction: i32, on_complete: Rc<dyn Fn()>) {
+    fn repair(self: &Rc<Self>, repairer: &ActorRef, direction: i32, on_complete: Rc<LegacyBridgeHut>) {
         let initial_damage = self.health().damage_state();
         let world = self.self_.world();
         let (me, by, done) = (self.clone(), repairer.clone(), on_complete.clone());
@@ -366,7 +445,7 @@ impl Bridge {
                 me.own_hut().is_some() || me.neighbour(direction as usize).is_none()
             };
             if finished {
-                done();
+                done.repair_directions.set(done.repair_directions.get() - 1);
             }
         }));
         if direction < 0 || self.own_hut().is_some() {
@@ -384,7 +463,12 @@ impl Bridge {
         world.add_frame_end_task(Box::new(move |w: &Rc<World>| {
             w.add_effect(DelayedAction::new(
                 delay,
-                Box::new(move |_| next.repair(&by, direction, on_complete)),
+                BridgeAction::Repair {
+                    bridge: next,
+                    by,
+                    direction,
+                    hut: on_complete,
+                },
             ));
         }));
     }
@@ -435,7 +519,12 @@ impl Bridge {
         world.add_frame_end_task(Box::new(move |w: &Rc<World>| {
             w.add_effect(DelayedAction::new(
                 delay,
-                Box::new(move |_| next.demolish(&by, direction, damage_types)),
+                BridgeAction::Demolish {
+                    bridge: next,
+                    by,
+                    direction,
+                    damage_types,
+                },
             ));
         }));
     }
@@ -486,6 +575,7 @@ pub struct LegacyBridgeHutInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct LegacyBridgeHut {
     bridge: RefCell<Option<Rc<Bridge>>>,
     repair_directions: Cell<i32>,
@@ -539,9 +629,7 @@ impl LegacyBridgeHut {
             1
         };
         self.repair_directions.set(directions);
-        let me = self.clone();
-        let done: Rc<dyn Fn()> = Rc::new(move || me.repair_directions.set(me.repair_directions.get() - 1));
-        bridge.for_each(|b, d| b.repair(repairer, d, done.clone()));
+        bridge.for_each(|b, d| b.repair(repairer, d, self.clone()));
     }
 
     /// `RepairsBridges` refuses a hut with an undamaged, repairing or dangling bridge.
@@ -565,24 +653,14 @@ impl IDemolishable for LegacyBridgeHut {
     }
 
     fn demolish(&self, self_: &ActorRef, saboteur: &ActorRef, delay: i32, damage_types: BitSet<DamageTypeTag>) {
-        let (me, by, bridge) = (self_.clone(), saboteur.clone(), self.bridge());
         self_.world().add_effect(DelayedAction::new(
             delay,
-            Box::new(move |_| {
-                if me.is_dead() {
-                    return;
-                }
-                let damage = Damage::new(0, DamageTypes::default());
-                let modifiers = me
-                    .traits_implementing::<dyn IDamageModifier>()
-                    .into_iter()
-                    .chain(me.owner().player_actor().traits_implementing::<dyn IDamageModifier>())
-                    .map(|t| t.get_damage_modifier(None, &damage))
-                    .collect::<Vec<_>>();
-                if apply_percentage_modifiers(100, modifiers) > 0 {
-                    bridge.for_each(|b, d| b.demolish(&by, d, damage_types));
-                }
-            }),
+            BridgeAction::HutDemolish {
+                hut: self_.clone(),
+                by: saboteur.clone(),
+                bridge: self.bridge(),
+                damage_types,
+            },
         ));
     }
 }
@@ -603,6 +681,7 @@ impl Default for LegacyBridgeLayerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct LegacyBridgeLayer {
     info: Rc<LegacyBridgeLayerInfo>,
     bridges: RefCell<HashMap<CPos, Rc<Bridge>>>,
@@ -656,6 +735,9 @@ impl LegacyBridgeLayer {
 
 impl IWorldLoaded for LegacyBridgeLayer {
     fn world_loaded(&self, world: &Rc<World>) {
+        if world.is_restoring() {
+            return;
+        }
         let mut types = BTreeMap::new();
         for name in &self.info.bridges {
             let info = world
@@ -705,6 +787,7 @@ impl Default for RepairsBridgesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct RepairsBridges {
     info: Rc<RepairsBridgesInfo>,
 }
@@ -785,6 +868,8 @@ impl IResolveOrder for RepairsBridges {
 }
 
 /// `RepairBridge`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
 struct RepairBridgeHooks {
     info: Rc<RepairsBridgesInfo>,
     enter_actor: RefCell<Option<ActorRef>>,
@@ -833,4 +918,10 @@ impl EnterHooks for RepairBridgeHooks {
             EnterBehaviour::Exit => {}
         }
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_effects!(DelayedAction);
+    rustora_engine::persist_values!(dyn crate::cargo::EnterHooks: RepairBridgeHooks);
 }

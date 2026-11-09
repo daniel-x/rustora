@@ -178,6 +178,7 @@ pub struct BuildingInfluenceInfo {
 }
 
 /// `BuildingInfluence`: buildings per cell, newest first.
+#[derive(rustora_engine::persist::Persist)]
 pub struct BuildingInfluence {
     influence: RefCell<CellLayer<Vec<ActorRef>>>,
 }
@@ -222,6 +223,7 @@ impl BuildingInfluence {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Building {
     pub info: Rc<BuildingInfo>,
     self_: ActorRef,
@@ -348,6 +350,7 @@ impl Default for ImmobileInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Immobile {
     top_left: CPos,
     center: WPos,

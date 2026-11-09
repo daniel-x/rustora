@@ -3,6 +3,7 @@
 
 //! Cosmetic render traits that add overlays, effects or animations to an actor (`Traits/Render/*`).
 
+use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
@@ -101,8 +102,10 @@ impl Default for WithBuildingBibInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithBuildingBib {
     info: Rc<WithBuildingBibInfo>,
+    #[persist(in_place)]
     anims: RefCell<Vec<Rc<Animation>>>,
 }
 
@@ -195,6 +198,7 @@ impl Default for WithDeathAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithDeathAnimation {
     info: Rc<WithDeathAnimationInfo>,
     state: ConditionalState,
@@ -289,6 +293,7 @@ pub struct WithMuzzleOverlayInfo {
     pub ignore_offset: bool,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 struct MuzzleFlash {
     armament: Rc<Armament>,
     barrel: usize,
@@ -309,6 +314,28 @@ info_impl!(WithMuzzleOverlayInfo => |info, _init| Some(Rc::new(WithMuzzleOverlay
     info,
 })));
 conditional_simple!(WithMuzzleOverlay);
+
+/// The flashes are created on first use; a loaded overlay creates them before it reads their state.
+impl rustora_engine::persist::PersistState for WithMuzzleOverlay {
+    fn save_state(&self, w: &mut rustora_engine::persist::SaveWriter) {
+        self.state.save_state(w);
+        let alive = w.current_actor.as_ref().is_some_and(|a| !a.disposed());
+        match self.flashes.get().filter(|_| alive) {
+            Some(f) => {
+                w.bool(true);
+                f.save_state(w);
+            }
+            None => w.bool(false),
+        }
+    }
+    fn load_state(&self, r: &mut rustora_engine::persist::SaveReader) {
+        self.state.load_state(r);
+        if r.bool() {
+            let actor = r.current_actor();
+            self.flashes(&actor).load_state(r);
+        }
+    }
+}
 
 impl WithMuzzleOverlay {
     fn flashes(&self, self_: &ActorRef) -> &Vec<MuzzleFlash> {
@@ -368,8 +395,9 @@ impl INotifyAttack for WithMuzzleOverlay {
         for f in self.flashes(self_) {
             if std::ptr::eq(Rc::as_ptr(&f.armament), a) && std::ptr::eq(&f.armament.barrels[f.barrel], barrel) {
                 f.visible.set(true);
-                let visible = f.visible.clone();
-                f.animation.animation.play_then(sequence, Some(Rc::new(move || visible.set(false))));
+                f.animation
+                    .animation
+                    .play_then_saved(sequence, Rc::new(SetFlag(f.visible.clone(), false)));
             }
         }
     }
@@ -446,6 +474,7 @@ impl Default for LeavesTrailsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct LeavesTrails {
     info: Rc<LeavesTrailsInfo>,
     state: ConditionalState,
@@ -646,9 +675,11 @@ impl ContrailInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct ContrailTrait {
     info: Rc<ContrailInfo>,
     state: ConditionalState,
+    #[persist(skip)]
     trail: RefCell<SharedContrail>,
 }
 
@@ -720,6 +751,7 @@ impl Default for WithDamageOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithDamageOverlay {
     info: Rc<WithDamageOverlayInfo>,
     anim: Rc<Animation>,
@@ -775,21 +807,9 @@ impl INotifyDamage for WithDamageOverlay {
             return;
         }
         self.is_smoking.set(true);
-        let (a1, a2) = (self.anim.clone(), self.anim.clone());
-        let (l, en, smoking) = (info.loop_sequence.clone(), info.end_sequence.clone(), self.is_smoking.clone());
-        self.anim.play_then(
-            &info.idle_sequence,
-            Some(Rc::new(move || {
-                let (a2, en, smoking) = (a2.clone(), en.clone(), smoking.clone());
-                a1.play_then(
-                    &l,
-                    Some(Rc::new(move || {
-                        let smoking = smoking.clone();
-                        a2.play_then(&en, Some(Rc::new(move || smoking.set(false))));
-                    })),
-                );
-            })),
-        );
+        let me = crate::util::trait_rc(_self_, self);
+        self.anim
+            .play_then_saved(&info.idle_sequence, Rc::new(SmokeStage { overlay: me, stage: 0 }));
     }
 }
 
@@ -813,6 +833,7 @@ impl Default for WithColoredOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithColoredOverlay {
     info: Rc<WithColoredOverlayInfo>,
     state: ConditionalState,
@@ -874,6 +895,7 @@ impl Default for WithShadowInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithShadow {
     info: Rc<WithShadowInfo>,
     state: ConditionalState,
@@ -937,6 +959,7 @@ impl Default for WithResupplyAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithResupplyAnimation {
     info: Rc<WithResupplyAnimationInfo>,
     state: ConditionalState,
@@ -1047,6 +1070,7 @@ impl Default for WithParachuteInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithParachute {
     info: Rc<WithParachuteInfo>,
     state: ConditionalState,
@@ -1098,23 +1122,21 @@ impl ConditionalHooks for WithParachute {
         &self.state
     }
 
-    fn trait_enabled(&self, _self_: &ActorRef) {
+    fn trait_enabled(&self, self_: &ActorRef) {
         let Some(anim) = &self.overlay else { return };
-        let (a, seq) = (anim.clone(), self.info.sequence.clone().unwrap_or_default());
-        anim.play_then(
+        anim.play_then_saved(
             self.info.opening_sequence.as_deref().unwrap_or_default(),
-            Some(Rc::new(move || a.play_repeating(&seq))),
+            Rc::new(ParachuteOpened(crate::util::trait_rc(self_, self))),
         );
     }
 
     fn trait_disabled(&self, _self_: &ActorRef) {
         let Some(anim) = &self.overlay else { return };
         self.render_prolonged.set(true);
-        let prolonged = self.render_prolonged.clone();
-        let after: Rc<dyn Fn()> = Rc::new(move || prolonged.set(false));
+        let after = AfterAnim::saved(SetFlag(self.render_prolonged.clone(), false));
         match self.info.closing_sequence.as_deref().filter(|c| !c.is_empty()) {
-            Some(c) => anim.play_then(c, Some(after)),
-            None => anim.play_backwards_then(self.info.opening_sequence.as_deref().unwrap_or_default(), Some(after)),
+            Some(c) => anim.play_then_after(c, Some(after)),
+            None => anim.play_backwards_then_after(self.info.opening_sequence.as_deref().unwrap_or_default(), Some(after)),
         }
     }
 }
@@ -1190,6 +1212,7 @@ impl Default for WithTurretAttackAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithTurretAttackAnimation {
     info: Rc<WithTurretAttackAnimationInfo>,
     state: ConditionalState,
@@ -1268,6 +1291,7 @@ impl Default for WithTeslaChargeAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithTeslaChargeAnimation {
     info: Rc<WithTeslaChargeAnimationInfo>,
 }
@@ -1303,6 +1327,7 @@ impl Default for WithSupportPowerActivationAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithSupportPowerActivationAnimation {
     info: Rc<WithSupportPowerActivationAnimationInfo>,
     state: ConditionalState,
@@ -1366,6 +1391,7 @@ impl Default for WithLandingCraftAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithLandingCraftAnimation {
     info: Rc<WithLandingCraftAnimationInfo>,
     open: Cell<bool>,
@@ -1396,14 +1422,13 @@ impl ITick for WithLandingCraftAnimation {
         if self.should_be_open(self_) {
             if !self.open.get() && anim.has_sequence(&self.info.open_sequence) {
                 self.open.set(true);
-                let (b, a, unload) = (body.clone(), self_.clone(), self.info.unload_sequence.clone());
                 body.play_custom_animation(
                     self_,
                     &self.info.open_sequence,
-                    Some(Rc::new(move || {
-                        if b.default_animation.has_sequence(&unload) {
-                            b.play_custom_animation_repeating(&a, &unload);
-                        }
+                    Some(AfterAnim::saved(PlayIfHasSequence {
+                        body: body.clone(),
+                        actor: self_.clone(),
+                        sequence: self.info.unload_sequence.clone(),
                     })),
                 );
             }
@@ -1439,6 +1464,7 @@ impl Default for WithCrateBodyInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithCrateBody {
     info: Rc<WithCrateBodyInfo>,
     anim: Rc<Animation>,
@@ -1521,6 +1547,7 @@ impl Default for WithIdleAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithIdleAnimation {
     info: Rc<WithIdleAnimationInfo>,
     state: ConditionalState,
@@ -1593,6 +1620,7 @@ impl Default for WithMoveAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithMoveAnimation {
     info: Rc<WithMoveAnimationInfo>,
     state: ConditionalState,
@@ -1697,6 +1725,7 @@ impl Default for WithAttackAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithAttackAnimation {
     info: Rc<WithAttackAnimationInfo>,
     state: ConditionalState,
@@ -1785,6 +1814,7 @@ impl Default for WithAttackOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithAttackOverlay {
     info: Rc<WithAttackOverlayInfo>,
     overlay: Rc<Animation>,
@@ -1824,8 +1854,8 @@ info_impl!(WithAttackOverlayInfo => |info, init| {
 impl WithAttackOverlay {
     fn play_overlay(&self) {
         self.attacking.set(true);
-        let att = self.attacking.clone();
-        self.overlay.play_then(&self.info.sequence, Some(Rc::new(move || att.set(false))));
+        self.overlay
+            .play_then_saved(&self.info.sequence, Rc::new(SetFlag(self.attacking.clone(), false)));
     }
 
     fn notify(&self, a: &Armament, relative_to: &str) {
@@ -1887,6 +1917,7 @@ impl Default for WithSupportPowerActivationOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithSupportPowerActivationOverlay {
     state: ConditionalState,
     overlay: Rc<Animation>,
@@ -1901,8 +1932,7 @@ info_impl!(WithSupportPowerActivationOverlayInfo => |info, init| {
     let body = self_.trait_::<BodyOrientation>();
     let overlay = Animation::new(w.map().sequences().clone(), &rs.get_image(&self_), None, None);
     let visible = Rc::new(Cell::new(false));
-    let v = visible.clone();
-    overlay.play_then(&info.sequence, Some(Rc::new(move || v.set(false))));
+    overlay.play_then_saved(&info.sequence, Rc::new(SetFlag(visible.clone(), false)));
     let t = Rc::new(WithSupportPowerActivationOverlay { state: ConditionalState::new(&info.base), overlay, visible });
     let (b, a, off, weak) = (body, self_.clone(), info.offset, Rc::downgrade(&t));
     let center = self_.clone();
@@ -1925,9 +1955,8 @@ impl INotifySupportPower for WithSupportPowerActivationOverlay {
 
     fn activated(&self, _self_: &ActorRef) {
         self.visible.set(true);
-        let v = self.visible.clone();
         if let Some(name) = self.overlay.current_sequence().map(|s| s.name.clone()) {
-            self.overlay.play_then(&name, Some(Rc::new(move || v.set(false))));
+            self.overlay.play_then_saved(&name, Rc::new(SetFlag(self.visible.clone(), false)));
         }
     }
 }
@@ -1954,6 +1983,7 @@ impl Default for WithDeliveryAnimationInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithDeliveryAnimation {
     info: Rc<WithDeliveryAnimationInfo>,
     state: ConditionalState,
@@ -2020,6 +2050,7 @@ impl Default for WithResourceLevelOverlayInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct WithResourceLevelOverlay {
     info: Rc<WithResourceLevelOverlayInfo>,
     state: ConditionalState,
@@ -2076,4 +2107,76 @@ impl INotifyOwnerChanged for WithResourceLevelOverlay {
     fn on_owner_changed(&self, _self_: &ActorRef, _old: &rustora_engine::player::PlayerRef, new_owner: &rustora_engine::player::PlayerRef) {
         *self.player_resources.borrow_mut() = new_owner.player_actor().trait_::<crate::player::PlayerResources>();
     }
+}
+
+/// After an animation: repeats `sequence` on the body if it has it.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct PlayIfHasSequence {
+    body: Rc<crate::render::WithSpriteBody>,
+    actor: ActorRef,
+    sequence: String,
+}
+
+impl rustora_engine::persist::SavedFn for PlayIfHasSequence {
+    fn call(&self) {
+        if self.body.default_animation.has_sequence(&self.sequence) {
+            self.body.play_custom_animation_repeating(&self.actor, &self.sequence);
+        }
+    }
+}
+
+/// Sets a flag after an animation.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct SetFlag(pub Rc<Cell<bool>>, pub bool);
+
+impl rustora_engine::persist::SavedFn for SetFlag {
+    fn call(&self) {
+        self.0.set(self.1);
+    }
+}
+
+/// The idle, loop and end sequences of `WithDamageOverlay`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct SmokeStage {
+    overlay: Rc<WithDamageOverlay>,
+    stage: u8,
+}
+
+impl rustora_engine::persist::SavedFn for SmokeStage {
+    fn call(&self) {
+        let o = &self.overlay;
+        if self.stage == 0 {
+            o.anim.play_then_saved(
+                &o.info.loop_sequence,
+                Rc::new(SmokeStage {
+                    overlay: o.clone(),
+                    stage: 1,
+                }),
+            );
+        } else {
+            o.anim
+                .play_then_saved(&o.info.end_sequence, Rc::new(SetFlag(o.is_smoking.clone(), false)));
+        }
+    }
+}
+
+/// After the opening sequence of a parachute.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct ParachuteOpened(Rc<WithParachute>);
+
+impl rustora_engine::persist::SavedFn for ParachuteOpened {
+    fn call(&self) {
+        if let Some(a) = &self.0.overlay {
+            a.play_repeating(self.0.info.sequence.as_deref().unwrap_or_default());
+        }
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: PlayIfHasSequence, SetFlag, SmokeStage, ParachuteOpened);
 }

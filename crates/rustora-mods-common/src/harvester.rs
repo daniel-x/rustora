@@ -4,6 +4,7 @@
 //! Harvesting and docking: `Harvester`, `DockClientManager`, `DockHost`, `Refinery`, `StoresResources`,
 //! `StoresPlayerResources`, `ResourceClaimLayer`, `CashTrickler` and their activities.
 
+use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
@@ -100,6 +101,7 @@ impl Default for StoresResourcesInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct StoresResources {
     info: Rc<StoresResourcesInfo>,
     contents: RefCell<NetMap<String, i32>>,
@@ -186,6 +188,7 @@ pub struct StoresPlayerResourcesInfo {
     pub capacity: i32,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct StoresPlayerResources {
     info: Rc<StoresPlayerResourcesInfo>,
     player: RefCell<Rc<PlayerResources>>,
@@ -255,7 +258,7 @@ pub struct ResourceClaimLayerInfo {
     pub instance_name: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct ResourceClaimLayer {
     claim_by_cell: RefCell<HashMap<CPos, Vec<ActorRef>>>,
     claim_by_actor: RefCell<HashMap<u32, CPos>>,
@@ -331,6 +334,7 @@ impl Default for RefineryInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Refinery {
     info: Rc<RefineryInfo>,
     player_resources: RefCell<Rc<PlayerResources>>,
@@ -414,6 +418,7 @@ impl Default for CashTricklerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct CashTrickler {
     info: Rc<CashTricklerInfo>,
     state: ConditionalState,
@@ -506,6 +511,7 @@ impl Default for DockClientManagerInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct DockClientManager {
     pub info: Rc<DockClientManagerInfo>,
     state: ConditionalState,
@@ -914,6 +920,7 @@ impl Default for DockHostInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct DockHost {
     pub info: Rc<DockHostInfo>,
     state: ConditionalState,
@@ -1176,6 +1183,7 @@ impl Default for HarvesterInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Harvester {
     pub info: Rc<HarvesterInfo>,
     state: ConditionalState,
@@ -1464,6 +1472,8 @@ impl ISpeedModifier for Harvester {
 }
 
 /// `Activities/FindAndDeliverResources.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct FindAndDeliverResources {
     base: ActivityBase,
     harv: Rc<Harvester>,
@@ -1662,6 +1672,8 @@ impl Activity for FindAndDeliverResources {
 }
 
 /// `Activities/HarvestResource.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct HarvestResource {
     base: ActivityBase,
     harv: Rc<Harvester>,
@@ -1762,6 +1774,8 @@ impl Activity for HarvestResource {
 }
 
 /// `Activities/MoveToDock.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct MoveToDock {
     base: ActivityBase,
     dock_client: Rc<DockClientManager>,
@@ -1884,7 +1898,8 @@ impl Activity for MoveToDock {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, rustora_engine::persist::Persist)]
+#[persist(value)]
 enum DockingState {
     Wait,
     Drag,
@@ -1895,6 +1910,8 @@ enum DockingState {
 }
 
 /// `Activities/GenericDockSequence.cs`.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(activity)]
 pub struct GenericDockSequence {
     base: ActivityBase,
     dock_host_actor: ActorRef,
@@ -1983,7 +2000,7 @@ impl Activity for GenericDockSequence {
                         Some(b) => {
                             state.set(DockingState::Wait);
                             let s = state.clone();
-                            b.play_dock_animation(self_, Rc::new(move || s.set(DockingState::Loop)));
+                            b.play_dock_animation(self_, AfterAnim::saved(SetDockingState(s, DockingState::Loop)));
                         }
                         None => state.set(DockingState::Loop),
                     }
@@ -2015,7 +2032,7 @@ impl Activity for GenericDockSequence {
                         Some(b) => {
                             state.set(DockingState::Wait);
                             let s = state.clone();
-                            b.play_reverse_dock_animation(self_, Rc::new(move || s.set(DockingState::Complete)));
+                            b.play_reverse_dock_animation(self_, AfterAnim::saved(SetDockingState(s, DockingState::Complete)));
                         }
                         None => state.set(DockingState::Complete),
                     }
@@ -2066,4 +2083,23 @@ impl rustora_engine::sound::IOrderVoice for DockClientManager {
         self.can_queue_dock_at(target, order.order_string == "ForceDock", order.queued)
             .then(|| self.info.voice.clone())
     }
+}
+
+rustora_engine::persist_trait_refs!(dyn IAcceptResources, dyn IDockClient, dyn INotifyDockClientMoving);
+
+/// Sets the state of a dock sequence after its animation.
+#[derive(rustora_engine::persist::Persist)]
+#[persist(value)]
+pub struct SetDockingState(Rc<Cell<DockingState>>, DockingState);
+
+impl rustora_engine::persist::SavedFn for SetDockingState {
+    fn call(&self) {
+        self.0.set(self.1);
+    }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    rustora_engine::persist_activities!(FindAndDeliverResources, HarvestResource, MoveToDock, GenericDockSequence);
+    rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: SetDockingState);
 }

@@ -24,6 +24,7 @@ pub struct GameSaveViewportManagerInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct GameSaveViewportManager;
 register_traits!(GameSaveViewportManager: IGameSaveTraitData);
 info_impl!(GameSaveViewportManagerInfo => |_info, _init| Some(Rc::new(GameSaveViewportManager)));

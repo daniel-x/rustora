@@ -280,6 +280,7 @@ impl Default for HitShapeInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct HitShape {
     pub info: Rc<HitShapeInfo>,
     state: ConditionalState,

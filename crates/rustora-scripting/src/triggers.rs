@@ -366,3 +366,18 @@ impl INotifyActorDisposing for ScriptTriggers {
         }
     }
 }
+
+/// Triggers hold Lua functions, which save games cannot keep: saving fails if any trigger is registered.
+impl rustora_engine::persist::PersistState for ScriptTriggers {
+    fn save_state(&self, _w: &mut rustora_engine::persist::SaveWriter) {
+        let empty = self.triggerables.borrow().iter().all(Vec::is_empty)
+            && self.on_killed_internal.borrow().is_empty()
+            && self.on_captured_internal.borrow().is_empty()
+            && self.on_removed_internal.borrow().is_empty()
+            && self.on_added_internal.borrow().is_empty()
+            && self.on_produced_internal.borrow().is_empty()
+            && self.on_other_produced_internal.borrow().is_empty();
+        assert!(empty, "save game: an actor has Lua triggers");
+    }
+    fn load_state(&self, _r: &mut rustora_engine::persist::SaveReader) {}
+}

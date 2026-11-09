@@ -20,21 +20,89 @@ use crate::target::{Target, TargetType};
 use crate::terrain::TargetableType;
 use crate::world::World;
 
+/// A trait that fires projectiles from barrels, such as `Armament`.
+pub trait IMuzzle {
+    /// The world position of the barrel with the local `offset` and `yaw`.
+    fn muzzle_position(&self, self_: &ActorRef, offset: WVec, yaw: WAngle) -> WPos;
+    fn muzzle_facing(&self, self_: &ActorRef, offset: WVec, yaw: WAngle) -> WAngle;
+}
+
+crate::persist_trait_refs!(dyn IMuzzle);
+
+/// Where a projectile comes from while it flies: `ProjectileArgs.CurrentMuzzleFacing` and `CurrentSource`.
+#[derive(Clone, crate::persist::Persist)]
+#[persist(value)]
+pub enum MuzzleSource {
+    /// A barrel of an armament.
+    Barrel {
+        muzzle: Rc<dyn IMuzzle>,
+        actor: ActorRef,
+        offset: WVec,
+        yaw: WAngle,
+    },
+    /// The center of an actor, with facing zero.
+    ActorCenter(ActorRef),
+    /// The center of a target, facing from it towards `center`.
+    TowardsCenter { target: Target, center: WPos },
+}
+
+impl MuzzleSource {
+    pub fn facing(&self) -> WAngle {
+        match self {
+            MuzzleSource::Barrel {
+                muzzle,
+                actor,
+                offset,
+                yaw,
+            } => muzzle.muzzle_facing(actor, *offset, *yaw),
+            MuzzleSource::ActorCenter(_) => WAngle::ZERO,
+            MuzzleSource::TowardsCenter { target, center } => (*center - target.center_position()).yaw(),
+        }
+    }
+
+    pub fn position(&self) -> WPos {
+        match self {
+            MuzzleSource::Barrel {
+                muzzle,
+                actor,
+                offset,
+                yaw,
+            } => muzzle.muzzle_position(actor, *offset, *yaw),
+            MuzzleSource::ActorCenter(a) => a.center_position(),
+            MuzzleSource::TowardsCenter { target, .. } => target.center_position(),
+        }
+    }
+}
+
+#[derive(Clone, crate::persist::Persist)]
+#[persist(value)]
 pub struct ProjectileArgs {
     pub weapon: Rc<WeaponInfo>,
     pub damage_modifiers: Vec<i32>,
     pub inaccuracy_modifiers: Vec<i32>,
     pub range_modifiers: Vec<i32>,
     pub facing: WAngle,
-    pub current_muzzle_facing: Rc<dyn Fn() -> WAngle>,
+    pub muzzle: MuzzleSource,
     pub source: WPos,
-    pub current_source: Rc<dyn Fn() -> WPos>,
     pub source_actor: ActorRef,
     pub passive_target: WPos,
     pub guided_target: Target,
 }
 
-#[derive(Clone)]
+impl ProjectileArgs {
+    /// `CurrentMuzzleFacing`.
+    pub fn current_muzzle_facing(&self) -> WAngle {
+        self.muzzle.facing()
+    }
+
+    /// `CurrentSource`.
+    pub fn current_source(&self) -> WPos {
+        self.muzzle.position()
+    }
+}
+
+#[derive(Clone, crate::persist::Persist)]
+#[persist(value)]
 pub struct WarheadArgs {
     pub weapon: Rc<WeaponInfo>,
     pub damage_modifiers: Vec<i32>,
@@ -259,11 +327,14 @@ pub fn weapon_impact(weapon: &Rc<WeaponInfo>, target: &Target, fired_by: &ActorR
 }
 
 /// `Effects/DelayedImpact.cs`.
+#[derive(crate::persist::Persist)]
+#[persist(effect)]
 struct DelayedImpact {
     delay: std::cell::Cell<i32>,
     warhead: Rc<dyn IWarhead>,
     target: Target,
     args: WarheadArgs,
+    #[persist(me)]
     me: std::rc::Weak<DelayedImpact>,
 }
 
@@ -284,4 +355,9 @@ impl Effect for DelayedImpact {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Registers the save game loaders of this module.
+pub(crate) fn register_persist() {
+    crate::persist_effects!(DelayedImpact);
 }

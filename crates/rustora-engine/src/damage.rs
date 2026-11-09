@@ -7,7 +7,8 @@ use crate::actor::ActorRef;
 use crate::bitset::BitSet;
 
 /// Bit flags of `DamageState`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, crate::persist::Persist)]
+#[persist(value)]
 pub struct DamageState(pub i32);
 
 impl DamageState {
@@ -48,7 +49,8 @@ impl rustora_core::fieldloader::ArrayAware for DamageState {}
 pub struct DamageTypeTag;
 pub type DamageTypes = BitSet<DamageTypeTag>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, crate::persist::Persist)]
+#[persist(value)]
 pub struct Damage {
     pub value: i32,
     pub damage_types: DamageTypes,
@@ -60,7 +62,8 @@ impl Damage {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, crate::persist::Persist)]
+#[persist(value)]
 pub struct AttackInfo {
     pub damage: Damage,
     pub attacker: Option<ActorRef>,

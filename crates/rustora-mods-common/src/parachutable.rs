@@ -49,6 +49,7 @@ impl Default for ParachutableInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Parachutable {
     info: Rc<ParachutableInfo>,
     positionable: Rc<dyn IPositionable>,

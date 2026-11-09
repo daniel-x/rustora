@@ -69,6 +69,7 @@ impl FactionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Faction;
 register_traits!(Faction);
 info_impl!(FactionInfo => |_, _| Some(Rc::new(Faction)));
@@ -108,7 +109,8 @@ fn display_faction(name: &str, factions: &[Rc<FactionInfo>]) -> Rc<FactionInfo> 
 }
 
 /// `PlayerReference` from map.yaml.
-#[derive(Clone, Debug, FieldLoad)]
+#[derive(Clone, Debug, FieldLoad, rustora_engine::persist::Persist)]
+#[persist(value)]
 pub struct PlayerReference {
     pub name: String,
     pub palette: Option<String>,
@@ -214,7 +216,7 @@ pub struct CreateMapPlayersInfo {
 }
 
 /// Player references of the created players, used for alliance masks and starting units.
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct CreateMapPlayers {
     pub references: RefCell<Vec<(PlayerRef, PlayerReference)>>,
 }
@@ -385,12 +387,14 @@ impl Default for MapStartingLocationsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct MapStartingLocations {
     info: Rc<MapStartingLocationsInfo>,
     state: RefCell<SpawnState>,
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
+#[persist(value)]
 struct SpawnState {
     separate_team_spawns: bool,
     spawn_locations: Vec<CPos>,
@@ -494,7 +498,7 @@ pub struct SpawnMapActorsInfo {
     pub instance_name: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, rustora_engine::persist::Persist)]
 pub struct SpawnMapActors {
     pub actors: RefCell<IndexMap<String, ActorRef>>,
     /// The ID of the last actor created from the map.
@@ -506,6 +510,9 @@ info_impl!(SpawnMapActorsInfo => |_, _| Some(Rc::new(SpawnMapActors::default()))
 
 impl IWorldLoaded for SpawnMapActors {
     fn world_loaded(&self, world: &Rc<World>) {
+        if world.is_restoring() {
+            return;
+        }
         let world_owner = world.world_actor().owner();
         for n in world.map().package.section_nodes("Actors") {
             let mut r = ActorReference::from_yaml(n.value.value_str(), &n.value).expect("map actor reference");
@@ -557,6 +564,7 @@ impl Default for StartingUnitsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct StartingUnits;
 register_traits!(StartingUnits);
 info_impl!(StartingUnitsInfo => |_, _| Some(Rc::new(StartingUnits)));
@@ -577,6 +585,7 @@ impl Default for SpawnStartingUnitsInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct SpawnStartingUnits {
     info: Rc<SpawnStartingUnitsInfo>,
 }
@@ -650,6 +659,9 @@ impl SpawnStartingUnits {
 
 impl IWorldLoaded for SpawnStartingUnits {
     fn world_loaded(&self, w: &Rc<World>) {
+        if w.is_restoring() {
+            return;
+        }
         let refs = w.world_actor().trait_::<CreateMapPlayers>().references.borrow().clone();
         for p in w.players() {
             if !p.playable {

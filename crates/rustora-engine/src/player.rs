@@ -23,7 +23,8 @@ pub enum WinState {
 }
 
 /// Bit flags of `PlayerRelationship`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, crate::persist::Persist)]
+#[persist(value)]
 pub struct PlayerRelationship(pub i32);
 
 impl PlayerRelationship {

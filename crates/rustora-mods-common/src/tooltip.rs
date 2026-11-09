@@ -56,6 +56,7 @@ impl Default for TooltipInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct Tooltip {
     pub info: Rc<TooltipInfo>,
     state: ConditionalState,
@@ -128,6 +129,7 @@ impl Default for TooltipDescriptionInfo {
     }
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct TooltipDescription {
     pub info: Rc<TooltipDescriptionInfo>,
     state: ConditionalState,
@@ -164,6 +166,7 @@ pub struct PowerTooltipInfo {
     pub instance_name: Option<String>,
 }
 
+#[derive(rustora_engine::persist::Persist)]
 pub struct PowerTooltip;
 
 register_traits!(PowerTooltip: IProvideTooltipInfo);
