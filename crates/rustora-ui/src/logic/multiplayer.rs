@@ -10,8 +10,8 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
 
 use rustora_core::fieldloader::Color;
-use rustora_game::map_cache::MapStatus;
-use rustora_game::settings::MpGameFilters;
+use rustora_client::map_cache::MapStatus;
+use rustora_client::settings::MpGameFilters;
 use rustora_net::beacon::{BeaconLocation, Probe};
 use rustora_net::game_server::{GameServer, parse_game_list, parse_lan_game, server_list_url};
 

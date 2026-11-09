@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use rustora_core::miniyaml::MiniYaml;
-use rustora_game::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
+use rustora_client::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
 use rustora_net::order::RawOrder;
 
 use super::lobby_utils::split_on_first_token;

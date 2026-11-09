@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::UNIX_EPOCH;
 
-use rustora_game::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
+use rustora_client::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
 
 use crate::fluent::MessageArg;
 use crate::loader::cell;

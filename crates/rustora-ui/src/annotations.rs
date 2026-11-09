@@ -13,7 +13,7 @@ use rustora_engine::damage::DamageState;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::traits::{IHealth, ISelectionBar};
 use rustora_engine::world::WorldType;
-use rustora_game::settings::{Settings, StatusBarsType, TargetLinesType};
+use rustora_client::settings::{Settings, StatusBarsType, TargetLinesType};
 use rustora_mods_common::decorations::{AnnotationCircle, DecorationLabel, IDecoration, IRenderCircles};
 use rustora_mods_common::selection::SelectableInfo;
 use rustora_mods_common::target_lines::DrawLineToTarget;

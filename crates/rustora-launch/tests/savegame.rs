@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use rustora_launch::{ReplayDriver, Step, load_game, restore_game, save_game};
-use rustora_net::replay::Replay;
+use rustora_client::replay::Replay;
 
 #[test]
 fn restored_game_continues_like_the_original() {

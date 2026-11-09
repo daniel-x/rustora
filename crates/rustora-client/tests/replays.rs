@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use rustora_net::order::Packet;
-use rustora_net::replay::Replay;
+use rustora_client::replay::Replay;
 
 /// The replays of the outer project's `testdata/replays`, when present.
 #[test]

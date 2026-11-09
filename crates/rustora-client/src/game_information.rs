@@ -9,7 +9,7 @@ use rustora_core::fieldloader::{Color, LoadError, load};
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_derive::FieldLoad;
 
-use crate::NetError;
+use rustora_net::NetError;
 
 /// `WinState`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

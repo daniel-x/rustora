@@ -20,10 +20,10 @@ use rustora_engine::order_manager::{Connection, Incoming};
 use rustora_engine::world::World;
 use rustora_fs::Platform;
 use rustora_game::moddata::ModData;
-use rustora_net::game_information::GameInformation;
+use rustora_client::game_information::GameInformation;
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::order::{OrderPacket, Packet, RawOrder, order_type};
-use rustora_net::replay::ReplayRecorder;
+use rustora_client::replay::ReplayRecorder;
 use rustora_net::session::{Client, ClientState, Session};
 
 use crate::skirmish::BotSpec;

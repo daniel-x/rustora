@@ -8,11 +8,11 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::NetError;
-use crate::binary::Reader;
+use rustora_net::NetError;
+use rustora_net::binary::Reader;
 use crate::game_information::GameInformation;
-use crate::order::{OrderPacket, Packet};
-use crate::session::Session;
+use rustora_net::order::{OrderPacket, Packet};
+use rustora_net::session::Session;
 
 pub const META_START_MARKER: i32 = -1;
 pub const META_END_MARKER: i32 = -2;
@@ -79,7 +79,7 @@ impl Replay {
             if packets.last().unwrap().data.len() > 4
                 && matches!(
                     ty,
-                    Some(crate::order::order_type::DISCONNECT) | Some(crate::order::order_type::SYNC_HASH)
+                    Some(rustora_net::order::order_type::DISCONNECT) | Some(rustora_net::order::order_type::SYNC_HASH)
                 )
             {
                 continue;

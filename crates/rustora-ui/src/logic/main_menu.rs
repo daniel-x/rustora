@@ -6,7 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use rustora_game::map_cache::{MapClassification, MapVisibility};
+use rustora_client::map_cache::{MapClassification, MapVisibility};
 
 use crate::loader::cell;
 use crate::logic::{NoLogic, connection, cosmetic_random, lobby, services};

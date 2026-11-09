@@ -15,19 +15,19 @@ use rustora_engine::sequence::ReadFile;
 use rustora_engine::sound::{AudioDevice, AudioRules, NullAudioDevice, Sound};
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Package, Platform, ReadFs};
-use rustora_game::installer::ModContent;
+use rustora_client::installer::ModContent;
 use rustora_game::map::MapPackage;
-use rustora_game::map_cache::MapCache;
+use rustora_client::map_cache::MapCache;
 use rustora_game::moddata::ModData;
-use rustora_game::settings::{Settings, WorldViewport};
+use rustora_client::settings::{Settings, WorldViewport};
 use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
 use rustora_launch::{Step, load_world_with_sound, open_map, shellmaps};
 use rustora_mods_common::sound::StartGameNotificationInfo;
 use rustora_mods_common::world::create_game_information;
-use rustora_net::game_information::ReplayMetadata;
+use rustora_client::game_information::ReplayMetadata;
 use rustora_net::order::RawOrder;
-use rustora_net::replay::Replay;
+use rustora_client::replay::Replay;
 use rustora_net::session::Session;
 use rustora_render::ui::UiList;
 use rustora_render::{Camera, Quad, Renderer};
@@ -1060,7 +1060,7 @@ impl Client {
         let final_game_tick = replay
             .metadata
             .as_deref()
-            .and_then(|m| rustora_net::game_information::GameInformation::deserialize(m, path).ok())
+            .and_then(|m| rustora_client::game_information::GameInformation::deserialize(m, path).ok())
             .map_or(0, |info| info.root.final_game_tick);
         let distance = self.services.settings.borrow().graphics.viewport_distance;
         let shell = ShellWorld::start_replay(&self.engine, &self.support, package, lobby, replay, self.ui.resolution, distance);

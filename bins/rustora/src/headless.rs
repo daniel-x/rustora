@@ -10,7 +10,7 @@ use std::rc::Rc;
 use rustora_engine::order_manager::OrderManager;
 use rustora_engine::world::World;
 use rustora_launch::{LoadedGame, ReplayDriver, Step, load_game};
-use rustora_net::replay::Replay;
+use rustora_client::replay::Replay;
 
 /// Type names of an activity and its nested children with their targets, like the C# `Harness.TraceActor` output:
 /// `Move[1024,2048,0] > Turn`.
@@ -791,7 +791,7 @@ fn compare_worlds(a: &Rc<World>, b: &Rc<World>) -> bool {
 }
 
 /// The recorded sync packets of each frame, as client id to (sync hash, defeat state).
-fn recorded_syncs(replay: &rustora_net::replay::Replay) -> std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> {
+fn recorded_syncs(replay: &rustora_client::replay::Replay) -> std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> {
     let mut out: std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> = Default::default();
     for p in replay.chunks.iter().flat_map(|c| &c.packets) {
         if let Ok(rustora_net::order::Packet::Sync {

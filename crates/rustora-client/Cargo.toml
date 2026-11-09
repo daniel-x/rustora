@@ -1,0 +1,22 @@
+[package]
+name = "rustora-client"
+description = "Client-only data of rustora: settings, map cache, content installer, replays and game information"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustora-core = { path = "../rustora-core" }
+rustora-derive = { path = "../rustora-derive" }
+rustora-fs = { path = "../rustora-fs" }
+rustora-game = { path = "../rustora-game" }
+rustora-net = { path = "../rustora-net" }
+indexmap = "2"
+log = "0.4"
+sha1 = "0.11"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+flate2 = "1"
+base64 = "0.23"
+
+[lints]
+workspace = true

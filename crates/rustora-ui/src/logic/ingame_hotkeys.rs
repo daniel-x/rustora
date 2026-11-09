@@ -13,7 +13,7 @@ use rustora_engine::actor::ActorRef;
 use rustora_engine::order::Order;
 use rustora_engine::player::WinState;
 use rustora_engine::target::Target;
-use rustora_game::settings::StatusBarsType;
+use rustora_client::settings::StatusBarsType;
 use rustora_mods_common::auto_target::{AutoTarget, UnitStance};
 use rustora_mods_common::base::BaseBuilding;
 use rustora_mods_common::building::Building;

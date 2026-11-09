@@ -3,7 +3,7 @@
 
 //! Port of the geometry of `Viewport.cs`. Positions are world pixels.
 
-use rustora_game::settings::WorldViewport;
+use rustora_client::settings::WorldViewport;
 
 use crate::draw::Rect;
 

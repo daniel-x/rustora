@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use rustora_fs::Platform;
-use rustora_game::installer::{
+use rustora_client::installer::{
     Availability, ModContent, ModDownload, ModSource, StatusArg, StatusMessage, extract_download, find_source_path, install_from_source,
     package_tooltip, sha1_file, source_availability, write_install_log,
 };

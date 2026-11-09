@@ -628,8 +628,8 @@ pub fn create_game_information(
     world: &World,
     mod_id: &str,
     version: &str,
-) -> std::sync::Arc<std::sync::Mutex<rustora_net::game_information::GameInformation>> {
-    use rustora_net::game_information::{GameInformation, GamePlayer, GameRoot, now_utc};
+) -> std::sync::Arc<std::sync::Mutex<rustora_client::game_information::GameInformation>> {
+    use rustora_client::game_information::{GameInformation, GamePlayer, GameRoot, now_utc};
     let factions = world.world_actor().info.trait_infos::<FactionInfo>();
     let faction_name = |internal: &str| factions.iter().find(|f| f.internal() == internal).and_then(|f| f.name.clone());
     let lobby = &world.lobby_info;

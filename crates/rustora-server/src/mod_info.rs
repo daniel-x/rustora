@@ -12,6 +12,7 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use rustora_fs::{Package, Platform};
 use rustora_game::map::MapPackage;
+use rustora_game::map_folders::map_folders;
 use rustora_game::moddata::ModData;
 pub use rustora_game::lobby_rules::{GameSpeed, MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo};
 use rustora_game::lobby_rules::ModLobbyRules;
@@ -29,20 +30,14 @@ pub struct ServerMod {
     infos: HashMap<String, Rc<MapInfo>>,
 }
 
-/// The maps of the `MapFolders` of the manifest, as `MapCache.LoadMaps` finds them.
+/// The maps of the map folders of the mod, each folder in name order.
 fn scan_maps(data: &ModData) -> IndexMap<String, MapEntry> {
     let mut maps = IndexMap::new();
-    let fs = &data.file_system;
-    for (name, _) in &data.manifest.map_folders {
-        let Some(folder) = fs.open_package(name.strip_prefix('~').unwrap_or(name)) else {
-            continue;
-        };
-        let mut entries = folder.contents();
-        entries.sort();
-        for entry in entries {
-            if let Some(package) = folder.open_package(&entry, fs)
-                && let Ok(map) = MapPackage::load(package.clone())
-            {
+    for folder in map_folders(data) {
+        let mut packages = folder.map_packages(&data.file_system);
+        packages.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, package) in packages {
+            if let Ok(map) = MapPackage::load(package.clone()) {
                 maps.entry(map.uid.clone()).or_insert(MapEntry { package, map });
             }
         }

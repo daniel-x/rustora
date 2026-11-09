@@ -10,8 +10,8 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use rustora_core::fieldloader::Color;
-use rustora_game::map_cache::{MapPreview, MapStatus};
-use rustora_game::settings::sanitized_player_name;
+use rustora_client::map_cache::{MapPreview, MapStatus};
+use rustora_client::settings::sanitized_player_name;
 use rustora_net::session::{Client, ConnectionQuality, Session, Slot};
 
 use crate::fluent::MessageArg;

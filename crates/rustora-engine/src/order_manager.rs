@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use rustora_core::miniyaml::MiniYaml;
 use rustora_net::order::{OrderPacket, Packet, RawOrder};
-use rustora_net::replay::Chunk;
+use rustora_client::replay::Chunk;
 
 use crate::net_collections::NetMap;
 use crate::order::Order;

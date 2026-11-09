@@ -17,9 +17,10 @@ use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::CPos;
 use rustora_fs::{FileSystem, Package};
 
-use crate::GameError;
-use crate::map::compute_uid;
-use crate::moddata::ModData;
+use rustora_game::GameError;
+use rustora_game::map::compute_uid;
+use rustora_game::map_folders::map_folders;
+use rustora_game::moddata::ModData;
 
 /// The oldest map format that `Map.SupportedMapFormat` accepts.
 pub const SUPPORTED_MAP_FORMAT: i32 = 11;
@@ -351,27 +352,23 @@ impl MapCache {
             ..MapCache::default()
         };
         let fs = &mod_data.file_system;
-        for (name, class) in &manifest.map_folders {
-            let class = MapClassification::parse(class);
-            let name = name.strip_prefix('~').unwrap_or(name);
-            let resolved = fs.platform().resolve_path(name);
+        for name in manifest.map_folders.keys() {
+            let resolved = fs.platform().resolve_path(name.strip_prefix('~').unwrap_or(name));
             if resolved.starts_with(&*fs.platform().support_dir.to_string_lossy())
                 && !std::path::Path::new(&resolved).is_file()
                 && let Err(e) = std::fs::create_dir_all(&resolved)
             {
                 log::warn!("Cannot create the map folder {resolved}: {e}");
             }
-            let Some(folder) = fs.open_package(name) else {
-                continue;
-            };
+        }
+        for folder in map_folders(mod_data) {
+            let class = MapClassification::parse(&folder.classification);
+            let resolved = fs.platform().resolve_path(&folder.name);
             if class == MapClassification::User && cache.user_folder.is_none() && std::path::Path::new(&resolved).is_dir() {
-                cache.user_folder = Some((folder.clone(), resolved.clone().into()));
+                cache.user_folder = Some((folder.package.clone(), resolved.clone().into()));
             }
-            for entry in folder.contents() {
-                let Some(package) = folder.open_package(&entry, fs) else {
-                    continue;
-                };
-                match preview_from_package(&package, &folder, &entry, class, compatibility, grid_type) {
+            for (entry, package) in folder.map_packages(fs) {
+                match preview_from_package(&package, &folder.package, &entry, class, compatibility, grid_type) {
                     Ok(preview) => {
                         cache.previews.insert(preview.uid.clone(), Rc::new(preview));
                     }

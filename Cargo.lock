@@ -2542,6 +2542,7 @@ dependencies = [
  "image-webp",
  "log",
  "rustora-audio",
+ "rustora-client",
  "rustora-core",
  "rustora-engine",
  "rustora-formats",
@@ -2566,6 +2567,23 @@ dependencies = [
  "rustora-core",
  "rustora-engine",
  "rustora-formats",
+]
+
+[[package]]
+name = "rustora-client"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "flate2",
+ "indexmap",
+ "log",
+ "rustora-core",
+ "rustora-derive",
+ "rustora-fs",
+ "rustora-game",
+ "rustora-net",
+ "sha1 0.11.0",
+ "zip",
 ]
 
 [[package]]
@@ -2594,6 +2612,7 @@ version = "0.1.0"
 dependencies = [
  "indexmap",
  "log",
+ "rustora-client",
  "rustora-core",
  "rustora-derive",
  "rustora-formats",
@@ -2624,17 +2643,13 @@ dependencies = [
 name = "rustora-game"
 version = "0.1.0"
 dependencies = [
- "base64 0.23.1",
- "flate2",
  "indexmap",
- "log",
  "rustora-core",
  "rustora-derive",
  "rustora-fs",
  "rustora-net",
  "sha1 0.11.0",
  "thiserror 2.0.21",
- "zip",
 ]
 
 [[package]]
@@ -2642,6 +2657,7 @@ name = "rustora-launch"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "rustora-client",
  "rustora-core",
  "rustora-engine",
  "rustora-fs",
@@ -2657,6 +2673,7 @@ version = "0.1.0"
 dependencies = [
  "indexmap",
  "log",
+ "rustora-client",
  "rustora-core",
  "rustora-derive",
  "rustora-engine",
@@ -2669,7 +2686,6 @@ name = "rustora-net"
 version = "0.1.0"
 dependencies = [
  "indexmap",
- "log",
  "rustora-core",
  "rustora-derive",
  "socket2",
@@ -2729,6 +2745,7 @@ dependencies = [
  "indexmap",
  "log",
  "png",
+ "rustora-client",
  "rustora-core",
  "rustora-engine",
  "rustora-formats",

@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rustora_game::map_cache::{MapPreview, MapStatus};
+use rustora_client::map_cache::{MapPreview, MapStatus};
 
 use crate::fluent::MessageArg;
 use crate::loader::cell;

@@ -10,7 +10,7 @@ use rustora_core::world_types::MersenneTwister;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::sound::{AudioRules, MusicInfo, Sound};
 use rustora_engine::world::World;
-use rustora_game::settings::Settings;
+use rustora_client::settings::Settings;
 use rustora_mods_common::sound::MusicPlaylistInfo;
 
 /// `MusicPlaylist`.

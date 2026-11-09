@@ -5,12 +5,10 @@
 
 pub mod beacon;
 pub mod binary;
-pub mod game_information;
 pub mod game_save;
 pub mod game_server;
 pub mod handshake;
 pub mod order;
-pub mod replay;
 pub mod session;
 pub mod web;
 

@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 use rustora_core::miniyaml::MiniYamlNode;
-use rustora_game::settings::{
+use rustora_client::settings::{
     GlProfile, ModifierFlags, MouseScrollType, SettingValue, Settings, StatusBarsType, TargetLinesType, TextNotificationPoolFilters,
     WindowMode, WorldViewport, sanitized_player_name,
 };

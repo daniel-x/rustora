@@ -15,10 +15,10 @@ use rustora_fs::mix::MixFile;
 use rustora_fs::{Package, Platform};
 use sha1::{Digest, Sha1};
 
-use crate::GameError;
+use rustora_game::GameError;
 use crate::cab::InstallShieldCab;
-use crate::manifest::split_list;
-use crate::moddata::ModData;
+use rustora_game::manifest::split_list;
+use rustora_game::moddata::ModData;
 
 /// `InstallFromSourceLogic.ShowPercentageThreshold`.
 const SHOW_PERCENTAGE_THRESHOLD: u64 = 26_214_400;

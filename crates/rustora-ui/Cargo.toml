@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rustora-client = { path = "../rustora-client" }
 rustora-core = { path = "../rustora-core" }
 rustora-formats = { path = "../rustora-formats" }
 rustora-fs = { path = "../rustora-fs" }

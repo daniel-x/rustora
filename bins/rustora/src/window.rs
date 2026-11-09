@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rustora_game::settings::{Settings, WindowMode};
+use rustora_client::settings::{Settings, WindowMode};
 use rustora_render::{Renderer, wgpu};
 use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
 use rustora_ui::widget::{AppRequest, Clipboard};

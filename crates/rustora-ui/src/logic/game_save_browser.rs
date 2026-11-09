@@ -234,7 +234,7 @@ impl Browser {
         };
         let Some(map) = save.global_settings.map.clone() else { return };
         let maps = services(ui).maps.clone();
-        if maps.borrow_mut().entry(&map).status != rustora_game::map_cache::MapStatus::Available {
+        if maps.borrow_mut().entry(&map).status != rustora_client::map_cache::MapStatus::Available {
             return;
         }
         ui.close_window();
