@@ -343,7 +343,7 @@ rustora --headless - replay verification and test games without window, graphics
 Usage:
   rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump] [save options]
   rustora --headless verify-save <engine-dir> <support-dir> <replay> <tick> [ticks]
-  rustora --headless world <engine-dir> <support-dir> <replay> [tick]
+  rustora --headless world <engine-dir> <support-dir> <replay> [tick] [--from-save <file>]
   rustora --headless verify-bots <engine-dir> <support-dir> <replay> <order-dump> [sync-dump]
   rustora --headless skirmish <engine-dir> <support-dir> <map> <bots> <ticks> <seed> [sync-out] [cs-sync-dump]
   rustora --headless join <engine-dir> <support-dir> <host:port> <ticks> [join options]
@@ -420,7 +420,18 @@ pub fn main(args: Vec<String>) {
     let LoadedGame { world, replay, .. } = load_game(&engine, &args[3], &args[4]);
     match args[1].as_str() {
         "world" => {
-            let tick: i32 = args.get(5).map_or(0, |t| t.parse().expect("tick"));
+            let options = SaveOptions::parse(&args[5..]);
+            let tick: i32 = options.positional.first().map_or(0, |t| t.parse().expect("tick"));
+            let (world, driver) = match &options.from_save {
+                None => (world.clone(), ReplayDriver::new(&world, replay)),
+                Some(path) => {
+                    let replay = Replay::parse(&std::fs::read(&args[4]).expect("read replay")).expect("parse replay");
+                    let data = std::fs::read(path).unwrap_or_else(|e| panic!("read save game {path}: {e}"));
+                    let (w, _, _) = rustora_launch::restore_game(&engine, &args[3], &data, true, false)
+                        .unwrap_or_else(|e| panic!("restore {path}: {e}"));
+                    (w.clone(), ReplayDriver::resumed(&w, replay))
+                }
+            };
             if tick > 0 {
                 if let Some((a, b)) = std::env::var("TRACE_RANDOM").ok().and_then(|v| {
                     let (a, b) = v.split_once(',')?;
@@ -437,7 +448,7 @@ pub fn main(args: Vec<String>) {
                     let (x, y) = v.split_once(',')?;
                     Some(rustora_core::world_types::CPos::new(x.parse().ok()?, y.parse().ok()?))
                 });
-                run_replay(&world, replay, tick, |w, _| {
+                run_driver(&world, driver, tick, |w, _| {
                     if let Some(c) = trace_cell {
                         use rustora_mods_common::actor_map::WorldExt;
                         let actors: Vec<String> = w
