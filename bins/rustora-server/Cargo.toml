@@ -1,6 +1,6 @@
 [package]
-name = "rustora-dedicated"
-description = "Dedicated OpenRA compatible game server"
+name = "rustora-server-bin"
+description = "OpenRA compatible game server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

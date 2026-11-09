@@ -355,7 +355,7 @@ impl KickContext {
         let local_index = n.local_client().map_or(-1, |c| c.index);
         client.index != local_index
             && client.state != ClientState::Disconnected
-            && (!client.is_admin || n.session.global_settings.dedicated)
+            && (!client.is_admin || n.session.global_settings.independent_server)
             && (!vote_kick || n.kick_vote_target.is_none_or(|t| t == client.index))
     }
 

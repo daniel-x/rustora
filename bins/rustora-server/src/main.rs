@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Dedicated rustora server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory.
-//! `--local` and `--skirmish` make it the server that a client starts for itself, like `Game.CreateLocalServer`; it
-//! then serves one game and exits. `--exit-on-stdin-close` makes it exit when its standard input closes, so a server
-//! started by a client ends with the client.
+//! The rustora game server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory.
+//! By default it is independent: it runs on its own and starts a new server instance after each game, like a C#
+//! dedicated server. `--dependent <local|skirmish|multiplayer>` makes it the server that a client starts for its
+//! game, like `Game.CreateLocalServer` and `Game.CreateServer`: it serves one game, and it exits when its standard
+//! input closes, which happens when the client is gone.
 //! Usage: `rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
-//! [--name <text>] [--password <text>] [--seed <int>] [--local] [--skirmish] [--multiplayer] [--exit-on-stdin-close]
-//! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>]
-//! [--profile-blacklist <id,id>]`.
+//! [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>]
+//! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices]
+//! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]`.
 
 use std::path::PathBuf;
 
@@ -20,8 +21,8 @@ fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
     eprintln!(
         "usage: rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
-         [--name <text>] [--password <text>] [--seed <int>] [--local] [--skirmish] [--multiplayer] \
-         [--exit-on-stdin-close] [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
+         [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>] \
+         [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
          [--profile-blacklist <id,id>]"
     );
     std::process::exit(2);
@@ -60,10 +61,15 @@ fn main() {
             "--password" => settings.password = value(),
             "--seed" => settings.seed = Some(value().parse().unwrap_or_else(|_| usage("invalid seed"))),
             "--enable-singleplayer" => settings.enable_singleplayer = true,
-            "--local" => settings.server_type = ServerType::Local,
-            "--skirmish" => settings.server_type = ServerType::Skirmish,
-            "--multiplayer" => settings.server_type = ServerType::Multiplayer,
-            "--exit-on-stdin-close" => exit_on_stdin_close(),
+            "--dependent" => {
+                settings.server_type = match value().as_str() {
+                    "local" => ServerType::Local,
+                    "skirmish" => ServerType::Skirmish,
+                    "multiplayer" => ServerType::Multiplayer,
+                    _ => usage("--dependent needs local, skirmish or multiplayer"),
+                };
+                exit_on_stdin_close();
+            }
             "--enable-sync-reports" => settings.enable_sync_reports = true,
             "--advertise-online" => settings.advertise_online = true,
             "--discover-nat-devices" => settings.discover_nat_devices = true,
@@ -76,16 +82,16 @@ fn main() {
     let engine = engine.unwrap_or_else(|| usage("--engine-dir is required"));
     let support = support.unwrap_or_else(|| engine.join("Support").to_string_lossy().into_owned());
     settings.support_dir = PathBuf::from(&support);
-    let channels = if settings.server_type == ServerType::Dedicated {
-        log_channels::DEDICATED_SERVER_CHANNELS
+    let independent = settings.server_type == ServerType::Independent;
+    let channels = if independent {
+        log_channels::INDEPENDENT_SERVER_CHANNELS
     } else {
-        log_channels::LOCAL_SERVER_CHANNELS
+        log_channels::DEPENDENT_SERVER_CHANNELS
     };
     log_channels::init(&settings.support_dir, channels);
     log_channels::install_panic_hook(&settings.support_dir);
-    let dedicated = settings.server_type == ServerType::Dedicated;
-    if dedicated {
-        println!("Starting dedicated server for mod: {mod_id}");
+    if independent {
+        println!("Starting independent server for mod: {mod_id}");
     }
     loop {
         let result = ServerMod::load(&engine, &support, &mod_id)
@@ -97,7 +103,7 @@ fn main() {
             eprintln!("server failed: {e}");
             std::process::exit(1);
         }
-        if !dedicated {
+        if !independent {
             log::logger().flush();
             return;
         }

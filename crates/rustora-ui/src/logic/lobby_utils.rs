@@ -491,14 +491,14 @@ fn show_player_action_dropdown(
         is_selected: no_selection.clone(),
         on_click: kick,
     }];
-    let (dedicated, allow_spectators) = {
+    let (independent_server, allow_spectators) = {
         let state = net.borrow();
         (
-            state.session.global_settings.dedicated,
+            state.session.global_settings.independent_server,
             state.session.global_settings.allow_spectators,
         )
     };
-    if dedicated {
+    if independent_server {
         options.push(command_option(
             net,
             "Transfer Admin".to_string(),

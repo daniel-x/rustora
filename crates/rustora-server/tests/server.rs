@@ -423,8 +423,8 @@ fn local_server_saves_a_game_and_loads_it_again() {
     );
     drop(b);
 
-    let dedicated = start_server(engine, move |s| s.support_dir = support);
-    let mut c = join(dedicated);
+    let independent = start_server(engine, move |s| s.support_dir = support);
+    let mut c = join(independent);
     c.send_packet(0, &load.serialize());
     c.command("spectate");
     let index = c.index;

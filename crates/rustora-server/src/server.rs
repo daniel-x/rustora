@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The game server (`OpenRA.Game/Server/Server.cs`) with the `PlayerPinger` trait.
-//! Not ported yet: replay recording, which C# dedicated servers do not enable by default.
+//! Not ported yet: replay recording, which C# independent (dedicated) servers do not enable by default.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
@@ -49,12 +49,13 @@ pub enum ServerState {
     ShuttingDown,
 }
 
-/// `ServerType`.
+/// `ServerType`. An independent server runs on its own (`Dedicated` in C#). The other kinds are dependent servers:
+/// a client starts them for its game, and they end with that client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServerType {
     Local,
     Multiplayer,
-    Dedicated,
+    Independent,
     Skirmish,
 }
 
@@ -93,7 +94,7 @@ pub struct ServerSettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         ServerSettings {
-            server_type: ServerType::Dedicated,
+            server_type: ServerType::Independent,
             name: String::new(),
             listen_port: 1234,
             map: None,
@@ -314,8 +315,8 @@ impl Server {
         let accepting = Arc::new(AtomicBool::new(true));
         let mut listener_threads = Vec::new();
         let mut last_error = None;
-        let dedicated = settings.server_type == ServerType::Dedicated;
-        let is_multiplayer = matches!(settings.server_type, ServerType::Multiplayer | ServerType::Dedicated);
+        let independent = settings.server_type == ServerType::Independent;
+        let is_multiplayer = matches!(settings.server_type, ServerType::Multiplayer | ServerType::Independent);
         let addresses = if is_multiplayer {
             [IpAddr::V6(Ipv6Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::UNSPECIFIED)]
         } else {
@@ -362,7 +363,7 @@ impl Server {
             .map
             .as_deref()
             .and_then(|m| game_mod.resolve_map(m))
-            .filter(|uid| !dedicated || map_pool.contains(uid));
+            .filter(|uid| !independent || map_pool.contains(uid));
         let uid = known
             .or_else(|| {
                 let n = map_pool.len() as i32;
@@ -376,10 +377,10 @@ impl Server {
             global_settings: Global {
                 random_seed,
                 server_name: Some(settings.name.clone()),
-                enable_singleplayer: settings.enable_singleplayer || !dedicated,
+                enable_singleplayer: settings.enable_singleplayer || !independent,
                 enable_sync_reports: settings.enable_sync_reports,
                 game_uid: Some(random_guid(&mut random)),
-                dedicated,
+                independent_server: independent,
                 map: Some(uid),
                 map_status: map.status,
                 ..Default::default()
@@ -492,11 +493,11 @@ impl Server {
 
     /// `IsMultiplayer`.
     pub fn is_multiplayer(&self) -> bool {
-        matches!(self.settings.server_type, ServerType::Multiplayer | ServerType::Dedicated)
+        matches!(self.settings.server_type, ServerType::Multiplayer | ServerType::Independent)
     }
 
-    fn is_dedicated(&self) -> bool {
-        self.settings.server_type == ServerType::Dedicated
+    fn is_independent(&self) -> bool {
+        self.settings.server_type == ServerType::Independent
     }
 
     pub fn conn(&self, player_index: i32) -> Option<&Connection> {
@@ -656,7 +657,7 @@ impl Server {
     }
 
     pub(crate) fn authentication_required(&self) -> bool {
-        self.is_dedicated() && (self.settings.require_authentication || !self.settings.profile_id_whitelist.is_empty())
+        self.is_independent() && (self.settings.require_authentication || !self.settings.profile_id_whitelist.is_empty())
     }
 
     /// Looks up the player profile on a thread; [`Event::Authenticated`] continues on the server thread.
@@ -696,10 +697,10 @@ impl Server {
                 None
             }
         };
-        let dedicated = self.is_dedicated();
+        let independent = self.is_independent();
         let settings = &self.settings;
-        let blacklisted = dedicated && profile_id.is_some_and(|id| settings.profile_id_blacklist.contains(&id));
-        let not_whitelisted = dedicated
+        let blacklisted = independent && profile_id.is_some_and(|id| settings.profile_id_blacklist.contains(&id));
+        let not_whitelisted = independent
             && !settings.profile_id_whitelist.is_empty()
             && profile_id.is_none_or(|id| !settings.profile_id_whitelist.contains(&id));
         if profile_id.is_none() && self.authentication_required() {
@@ -749,7 +750,7 @@ impl Server {
         log::info!(target: "server", "{name} has joined the game.");
         self.send_fluent_message("notification-joined", &[("player", (&name).into())]);
 
-        if self.is_dedicated() {
+        if self.is_independent() {
             let motd_file = self.settings.support_dir.join("motd.txt");
             if !motd_file.exists() {
                 let _ = std::fs::create_dir_all(&self.settings.support_dir);
@@ -1001,7 +1002,7 @@ impl Server {
 
     /// The `LoadGameSave` server order.
     fn load_game_save(&mut self, name: &str) {
-        if self.is_dedicated() || self.state != ServerState::WaitingPlayers {
+        if self.is_independent() || self.state != ServerState::WaitingPlayers {
             return;
         }
         let Some(path) = self.save_path(name) else {
@@ -1110,7 +1111,7 @@ impl Server {
     /// `SendMessage`.
     pub fn send_message(&mut self, text: &str) {
         self.broadcast_order("Message", text);
-        if self.is_dedicated() {
+        if self.is_independent() {
             write_line_with_time_stamp(text);
         }
     }
@@ -1118,7 +1119,7 @@ impl Server {
     /// `SendFluentMessage`.
     pub fn send_fluent_message(&mut self, key: &str, args: &[(&str, FluentArg)]) {
         self.broadcast_order("FluentMessage", &serialize_fluent_message(key, args));
-        if self.is_dedicated() {
+        if self.is_independent() {
             write_line_with_time_stamp(&format!("{} {args:?}", self.game_mod.message(key)));
         }
     }
@@ -1170,7 +1171,7 @@ impl Server {
         if let Some(client) = self.lobby.client_with_index(player_index).cloned() {
             self.announce_drop(&client);
             self.lobby.clients.retain(|c| c.index != player_index);
-            if self.is_dedicated() && client.is_admin && self.state == ServerState::WaitingPlayers {
+            if self.is_independent() && client.is_admin && self.state == ServerState::WaitingPlayers {
                 self.lobby
                     .clients
                     .retain(|c| !(c.is_bot() && c.bot_controller_client_index == player_index));
@@ -1188,10 +1189,10 @@ impl Server {
             if !any_validated {
                 self.server_empty();
             }
-            if any_validated || self.is_dedicated() {
+            if any_validated || self.is_independent() {
                 self.sync_lobby_clients();
             }
-            if !self.is_dedicated() && client.is_admin {
+            if !self.is_independent() && client.is_admin {
                 self.state = ServerState::ShuttingDown;
             }
         }
@@ -1269,7 +1270,7 @@ impl Server {
             self.send_order_to(c, "ServerError", "notification-you-were-kicked");
             self.drop_client(c);
         }
-        self.lobby.global_settings.game_saves_enabled = !self.is_dedicated() && self.lobby.non_bot_clients().count() == 1;
+        self.lobby.global_settings.game_saves_enabled = !self.is_independent() && self.lobby.non_bot_clients().count() == 1;
         self.create_world_players();
         self.sync_lobby_info();
 

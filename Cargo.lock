@@ -2581,15 +2581,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustora-dedicated"
-version = "0.1.0"
-dependencies = [
- "log",
- "rustora-core",
- "rustora-server",
-]
-
-[[package]]
 name = "rustora-derive"
 version = "0.1.0"
 dependencies = [
@@ -2727,6 +2718,15 @@ dependencies = [
  "rustora-net",
  "sha1 0.10.7",
  "socket2",
+]
+
+[[package]]
+name = "rustora-server-bin"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rustora-core",
+ "rustora-server",
 ]
 
 [[package]]

@@ -99,7 +99,9 @@ pub struct Global {
     pub game_uid: Option<String>,
     pub enable_singleplayer: bool,
     pub enable_sync_reports: bool,
-    pub dedicated: bool,
+    /// `Dedicated`: the server is independent, not started by a client for its game.
+    #[field(name = "Dedicated")]
+    pub independent_server: bool,
     pub game_saves_enabled: bool,
     pub net_frame_interval: i32,
     #[field(ignore)]
@@ -117,7 +119,7 @@ impl Default for Global {
             game_uid: None,
             enable_singleplayer: false,
             enable_sync_reports: false,
-            dedicated: false,
+            independent_server: false,
             game_saves_enabled: false,
             net_frame_interval: 3,
             lobby_options: IndexMap::new(),
@@ -333,7 +335,7 @@ impl Global {
             ("GameUid", fmt_opt(&self.game_uid)),
             ("EnableSingleplayer", fmt_bool(self.enable_singleplayer)),
             ("EnableSyncReports", fmt_bool(self.enable_sync_reports)),
-            ("Dedicated", fmt_bool(self.dedicated)),
+            ("Dedicated", fmt_bool(self.independent_server)),
             ("GameSavesEnabled", fmt_bool(self.game_saves_enabled)),
             ("NetFrameInterval", self.net_frame_interval.to_string()),
         ]);

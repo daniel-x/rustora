@@ -54,7 +54,7 @@ impl ChannelSpec {
 }
 
 /// The channels of the game client, from `Game.Initialize`, `ScriptContext`, `SyncReport`, the installation logic
-/// and `TraitDictionary`. The local server runs as its own process and writes `server.log`.
+/// and `TraitDictionary`. The dependent server of the client runs as its own process and writes `server.log`.
 pub const CLIENT_CHANNELS: &[ChannelSpec] = &[
     ChannelSpec::new("perf", "perf.log", false, true),
     ChannelSpec::new("debug", "debug.log", false, true),
@@ -70,18 +70,19 @@ pub const CLIENT_CHANNELS: &[ChannelSpec] = &[
     ChannelSpec::new("assetbrowser", "assetbrowser.log", false, false),
 ];
 
-/// The channels of the dedicated server, from `OpenRA.Server.Program`.
-pub const DEDICATED_SERVER_CHANNELS: &[ChannelSpec] = &[
-    ChannelSpec::new("debug", "dedicated-debug.log", true, true),
-    ChannelSpec::new("perf", "dedicated-perf.log", true, true),
-    ChannelSpec::new("server", "dedicated-server.log", true, true),
-    ChannelSpec::new("nat", "dedicated-nat.log", true, true),
-    ChannelSpec::new("geoip", "dedicated-geoip.log", true, true),
+/// The channels of an independent server, from `OpenRA.Server.Program` (`dedicated-*.log` in C#).
+pub const INDEPENDENT_SERVER_CHANNELS: &[ChannelSpec] = &[
+    ChannelSpec::new("debug", "independent-debug.log", true, true),
+    ChannelSpec::new("perf", "independent-perf.log", true, true),
+    ChannelSpec::new("server", "independent-server.log", true, true),
+    ChannelSpec::new("nat", "independent-nat.log", true, true),
+    ChannelSpec::new("geoip", "independent-geoip.log", true, true),
 ];
 
-/// The channels of a server that a client started for itself. In C# it runs inside the client and writes the
-/// `server.log` of the client for the whole session, so each server appends to it. Its other lines go there too.
-pub const LOCAL_SERVER_CHANNELS: &[ChannelSpec] = &[ChannelSpec::new("server", "server.log", true, true).appending()];
+/// The channels of a dependent server, which a client started for its game. In C# it runs inside the client and
+/// writes the `server.log` of the client for the whole session, so each server appends to it. Its other lines go
+/// there too.
+pub const DEPENDENT_SERVER_CHANNELS: &[ChannelSpec] = &[ChannelSpec::new("server", "server.log", true, true).appending()];
 
 struct Channel {
     writer: Option<BufWriter<File>>,

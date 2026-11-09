@@ -161,7 +161,7 @@ pub fn ingame_menu(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
         let v: Vec<i32> = arg("ButtonStride").split(',').filter_map(|p| p.trim().parse().ok()).collect();
         (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0))
     };
-    let is_single_player = !world.lobby_info.global_settings.dedicated && single_non_bot_client(&world);
+    let is_single_player = !world.lobby_info.global_settings.independent_server && single_non_bot_client(&world);
     let mpe = world
         .world_actor()
         .trait_or_default::<rustora_mods_common::post_effects::MenuPostProcessEffect>();

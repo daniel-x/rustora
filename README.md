@@ -29,7 +29,8 @@ each player, Escape quits. `--screenshot <out.webp> --tick <n>` renders one fram
 ALSA or a GPU. `rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]`
 replays a game and compares the sync hashes; `bins/rustora/src/headless.rs` lists all commands.
 
-`rustora-server` is the dedicated server.
+`rustora-server` is the game server. It runs independently, or dependent on a client that started it for its game
+and ends with that client.
 
 ## Packaging
 

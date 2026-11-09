@@ -37,14 +37,14 @@ const JOINED: &str = "notification-joined";
 const LOCAL_GAME_NAME: &str = "Skirmish Game";
 const LEFT: &str = "notification-lobby-disconnected";
 
-/// Starts the `rustora-server` binary next to this executable with `args`. The server exits when the game it serves
-/// ends, or when the client process is gone, because its standard input closes then.
-fn spawn_server(engine: &Path, support: &str, args: &[&str]) -> Option<Child> {
+/// Starts the `rustora-server` binary next to this executable as a dependent server of `kind` with `args`. It exits
+/// after the game it serves, or when the client process is gone, because its standard input closes then.
+fn spawn_server(engine: &Path, support: &str, kind: &str, args: &[&str]) -> Option<Child> {
     let exe = std::env::current_exe().ok()?.with_file_name(format!("rustora-server{}", std::env::consts::EXE_SUFFIX));
     let result = Command::new(&exe)
         .arg("--engine-dir")
         .arg(engine)
-        .args(["--support-dir", support, "--exit-on-stdin-close"])
+        .args(["--support-dir", support, "--dependent", kind])
         .args(args)
         .stdin(Stdio::piped())
         .spawn();
@@ -184,20 +184,20 @@ impl NetClient {
     pub fn create_server(&mut self, name: String, port: u16, password: String, advertise_online: bool, map: String) {
         self.created_port = Some(port);
         let port = port.to_string();
-        let mut args = vec!["--multiplayer", "--name", &name, "--port", &port, "--password", &password, "--map", &map];
+        let mut args = vec!["--name", &name, "--port", &port, "--password", &password, "--map", &map];
         if advertise_online {
             args.push("--advertise-online");
         }
-        self.replace_server(spawn_server(&self.engine, &self.support, &args));
+        self.replace_server(spawn_server(&self.engine, &self.support, "multiplayer", &args));
     }
 
     /// `Game.CreateLocalServer`, as a separate server process on a free loopback port.
     pub fn create_local_server(&mut self, map: String, skirmish: bool) {
         self.local_port = free_local_port();
         let Some(port) = self.local_port.map(|p| p.to_string()) else { return };
-        let kind = if skirmish { "--skirmish" } else { "--local" };
-        let args = [kind, "--name", LOCAL_GAME_NAME, "--port", &port, "--map", &map];
-        self.replace_server(spawn_server(&self.engine, &self.support, &args));
+        let kind = if skirmish { "skirmish" } else { "local" };
+        let args = ["--name", LOCAL_GAME_NAME, "--port", &port, "--map", &map];
+        self.replace_server(spawn_server(&self.engine, &self.support, kind, &args));
     }
 
     /// Stops the server this client started last, if it still runs, and keeps `server` in its place.
