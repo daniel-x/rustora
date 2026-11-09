@@ -462,7 +462,10 @@ impl ShellWorld {
         self.quads = scene.build(renderer, world, viewer.as_ref(), &cam, &overlay);
         self.passes = crate::scene::post_passes(world, scene.after_actors, scene.after_world, self.quads.len());
         if let Some(ingame) = &self.ingame {
-            ingame.screen_map.borrow_mut().set(scene.mouse_bounds(renderer, world));
+            let frozen = scene.frozen_mouse_bounds(renderer, world, viewer.as_ref());
+            let mut screen_map = ingame.screen_map.borrow_mut();
+            screen_map.set(scene.mouse_bounds(renderer, world));
+            screen_map.set_frozen(frozen);
         }
     }
 }

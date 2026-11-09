@@ -113,17 +113,23 @@ impl ServerEntry {
     }
 }
 
+/// The widgets of the client list of the selected server.
+struct ClientPanel {
+    list: WidgetId,
+    header: WidgetId,
+    template: WidgetId,
+    container: WidgetId,
+}
+
 /// The state shared by the callbacks of `ServerListLogic`.
 struct ServerList {
     server_list: WidgetId,
     server_template: WidgetId,
     header_template: WidgetId,
-    client_list: WidgetId,
-    client_header: WidgetId,
-    client_template: WidgetId,
-    client_container: WidgetId,
-    join_button: WidgetId,
-    join_button_y: i32,
+    /// The client list of the selected server, which the lobby's server list lacks.
+    clients: Option<ClientPanel>,
+    /// The join button and its y position without a client list, which the lobby's server list lacks.
+    join_button: Option<(WidgetId, i32)>,
     on_join: Rc<dyn Fn(&mut Ui, &ServerEntry)>,
     current: RefCell<Option<Rc<ServerEntry>>>,
     status: Cell<SearchStatus>,
@@ -380,7 +386,7 @@ impl ServerList {
     fn select_server(self: &Rc<Self>, ui: &mut Ui, server: Option<Rc<ServerEntry>>) {
         *self.current.borrow_mut() = server.clone();
         let Some(server) = server else {
-            ui.node_mut(self.join_button).bounds.y = self.join_button_y;
+            self.place_join_button(ui, None);
             self.occupants.borrow_mut().clear();
             self.disabled_spawns.borrow_mut().clear();
             return;
@@ -410,21 +416,28 @@ impl ServerList {
             .collect();
         *self.disabled_spawns.borrow_mut() = game.disabled_spawn_points.clone();
 
-        if game.clients.is_empty() {
-            ui.node_mut(self.join_button).bounds.y = self.join_button_y;
+        let Some(clients) = self.clients.as_ref().filter(|_| !game.clients.is_empty()) else {
+            self.place_join_button(ui, None);
             return;
-        }
+        };
         let bottom = {
-            let b = ui.node(self.client_container).bounds;
+            let b = ui.node(clients.container).bounds;
             b.y + b.h
         };
-        ui.node_mut(self.join_button).bounds.y = bottom;
-        self.show_clients(ui, &server, &bot_name);
+        self.place_join_button(ui, Some(bottom));
+        self.show_clients(ui, clients, &server, &bot_name);
     }
 
-    fn show_clients(&self, ui: &mut Ui, server: &ServerEntry, bot_name: &str) {
+    /// Moves the join button below the client list at `y`, or back to its own position.
+    fn place_join_button(&self, ui: &mut Ui, y: Option<i32>) {
+        if let Some((button, own_y)) = self.join_button {
+            ui.node_mut(button).bounds.y = y.unwrap_or(own_y);
+        }
+    }
+
+    fn show_clients(&self, ui: &mut Ui, clients: &ClientPanel, server: &ServerEntry, bot_name: &str) {
         let game = &server.game;
-        ui.remove_children(self.client_list);
+        ui.remove_children(clients.list);
         let mut team_ids: Vec<i32> = game.clients.iter().filter(|c| !c.is_spectator).map(|c| c.team).collect();
         team_ids.sort();
         team_ids.dedup();
@@ -447,12 +460,12 @@ impl ServerList {
         }
         let same_mod = game.mod_id.as_deref() == Some(MOD_ID);
         for (group, members) in groups {
-            let header = ScrollItemWidget::setup(ui, self.client_header, Rc::new(|| false), Rc::new(|_| {}));
+            let header = ScrollItemWidget::setup(ui, clients.header, Rc::new(|| false), Rc::new(|_| {}));
             let label = ui.child(header, "LABEL");
             ui.label(label).get_text = Some(Rc::new(move || group.clone()));
-            ui.add_child(self.client_list, header);
+            ui.add_child(clients.list, header);
             for client in members {
-                let item = ScrollItemWidget::setup(ui, self.client_template, Rc::new(|| false), Rc::new(|_| {}));
+                let item = ScrollItemWidget::setup(ui, clients.template, Rc::new(|| false), Rc::new(|_| {}));
                 let name = if client.is_bot {
                     bot_name.to_string()
                 } else {
@@ -481,7 +494,7 @@ impl ServerList {
                     image.get_image_collection = Some(Rc::new(|| "flags".to_string()));
                     image.get_image_name = Some(Rc::new(move || faction.clone()));
                 }
-                ui.add_child(self.client_list, item);
+                ui.add_child(clients.list, item);
             }
         }
     }
@@ -713,70 +726,38 @@ pub fn open_multiplayer_panel(ui: &mut Ui, on_start: Action, on_exit: Action) {
     ui.open_window("MULTIPLAYER_PANEL", args);
 }
 
-pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
-    let (on_start, on_exit) = (args.action("onStart"), args.action("onExit"));
-    let open_lobby: Action = {
-        let (start, exit) = (on_start.clone(), on_exit.clone());
-        Rc::new(move |ui| open_lobby_from_browser(ui, start.clone(), exit.clone()))
-    };
-
-    let direct = ui.child(widget, "DIRECTCONNECT_BUTTON");
-    let lobby_action = open_lobby.clone();
-    ui.button(direct).on_click = Some(Rc::new(move |ui| {
-        let args = WidgetArgs::default()
-            .with_action("openLobby", lobby_action.clone())
-            .with_action("onExit", Rc::new(|_| {}));
-        ui.open_window("DIRECTCONNECT_PANEL", args);
-    }));
-
-    let create_button = ui.child(widget, "CREATE_BUTTON");
-    let lobby_action = open_lobby.clone();
-    ui.button(create_button).on_click = Some(Rc::new(move |ui| {
-        let args = WidgetArgs::default()
-            .with_action("openLobby", lobby_action.clone())
-            .with_action("onExit", Rc::new(|_| {}));
-        ui.open_window("MULTIPLAYER_CREATESERVER_PANEL", args);
-    }));
-
-    let back = ui.child(widget, "BACK_BUTTON");
-    let exit = on_exit.clone();
-    ui.button(back).on_click = Some(Rc::new(move |ui| {
-        ui.close_window();
-        exit(ui);
-    }));
-
+/// `ServerListLogic`'s constructor: sets up the server list in `widget`; `on_join` joins a server.
+fn setup_server_list(
+    ui: &mut Ui,
+    widget: WidgetId,
+    on_join: Rc<dyn Fn(&mut Ui, &ServerEntry)>,
+) -> (Rc<ServerList>, Rc<RefCell<SelectedTexts>>, WidgetId, WidgetId, WidgetId) {
     let server_list = ui.child(widget, "SERVER_LIST");
     let header_template = ui.child(server_list, "HEADER_TEMPLATE");
     let server_template = ui.child(server_list, "SERVER_TEMPLATE");
-    let join_button = ui.child(widget, "JOIN_BUTTON");
-    let join_button_y = ui.node(join_button).bounds.y;
-    let client_container = ui.child(widget, "CLIENT_LIST_CONTAINER");
-    let client_list = ui.load_widget("MULTIPLAYER_CLIENT_LIST", Some(client_container), &WidgetArgs::default());
-    let client_header = ui.child(client_list, "HEADER");
-    let client_template = ui.child(client_list, "TEMPLATE");
-    ui.hide_child(client_list, client_header);
-    ui.hide_child(client_list, client_template);
+    let join_button = ui.find(widget, "JOIN_BUTTON").map(|b| (b, ui.node(b).bounds.y));
+    let clients = ui.find(widget, "CLIENT_LIST_CONTAINER").map(|container| {
+        let list = ui.load_widget("MULTIPLAYER_CLIENT_LIST", Some(container), &WidgetArgs::default());
+        let (header, template) = (ui.child(list, "HEADER"), ui.child(list, "TEMPLATE"));
+        ui.hide_child(list, header);
+        ui.hide_child(list, template);
+        ClientPanel {
+            list,
+            header,
+            template,
+            container,
+        }
+    });
     ui.hide_child(server_list, header_template);
     ui.hide_child(server_list, server_template);
 
-    let lobby_action = open_lobby.clone();
-    let on_join: Rc<dyn Fn(&mut Ui, &ServerEntry)> = Rc::new(move |ui, server| {
-        if !server.is_joinable {
-            return;
-        }
-        crate::logic::connection::connect(ui, &server.address(), "", lobby_action.clone(), Rc::new(|_| {}));
-    });
     let probe = Probe::start(LAN_BEACON).map_err(|e| log::debug!("BeaconLib.Probe: {e}")).ok();
     let list = Rc::new(ServerList {
         server_list,
         server_template,
         header_template,
-        client_list,
-        client_header,
-        client_template,
-        client_container,
+        clients,
         join_button,
-        join_button_y,
         on_join,
         current: RefCell::new(None),
         status: Cell::new(SearchStatus::Fetching),
@@ -787,19 +768,21 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         probe,
     });
 
-    let visible_client_list = list.clone();
-    ui.set_visible_fn(client_list, move || {
-        visible_client_list
-            .current
-            .borrow()
-            .as_ref()
-            .is_some_and(|c| !c.game.clients.is_empty())
-    });
+    if let Some(clients) = &list.clients {
+        let visible_client_list = list.clone();
+        ui.set_visible_fn(clients.list, move || {
+            visible_client_list
+                .current
+                .borrow()
+                .as_ref()
+                .is_some_and(|c| !c.game.clients.is_empty())
+        });
+    }
 
-    let current = list.clone();
-    ui.set_visible_fn(join_button, move || current.current.borrow().is_some());
-    let (disabled, join) = (list.clone(), list.clone());
-    {
+    if let Some((join_button, _)) = list.join_button {
+        let current = list.clone();
+        ui.set_visible_fn(join_button, move || current.current.borrow().is_some());
+        let (disabled, join) = (list.clone(), list.clone());
         let mut button = ui.button(join_button);
         button.is_disabled = Some(Rc::new(move || !disabled.current.borrow().as_ref().is_some_and(|c| c.is_joinable)));
         button.on_click = Some(Rc::new(move |ui| {
@@ -845,7 +828,71 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
 
     let selected = Rc::new(RefCell::new(SelectedTexts::default()));
     let (selected_status, selected_map, selected_version) = setup_selected_labels(ui, widget, &list, &selected);
+    (list, selected, selected_status, selected_map, selected_version)
+}
 
+/// Port of `ServerListLogic` on its own, as in the lobby's server tab: `onJoin` is optional there, and the list
+/// refreshes when the tab opens.
+pub fn create_server_list(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+    let on_join: Rc<dyn Fn(&mut Ui, &ServerEntry)> = Rc::new(|_, _| {});
+    let (list, selected, selected_status, selected_map, selected_version) = setup_server_list(ui, widget, on_join);
+    if let Some(refresh) = args.value::<RefreshServerList>("refreshServerList") {
+        let list = list.clone();
+        *refresh.borrow_mut() = Some(Rc::new(move |ui: &Ui| list.refresh(ui)));
+    }
+    list.refresh(ui);
+    cell(MultiplayerLogic {
+        list,
+        selected,
+        selected_status,
+        selected_map,
+        selected_version,
+    })
+}
+
+/// Where `ServerListLogic` leaves its `RefreshServerList`, for the lobby's server tab.
+pub type RefreshServerList = Rc<RefCell<Option<Rc<dyn Fn(&Ui)>>>>;
+
+pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+    let (on_start, on_exit) = (args.action("onStart"), args.action("onExit"));
+    let open_lobby: Action = {
+        let (start, exit) = (on_start.clone(), on_exit.clone());
+        Rc::new(move |ui| open_lobby_from_browser(ui, start.clone(), exit.clone()))
+    };
+
+    let direct = ui.child(widget, "DIRECTCONNECT_BUTTON");
+    let lobby_action = open_lobby.clone();
+    ui.button(direct).on_click = Some(Rc::new(move |ui| {
+        let args = WidgetArgs::default()
+            .with_action("openLobby", lobby_action.clone())
+            .with_action("onExit", Rc::new(|_| {}));
+        ui.open_window("DIRECTCONNECT_PANEL", args);
+    }));
+
+    let create_button = ui.child(widget, "CREATE_BUTTON");
+    let lobby_action = open_lobby.clone();
+    ui.button(create_button).on_click = Some(Rc::new(move |ui| {
+        let args = WidgetArgs::default()
+            .with_action("openLobby", lobby_action.clone())
+            .with_action("onExit", Rc::new(|_| {}));
+        ui.open_window("MULTIPLAYER_CREATESERVER_PANEL", args);
+    }));
+
+    let back = ui.child(widget, "BACK_BUTTON");
+    let exit = on_exit.clone();
+    ui.button(back).on_click = Some(Rc::new(move |ui| {
+        ui.close_window();
+        exit(ui);
+    }));
+
+    let lobby_action = open_lobby.clone();
+    let on_join: Rc<dyn Fn(&mut Ui, &ServerEntry)> = Rc::new(move |ui, server| {
+        if !server.is_joinable {
+            return;
+        }
+        crate::logic::connection::connect(ui, &server.address(), "", lobby_action.clone(), Rc::new(|_| {}));
+    });
+    let (list, selected, selected_status, selected_map, selected_version) = setup_server_list(ui, widget, on_join);
     list.refresh(ui);
     cell(MultiplayerLogic {
         list,

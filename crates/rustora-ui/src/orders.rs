@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! `IOrderGenerator.cs` and `UnitOrderGenerator.cs`. Frozen actors are not targetable yet.
+//! `IOrderGenerator.cs` and `UnitOrderGenerator.cs`.
 
 use std::rc::Rc;
 
@@ -17,7 +17,7 @@ use rustora_mods_common::selection::{SelectableInfo, Selection};
 use rustora_mods_common::targetable::TargetableInfo;
 
 use crate::input::{KeyInput, Modifiers, MouseButton, MouseInput};
-use crate::screen_map::{ScreenMap, SelectionContext, with_highest_selection_priority};
+use crate::screen_map::{ScreenMap, SelectionContext, frozen_with_highest_selection_priority, with_highest_selection_priority};
 
 /// What order generators read of the world and the client.
 pub struct OrderContext<'a> {
@@ -132,8 +132,17 @@ impl UnitOrderGenerator {
             .into_iter()
             .filter(|e| !e.actor.is_dead() && e.actor.info.has_trait_info::<TargetableInfo>() && !sel.fog_obscures(&e.actor))
             .collect();
-        match with_highest_selection_priority(&candidates, world_px, mi.modifiers) {
-            Some(a) => Target::from_actor(Some(&a)),
+        if let Some(a) = with_highest_selection_priority(&candidates, world_px, mi.modifiers) {
+            return Target::from_actor(Some(&a));
+        }
+        let frozen: Vec<_> = ctx
+            .screen_map
+            .frozen_actors_at_mouse(world_px)
+            .into_iter()
+            .filter(|e| e.frozen.info().has_trait_info::<TargetableInfo>() && e.frozen.visible() && e.frozen.has_renderables())
+            .collect();
+        match frozen_with_highest_selection_priority(&frozen, world_px, mi.modifiers) {
+            Some(f) => Target::from_frozen_actor(f),
             None => Target::from_cell(ctx.world, cell, FULL_CELL),
         }
     }

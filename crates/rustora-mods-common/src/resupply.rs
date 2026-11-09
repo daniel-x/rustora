@@ -397,11 +397,15 @@ pub struct RepairableNearInfo {
     pub repair_actors: IndexSet<String>,
     pub close_enough: WDist,
     pub require_force_move_condition: Option<BooleanExpression>,
+    pub enter_cursor: String,
+    pub enter_blocked_cursor: String,
 }
 
 impl Default for RepairableNearInfo {
     fn default() -> Self {
         RepairableNearInfo {
+            enter_cursor: "enter".into(),
+            enter_blocked_cursor: "enter-blocked".into(),
             voice: "Action".into(),
             instance_name: None,
             repair_actors: IndexSet::new(),
@@ -417,12 +421,36 @@ pub struct RepairableNear {
     require_force_move: Cell<bool>,
 }
 
-register_traits!(RepairableNear: rustora_engine::sound::IOrderVoice, IResolveOrder, IObservesVariables);
+register_traits!(RepairableNear: rustora_engine::sound::IOrderVoice, IResolveOrder, crate::orders::IIssueOrder, IObservesVariables);
 info_impl!(RepairableNearInfo => |info, _init| Some(Rc::new(RepairableNear { info, require_force_move: Cell::new(false) })));
 
 impl IObservesVariables for RepairableNear {
     fn get_variable_observers(self: Rc<Self>) -> Vec<VariableObserver> {
         force_move_observer(&self, &self.info.require_force_move_condition, |s| &s.require_force_move)
+    }
+}
+
+impl crate::orders::IIssueOrder for RepairableNear {
+    fn orders(&self, self_: &ActorRef) -> Vec<Box<dyn crate::orders::IOrderTargeter>> {
+        let require_force_move = self.require_force_move.get();
+        let repair_actors = self.info.repair_actors.clone();
+        let should_repair = has_damage(self_);
+        vec![Box::new(crate::orders::UnitOrderTargeter::enter_allied(
+            "RepairNear",
+            5,
+            &self.info.enter_cursor,
+            &self.info.enter_blocked_cursor,
+            |t| t.info.has_trait_info::<crate::building::BuildingInfo>(),
+            Box::new(move |t, modifiers| {
+                (!require_force_move || modifiers.has_modifier(crate::orders::TargetModifiers::FORCE_MOVE))
+                    && repair_actors.contains(&t.info.name)
+            }),
+            Box::new(move |_| should_repair),
+        ))]
+    }
+
+    fn issue_order(&self, self_: &ActorRef, order: &dyn crate::orders::IOrderTargeter, target: &Target, queued: bool) -> Option<Order> {
+        (order.order_id() == "RepairNear").then(|| Order::new("RepairNear", Some(self_.clone()), target.clone(), queued))
     }
 }
 

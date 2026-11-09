@@ -8,6 +8,7 @@
 use std::rc::Rc;
 
 use rustora_engine::actor::ActorRef;
+use rustora_engine::frozen::FrozenActorRef;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::world::World;
 use rustora_mods_common::selection::{SelectionModifiers, info_selection_priority, selection_class, selection_priority};
@@ -27,6 +28,15 @@ pub struct ActorBounds {
 #[derive(Default)]
 pub struct ScreenMap {
     entries: Vec<ActorBounds>,
+    /// The frozen actors of the render player with their mouse bounds.
+    frozen: Vec<FrozenActorBounds>,
+}
+
+/// A frozen actor and its `MouseBounds`.
+#[derive(Clone)]
+pub struct FrozenActorBounds {
+    pub frozen: FrozenActorRef,
+    pub bounds: Rect,
 }
 
 fn rect_with_corners(a: (i32, i32), b: (i32, i32)) -> Rect {
@@ -45,6 +55,15 @@ impl ScreenMap {
 
     pub fn entries(&self) -> &[ActorBounds] {
         &self.entries
+    }
+
+    pub fn set_frozen(&mut self, frozen: Vec<FrozenActorBounds>) {
+        self.frozen = frozen;
+    }
+
+    /// `FrozenActorsAtMouse` of the render player.
+    pub fn frozen_actors_at_mouse(&self, px: (i32, i32)) -> Vec<FrozenActorBounds> {
+        self.frozen.iter().filter(|e| e.bounds.contains(px.0, px.1)).cloned().collect()
     }
 
     /// `ActorsAtMouse`.
@@ -95,6 +114,27 @@ pub fn with_highest_selection_priority(actors: &[ActorBounds], px: (i32, i32), m
         }
     }
     best.map(|(_, a)| a.clone())
+}
+
+/// `WithHighestSelectionPriority` of frozen actors; the first of equal priorities wins like `MaxByOrDefault`.
+pub fn frozen_with_highest_selection_priority(
+    frozen: &[FrozenActorBounds],
+    px: (i32, i32),
+    modifiers: Modifiers,
+) -> Option<FrozenActorRef> {
+    let m = selection_modifiers(modifiers);
+    let mut best: Option<(i64, &FrozenActorRef)> = None;
+    for e in frozen {
+        let b = e.bounds;
+        let (cx, cy) = (b.x + b.w / 2, b.y + b.h / 2);
+        let (dx, dy) = ((cx - px.0) as f64, (cy - px.1) as f64);
+        let distance = (dx * dx + dy * dy).sqrt() as i32 as i64;
+        let priority = (info_selection_priority(e.frozen.info(), m) as i64 - distance) << 16;
+        if best.is_none_or(|(p, _)| priority > p) {
+            best = Some((priority, &e.frozen));
+        }
+    }
+    best.map(|(_, f)| f.clone())
 }
 
 /// `SubsetWithHighestSelectionPriority`.

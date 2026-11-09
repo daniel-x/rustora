@@ -597,6 +597,23 @@ impl SupportPower {
         units
     }
 
+    /// `ChronoshiftPower.SimilarTerrain`: whether the explored footprints at `xy` and `source` have the same terrain
+    /// cell by cell.
+    pub fn similar_terrain(&self, xy: CPos, source: CPos) -> bool {
+        let shroud = self.self_.owner().shroud();
+        if !shroud.is_explored(xy) {
+            return false;
+        }
+        let (from, to) = (self.cells_matching(xy), self.cells_matching(source));
+        if from.is_empty() || to.is_empty() {
+            return false;
+        }
+        let map = self.self_.world().map().clone();
+        from.iter()
+            .zip(&to)
+            .all(|(&a, &b)| shroud.is_explored(a) && shroud.is_explored(b) && map.terrain_index(a) == map.terrain_index(b))
+    }
+
     fn chronoshift(&self, self_: &ActorRef, order: &Order) {
         let world = self_.world();
         let target_delta = world.map().cell_containing(order.target.center_position()) - order.extra_location;

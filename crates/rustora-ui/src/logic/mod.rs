@@ -472,6 +472,7 @@ pub fn create(
         "ConnectionFailedLogic" => connection::create_connection_failed(ui, id, args),
         "LobbyLogic" => lobby::create(ui, id, args, logic_args),
         "MultiplayerLogic" => multiplayer::create(ui, id, args),
+        "ServerListLogic" => multiplayer::create_server_list(ui, id, args),
         "DirectConnectLogic" => multiplayer::create_direct_connect(ui, id, args),
         "ServerCreationLogic" => multiplayer::create_server_creation(ui, id, args),
         "ModContentLogic" => installer::create_mod_content(ui, id, args),

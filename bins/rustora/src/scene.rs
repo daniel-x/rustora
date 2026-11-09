@@ -437,6 +437,36 @@ impl Scene {
         out
     }
 
+    /// The `MouseBounds` of the visible frozen actors of `viewer`, from their interactable bounds at the frozen
+    /// position, or the auto bounds of the actor while it exists.
+    pub fn frozen_mouse_bounds(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &World,
+        viewer: Option<&PlayerRef>,
+    ) -> Vec<rustora_ui::screen_map::FrozenActorBounds> {
+        let Some(layer) = viewer.and_then(|v| v.player_actor().trait_or_default::<FrozenActorLayer>()) else {
+            return Vec::new();
+        };
+        let (w, h) = world.map().map_size;
+        let mut out = Vec::new();
+        for frozen in layer.frozen_actors_in_region(CPos::new(0, 0), CPos::new(w, h), true) {
+            let Some(info) = mouse_bounds_info(frozen.info()) else {
+                continue;
+            };
+            let center = screen_px_position(frozen.center_position());
+            let bounds = match (info.bounds.as_ref(), frozen.actor()) {
+                (Some(b), _) if b.len() >= 2 => Some(bounds_rect(center, b)),
+                (_, Some(a)) => self.auto_bounds(renderer, &a, center),
+                _ => None,
+            };
+            if let Some(bounds) = bounds.filter(|b| b.w > 0 || b.h > 0) {
+                out.push(rustora_ui::screen_map::FrozenActorBounds { frozen, bounds });
+            }
+        }
+        out
+    }
+
     /// `Interactable.AutoBounds`: the first non-empty `WithSpriteBody.AutoMouseoverBounds`, the bounds of the default
     /// animation's current sequence. Actors like the V2 launcher have several sprite bodies.
     fn auto_bounds(&mut self, renderer: &mut Renderer, a: &rustora_engine::actor::ActorRef, center: (i32, i32)) -> Option<Rect> {
@@ -554,8 +584,7 @@ impl Scene {
                 "Gems" => &["gem01", "gem02", "gem03", "gem04"],
                 _ => continue,
             };
-            let h = (c.bits as u32).wrapping_mul(self.variant_seed) >> 16;
-            let name = names[h as usize % names.len()];
+            let name = names[cell_hash(c.bits as u32 ^ self.variant_seed) as usize % names.len()];
             if !seqs.has_sequence("resources", name) {
                 continue;
             }
@@ -578,4 +607,14 @@ impl Scene {
             }
         }
     }
+}
+
+/// The murmur3 finalizer: mixes every bit of `x` into every bit of the result, so neighboring cells get unrelated
+/// values.
+fn cell_hash(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x85eb_ca6b);
+    x ^= x >> 13;
+    x = x.wrapping_mul(0xc2b2_ae35);
+    x ^ (x >> 16)
 }

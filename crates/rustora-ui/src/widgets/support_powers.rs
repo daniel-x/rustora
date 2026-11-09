@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `SupportPowersWidget.cs` and `SelectGenericPowerTarget`. Every power targets through the generic
-//! target selection for now, so the chronoshift second target and the directional targets of air powers are
-//! missing; sounds, speech and icon overlay texts are not ported.
+//! Ports of `SupportPowersWidget.cs`, `SelectGenericPowerTarget` and the two target selections of
+//! `ChronoshiftPower`. The other powers target through the generic target selection, so the footprints of the iron
+//! curtain and the nuke and the directional targets of air powers are not shown; sounds, speech and icon overlay
+//! texts are not ported.
 
-use std::rc::Rc;
+use std::cell::Cell;
+use std::rc::{Rc, Weak};
 
 use rustora_core::fieldloader::Color;
 use rustora_core::world_types::CPos;
+use rustora_core::world_types::WVec;
 use rustora_engine::order::Order;
+use rustora_engine::render::{PaletteRef, Renderable, SpriteRenderable};
 use rustora_engine::target::Target;
 use rustora_engine::traits::subcell::FULL_CELL;
-use rustora_mods_common::support_powers::{SupportPowerInstance, SupportPowerManager};
+use rustora_mods_common::chrono::Chronoshiftable;
+use rustora_mods_common::support_powers::{PowerKind, SupportPower, SupportPowerInstance, SupportPowerManager};
 
 use super::TooltipContainerWidget;
 use super::impl_as_any;
@@ -65,6 +70,188 @@ impl OrderGenerator for SelectGenericPowerTarget {
         } else {
             self.blocked_cursor.clone()
         })
+    }
+}
+
+/// Whether the power of `order_key` is still active and ready, which the target selections need.
+fn power_usable(manager: &SupportPowerManager, order_key: &String) -> bool {
+    manager.powers.borrow().get(order_key).is_some_and(|p| p.active() && p.ready())
+}
+
+/// The footprint tile of `sequence` of the power's footprint image at `cell`, like the C# `SpriteRenderable` with z
+/// offset -511.
+fn footprint_tile(ctx: &OrderContext, power: &SupportPower, sequence: &str, palette: &str, cell: CPos) -> Renderable {
+    let world = ctx.world;
+    Renderable::Sprite(SpriteRenderable {
+        sequence: world.map().sequences().get_sequence(&power.info.footprint_image, sequence),
+        frame: 0,
+        facing: Default::default(),
+        pos: world.map().center_of_cell(cell),
+        offset: WVec::ZERO,
+        z_offset: -511,
+        palette: PaletteRef::named(palette),
+        alpha: 1.0,
+        replace_color: None,
+        is_decoration: true,
+    })
+}
+
+/// `ChronoshiftPower.SelectChronoshiftTarget`: the first click chooses the units to shift, the footprint around it.
+pub struct SelectChronoshiftTarget {
+    ingame: Weak<Ingame>,
+    manager: Rc<SupportPowerManager>,
+    power: Rc<SupportPower>,
+    order_key: String,
+    mouse_cell: Cell<CPos>,
+}
+
+impl OrderGenerator for SelectChronoshiftTarget {
+    fn order(&self, ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+        let left_down = mi.button == MouseButton::Left && mi.event == MouseEvent::Down;
+        let right_up = mi.button == MouseButton::Right && mi.event == MouseEvent::Up;
+        if !left_down && !right_up {
+            return Vec::new();
+        }
+        ctx.cancel_input_mode();
+        if left_down && let Some(ingame) = self.ingame.upgrade() {
+            ingame.set_order_generator(Rc::new(SelectChronoshiftDestination {
+                manager: self.manager.clone(),
+                power: self.power.clone(),
+                order_key: self.order_key.clone(),
+                source: cell,
+                mouse_cell: Cell::new(cell),
+            }));
+        }
+        Vec::new()
+    }
+
+    fn tick(&self, ctx: &OrderContext) {
+        if !power_usable(&self.manager, &self.order_key) {
+            ctx.cancel_input_mode();
+        }
+    }
+
+    fn get_cursor(&self, _ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), _mi: &MouseInput) -> Option<String> {
+        self.mouse_cell.set(cell);
+        Some(self.power.info.selection_cursor.clone())
+    }
+
+    fn render_above_shroud(&self, ctx: &OrderContext, out: &mut Vec<Renderable>) {
+        let info = &self.power.info;
+        for t in self.power.cells_matching(self.mouse_cell.get()) {
+            out.push(footprint_tile(
+                ctx,
+                &self.power,
+                &info.source_footprint_sequence,
+                &info.target_overlay_palette,
+                t,
+            ));
+        }
+    }
+}
+
+/// `ChronoshiftPower.SelectDestination`: the second click chooses where the units from `source` go.
+pub struct SelectChronoshiftDestination {
+    manager: Rc<SupportPowerManager>,
+    power: Rc<SupportPower>,
+    order_key: String,
+    source: CPos,
+    mouse_cell: Cell<CPos>,
+}
+
+impl SelectChronoshiftDestination {
+    /// Whether `cell` is explored and the unit can be shifted there.
+    fn can_enter(&self, unit: &rustora_engine::actor::ActorRef, cell: CPos) -> bool {
+        self.power.self_.owner().shroud().is_explored(cell)
+            && unit
+                .trait_or_default::<Chronoshiftable>()
+                .is_some_and(|c| c.can_chronoshift_to(cell))
+    }
+
+    /// `IsValidTarget`: a unit in range can be shifted to `xy`, or the terrain there is like the source terrain.
+    fn is_valid_target(&self, xy: CPos) -> bool {
+        let units = self.power.chronoshift_units_in_range(self.source);
+        if units.is_empty() {
+            return false;
+        }
+        units.iter().any(|u| self.can_enter(u, u.location() + (xy - self.source))) || self.power.similar_terrain(self.source, xy)
+    }
+}
+
+impl OrderGenerator for SelectChronoshiftDestination {
+    fn order(&self, ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+        let left_down = mi.button == MouseButton::Left && mi.event == MouseEvent::Down;
+        let right_up = mi.button == MouseButton::Right && mi.event == MouseEvent::Up;
+        if right_up {
+            ctx.cancel_input_mode();
+            return Vec::new();
+        }
+        if !left_down || !self.is_valid_target(cell) {
+            return Vec::new();
+        }
+        ctx.cancel_input_mode();
+        let mut order = Order::new(
+            &self.order_key,
+            Some(self.manager.self_.clone()),
+            Target::from_cell(ctx.world, cell, FULL_CELL),
+            false,
+        );
+        order.extra_location = self.source;
+        order.suppress_visual_feedback = true;
+        vec![order]
+    }
+
+    fn tick(&self, ctx: &OrderContext) {
+        if !power_usable(&self.manager, &self.order_key) {
+            ctx.cancel_input_mode();
+        }
+    }
+
+    fn get_cursor(&self, _ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), _mi: &MouseInput) -> Option<String> {
+        self.mouse_cell.set(cell);
+        let info = &self.power.info;
+        Some(if self.is_valid_target(cell) {
+            info.target_cursor.clone()
+        } else {
+            info.target_blocked_cursor.clone()
+        })
+    }
+
+    /// `Render` and `RenderAboveShroud`: the source footprint, the destination footprint and the destination cell of
+    /// each unit, valid where explored and enterable. The unit previews of C# are not drawn.
+    fn render_above_shroud(&self, ctx: &OrderContext, out: &mut Vec<Renderable>) {
+        let info = &self.power.info;
+        let palette = &info.icon_palette;
+        let tileset = ctx.world.map().tileset.to_lowercase();
+        let tileset_valid = format!("{}-{tileset}", info.valid_footprint_sequence);
+        let valid = if ctx.world.map().sequences().has_sequence(&info.footprint_image, &tileset_valid) {
+            tileset_valid
+        } else {
+            info.valid_footprint_sequence.clone()
+        };
+        let delta = self.mouse_cell.get() - self.source;
+        let shroud = self.power.self_.owner().shroud();
+        for t in self.power.cells_matching(self.source) {
+            out.push(footprint_tile(ctx, &self.power, &info.source_footprint_sequence, palette, t));
+            let sequence = if shroud.is_explored(t + delta) {
+                &valid
+            } else {
+                &info.invalid_footprint_sequence
+            };
+            out.push(footprint_tile(ctx, &self.power, sequence, palette, t + delta));
+        }
+        let viewer = self.power.self_.owner();
+        for unit in self.power.chronoshift_units_in_range(self.source) {
+            if unit.can_be_viewed_by_player(Some(&viewer)) {
+                let cell = unit.location() + delta;
+                let sequence = if self.can_enter(&unit, cell) {
+                    &valid
+                } else {
+                    &info.invalid_footprint_sequence
+                };
+                out.push(footprint_tile(ctx, &self.power, sequence, palette, cell));
+            }
+        }
     }
 }
 
@@ -243,6 +430,16 @@ impl SupportPowersWidget {
             ingame
                 .world
                 .issue_order(Order::new(&icon.power.key, Some(manager.self_.clone()), Target::Invalid, false));
+            return;
+        }
+        if instance.info.kind == PowerKind::Chronoshift {
+            ingame.set_order_generator(Rc::new(SelectChronoshiftTarget {
+                ingame: Rc::downgrade(ingame),
+                manager: manager.clone(),
+                power: instance,
+                order_key: icon.power.key.clone(),
+                mouse_cell: Cell::new(CPos::ZERO),
+            }));
             return;
         }
         ingame.set_order_generator(Rc::new(SelectGenericPowerTarget {

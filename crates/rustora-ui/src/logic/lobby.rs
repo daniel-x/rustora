@@ -853,8 +853,10 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
     let music_bin = ui.load_widget("LOBBY_MUSIC_BIN", Some(top_panels), &WidgetArgs::default());
     ui.set_visible_fn(music_bin, lobby.panel_is(PanelType::Music));
 
+    let refresh_server_list: super::multiplayer::RefreshServerList = Rc::default();
     if !skirmish_mode {
-        let servers_bin = ui.load_widget("LOBBY_SERVERS_BIN", Some(top_panels), &WidgetArgs::default());
+        let args = WidgetArgs::default().with_value("refreshServerList", refresh_server_list.clone());
+        let servers_bin = ui.load_widget("LOBBY_SERVERS_BIN", Some(top_panels), &args);
         ui.set_visible_fn(servers_bin, lobby.panel_is(PanelType::Servers));
     }
 
@@ -876,6 +878,17 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
     tab(ui, "PLAYERS_TAB", PanelType::Players, None);
     tab(ui, "MUSIC_TAB", PanelType::Music, None);
     tab(ui, "SERVERS_TAB", PanelType::Servers, None);
+    if let Some(servers_tab) = ui.find(tab_container, "SERVERS_TAB") {
+        let (p, set_servers) = (panel.clone(), lobby.set_panel(PanelType::Servers));
+        ui.button(servers_tab).on_click = Some(Rc::new(move |ui| {
+            if p.get() != PanelType::Servers
+                && let Some(refresh) = refresh_server_list.borrow().clone()
+            {
+                refresh(ui);
+            }
+            set_servers(ui);
+        }));
+    }
 
     let start_game: Action = {
         let (l, starting) = (lobby.clone(), game_starting.clone());
