@@ -2,10 +2,12 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Dedicated rustora server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory.
-//! `--local` makes it a loopback server for one client, like the server the C# game starts for a skirmish.
+//! `--local` and `--skirmish` make it the server that a client starts for itself, like `Game.CreateLocalServer`; it
+//! then serves one game and exits. `--exit-on-stdin-close` makes it exit when its standard input closes, so a server
+//! started by a client ends with the client.
 //! Usage: `rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
-//! [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports]
-//! [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>]
+//! [--name <text>] [--password <text>] [--seed <int>] [--local] [--skirmish] [--multiplayer] [--exit-on-stdin-close]
+//! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>]
 //! [--profile-blacklist <id,id>]`.
 
 use std::path::PathBuf;
@@ -17,8 +19,8 @@ fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
     eprintln!(
         "usage: rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
-         [--name <text>] [--password <text>] [--seed <int>] [--enable-singleplayer] [--enable-sync-reports] \
-         [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
+         [--name <text>] [--password <text>] [--seed <int>] [--local] [--skirmish] [--multiplayer] \
+         [--exit-on-stdin-close] [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
          [--profile-blacklist <id,id>]"
     );
     std::process::exit(2);
@@ -28,6 +30,14 @@ fn parse_ids(text: &str) -> Vec<i32> {
     text.split(',')
         .map(|s| s.trim().parse().unwrap_or_else(|_| usage("invalid profile id")))
         .collect()
+}
+
+/// Exits the process once standard input reaches its end, which happens when the parent process is gone.
+fn exit_on_stdin_close() {
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        std::process::exit(0);
+    });
 }
 
 fn main() {
@@ -49,6 +59,9 @@ fn main() {
             "--seed" => settings.seed = Some(value().parse().unwrap_or_else(|_| usage("invalid seed"))),
             "--enable-singleplayer" => settings.enable_singleplayer = true,
             "--local" => settings.server_type = ServerType::Local,
+            "--skirmish" => settings.server_type = ServerType::Skirmish,
+            "--multiplayer" => settings.server_type = ServerType::Multiplayer,
+            "--exit-on-stdin-close" => exit_on_stdin_close(),
             "--enable-sync-reports" => settings.enable_sync_reports = true,
             "--advertise-online" => settings.advertise_online = true,
             "--discover-nat-devices" => settings.discover_nat_devices = true,
@@ -61,7 +74,10 @@ fn main() {
     let engine = engine.unwrap_or_else(|| usage("--engine-dir is required"));
     let support = support.unwrap_or_else(|| engine.join("Support").to_string_lossy().into_owned());
     settings.support_dir = PathBuf::from(&support);
-    println!("Starting dedicated server for mod: {mod_id}");
+    let dedicated = settings.server_type == ServerType::Dedicated;
+    if dedicated {
+        println!("Starting dedicated server for mod: {mod_id}");
+    }
     loop {
         let result = ServerMod::load(&engine, &support, &mod_id)
             .and_then(|game_mod| Server::new(settings.clone(), game_mod))
@@ -69,6 +85,9 @@ fn main() {
         if let Err(e) = result {
             eprintln!("server failed: {e}");
             std::process::exit(1);
+        }
+        if !dedicated {
+            return;
         }
         println!("Starting a new server instance...");
     }

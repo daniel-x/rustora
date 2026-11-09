@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors.
 
-//! The socket side of the lobby: the local server thread, the connection and the orders of `UnitOrders.ProcessOrder`
+//! The socket side of the lobby: the local server process, the connection and the orders of `UnitOrders.ProcessOrder`
 //! that matter before a game starts.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
@@ -20,7 +21,6 @@ use rustora_net::game_information::timestamped_filename;
 use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
 use rustora_server::mod_info::ServerMod;
-use rustora_server::server::{Server, ServerSettings, ServerType};
 use rustora_ui::fluent::{MessageArg, Messages};
 use rustora_ui::logic::color_picker::ColorRules;
 use rustora_ui::logic::{ColorRulesLookup, LobbyRulesLookup};
@@ -33,29 +33,29 @@ const LOCAL_CONNECT_PATIENCE: Duration = Duration::from_secs(60);
 /// `UnitOrders.ChatMessageMaxLength`.
 const CHAT_MESSAGE_MAX_LENGTH: usize = 2500;
 const JOINED: &str = "notification-joined";
+/// The server name of `Game.CreateLocalServer`.
+const LOCAL_GAME_NAME: &str = "Skirmish Game";
 const LEFT: &str = "notification-lobby-disconnected";
 
-/// `Game.CreateLocalServer`. The thread ends when the host leaves. Returns the port.
-fn create_local_server(engine: PathBuf, support: String, map: String, skirmish: bool) -> Option<u16> {
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?.local_addr().ok()?.port();
-    std::thread::spawn(move || {
-        let settings = ServerSettings {
-            server_type: if skirmish { ServerType::Skirmish } else { ServerType::Local },
-            name: "Skirmish Game".to_string(),
-            listen_port: port,
-            map: Some(map),
-            advertise_online: false,
-            support_dir: PathBuf::from(&support),
-            ..Default::default()
-        };
-        let result = ServerMod::load(&engine, &support, "ra")
-            .and_then(|game_mod| Server::new(settings, game_mod))
-            .map(|mut server| server.run());
-        if let Err(e) = result {
-            log::error!("The local server failed: {e}");
-        }
-    });
-    Some(port)
+/// Starts the `rustora-server` binary next to this executable with `args`. The server exits when the game it serves
+/// ends, or when the client process is gone, because its standard input closes then.
+fn spawn_server(engine: &Path, support: &str, args: &[&str]) -> Option<Child> {
+    let exe = std::env::current_exe().ok()?.with_file_name(format!("rustora-server{}", std::env::consts::EXE_SUFFIX));
+    let result = Command::new(&exe)
+        .arg("--engine-dir")
+        .arg(engine)
+        .args(["--support-dir", support, "--exit-on-stdin-close"])
+        .args(args)
+        .stdin(Stdio::piped())
+        .spawn();
+    result
+        .inspect_err(|e| log::error!("Starting the server {} failed: {e}", exe.display()))
+        .ok()
+}
+
+/// A free port on the loopback interface.
+fn free_local_port() -> Option<u16> {
+    Some(std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?.local_addr().ok()?.port())
 }
 
 /// The mod as the server reads it, loaded on first use.
@@ -154,6 +154,8 @@ pub struct NetClient {
     local_port: Option<u16>,
     /// The port of the server of `create_server`, which may still be loading when the client joins it.
     created_port: Option<u16>,
+    /// The server process this client started.
+    server: Option<Child>,
     connecting: Option<Receiver<Result<NetworkConnection, String>>>,
     connection: Option<NetworkConnection>,
     /// The orders of `Game.CreateAndStartLocalServer`, sent once the first lobby information arrived.
@@ -170,6 +172,7 @@ impl NetClient {
             net,
             local_port: None,
             created_port: None,
+            server: None,
             connecting: None,
             connection: None,
             setup_orders: Vec::new(),
@@ -177,32 +180,32 @@ impl NetClient {
         }
     }
 
-    /// `Game.CreateServer`.
+    /// `Game.CreateServer`, as a separate server process.
     pub fn create_server(&mut self, name: String, port: u16, password: String, advertise_online: bool, map: String) {
-        let (engine, support) = (self.engine.clone(), self.support.clone());
         self.created_port = Some(port);
-        std::thread::spawn(move || {
-            let settings = ServerSettings {
-                server_type: ServerType::Multiplayer,
-                name,
-                listen_port: port,
-                password,
-                map: Some(map),
-                advertise_online,
-                support_dir: PathBuf::from(&support),
-                ..Default::default()
-            };
-            let result = ServerMod::load(&engine, &support, "ra")
-                .and_then(|game_mod| Server::new(settings, game_mod))
-                .map(|mut server| server.run());
-            if let Err(e) = result {
-                log::error!("The server failed: {e}");
-            }
-        });
+        let port = port.to_string();
+        let mut args = vec!["--multiplayer", "--name", &name, "--port", &port, "--password", &password, "--map", &map];
+        if advertise_online {
+            args.push("--advertise-online");
+        }
+        self.replace_server(spawn_server(&self.engine, &self.support, &args));
     }
 
+    /// `Game.CreateLocalServer`, as a separate server process on a free loopback port.
     pub fn create_local_server(&mut self, map: String, skirmish: bool) {
-        self.local_port = create_local_server(self.engine.clone(), self.support.clone(), map, skirmish);
+        self.local_port = free_local_port();
+        let Some(port) = self.local_port.map(|p| p.to_string()) else { return };
+        let kind = if skirmish { "--skirmish" } else { "--local" };
+        let args = [kind, "--name", LOCAL_GAME_NAME, "--port", &port, "--map", &map];
+        self.replace_server(spawn_server(&self.engine, &self.support, &args));
+    }
+
+    /// Stops the server this client started last, if it still runs, and keeps `server` in its place.
+    fn replace_server(&mut self, server: Option<Child>) {
+        if let Some(mut old) = std::mem::replace(&mut self.server, server) {
+            let _ = old.kill();
+            let _ = old.wait();
+        }
     }
 
     /// Sets the orders that the next connection sends when its lobby information is ready.
@@ -531,4 +534,10 @@ pub fn process_client_order(
         _ => {}
     }
     Ok(())
+}
+
+impl Drop for NetClient {
+    fn drop(&mut self) {
+        self.replace_server(None);
+    }
 }
