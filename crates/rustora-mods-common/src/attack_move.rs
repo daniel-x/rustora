@@ -133,10 +133,10 @@ pub enum MoveOrder {
         evaluate_nearest_movable_cell: bool,
         line_color: Option<rustora_core::fieldloader::Color>,
     },
-    /// `IMove.MoveWithinRange` of a cell target.
-    WithinRange {
+    /// `IMove.MoveWithinRange` of the cell where `cell_of` is when the move starts, as in `Hunt`.
+    WithinRangeOfCell {
         mv: Rc<dyn IMove>,
-        target: Target,
+        cell_of: ActorRef,
         min_range: rustora_core::world_types::WDist,
         max_range: rustora_core::world_types::WDist,
     },
@@ -170,12 +170,15 @@ impl MoveOrder {
                     None => a,
                 }
             }
-            MoveOrder::WithinRange {
+            MoveOrder::WithinRangeOfCell {
                 mv,
-                target,
+                cell_of,
                 min_range,
                 max_range,
-            } => mv.move_within_range(target, *min_range, *max_range, None),
+            } => {
+                let target = Target::from_cell(&cell_of.world(), cell_of.location(), rustora_engine::traits::subcell::FULL_CELL);
+                mv.move_within_range(&target, *min_range, *max_range, None)
+            }
             MoveOrder::Follow {
                 mv,
                 self_,

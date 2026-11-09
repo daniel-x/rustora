@@ -47,12 +47,17 @@ impl Once {
         })
     }
 
-    /// Calls and disposes the function; returns whether the call succeeded.
+    /// Calls the function, then disposes it, as the `using` blocks of C# do: a nested call from inside the
+    /// function still works. Returns whether the call succeeded.
     fn call(&self, args: impl IntoLuaMulti) -> bool {
         let Some(context) = self.context.upgrade() else { return false };
-        let f = self.f.borrow_mut().take();
+        let f = self.f.borrow().clone();
         match f {
-            Some(f) => context.call(&f, args),
+            Some(f) => {
+                let ok = context.call(&f, args);
+                self.f.borrow_mut().take();
+                ok
+            }
             None => {
                 context.fatal_error(&mlua::Error::RuntimeError(
                     "Cannot access a disposed object. Object name: 'LuaFunction'.".into(),

@@ -2591,12 +2591,12 @@ impl Activity for Hunt {
         let Some(target_actor) = util::closest_to_with_path_from(candidates, self_) else {
             return false;
         };
-        let (mv, world) = (self.mv.clone(), w.clone());
+        let mv = self.mv.clone();
         self.base.queue_child(crate::attack_move::AttackMoveActivity::new(
             self_,
-            crate::attack_move::MoveOrder::WithinRange {
+            crate::attack_move::MoveOrder::WithinRangeOfCell {
                 mv,
-                target: Target::from_cell(&world, target_actor.location(), rustora_engine::traits::subcell::FULL_CELL),
+                cell_of: target_actor,
                 min_range: WDist::ZERO,
                 max_range: WDist::from_cells(2),
             },
