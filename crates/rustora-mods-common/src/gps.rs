@@ -5,6 +5,8 @@
 //! `Mods.Cnc/Effects/SatelliteLaunch.cs`, `Mods.Cnc/Effects/GpsSatellite.cs` and `Traits/Radar/ProvidesRadar.cs`.
 //! `GpsPower` itself is a [`crate::support_powers::PowerKind`].
 
+use rustora_engine::net_collections::NetMap;
+use rustora_engine::persist::AddrKey;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
@@ -48,7 +50,10 @@ pub struct GpsWatcher {
     granted: Cell<bool>,
     explored: Cell<bool>,
     actors: RefCell<Vec<ActorRef>>,
-    notify_on_refresh: RefCell<Vec<(ActorRef, Rc<dyn IOnGpsRefreshed>)>>,
+    /// The C# `HashSet<TraitPair<IOnGpsRefreshed>>`, keyed by actor id and trait address; its order reuses the
+    /// slots of removed entries like the .NET set.
+    #[allow(clippy::type_complexity)]
+    notify_on_refresh: RefCell<NetMap<(u32, AddrKey), (ActorRef, Rc<dyn IOnGpsRefreshed>)>>,
 }
 
 register_traits!(GpsWatcher: ISync, IPreventsShroudReset);
@@ -59,7 +64,7 @@ info_impl!(GpsWatcherInfo => |_, init| Some(Rc::new(GpsWatcher {
     granted: Cell::new(false),
     explored: Cell::new(false),
     actors: RefCell::new(Vec::new()),
-    notify_on_refresh: RefCell::new(Vec::new()),
+    notify_on_refresh: RefCell::new(NetMap::new()),
 })));
 
 impl ISync for GpsWatcher {
@@ -129,7 +134,7 @@ impl GpsWatcher {
             self.owner.shroud().explore_all();
         }
         if was_granted != self.granted.get() || was_granted_allies != self.granted_allies.get() {
-            let list = self.notify_on_refresh.borrow().clone();
+            let list: Vec<(ActorRef, Rc<dyn IOnGpsRefreshed>)> = self.notify_on_refresh.borrow().values().cloned().collect();
             for (a, t) in list {
                 t.on_gps_refresh(&a, &self.owner);
             }
@@ -137,16 +142,17 @@ impl GpsWatcher {
     }
 
     pub fn register_for_on_gps_refreshed(&self, actor: &ActorRef, t: Rc<dyn IOnGpsRefreshed>) {
+        let key = (actor.id, AddrKey(Rc::as_ptr(&t) as *const () as usize));
         let mut l = self.notify_on_refresh.borrow_mut();
-        if !l.iter().any(|(a, x)| a.id == actor.id && Rc::ptr_eq(x, &t)) {
-            l.push((actor.clone(), t));
+        if !l.contains_key(&key) {
+            l.insert(key, (actor.clone(), t));
         }
     }
 
     pub fn unregister_for_on_gps_refreshed(&self, actor: &ActorRef, t: &Rc<dyn IOnGpsRefreshed>) {
         self.notify_on_refresh
             .borrow_mut()
-            .retain(|(a, x)| !(a.id == actor.id && Rc::ptr_eq(x, t)));
+            .remove(&(actor.id, AddrKey(Rc::as_ptr(t) as *const () as usize)));
     }
 }
 
