@@ -2573,7 +2573,9 @@ dependencies = [
 name = "rustora-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "indexmap",
+ "log",
  "rustora-derive",
  "thiserror 2.0.21",
 ]
@@ -2582,6 +2584,8 @@ dependencies = [
 name = "rustora-dedicated"
 version = "0.1.0"
 dependencies = [
+ "log",
+ "rustora-core",
  "rustora-server",
 ]
 
@@ -2708,8 +2712,10 @@ name = "rustora-server"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "chrono",
  "igd-next",
  "indexmap",
+ "log",
  "rand 0.8.8",
  "rsa",
  "rustora-core",

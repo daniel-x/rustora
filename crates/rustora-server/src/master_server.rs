@@ -40,7 +40,7 @@ impl MasterServerPinger {
         let beacon = is_multiplayer
             .then(|| {
                 Beacon::start(LAN_GAME_BEACON, DISCOVERY_PORT, advertised_port)
-                    .inspect_err(|e| println!("LAN beacon failed: {e}"))
+                    .inspect_err(|e| log::info!(target: "server", "LAN beacon failed: {e}"))
                     .ok()
             })
             .flatten();
@@ -103,12 +103,12 @@ fn update_master_server(url: String, data: String, events: Sender<Event>, initia
     std::thread::spawn(move || {
         let messages = match rustora_net::web::post(&url, &data) {
             Ok(text) if initial.swap(false, Ordering::Relaxed) => {
-                println!("Master server: {text}");
+                log::info!(target: "server", "Master server: {text}");
                 parse_master_response(&text)
             }
             Ok(_) => Vec::new(),
             Err(e) => {
-                println!("Master server: {e}");
+                log::info!(target: "server", "Master server: {e}");
                 vec![ERROR.to_string()]
             }
         };

@@ -12,6 +12,7 @@
 
 use std::path::PathBuf;
 
+use rustora_core::log_channels;
 use rustora_server::mod_info::ServerMod;
 use rustora_server::server::{Server, ServerSettings, ServerType};
 
@@ -36,6 +37,7 @@ fn parse_ids(text: &str) -> Vec<i32> {
 fn exit_on_stdin_close() {
     std::thread::spawn(|| {
         let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        log::logger().flush();
         std::process::exit(0);
     });
 }
@@ -74,6 +76,13 @@ fn main() {
     let engine = engine.unwrap_or_else(|| usage("--engine-dir is required"));
     let support = support.unwrap_or_else(|| engine.join("Support").to_string_lossy().into_owned());
     settings.support_dir = PathBuf::from(&support);
+    let channels = if settings.server_type == ServerType::Dedicated {
+        log_channels::DEDICATED_SERVER_CHANNELS
+    } else {
+        log_channels::LOCAL_SERVER_CHANNELS
+    };
+    log_channels::init(&settings.support_dir, channels);
+    log_channels::install_panic_hook(&settings.support_dir);
     let dedicated = settings.server_type == ServerType::Dedicated;
     if dedicated {
         println!("Starting dedicated server for mod: {mod_id}");
@@ -83,10 +92,13 @@ fn main() {
             .and_then(|game_mod| Server::new(settings.clone(), game_mod))
             .map(|mut server| server.run());
         if let Err(e) = result {
+            log::error!(target: "server", "server failed: {e}");
+            log::logger().flush();
             eprintln!("server failed: {e}");
             std::process::exit(1);
         }
         if !dedicated {
+            log::logger().flush();
             return;
         }
         println!("Starting a new server instance...");

@@ -168,7 +168,7 @@ impl Server {
             MiniYamlNode::new("Bots", MiniYaml::new(None, bots)),
         ];
         if let Err(e) = std::fs::write(self.skirmish_file(), nodes_to_string(&nodes)) {
-            println!("Cannot write the skirmish settings: {e}");
+            log::info!(target: "server", "Cannot write the skirmish settings: {e}");
         }
     }
 }

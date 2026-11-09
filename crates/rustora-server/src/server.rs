@@ -329,7 +329,7 @@ impl Server {
                     listener_threads.push(std::thread::spawn(move || listen_loop(l, tx, flag)));
                 }
                 Err(e) => {
-                    println!("Failed to listen on {address}: {e}");
+                    log::info!(target: "server", "Failed to listen on {address}: {e}");
                     last_error = Some(e);
                 }
             }
@@ -396,13 +396,13 @@ impl Server {
         let master_server = MasterServerPinger::start(&mut random, is_multiplayer);
         let port_forward = if settings.discover_nat_devices && is_multiplayer {
             PortForward::try_forward(settings.listen_port, settings.nat_port_mapping_lifetime)
-                .inspect_err(|e| println!("Port forwarding failed: {e}"))
+                .inspect_err(|e| log::info!(target: "nat", "Port forwarding failed: {e}"))
                 .ok()
         } else {
             None
         };
-        println!("Initial mod: {}", game_mod.data.manifest.id);
-        println!("Initial map: {}", map.uid);
+        log::info!(target: "server", "Initial mod: {}", game_mod.data.manifest.id);
+        log::info!(target: "server", "Initial map: {}", map.uid);
 
         Ok(Server {
             settings,
@@ -451,14 +451,14 @@ impl Server {
             if self.state == ServerState::GameStarted {
                 self.send_tick_scales();
                 if self.conns.is_empty() {
-                    println!("No one is playing, shutting down...");
+                    log::info!(target: "server", "No one is playing, shutting down...");
                     self.state = ServerState::ShuttingDown;
                 }
             }
         }
         self.master_server_shutdown();
         if let Some(Err(e)) = self.port_forward.take().map(|p| p.remove()) {
-            println!("Port removal failed: {e}");
+            log::info!(target: "nat", "Port removal failed: {e}");
         }
         self.accepting.store(false, Ordering::Relaxed);
         for t in self.listener_threads.drain(..) {
@@ -534,7 +534,7 @@ impl Server {
         ) {
             Ok(c) => c,
             Err(e) => {
-                println!("Handshake failed: {e}");
+                log::info!(target: "server", "Handshake failed: {e}");
                 return;
             }
         };
@@ -553,7 +553,7 @@ impl Server {
 
     fn reject(&mut self, player_index: i32, order: &str, message: &str, reason: &str) {
         if let Some(c) = self.conn(player_index) {
-            println!("Rejected connection from {}; {reason}.", c.end_point);
+            log::info!(target: "server", "Rejected connection from {}; {reason}.", c.end_point);
         }
         self.send_order_to(player_index, order, message);
         self.drop_client(player_index);
@@ -572,7 +572,7 @@ impl Server {
         let handshake = match HandshakeResponse::deserialize(data, name) {
             Ok(h) => h,
             Err(e) => {
-                println!("Dropping connection because an error occurred: {e}");
+                log::info!(target: "server", "Dropping connection because an error occurred: {e}");
                 return self.drop_client(player_index);
             }
         };
@@ -683,7 +683,7 @@ impl Server {
         }
         let profile_id = match &profile {
             Ok(p) => {
-                println!(
+                log::info!(target: "server", 
                     "Client {player_index} authenticated as {} (UID {})",
                     p.profile_name.as_deref().unwrap_or(""),
                     p.profile_id
@@ -691,7 +691,7 @@ impl Server {
                 Some(p.profile_id)
             }
             Err(e) => {
-                println!("Client {player_index} failed to authenticate: {e}");
+                log::info!(target: "server", "Client {player_index} failed to authenticate: {e}");
                 client.fingerprint = None;
                 None
             }
@@ -737,7 +737,7 @@ impl Server {
         self.lobby.clients.push(client);
         if let Some(c) = self.conn_mut(player_index) {
             c.validated = true;
-            println!("Client {player_index}: Accepted connection from {}.", c.end_point);
+            log::info!(target: "server", "Client {player_index}: Accepted connection from {}.", c.end_point);
         }
         let join_cooldown = self.settings.flood_limit_join_cooldown;
         if !is_admin && join_cooldown > 0 {
@@ -746,7 +746,7 @@ impl Server {
         self.client_joined(player_index);
         self.skirmish_client_joined(player_index);
         self.sync_lobby_info();
-        println!("{name} has joined the game.");
+        log::info!(target: "server", "{name} has joined the game.");
         self.send_fluent_message("notification-joined", &[("player", (&name).into())]);
 
         if self.is_dedicated() {
@@ -776,7 +776,7 @@ impl Server {
         let sent = self.conn(player_index).is_some_and(|c| c.try_send_data(frame));
         if !sent {
             self.drop_client(player_index);
-            println!("Dropping client {player_index} because dispatching orders failed!");
+            log::info!(target: "server", "Dropping client {player_index} because dispatching orders failed!");
         }
     }
 
@@ -812,7 +812,7 @@ impl Server {
         if data.len() == SYNC_HASH_ORDER_LENGTH {
             self.handle_sync_order(frame, data);
         } else {
-            println!(
+            log::info!(target: "server", 
                 "Dropped sync order with length {} from client {from}. Expected length {SYNC_HASH_ORDER_LENGTH}.",
                 data.len()
             );
@@ -823,7 +823,7 @@ impl Server {
     fn handle_sync_order(&mut self, frame: i32, packet: &[u8]) {
         if let Some(existing) = self.sync_for_frame.get(&frame) {
             if existing != packet {
-                println!("Out of sync detected at frame {frame}");
+                log::info!(target: "server", "Out of sync detected at frame {frame}");
             }
             return;
         }
@@ -995,7 +995,7 @@ impl Server {
                 let file_name = path.file_name().map_or(String::new(), |f| f.to_string_lossy().into_owned());
                 self.broadcast_order("GameSaved", &file_name);
             }
-            Err(e) => println!("Failed to save the game: {e}"),
+            Err(e) => log::info!(target: "server", "Failed to save the game: {e}"),
         }
     }
 
@@ -1009,10 +1009,10 @@ impl Server {
         };
         let save = match GameSave::read(&path) {
             Ok(s) => s,
-            Err(e) => return println!("Failed to load the game save: {e}"),
+            Err(e) => return log::info!(target: "server", "Failed to load the game save: {e}"),
         };
         if let Err(e) = self.apply_game_save(save) {
-            println!("Failed to load the game save: {e}");
+            log::info!(target: "server", "Failed to load the game save: {e}");
         }
     }
 
@@ -1079,7 +1079,7 @@ impl Server {
             if o.order_string == "HandshakeResponse" {
                 self.validate_client(player_index, target, &o.order_string);
             } else {
-                println!("Rejected connection; order `{}` is not a `HandshakeResponse`.", o.order_string);
+                log::info!(target: "server", "Rejected connection; order `{}` is not a `HandshakeResponse`.", o.order_string);
                 self.drop_client(player_index);
             }
             return;
@@ -1087,7 +1087,7 @@ impl Server {
         match o.order_string.as_str() {
             "Command" => {
                 if !self.interpret_command(target, player_index) {
-                    println!("Unknown server command: {target}");
+                    log::info!(target: "server", "Unknown server command: {target}");
                     self.send_fluent_message_to(player_index, "notification-unknown-server-command", &[("command", target.into())]);
                 }
             }
@@ -1111,7 +1111,7 @@ impl Server {
     pub fn send_message(&mut self, text: &str) {
         self.broadcast_order("Message", text);
         if self.is_dedicated() {
-            println!("{text}");
+            write_line_with_time_stamp(text);
         }
     }
 
@@ -1119,7 +1119,7 @@ impl Server {
     pub fn send_fluent_message(&mut self, key: &str, args: &[(&str, FluentArg)]) {
         self.broadcast_order("FluentMessage", &serialize_fluent_message(key, args));
         if self.is_dedicated() {
-            println!("{} {args:?}", self.game_mod.message(key));
+            write_line_with_time_stamp(&format!("{} {args:?}", self.game_mod.message(key)));
         }
     }
 
@@ -1252,7 +1252,7 @@ impl Server {
 
     /// `StartGame`.
     pub fn start_game(&mut self) {
-        println!("{}", self.game_mod.message("notification-game-started"));
+        write_line_with_time_stamp(&self.game_mod.message("notification-game-started"));
         let to_kick: Vec<i32> = self
             .conns
             .iter()
@@ -1305,7 +1305,7 @@ impl Server {
                     MiniYamlNode::with_value_str("SaveSyncFrame", save.last_sync_frame.to_string()),
                 ]);
                 saved_packets = save.parse_orders(&self.lobby).unwrap_or_else(|e| {
-                    println!("Failed to replay the game save: {e}");
+                    log::info!(target: "server", "Failed to replay the game save: {e}");
                     Vec::new()
                 });
                 first_frame += save.last_orders_frame;
@@ -1457,4 +1457,9 @@ mod tests {
         assert_eq!(anonymize_ip("10.1.2.3".parse().unwrap()).as_deref(), Some("10.1.2.*"));
         assert_eq!(anonymize_ip("::1".parse().unwrap()), None);
     }
+}
+
+/// `WriteLineWithTimeStamp`: a console line with the local time.
+fn write_line_with_time_stamp(line: &str) {
+    println!("[{}] {line}", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"));
 }

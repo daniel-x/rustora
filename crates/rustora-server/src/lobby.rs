@@ -89,7 +89,7 @@ impl Server {
 
     fn validate_slot_command(&mut self, conn: i32, client: &Client, slot: &str) -> bool {
         if !self.lobby.slots.contains_key(slot) {
-            println!("Invalid slot: {slot}");
+            log::info!(target: "server", "Invalid slot: {slot}");
             return false;
         }
         if !client.is_admin {
@@ -164,7 +164,7 @@ impl Server {
 
     fn cmd_slot(&mut self, conn: i32, client: &Client, s: &str) -> bool {
         let Some(slot) = self.lobby.slots.get(s) else {
-            println!("Invalid slot: {s}");
+            log::info!(target: "server", "Invalid slot: {s}");
             return false;
         };
         if slot.closed || self.lobby.client_in_slot(s).is_some() {
@@ -275,7 +275,7 @@ impl Server {
             return false;
         }
         let Some(controller) = parse_int(parts[1]) else {
-            println!("Invalid bot controller client index: {}", parts[1]);
+            log::info!(target: "server", "Invalid bot controller client index: {}", parts[1]);
             return false;
         };
         let existing = self.lobby.client_in_slot(slot_name).cloned();
@@ -340,7 +340,7 @@ impl Server {
         match self.game_mod.map_info(s) {
             Ok(map) => self.select_map(conn, client, map),
             Err(e) => {
-                println!("Failed to load map {s}: {e}");
+                log::info!(target: "server", "Failed to load map {s}: {e}");
                 self.send_fluent_message_to(conn, "notification-unknown-map", &[]);
             }
         }
@@ -739,7 +739,7 @@ impl Server {
             return true;
         }
         let Some(team) = parse_int(team) else {
-            println!("Invalid team: {s}");
+            log::info!(target: "server", "Invalid team: {s}");
             return false;
         };
         if let Some(c) = self.lobby.client_with_index_mut(target.index) {
@@ -757,7 +757,7 @@ impl Server {
             return true;
         }
         let Some(handicap) = parse_int(handicap).filter(|h| (0..100).contains(h) && h % 5 == 0) else {
-            println!("Invalid handicap: {s}");
+            log::info!(target: "server", "Invalid handicap: {s}");
             return false;
         };
         if let Some(c) = self.lobby.client_with_index_mut(target.index) {
@@ -805,7 +805,7 @@ impl Server {
             return true;
         }
         let Some(spawn) = parse_int(spawn).filter(|v| *v >= 0 && *v <= self.map.spawn_points as i32) else {
-            println!("Invalid spawn point: {spawn}");
+            log::info!(target: "server", "Invalid spawn point: {spawn}");
             return true;
         };
         if self

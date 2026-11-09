@@ -198,7 +198,7 @@ impl MixFile {
             }
         }
         let best = if crc.len() > classic.len() { crc } else { classic };
-        let unknown = entries.len() - best.len();
+        let unknown = entries.len() as i64 - best.len() as i64;
         if unknown > 0 {
             log::debug!("{}: failed to resolve filenames for {unknown} unknown hashes", self.name);
         }

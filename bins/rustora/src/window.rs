@@ -82,6 +82,8 @@ impl Clipboard for SystemClipboard {
 /// Opens the client window. Without an explicit `size`, the window follows the `Graphics.Mode` setting like
 /// OpenRA: fullscreen modes cover the monitor, windowed mode uses `Graphics.WindowedSize`.
 pub fn run(engine: &Path, support: &str, size: Option<(u32, u32)>, args: &[String]) {
+    rustora_core::log_channels::init(Path::new(support), rustora_core::log_channels::CLIENT_CHANNELS);
+    rustora_core::log_channels::install_panic_hook(Path::new(support));
     let mut launcher = Launcher {
         engine: engine.to_path_buf(),
         support: support.to_string(),
@@ -91,6 +93,7 @@ pub fn run(engine: &Path, support: &str, size: Option<(u32, u32)>, args: &[Strin
     };
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.run_app(&mut launcher).expect("run event loop");
+    log::logger().flush();
 }
 
 /// Creates the `App` once the event loop can report the monitor size, then forwards all events to it.

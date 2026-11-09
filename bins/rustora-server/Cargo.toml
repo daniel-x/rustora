@@ -10,7 +10,9 @@ name = "rustora-server"
 path = "src/main.rs"
 
 [dependencies]
+rustora-core = { path = "../../crates/rustora-core" }
 rustora-server = { path = "../../crates/rustora-server" }
+log = "0.4"
 
 [lints]
 workspace = true

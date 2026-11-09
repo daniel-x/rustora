@@ -1067,6 +1067,11 @@ impl Client {
 
     /// The part of `Game.StartGame` after the world loaded: the in-game user interface.
     fn enter_game(&mut self, mut shell: ShellWorld, replay: Option<rustora_ui::logic::ingame::ReplayStatus>) {
+        let map = shell.world.map();
+        rustora_core::log_channels::set_panic_context(vec![
+            format!("{} mod version {}", self.services.mod_id, self.services.mod_version),
+            format!("on map {} ({}).", map.uid, map.title),
+        ]);
         let (select_cursor, default_cursor) = {
             let assets = self.ui.assets.borrow();
             (
