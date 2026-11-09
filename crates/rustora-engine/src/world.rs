@@ -9,9 +9,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
+use rustora_client::game_information::{self, GameInformation};
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
-use rustora_client::game_information::{self, GameInformation};
 use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
 

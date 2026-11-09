@@ -8,8 +8,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rustora_core::miniyaml::MiniYamlNode;
 use rustora_client::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
+use rustora_core::miniyaml::MiniYamlNode;
 use rustora_net::session::{Client, Slot};
 
 use crate::fluent::MessageArg;

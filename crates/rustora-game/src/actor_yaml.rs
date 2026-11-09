@@ -56,4 +56,3 @@ pub fn parse_trait_nodes(actor: &str, nodes: &[MiniYamlNode]) -> Result<Vec<Trai
     }
     Ok(out)
 }
-

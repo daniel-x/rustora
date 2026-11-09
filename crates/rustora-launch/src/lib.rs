@@ -10,6 +10,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use rustora_client::replay::Replay;
 use rustora_engine::map::{Map, MapGrid};
 use rustora_engine::order_manager::{OrderManager, ReplayConnection};
 use rustora_engine::rules::{Ruleset, TraitRegistry};
@@ -20,7 +21,6 @@ use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
 use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
-use rustora_client::replay::Replay;
 
 /// Opens the map with the given uid from the `maps` folder of the RA mod or from the user map folders
 /// `<support>/maps/ra/<version>`, like the `MapFolders` of the RA manifest.

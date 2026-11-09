@@ -503,7 +503,8 @@ impl ModLobbyRules {
                     if !values.is_empty() {
                         let label = field(t, "DefaultCashDropdownLabel").unwrap_or("Starting Cash");
                         out.push(
-                            Self::dropdown_option(messages, 
+                            Self::dropdown_option(
+                                messages,
                                 "startingcash",
                                 label,
                                 values,
@@ -514,13 +515,41 @@ impl ModLobbyRules {
                         );
                     }
                 }
-                "DeveloperMode" => out.push(Self::boolean_option(messages, t, "cheats", "checkbox-debug-menu.label", "Checkbox", false)),
+                "DeveloperMode" => out.push(Self::boolean_option(
+                    messages,
+                    t,
+                    "cheats",
+                    "checkbox-debug-menu.label",
+                    "Checkbox",
+                    false,
+                )),
                 "Shroud" => {
-                    out.push(Self::boolean_option(messages, t, "explored", "checkbox-explored-map.label", "ExploredMapCheckbox", false));
-                    out.push(Self::boolean_option(messages, t, "fog", "checkbox-fog-of-war.label", "FogCheckbox", true));
+                    out.push(Self::boolean_option(
+                        messages,
+                        t,
+                        "explored",
+                        "checkbox-explored-map.label",
+                        "ExploredMapCheckbox",
+                        false,
+                    ));
+                    out.push(Self::boolean_option(
+                        messages,
+                        t,
+                        "fog",
+                        "checkbox-fog-of-war.label",
+                        "FogCheckbox",
+                        true,
+                    ));
                 }
                 "MapOptions" => {
-                    out.push(Self::boolean_option(messages, t, "shortgame", "checkbox-short-game.label", "ShortGameCheckbox", true));
+                    out.push(Self::boolean_option(
+                        messages,
+                        t,
+                        "shortgame",
+                        "checkbox-short-game.label",
+                        "ShortGameCheckbox",
+                        true,
+                    ));
                     let tech: IndexMap<String, String> = player
                         .iter()
                         .filter(|p| p.name == "ProvidesTechPrerequisite")
@@ -529,7 +558,8 @@ impl ModLobbyRules {
                     if !tech.is_empty() {
                         let label = field(t, "TechLevelDropdownLabel").unwrap_or("dropdown-tech-level.label");
                         out.push(
-                            Self::dropdown_option(messages, 
+                            Self::dropdown_option(
+                                messages,
                                 "techlevel",
                                 label,
                                 tech,
@@ -542,7 +572,8 @@ impl ModLobbyRules {
                     let speeds = self.speed_names.iter().map(|(k, n)| (k.clone(), messages.get(n))).collect();
                     let label = field(t, "GameSpeedDropdownLabel").unwrap_or("dropdown-game-speed.label");
                     out.push(
-                        Self::dropdown_option(messages, 
+                        Self::dropdown_option(
+                            messages,
                             "gamespeed",
                             label,
                             speeds,
@@ -553,11 +584,39 @@ impl ModLobbyRules {
                     );
                 }
                 "MapBuildRadius" => {
-                    out.push(Self::boolean_option(messages, t, "allybuild", "checkbox-ally-build-radius.label", "AllyBuildRadiusCheckbox", true));
-                    out.push(Self::boolean_option(messages, t, "buildradius", "checkbox-build-radius.label", "BuildRadiusCheckbox", true));
+                    out.push(Self::boolean_option(
+                        messages,
+                        t,
+                        "allybuild",
+                        "checkbox-ally-build-radius.label",
+                        "AllyBuildRadiusCheckbox",
+                        true,
+                    ));
+                    out.push(Self::boolean_option(
+                        messages,
+                        t,
+                        "buildradius",
+                        "checkbox-build-radius.label",
+                        "BuildRadiusCheckbox",
+                        true,
+                    ));
                 }
-                "CrateSpawner" => out.push(Self::boolean_option(messages, t, "crates", "checkbox-crates.label", "Checkbox", true)),
-                "MapCreeps" => out.push(Self::boolean_option(messages, t, "creeps", "dropdown-map-creeps.label", "Checkbox", true)),
+                "CrateSpawner" => out.push(Self::boolean_option(
+                    messages,
+                    t,
+                    "crates",
+                    "checkbox-crates.label",
+                    "Checkbox",
+                    true,
+                )),
+                "MapCreeps" => out.push(Self::boolean_option(
+                    messages,
+                    t,
+                    "creeps",
+                    "dropdown-map-creeps.label",
+                    "Checkbox",
+                    true,
+                )),
                 "MapStartingLocations" => out.push(Self::boolean_option(
                     messages,
                     t,
@@ -580,7 +639,8 @@ impl ModLobbyRules {
                     if !units.is_empty() {
                         let label = field(t, "DropdownLabel").unwrap_or("dropdown-starting-units.label");
                         out.push(
-                            Self::dropdown_option(messages, 
+                            Self::dropdown_option(
+                                messages,
                                 "startingunits",
                                 label,
                                 units,
@@ -598,14 +658,14 @@ impl ModLobbyRules {
                         .collect();
                     let label = field(t, "TimeLimitLabel").unwrap_or("dropdown-time-limit.label");
                     let mut option = Self::dropdown_option(
-                            messages,
-                            "timelimit",
-                            label,
-                            values,
-                            field(t, "TimeLimitDefault").unwrap_or("0").trim().to_string(),
-                            field_bool(t, "TimeLimitLocked", false),
-                        )
-                        .decorated(messages, t, "TimeLimit", label);
+                        messages,
+                        "timelimit",
+                        label,
+                        values,
+                        field(t, "TimeLimitDefault").unwrap_or("0").trim().to_string(),
+                        field_bool(t, "TimeLimitLocked", false),
+                    )
+                    .decorated(messages, t, "TimeLimit", label);
                     option.is_visible = field_bool(t, "TimeLimitDropdownVisible", true);
                     out.push(option);
                 }
@@ -619,7 +679,8 @@ impl ModLobbyRules {
                     });
                     let label = field(t, "Label").unwrap_or_default();
                     out.push(
-                        Self::dropdown_option(messages, 
+                        Self::dropdown_option(
+                            messages,
                             field(t, "ID").unwrap_or_default(),
                             label,
                             values,

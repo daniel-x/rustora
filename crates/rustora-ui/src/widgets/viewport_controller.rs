@@ -6,10 +6,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use rustora_client::settings::MouseScrollType;
 use rustora_core::world_types::WPos;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::traits::IDisabledTrait;
-use rustora_client::settings::MouseScrollType;
 use rustora_mods_common::cosmetic::ScreenShaker;
 use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
 use rustora_mods_common::tooltip::{Tooltip, TooltipInfo};

@@ -11,11 +11,11 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use rustora_fs::{Package, Platform};
+use rustora_game::lobby_rules::ModLobbyRules;
+pub use rustora_game::lobby_rules::{GameSpeed, MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo};
 use rustora_game::map::MapPackage;
 use rustora_game::map_folders::map_folders;
 use rustora_game::moddata::ModData;
-pub use rustora_game::lobby_rules::{GameSpeed, MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo};
-use rustora_game::lobby_rules::ModLobbyRules;
 
 struct MapEntry {
     package: Arc<dyn Package>,

@@ -6,9 +6,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use rustora_client::settings::Settings;
 use rustora_engine::player::{PlayerRef, WinState};
 use rustora_engine::world::World;
-use rustora_client::settings::Settings;
 use rustora_mods_common::selection::Selection;
 
 use super::services;

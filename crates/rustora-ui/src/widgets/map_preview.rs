@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use rustora_client::map_cache::{MapGridType, MapPreview};
 use rustora_core::fieldloader::Color;
 use rustora_core::world_types::CPos;
-use rustora_client::map_cache::{MapGridType, MapPreview};
 
 use super::{TooltipContainerWidget, impl_as_any, parse_bool};
 use crate::assets::Assets;

@@ -684,7 +684,7 @@ impl Server {
         }
         let profile_id = match &profile {
             Ok(p) => {
-                log::info!(target: "server", 
+                log::info!(target: "server",
                     "Client {player_index} authenticated as {} (UID {})",
                     p.profile_name.as_deref().unwrap_or(""),
                     p.profile_id
@@ -813,7 +813,7 @@ impl Server {
         if data.len() == SYNC_HASH_ORDER_LENGTH {
             self.handle_sync_order(frame, data);
         } else {
-            log::info!(target: "server", 
+            log::info!(target: "server",
                 "Dropped sync order with length {} from client {from}. Expected length {SYNC_HASH_ORDER_LENGTH}.",
                 data.len()
             );
@@ -1278,7 +1278,8 @@ impl Server {
         let speed_name = self.lobby.global_settings.option_str("gamespeed", &default_speed).to_string();
         let speed = self
             .game_mod
-            .rules.speeds
+            .rules
+            .speeds
             .get(&speed_name)
             .or_else(|| self.game_mod.rules.speeds.get(&default_speed))
             .cloned()

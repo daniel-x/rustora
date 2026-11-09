@@ -110,4 +110,3 @@ pub fn map_players(defs: &[MiniYamlNode]) -> IndexMap<String, PlayerReference> {
     }
     out
 }
-

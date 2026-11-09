@@ -3,7 +3,6 @@
 
 //! Port of `GameRules/ActorInfo.cs`: an actor type and its trait definitions.
 
-
 use crate::generated::{TypeEntry, type_entry};
 
 pub use rustora_game::actor_yaml::{ActorInfoError, TraitNode, parse_trait_nodes};

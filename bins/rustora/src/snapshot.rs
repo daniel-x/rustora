@@ -69,7 +69,12 @@ pub fn read(save: &Path, lobby: &Session, last_orders_frame: i32) -> Option<Vec<
 /// The index and slot of each human client, which decide who controls which player. Bots may get other indices when
 /// a save loads; their orders come from the host, so the restored lobby keeps working for them.
 fn client_slots(lobby: &Session) -> Vec<(i32, Option<String>)> {
-    let mut slots: Vec<_> = lobby.clients.iter().filter(|c| !c.is_bot()).map(|c| (c.index, c.slot.clone())).collect();
+    let mut slots: Vec<_> = lobby
+        .clients
+        .iter()
+        .filter(|c| !c.is_bot())
+        .map(|c| (c.index, c.slot.clone()))
+        .collect();
     slots.sort();
     slots
 }

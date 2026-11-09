@@ -8,9 +8,9 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::game_information::GameInformation;
 use rustora_net::NetError;
 use rustora_net::binary::Reader;
-use crate::game_information::GameInformation;
 use rustora_net::order::{OrderPacket, Packet};
 use rustora_net::session::Session;
 

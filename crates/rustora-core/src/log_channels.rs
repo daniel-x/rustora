@@ -108,9 +108,7 @@ pub fn init(support_dir: &Path, specs: &'static [ChannelSpec]) {
     let logger = LOGGER.get_or_init(|| ChannelLogger {
         dir: support_dir.join("Logs"),
         specs,
-        state: Mutex::new(State {
-            open: HashMap::new(),
-        }),
+        state: Mutex::new(State { open: HashMap::new() }),
     });
     if log::set_logger(logger).is_err() {
         return;
@@ -225,7 +223,11 @@ impl log::Log for ChannelLogger {
             return;
         }
         let target = record.target();
-        let name = if self.spec(target).is_some() { target } else { crate_channel(target) };
+        let name = if self.spec(target).is_some() {
+            target
+        } else {
+            crate_channel(target)
+        };
         let mut state = self.lock();
         let channel = self.channel(&mut state, name);
         let timestamped = channel.timestamped;

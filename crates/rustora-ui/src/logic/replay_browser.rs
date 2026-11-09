@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use rustora_client::map_cache::{MapCache, MapPreview, MapStatus};
 use rustora_client::game_information::{GameInformation, GamePlayer, ReplayMetadata, WinState};
+use rustora_client::map_cache::{MapCache, MapPreview, MapStatus};
 
 use super::map_preview::{GetMap, MAP_STATUS_PLAYABLE};
 use super::{button_prompt_with_cancel, message, message_with, services, text_input_prompt};

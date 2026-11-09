@@ -13,17 +13,17 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use chrono::Timelike;
+use rustora_client::game_information::timestamped_filename;
+use rustora_client::map_cache::MapCache;
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_engine::order_manager::{Connection, Incoming};
-use rustora_game::moddata::ModData;
-use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_response};
-use rustora_client::game_information::timestamped_filename;
-use rustora_net::order::RawOrder;
-use rustora_net::session::Session;
 use rustora_game::lobby_rules::{MapInfo, ModLobbyRules};
 use rustora_game::map::MapPackage;
-use rustora_client::map_cache::MapCache;
+use rustora_game::moddata::ModData;
+use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_response};
+use rustora_net::order::RawOrder;
+use rustora_net::session::Session;
 use rustora_ui::fluent::{MessageArg, Messages};
 use rustora_ui::logic::color_picker::ColorRules;
 use rustora_ui::logic::{ColorRulesLookup, LobbyRulesLookup};
@@ -43,7 +43,9 @@ const LEFT: &str = "notification-lobby-disconnected";
 /// Starts the `rustora-server` binary next to this executable as a dependent server of `kind` with `args`. It exits
 /// after the game it serves, or when the client process is gone, because its standard input closes then.
 fn spawn_server(engine: &Path, support: &str, kind: &str, args: &[&str]) -> Option<Child> {
-    let exe = std::env::current_exe().ok()?.with_file_name(format!("rustora-server{}", std::env::consts::EXE_SUFFIX));
+    let exe = std::env::current_exe()
+        .ok()?
+        .with_file_name(format!("rustora-server{}", std::env::consts::EXE_SUFFIX));
     let result = Command::new(&exe)
         .arg("--engine-dir")
         .arg(engine)
@@ -83,7 +85,10 @@ impl LobbyData {
     fn rules(&self) -> Option<Rc<ModLobbyRules>> {
         let mut rules = self.rules.borrow_mut();
         if rules.is_none() {
-            *rules = ModLobbyRules::load(&self.mod_data).map(Rc::new).map_err(|e| log::error!("{e}")).ok();
+            *rules = ModLobbyRules::load(&self.mod_data)
+                .map(Rc::new)
+                .map_err(|e| log::error!("{e}"))
+                .ok();
         }
         rules.clone()
     }
@@ -209,7 +214,9 @@ impl NetClient {
     /// `Game.CreateLocalServer`, as a separate server process on a free loopback port.
     pub fn create_local_server(&mut self, map: String, skirmish: bool) {
         self.local_port = free_local_port();
-        let Some(port) = self.local_port.map(|p| p.to_string()) else { return };
+        let Some(port) = self.local_port.map(|p| p.to_string()) else {
+            return;
+        };
         let kind = if skirmish { "skirmish" } else { "local" };
         let args = ["--name", LOCAL_GAME_NAME, "--port", &port, "--map", &map];
         self.replace_server(spawn_server(&self.engine, &self.support, kind, &args));

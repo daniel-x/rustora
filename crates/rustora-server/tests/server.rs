@@ -505,7 +505,10 @@ fn unsigned_client_and_blacklisted_profile_are_rejected() {
 fn advertising_posts_the_game_and_its_changes() {
     let Some(engine) = engine_dir() else { return };
     let (url, requests) = start_http_stub(String::new());
-    let server = start_server(&engine, &["--advertise-online", "--server-advertise-url", &url, "--name", "Stub Game"]);
+    let server = start_server(
+        &engine,
+        &["--advertise-online", "--server-advertise-url", &url, "--name", "Stub Game"],
+    );
     let port = server.port;
     let timeout = Duration::from_secs(60);
     let (first, body) = requests.recv_timeout(timeout).unwrap();
@@ -544,7 +547,10 @@ fn a_dependent_server_ends_with_its_client_process() {
     drop(server.child.stdin.take());
     let start = Instant::now();
     while server.child.try_wait().unwrap().is_none() {
-        assert!(start.elapsed() < Duration::from_secs(10), "the server still runs without its client");
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the server still runs without its client"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }

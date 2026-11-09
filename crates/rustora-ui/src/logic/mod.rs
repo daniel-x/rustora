@@ -8,9 +8,9 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::rc::Rc;
 
-use rustora_core::miniyaml::MiniYamlNode;
 use rustora_client::map_cache::MapCache;
 use rustora_client::settings::Settings;
+use rustora_core::miniyaml::MiniYamlNode;
 
 use crate::draw::Rect;
 use crate::fluent::MessageArg;

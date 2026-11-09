@@ -15,8 +15,8 @@ use rustora_fs::mix::MixFile;
 use rustora_fs::{Package, Platform};
 use sha1::{Digest, Sha1};
 
-use rustora_game::GameError;
 use crate::cab::InstallShieldCab;
+use rustora_game::GameError;
 use rustora_game::manifest::split_list;
 use rustora_game::moddata::ModData;
 

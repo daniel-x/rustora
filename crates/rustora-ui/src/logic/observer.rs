@@ -6,10 +6,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use rustora_client::map_cache::MapVisibility;
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::MiniYamlNode;
 use rustora_engine::player::PlayerRef;
-use rustora_client::map_cache::MapVisibility;
 
 use super::game_info::player_name_and_status;
 use super::ingame::Ingame;

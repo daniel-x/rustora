@@ -9,25 +9,25 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use rustora_audio::MixerDevice;
+use rustora_client::game_information::ReplayMetadata;
+use rustora_client::installer::ModContent;
+use rustora_client::map_cache::MapCache;
+use rustora_client::replay::Replay;
+use rustora_client::settings::{Settings, WorldViewport};
 use rustora_engine::order_manager::{Connection, ReplayConnection};
 use rustora_engine::player::PlayerRef;
 use rustora_engine::sequence::ReadFile;
 use rustora_engine::sound::{AudioDevice, AudioRules, NullAudioDevice, Sound};
 use rustora_engine::world::{World, WorldType};
 use rustora_fs::{Package, Platform, ReadFs};
-use rustora_client::installer::ModContent;
 use rustora_game::map::MapPackage;
-use rustora_client::map_cache::MapCache;
 use rustora_game::moddata::ModData;
-use rustora_client::settings::{Settings, WorldViewport};
 use rustora_launch::net_client::NetworkConnection;
 use rustora_launch::skirmish::{SkirmishDriver, skirmish_session};
 use rustora_launch::{Step, load_world_with_sound, open_map, shellmaps};
 use rustora_mods_common::sound::StartGameNotificationInfo;
 use rustora_mods_common::world::create_game_information;
-use rustora_client::game_information::ReplayMetadata;
 use rustora_net::order::RawOrder;
-use rustora_client::replay::Replay;
 use rustora_net::session::Session;
 use rustora_render::ui::UiList;
 use rustora_render::{Camera, Quad, Renderer};
@@ -219,8 +219,8 @@ impl ShellWorld {
         if let Some((world, _, _)) = &restored {
             log::info!("Restored the state snapshot at net frame {}", world.net_frame_number());
         }
-        let (world, _, read_file) = restored
-            .unwrap_or_else(|| load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true));
+        let (world, _, read_file) =
+            restored.unwrap_or_else(|| load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true));
         let manifest = &mod_data.manifest;
         connection.set_replay_metadata(create_game_information(&world, &manifest.id, &manifest.metadata.version));
         let driver = if resumed {
