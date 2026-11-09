@@ -6,10 +6,12 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::Timelike;
@@ -33,6 +35,8 @@ use rustora_ui::net::{
 
 /// How long a join of the local server waits for the server to listen.
 const LOCAL_CONNECT_PATIENCE: Duration = Duration::from_secs(60);
+/// The start of the line in which `rustora-server` announces its port.
+const LISTENING_ON_PORT: &str = "Listening on port ";
 /// `UnitOrders.ChatMessageMaxLength`.
 const CHAT_MESSAGE_MAX_LENGTH: usize = 2500;
 const JOINED: &str = "notification-joined";
@@ -40,9 +44,13 @@ const JOINED: &str = "notification-joined";
 const LOCAL_GAME_NAME: &str = "Skirmish Game";
 const LEFT: &str = "notification-lobby-disconnected";
 
+/// The port of a started server, set once the server announced that it accepts players.
+type AnnouncedPort = Arc<OnceLock<u16>>;
+
 /// Starts the `rustora-server` binary next to this executable as a dependent server of `kind` with `args`. It exits
-/// after the game it serves, or when the client process is gone, because its standard input closes then.
-fn spawn_server(engine: &Path, support: &str, kind: &str, args: &[&str]) -> Option<Child> {
+/// after the game it serves, or when the client process is gone, because its standard input closes then. The port
+/// is set when the server announces it.
+fn spawn_server(engine: &Path, support: &str, kind: &str, args: &[&str]) -> Option<(Child, AnnouncedPort)> {
     let exe = std::env::current_exe()
         .ok()?
         .with_file_name(format!("rustora-server{}", std::env::consts::EXE_SUFFIX));
@@ -52,15 +60,22 @@ fn spawn_server(engine: &Path, support: &str, kind: &str, args: &[&str]) -> Opti
         .args(["--support-dir", support, "--dependent", kind])
         .args(args)
         .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .spawn();
-    result
+    let mut child = result
         .inspect_err(|e| log::error!("Starting the server {} failed: {e}", exe.display()))
-        .ok()
-}
-
-/// A free port on the loopback interface.
-fn free_local_port() -> Option<u16> {
-    Some(std::net::TcpListener::bind(("127.0.0.1", 0)).ok()?.local_addr().ok()?.port())
+        .ok()?;
+    let port = AnnouncedPort::default();
+    let stdout = child.stdout.take()?;
+    let announced = port.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(p) = line.strip_prefix(LISTENING_ON_PORT).and_then(|p| p.trim().parse().ok()) {
+                let _ = announced.set(p);
+            }
+        }
+    });
+    Some((child, port))
 }
 
 /// The lobby rules of the mod of the client and of the maps in its map cache, loaded on first use.
@@ -171,12 +186,14 @@ pub struct NetClient {
     engine: PathBuf,
     support: String,
     pub net: Net,
-    local_port: Option<u16>,
-    /// The port of the server of `create_server`, which may still be loading when the client joins it.
+    /// The announced port of the server this client started, which may still be loading when the client joins it.
+    started_port: Option<AnnouncedPort>,
+    /// The port of the server of `create_server`.
     created_port: Option<u16>,
     /// The server process this client started.
     server: Option<Child>,
-    connecting: Option<Receiver<Result<NetworkConnection, String>>>,
+    /// The address that the connection attempt resolved its target to, and its outcome.
+    connecting: Option<Receiver<(String, Result<NetworkConnection, String>)>>,
     connection: Option<NetworkConnection>,
     /// The orders of `Game.CreateAndStartLocalServer`, sent once the first lobby information arrived.
     setup_orders: Vec<RawOrder>,
@@ -190,7 +207,7 @@ impl NetClient {
             engine: engine.to_path_buf(),
             support: support.to_string(),
             net,
-            local_port: None,
+            started_port: None,
             created_port: None,
             server: None,
             connecting: None,
@@ -211,19 +228,17 @@ impl NetClient {
         self.replace_server(spawn_server(&self.engine, &self.support, "multiplayer", &args));
     }
 
-    /// `Game.CreateLocalServer`, as a separate server process on a free loopback port.
+    /// `Game.CreateLocalServer`, as a separate server process on a loopback port that the system chooses.
     pub fn create_local_server(&mut self, map: String, skirmish: bool) {
-        self.local_port = free_local_port();
-        let Some(port) = self.local_port.map(|p| p.to_string()) else {
-            return;
-        };
         let kind = if skirmish { "skirmish" } else { "local" };
-        let args = ["--name", LOCAL_GAME_NAME, "--port", &port, "--map", &map];
+        let args = ["--name", LOCAL_GAME_NAME, "--port", "0", "--map", &map];
         self.replace_server(spawn_server(&self.engine, &self.support, kind, &args));
     }
 
     /// Stops the server this client started last, if it still runs, and keeps `server` in its place.
-    fn replace_server(&mut self, server: Option<Child>) {
+    fn replace_server(&mut self, server: Option<(Child, AnnouncedPort)>) {
+        let (server, port) = server.unzip();
+        self.started_port = port;
         if let Some(mut old) = std::mem::replace(&mut self.server, server) {
             let _ = old.kill();
             let _ = old.wait();
@@ -247,13 +262,11 @@ impl NetClient {
             .created_port
             .is_some_and(|port| target.rsplit_once(':').is_some_and(|(_, p)| p == port.to_string()));
         let local = target == LOCAL_SERVER_TARGET || created;
-        let address = match (target == LOCAL_SERVER_TARGET, self.local_port) {
-            (true, Some(port)) => format!("127.0.0.1:{port}"),
-            _ => target.to_string(),
-        };
+        let started_port = self.started_port.clone().filter(|_| local);
+        let target_address = target.to_string();
         let mut net = self.net.borrow_mut();
         *net = NetState {
-            target: address.clone(),
+            target: target_address.clone(),
             password: password.to_string(),
             connection_state: ConnectionState::Connecting,
             notifications: std::mem::take(&mut net.notifications),
@@ -263,6 +276,23 @@ impl NetClient {
         let (send, receive) = channel();
         std::thread::spawn(move || {
             let start = Instant::now();
+            let address = match started_port {
+                Some(port) => loop {
+                    if let Some(p) = port.get() {
+                        break if target_address == LOCAL_SERVER_TARGET {
+                            format!("127.0.0.1:{p}")
+                        } else {
+                            target_address
+                        };
+                    }
+                    if start.elapsed() > LOCAL_CONNECT_PATIENCE {
+                        let _ = send.send((target_address, Err("the server did not start".to_string())));
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                },
+                None => target_address,
+            };
             let result = loop {
                 let result = NetworkConnection::connect(&address);
                 if result.is_ok() || !local || start.elapsed() > LOCAL_CONNECT_PATIENCE {
@@ -270,7 +300,7 @@ impl NetClient {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             };
-            let _ = send.send(result);
+            let _ = send.send((address, result));
         });
         self.connecting = Some(receive);
     }
@@ -279,7 +309,7 @@ impl NetClient {
     pub fn disconnect(&mut self) {
         self.connection = None;
         self.connecting = None;
-        self.local_port = None;
+        self.started_port = None;
         self.created_port = None;
         self.setup_orders.clear();
         let mut net = self.net.borrow_mut();
@@ -300,19 +330,21 @@ impl NetClient {
     pub fn pump(&mut self, mod_data: &ModData, messages: &Messages, run_time: i64, name: &str, color: Color) -> bool {
         if let Some(receive) = &self.connecting {
             match receive.try_recv() {
-                Ok(Ok(mut connection)) => {
+                Ok((address, Ok(mut connection))) => {
                     let manifest = &mod_data.manifest;
                     let directory =
                         rustora_core::own_files::replays_dir(Path::new(&self.support), &manifest.id, &manifest.metadata.version);
                     connection.start_recording(directory, timestamped_filename(&manifest.id, ""));
                     let mut net = self.net.borrow_mut();
+                    net.target = address;
                     net.local_client_id = connection.local_client_id();
                     net.connection_state = ConnectionState::Connected;
                     self.connection = Some(connection);
                     self.connecting = None;
                 }
-                Ok(Err(e)) => {
+                Ok((address, Err(e))) => {
                     let mut net = self.net.borrow_mut();
+                    net.target = address;
                     net.connection_state = ConnectionState::NotConnected;
                     net.error_message = Some(e);
                     self.connecting = None;

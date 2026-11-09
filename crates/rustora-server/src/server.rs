@@ -244,6 +244,41 @@ fn open_listener(address: SocketAddr) -> std::io::Result<TcpListener> {
     Ok(socket.into())
 }
 
+/// Opens a listener on `port` for each of `addresses`. Port 0 lets the system choose a free port for the first
+/// address; the others use the same port, and a conflict there starts over with a new port. Returns the listeners and
+/// their port.
+fn open_listeners(addresses: &[IpAddr], port: u16, last_error: &mut Option<std::io::Error>) -> (Vec<TcpListener>, u16) {
+    const ATTEMPTS_FOR_A_FREE_PORT: usize = 16;
+    let attempts = if port == 0 { ATTEMPTS_FOR_A_FREE_PORT } else { 1 };
+    let mut result = (Vec::new(), port);
+    for _ in 0..attempts {
+        let mut listeners = Vec::new();
+        let mut chosen = port;
+        let mut conflict = false;
+        for &ip in addresses {
+            let address = SocketAddr::new(ip, chosen);
+            match open_listener(address) {
+                Ok(l) => {
+                    if chosen == 0 {
+                        chosen = l.local_addr().map_or(0, |a| a.port());
+                    }
+                    listeners.push(l);
+                }
+                Err(e) => {
+                    log::info!(target: "server", "Failed to listen on {address}: {e}");
+                    conflict |= port == 0 && !listeners.is_empty() && e.kind() == std::io::ErrorKind::AddrInUse;
+                    *last_error = Some(e);
+                }
+            }
+        }
+        result = (listeners, chosen);
+        if !conflict {
+            break;
+        }
+    }
+    result
+}
+
 fn listen_loop(listener: TcpListener, events: Sender<Event>, accepting: Arc<AtomicBool>) {
     while accepting.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -322,18 +357,11 @@ impl Server {
         } else {
             [IpAddr::V6(Ipv6Addr::LOCALHOST), IpAddr::V4(Ipv4Addr::LOCALHOST)]
         };
-        for ip in addresses {
-            let address = SocketAddr::new(ip, settings.listen_port);
-            match open_listener(address) {
-                Ok(l) => {
-                    let (tx, flag) = (events_tx.clone(), accepting.clone());
-                    listener_threads.push(std::thread::spawn(move || listen_loop(l, tx, flag)));
-                }
-                Err(e) => {
-                    log::info!(target: "server", "Failed to listen on {address}: {e}");
-                    last_error = Some(e);
-                }
-            }
+        let (listeners, port) = open_listeners(&addresses, settings.listen_port, &mut last_error);
+        settings.listen_port = port;
+        for l in listeners {
+            let (tx, flag) = (events_tx.clone(), accepting.clone());
+            listener_threads.push(std::thread::spawn(move || listen_loop(l, tx, flag)));
         }
         if listener_threads.is_empty() {
             return Err(last_error.map_or_else(|| "no listeners".to_string(), |e| e.to_string()));

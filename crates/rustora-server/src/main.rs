@@ -7,6 +7,8 @@
 //! dedicated server. `--dependent <local|skirmish|multiplayer>` makes it the server that a client starts for its
 //! game, like `Game.CreateLocalServer` and `Game.CreateServer`: it serves one game, and it exits when its standard
 //! input closes, which happens when the client is gone.
+//! With `--port 0` the system chooses a free port. The server prints `Listening on port <port>` once it accepts
+//! players.
 //! Usage: `rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
 //! [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>]
 //! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices]
@@ -18,6 +20,9 @@ use std::path::PathBuf;
 use rustora_core::log_channels;
 use rustora_server::mod_info::ServerMod;
 use rustora_server::server::{Server, ServerSettings, ServerType};
+
+/// The start of the line that announces the port.
+const LISTENING_ON_PORT: &str = "Listening on port ";
 
 fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
@@ -34,6 +39,15 @@ fn parse_ids(text: &str) -> Vec<i32> {
     text.split(',')
         .map(|s| s.trim().parse().unwrap_or_else(|_| usage("invalid profile id")))
         .collect()
+}
+
+/// Prints `Listening on port <port>` once the server accepts players, so a process that starts it with `--port 0`
+/// learns the port and knows that the server is ready.
+fn announce_port(port: u16) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{LISTENING_ON_PORT}{port}");
+    let _ = out.flush();
 }
 
 /// Exits the process once standard input reaches its end, which happens when the parent process is gone.
@@ -102,7 +116,11 @@ fn main() {
     loop {
         let result = ServerMod::load(&engine, &support, &mod_id)
             .and_then(|game_mod| Server::new(settings.clone(), game_mod))
-            .map(|mut server| server.run());
+            .map(|mut server| {
+                settings.listen_port = server.settings.listen_port;
+                announce_port(settings.listen_port);
+                server.run()
+            });
         if let Err(e) = result {
             log::error!(target: "server", "server failed: {e}");
             log::logger().flush();

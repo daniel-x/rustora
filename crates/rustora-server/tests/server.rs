@@ -3,10 +3,11 @@
 
 //! Drives the `rustora-server` binary over TCP with raw protocol clients. Skips without the OpenRA reference checkout.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -29,6 +30,8 @@ fn engine_dir() -> Option<PathBuf> {
 struct ServerProcess {
     child: Child,
     port: u16,
+    /// The support directory that the test gave the server.
+    support: PathBuf,
 }
 
 impl Drop for ServerProcess {
@@ -38,23 +41,43 @@ impl Drop for ServerProcess {
     }
 }
 
-/// Starts the server binary on a free port with a test map, a fixed seed and a temporary support directory;
-/// `args` come after these and can override them.
+/// How long a server may take to start, generous for machines under load.
+const STARTUP_PATIENCE: Duration = Duration::from_secs(120);
+
+/// Starts the server binary on a port that the system chooses, with a test map, a fixed seed and a new temporary
+/// support directory; `args` come after these and can override them. Returns once the server announced its port,
+/// which it does when it accepts players.
 fn start_server(engine: &Path, args: &[&str]) -> ServerProcess {
-    let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let support = std::env::temp_dir().join(format!("rustora-server-test-{port}"));
-    let child = Command::new(env!("CARGO_BIN_EXE_rustora-server"))
+    static STARTED: AtomicUsize = AtomicUsize::new(0);
+    let n = STARTED.fetch_add(1, Ordering::Relaxed);
+    let support = std::env::temp_dir().join(format!("rustora-server-test-{}-{n}", std::process::id()));
+    let support = args
+        .iter()
+        .position(|a| *a == "--support-dir")
+        .and_then(|i| args.get(i + 1))
+        .map_or(support, PathBuf::from);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rustora-server"))
         .arg("--engine-dir")
         .arg(engine)
         .arg("--support-dir")
         .arg(&support)
-        .args(["--port", &port.to_string(), "--map", MAP, "--seed", "7", "--enable-singleplayer"])
+        .args(["--port", "0", "--map", MAP, "--seed", "7", "--enable-singleplayer"])
         .args(args)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .spawn()
         .expect("start rustora-server");
-    ServerProcess { child, port }
+    let stdout = child.stdout.take().expect("piped stdout");
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(port) = line.strip_prefix("Listening on port ").and_then(|p| p.trim().parse::<u16>().ok()) {
+                let _ = send.send(port);
+            }
+        }
+    });
+    let port = receive.recv_timeout(STARTUP_PATIENCE).expect("the server announces its port");
+    ServerProcess { child, port, support }
 }
 
 /// One packet from the server.
@@ -561,8 +584,7 @@ fn servers_write_their_log_channels() {
     let independent = start_server(&engine, &[]);
     let dependent = start_server(&engine, &["--dependent", "local"]);
     for (server, file) in [(&independent, "independent-server.log"), (&dependent, "server.log")] {
-        let support = std::env::temp_dir().join(format!("rustora-server-test-{}", server.port));
-        let log = rustora_core::own_files::logs_dir(&support).join(file);
+        let log = rustora_core::own_files::logs_dir(&server.support).join(file);
         let start = Instant::now();
         while !std::fs::read_to_string(&log).is_ok_and(|t| t.contains("Initial map")) {
             assert!(start.elapsed() < Duration::from_secs(15), "{} lacks the initial map", log.display());
