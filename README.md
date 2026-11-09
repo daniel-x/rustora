@@ -15,22 +15,24 @@ cargo build --release
 
 ## Running
 
-`rustora [Key=Value]...` opens the main menu like the OpenRA launcher. The mod data is looked up next to
-the executable, in `../share/rustora` or in `../Resources` (macOS app bundle); `Engine.EngineDir=<dir>`
-overrides it, for example with an OpenRA release-20250330 source tree. Settings, content and replays
-live in the OpenRA support directory, or in a `Support` directory next to the mod data if one exists;
-`Engine.SupportDir=<dir>` overrides it.
+`rustora` opens the main menu like the OpenRA launcher; `rustora <host>:<port>` joins a server. The mod
+data is looked up next to the executable, in `../share/rustora`, in `../Resources` (macOS app bundle), or,
+for a build in a source checkout, in an OpenRA release-20250330 source tree in a directory beside the
+executable's parent directories; `--engine-dir <dir>` overrides it. Settings, content, maps, replays and
+saves live in the OpenRA support directory, so they are shared with an OpenRA installation, or in a
+`Support` directory next to the mod data if one exists; `--support-dir <dir>` overrides it.
+`Section.Field=value` arguments override settings. `rustora --help` lists all options.
 
-`rustora <engine-dir> <support-dir> <replay>` plays back a replay in a window. Arrow keys or WASD
-scroll, the mouse wheel zooms, space pauses, `+` and `-` change the speed, Tab cycles the shroud of
-each player, Escape quits. `--screenshot <out.webp> --tick <n>` renders one frame offscreen instead.
+`rustora --replay <file> --viewer` plays back a replay in a debug viewer. Arrow keys or WASD scroll, the
+mouse wheel zooms, space pauses, `+` and `-` change the speed, Tab cycles the shroud of each player,
+Escape quits. `--screenshot <out.webp> --tick <n>` renders one frame offscreen instead.
 
 `rustora --headless <command> ...` runs without window, graphics and sound, also on servers without
 ALSA or a GPU. `rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]`
 replays a game and compares the sync hashes; `bins/rustora/src/headless.rs` lists all commands.
 
 `rustora-server` is the game server. It runs independently, or dependent on a client that started it for its game
-and ends with that client.
+and ends with that client. It finds the mod data and the support directory like the client.
 
 ## Packaging
 

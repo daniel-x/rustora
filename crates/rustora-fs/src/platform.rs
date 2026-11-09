@@ -36,24 +36,30 @@ impl Platform {
         }
     }
 
-    /// `Platform.BinDir` as the default engine directory: the directory of the executable, or the first of
-    /// `../share/rustora` (installed layout) and `../Resources` (macOS app bundle) that holds `mods`.
-    pub fn default_engine_dir() -> PathBuf {
-        let candidates = Self::engine_dir_candidates();
-        candidates
-            .iter()
-            .find(|d| d.join("mods").is_dir())
-            .unwrap_or(&candidates[0])
-            .clone()
+    /// `Platform.BinDir` as the default engine directory: the first of [`Platform::engine_dir_candidates`] that holds
+    /// the RA mod, or `None`.
+    pub fn find_engine_dir() -> Option<PathBuf> {
+        Self::engine_dir_candidates()
+            .into_iter()
+            .find(|d| d.join("mods/ra/mod.yaml").is_file())
     }
 
-    /// The directories [`Platform::default_engine_dir`] searches for `mods`, the executable's directory first.
+    /// The directories [`Platform::find_engine_dir`] searches for the RA mod: the executable's directory,
+    /// `../share/rustora` (installed layout) and `../Resources` (macOS app bundle), and then for a build in a source
+    /// checkout each directory beside the executable's ancestors, which finds an OpenRA source tree next to it.
     pub fn engine_dir_candidates() -> Vec<PathBuf> {
         let bin = std::env::current_exe()
             .ok()
             .and_then(|e| e.parent().map(Path::to_path_buf))
             .unwrap_or_default();
-        vec![bin.clone(), bin.join("../share/rustora"), bin.join("../Resources")]
+        let mut candidates = vec![bin.clone(), bin.join("../share/rustora"), bin.join("../Resources")];
+        for ancestor in bin.ancestors().skip(1) {
+            let Ok(entries) = std::fs::read_dir(ancestor) else { continue };
+            let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+            dirs.sort();
+            candidates.extend(dirs);
+        }
+        candidates
     }
 
     /// `Platform.SupportDir` of `InitializeSupportDir`: a `Support` directory in the engine directory if it exists,

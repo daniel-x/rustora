@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! The rustora game server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory.
+//! The rustora game server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory,
+//! by default the one the client finds too, and it uses the support directory of OpenRA by default.
 //! By default it is independent: it runs on its own and starts a new server instance after each game, like a C#
 //! dedicated server. `--dependent <local|skirmish|multiplayer>` makes it the server that a client starts for its
 //! game, like `Game.CreateLocalServer` and `Game.CreateServer`: it serves one game, and it exits when its standard
 //! input closes, which happens when the client is gone.
-//! Usage: `rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
+//! Usage: `rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
 //! [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>]
 //! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices]
 //! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]
@@ -21,7 +22,7 @@ use rustora_server::server::{Server, ServerSettings, ServerType};
 fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
     eprintln!(
-        "usage: rustora-server --engine-dir <dir> [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
+        "usage: rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
          [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>] \
          [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
          [--profile-blacklist <id,id>] [--player-profile-url <url>] [--server-advertise-url <url>]"
@@ -82,8 +83,10 @@ fn main() {
             _ => usage(&format!("unknown argument {a}")),
         }
     }
-    let engine = engine.unwrap_or_else(|| usage("--engine-dir is required"));
-    let support = support.unwrap_or_else(|| engine.join("Support").to_string_lossy().into_owned());
+    let engine = engine
+        .or_else(rustora_fs::Platform::find_engine_dir)
+        .unwrap_or_else(|| usage("no RA mod data (mods/ra/mod.yaml) found next to the executable; pass --engine-dir"));
+    let support = support.unwrap_or_else(|| rustora_fs::Platform::user_support_dir(&engine).to_string_lossy().into_owned());
     settings.support_dir = PathBuf::from(&support);
     let independent = settings.server_type == ServerType::Independent;
     let channels = if independent {
