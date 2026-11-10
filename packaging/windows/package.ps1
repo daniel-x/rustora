@@ -21,7 +21,21 @@ Get-ChildItem "$stage/mods/*/mod.yaml" | ForEach-Object {
   (Get-Content -Raw $_.FullName).Replace("{DEV_VERSION}", "release-20250330") | Set-Content -NoNewline $_.FullName
 }
 Copy-Item "$OpenRA/global mix database.dat", "$root/COPYING", "$root/AUTHORS", "$root/README.md" $stage
-if (Test-Path "$OpenRA/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP") { Copy-Item "$OpenRA/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP" $stage }
+# The GeoIP database of the server: the one of the OpenRA tree if it is younger than 30 days, else a download of
+# the current monthly one like OpenRA's make.ps1, else an older one of the OpenRA tree.
+$geoip = "IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP"
+$localGeoip = Join-Path $OpenRA $geoip
+if ((Test-Path $localGeoip) -and ((Get-Date) - (Get-Item $localGeoip).LastWriteTime).TotalDays -lt 30) {
+    Copy-Item $localGeoip $stage
+} else {
+    try {
+        Invoke-WebRequest -Uri "https://github.com/OpenRA/GeoIP-Database/releases/download/monthly/$geoip" -OutFile (Join-Path $stage $geoip)
+    } catch {
+        Remove-Item (Join-Path $stage $geoip) -ErrorAction SilentlyContinue
+        if (Test-Path $localGeoip) { Copy-Item $localGeoip $stage }
+        else { Write-Warning "No GeoIP database; the server of this package looks up no countries" }
+    }
+}
 $zip = Join-Path $Out "$name.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path $stage -DestinationPath $zip
