@@ -1,13 +1,57 @@
 # rustora
 
 A portvibe (a vibecoded port) of [OpenRA](https://www.openra.net) to Rust, aiming at full
-compatibility with OpenRA release-20250330 (data, replays, network play and save games). The first
-target is the Red Alert mod.
+compatibility with OpenRA, currently to OpenRA release-20250330 (data, replays, network play and
+save games).
 
-The original game content is not part of this repository. It is installed by the content
-installer, like in OpenRA. The RA mod data of OpenRA release-20250330 (rules, maps, chrome and scripts,
-GPL-3.0-or-later like OpenRA) is in `data/`; `scripts/update-mod-data.sh [openra-ref]` replaces it with
-the mod data of another OpenRA tag or commit from GitHub.
+Almost all code and docs in this project are ai generated, i.e. vibe coded. In fact, currently,
+this section in this file that you are reading right now are the only human-written part. This
+project is a re-re-make of the 1995 video game Command & Conquer: Red Alert. The project in front
+of you is based on the remake called OpenRA ( https://www.openra.net ), which has seen ongoing
+development from 2007 to 2026 (today) and will probably go on to be developed.  
+
+The game resources like sprites and sounds are freeware, so you can download and use them legally.
+However, EA missed to explicitly attach a license to this freeware, so they still have a copyright.
+That adds one subtlety: The game resources can be downloaded legally, but it is a gray area if you
+were to package them into other software. That's why you have to click the download button when you
+start rustora (or OpenRA) for the first time. Content that can't be packaged into rustora due to
+legal obstacles gets downloaded at that step.
+
+I haven't tested rustora on macOS or windows. If you test it there, please let me know. You can
+tell me on the Signal messenger in this group:  
+https://signal.group/#CjQKIOVB51Kt6ZNnJ1MUCJZ1Yy_uXkYk5jhF1jTu3u2OZ-K_EhCSG5pbi4zC2d35tVQDhQQU
+
+Why re-re-make? Because I can... I am trying out what can be done with ai for software development
+and translating a 6MB C# codebase into rust was an interesting experiment. It took only a few days.
+Take-aways:
+- Translating the 6MB codebase took about 350 USD API costs for the one shot and about the same on
+  top for fixing many bugs and doing some enhancements. (I used a 20 Eur/month plan, so I didn't
+  have to pay 700 USD.); it was ~18h API time in total. The stats say 7d session time, but that's
+  just an upper bound. Most of those 7d is idle time. I estimate that the real running time of the
+  implementation (ai working + ai waiting for tool results) is just about 48h.
+- It helped greatly to use tmux to make claude code able to self-compact when it decides to do so.
+  This allowed the ai to compact after every milestone, which kept usually keeps the avergage
+  context size around 150k to 250k. It did a total of 37 such self-compactions. I only gave it this
+  possibility during the run when I realized it would be helpful. I felt that afterwards it took
+  about twice as long to use up a 5h usage window's token quota.
+- I had it stop automatically before using up all token quota and to set a timer for continuing
+  after the usage window resets. This can happen one or 2 hours before the 5h window resets. This
+  was crucial for making it run autonomously. Otherwise, when paused because the token quota was
+  used up, it did not resume working by itself after the usage window reset.
+- The first one-shot result was already playable, but it had many bugs. Most bugs could be solved
+  by extensive testing. A good start was to replay 800 recorded real world matches by the ai and
+  have it fix any in-game diversions from the reference game client automatically.
+- Leftover were many UI bugs, which were not cought by the game replays, because they didn't use
+  UI. If i do something comparable again, I will take care to add better test coverage.
+- Even more can be automated. After the ai writes a plan for the port, check the port and think
+  about aspects that the ai doesn't know, like feasibility/availability of additional tests. Tell
+  it to add them to the plan.
+- Read the plan before steering the ai to implement it (I didn't read it before.). Solving small
+  issues in the plan helps you later to get a good one-shot result.
+- I used the model Opus 5.5 throughout. I heard that having Opus 5.5 delegate to Sonnet utilizes
+  the token quota much more efficiently. I yet have to try that out.
+
+(end of human-written text)
 
 ## System requirements and first start
 
