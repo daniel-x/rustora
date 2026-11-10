@@ -57,6 +57,8 @@ pub enum Event {
         player_index: i32,
         frame: i32,
         data: Vec<u8>,
+        /// When the reader thread received it, in [`run_time`] milliseconds.
+        received_ms: u64,
     },
     Ping {
         player_index: i32,
@@ -226,7 +228,13 @@ fn read_loop(
                 queue_length: data[9],
             });
         } else {
-            let _ = events.send(Event::Packet { player_index, frame, data });
+            let received_ms = run_time(start);
+            let _ = events.send(Event::Packet {
+                player_index,
+                frame,
+                data,
+                received_ms,
+            });
         }
     }
 }

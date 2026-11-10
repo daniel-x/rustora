@@ -85,39 +85,97 @@ pub const UI_TIMESTEP: i32 = 40;
 /// A longer pause between two tick attempts, like a minimized window, starts the lag measurement anew.
 const LAG_GAP_MS: i64 = 1000;
 
-/// True if the server reports a poor connection for this client while another human client's is fine. A stalled
-/// server delays the pings of all clients, so a poor connection of every client points at the server instead.
-fn own_connection_alone_poor(net: &rustora_ui::net::NetState) -> bool {
-    use rustora_net::session::ConnectionQuality;
-    let Some(own) = net.local_client() else {
-        return false;
-    };
-    own.connection_quality == ConnectionQuality::Poor
-        && net
-            .session
-            .non_bot_clients()
-            .any(|c| c.index != own.index && c.connection_quality != ConnectionQuality::Poor)
+/// A lag report of a rustora server counts while it is younger than this.
+const LAG_REPORT_MAX_AGE_MS: i64 = 2500;
+/// A ping round trip from this length on makes a slow connection.
+const SLOW_PING_MS: i32 = 300;
+/// A server that let a packet wait this long is slow itself.
+const SLOW_SERVER_DELAY_MS: i32 = 100;
+/// The orders of a client this much later than the earliest ones make it the client the server slows the game for.
+const LATE_ORDERS_MS: i32 = 20;
+
+/// What the lag display reads from the connection state. The connection qualities come from every server; a recent
+/// lag report of a rustora server makes the picture sharper.
+#[derive(Default)]
+struct LagContext {
+    /// The own connection alone is slow, so a missing acknowledgement of the own orders points at it rather than at
+    /// the server. A stalled server delays the pings of all clients, so slow connections of all clients do not count.
+    own_connection_slow: bool,
+    /// The client whose late orders make the server stretch the timestep, from a lag report.
+    latest_client: Option<i32>,
+    /// The clients with a slow connection.
+    slow_connections: Vec<i32>,
+    /// The software of the clients that announced it; the others count as OpenRA.
+    software: std::collections::HashMap<i32, String>,
 }
 
-/// The lines of the lag display for `report`.
-fn lag_text(report: &LagReport, world: &World) -> String {
-    let mut lines = vec![format!("Game slowed to {}%", report.speed_percent)];
-    for &(cause, percent) in &report.causes {
-        let what = match cause {
-            LagCause::Client(index) => world
-                .lobby_info
-                .client_with_index(index)
-                .and_then(|c| c.name.clone())
-                .unwrap_or_else(|| format!("player {index}")),
-            LagCause::Server => "server".to_string(),
-            LagCause::OwnConnection => "your connection".to_string(),
-            LagCause::SlowerPlayers => "slower players".to_string(),
-            LagCause::ThisComputer => "this computer".to_string(),
+impl LagContext {
+    fn new(net: &rustora_ui::net::NetState, now: i64) -> LagContext {
+        use rustora_net::session::{Client, ConnectionQuality};
+        let report = net
+            .lag_report
+            .as_ref()
+            .filter(|(t, _)| now - t <= LAG_REPORT_MAX_AGE_MS)
+            .map(|(_, r)| r);
+        let slow = |c: &Client| match report.and_then(|r| r.client(c.index)).and_then(|l| l.ping_ms) {
+            Some(ping) => ping >= SLOW_PING_MS,
+            None => c.connection_quality == ConnectionQuality::Poor,
         };
-        lines.push(format!("Waiting for {what}: {percent}%"));
+        let humans: Vec<&Client> = net.session.non_bot_clients().collect();
+        let slow_connections: Vec<i32> = humans.iter().filter(|c| slow(c)).map(|c| c.index).collect();
+        let own = net.local_client_id;
+        let server_slow = report.is_some_and(|r| r.server_delay_ms >= SLOW_SERVER_DELAY_MS);
+        let own_connection_slow = !server_slow
+            && slow_connections.contains(&own)
+            && humans.iter().any(|c| c.index != own && !slow_connections.contains(&c.index));
+        let latest_client = report
+            .and_then(|r| {
+                r.clients
+                    .iter()
+                    .filter(|c| c.lateness_ms >= LATE_ORDERS_MS)
+                    .max_by_key(|c| c.lateness_ms)
+            })
+            .map(|c| c.index);
+        LagContext {
+            own_connection_slow,
+            latest_client,
+            slow_connections,
+            software: net.client_software.clone(),
+        }
     }
-    lines.join("\n")
+
+    /// The lines of the lag display for `report`.
+    fn text(&self, report: &LagReport, world: &World) -> String {
+        let mut lines = vec![format!("Game slowed to {}%", report.speed_percent)];
+        for &(cause, percent) in &report.causes {
+            let what = match cause {
+                LagCause::Client(index) => {
+                    let name = world
+                        .lobby_info
+                        .client_with_index(index)
+                        .and_then(|c| c.name.clone())
+                        .unwrap_or_else(|| format!("player {index}"));
+                    let software = self
+                        .software
+                        .get(&index)
+                        .map_or(rustora_net::extensions::OPENRA_SOFTWARE, String::as_str);
+                    if self.slow_connections.contains(&index) {
+                        format!("{name} ({software}, slow connection)")
+                    } else {
+                        format!("{name} ({software})")
+                    }
+                }
+                LagCause::Server => "server".to_string(),
+                LagCause::OwnConnection => "your connection".to_string(),
+                LagCause::SlowerPlayers => "slower players".to_string(),
+                LagCause::ThisComputer => "this computer".to_string(),
+            };
+            lines.push(format!("Waiting for {what}: {percent}%"));
+        }
+        lines.join("\n")
+    }
 }
+
 /// `Game.TimestepJankThreshold`.
 const TIMESTEP_JANK_THRESHOLD: i64 = 250;
 
@@ -371,9 +429,9 @@ impl ShellWorld {
         }
     }
 
-    /// Attempts a world tick at `now` that was scheduled with `timestep`. `own_connection_poor` tells whether the
-    /// server reports a poor connection for this client alone.
-    fn tick(&mut self, now: i64, timestep: i32, own_connection_poor: bool) {
+    /// Attempts a world tick at `now` that was scheduled with `timestep`. `lag` is what the lag display reads from
+    /// the connection state.
+    fn tick(&mut self, now: i64, timestep: i32, lag: &LagContext) {
         if self.ended {
             // The simulation has stopped advancing, but keep exchanging immediate orders, like OpenRA's
             // decoupled `OrderManager.TickImmediate`, so chat still works after the game ends.
@@ -383,7 +441,7 @@ impl ShellWorld {
             if step == Step::Ended {
                 self.ended = true;
             }
-            self.measure_lag(now, timestep, step, own_connection_poor);
+            self.measure_lag(now, timestep, step, lag);
         }
         if self.world.is_replay() && self.driver.orders.out_of_sync.is_some() {
             self.world.replay_timestep.set(0);
@@ -400,7 +458,7 @@ impl ShellWorld {
     }
 
     /// Records the tick attempt in the lag monitor and puts its report into the in-game state.
-    fn measure_lag(&mut self, now: i64, timestep: i32, step: Step, own_connection_poor: bool) {
+    fn measure_lag(&mut self, now: i64, timestep: i32, step: Step, lag: &LagContext) {
         let Some(ingame) = self.ingame.clone() else {
             return;
         };
@@ -418,12 +476,12 @@ impl ShellWorld {
         match step {
             Step::Waiting => {
                 let local = orders.connection.local_client_id();
-                let causes = wait_causes(&orders.missing_clients(), local, own_connection_poor);
+                let causes = wait_causes(&orders.missing_clients(), local, lag.own_connection_slow);
                 monitor.wait(now, timestep, causes);
             }
-            _ => monitor.tick(now, timestep),
+            _ => monitor.tick(now, timestep, lag.latest_client),
         }
-        let text = monitor.report(now).map(|r| lag_text(&r, &self.world)).unwrap_or_default();
+        let text = monitor.report(now).map(|r| lag.text(&r, &self.world)).unwrap_or_default();
         *ingame.lag_text.borrow_mut() = text;
     }
 
@@ -865,9 +923,9 @@ impl Client {
         if self.world_tick_time.should_advance(now, timestep) {
             self.world_tick_time.advance(now, timestep);
             self.update_script_host();
-            let own_connection_poor = own_connection_alone_poor(&self.services.net.borrow());
+            let lag = LagContext::new(&self.services.net.borrow(), now);
             if let Some(shell) = &mut self.shell {
-                shell.tick(now, timestep, own_connection_poor);
+                shell.tick(now, timestep, &lag);
                 if shell.ingame.is_some() {
                     let assets = self.ui.assets.clone();
                     shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, now, &self.services.save_dir);

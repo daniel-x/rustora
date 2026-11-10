@@ -26,6 +26,7 @@ use rustora_game::lobby_rules::{MapInfo, ModLobbyRules};
 use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
 use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_response};
+use rustora_net::extensions;
 use rustora_net::lobby_setup::InitialLobby;
 use rustora_net::order::RawOrder;
 use rustora_net::session::{ClientState, ConnectionQuality, Session};
@@ -457,6 +458,14 @@ impl NetClient {
         if lobby_changed && let Some(file) = &self.skirmish_file {
             skirmish_file::write(file, &self.net.borrow().session);
         }
+        {
+            let mut net = self.net.borrow_mut();
+            if !net.software_announced && net.local_client().is_some() {
+                net.software_announced = true;
+                let order = RawOrder::from_target_string(extensions::CLIENT_SOFTWARE, &extensions::own_software(), true);
+                net.outgoing.push(order);
+            }
+        }
         if !self.setup_orders.is_empty() {
             let mut net = self.net.borrow_mut();
             if net.local_client().is_some() {
@@ -668,6 +677,14 @@ pub fn process_client_order(
             }
         }
         "SyncClientPings" => {}
+        extensions::SYNC_CLIENT_SOFTWARE => {
+            net.client_software = extensions::parse_client_software(text).into_iter().collect();
+        }
+        extensions::LAG_REPORT => {
+            if let Some(report) = extensions::LagReport::parse(text) {
+                net.lag_report = Some((run_time, report));
+            }
+        }
         "Message" => net.notifications.push(notification(
             TextNotificationPool::System,
             Some("Battlefield Control".to_string()),

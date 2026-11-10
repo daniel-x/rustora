@@ -15,12 +15,13 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
 use rustora_game::players::{make_slot, sync_client_to_player_reference};
 use rustora_net::binary::Reader;
+use rustora_net::extensions;
 use rustora_net::game_save::{GameSave, sanitized_file_name, saves_dir};
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::lobby_setup::InitialLobby;
@@ -377,6 +378,14 @@ pub struct Server {
     game_save: Option<GameSave>,
     /// `GeoIP.database`, loaded for multiplayer servers.
     geoip: Option<GeoIp>,
+    /// The software that clients announced with the `ClientSoftware` extension.
+    pub(crate) client_software: IndexMap<i32, String>,
+    /// The average ping round trip of each client in milliseconds.
+    latencies: HashMap<i32, i32>,
+    /// The longest time a packet waited before the server handled it, since the last lag report.
+    max_packet_delay: u64,
+    /// When the last lag report went out, in `run_time` milliseconds.
+    last_lag_report: u64,
 }
 
 impl Server {
@@ -504,6 +513,10 @@ impl Server {
             last_conn_report: 0,
             game_save: None,
             geoip,
+            client_software: IndexMap::new(),
+            latencies: HashMap::new(),
+            max_packet_delay: 0,
+            last_lag_report: 0,
         })
     }
 
@@ -516,6 +529,7 @@ impl Server {
             self.pinger_tick();
             self.vote_kick_tick();
             self.master_server_tick();
+            self.lag_report_tick();
             if self.state == ServerState::GameStarted {
                 self.send_tick_scales();
                 if self.conns.is_empty() {
@@ -541,7 +555,16 @@ impl Server {
     fn handle_event(&mut self, event: Event) {
         match event {
             Event::Connect(socket, origin) => self.accept_connection(socket, origin),
-            Event::Packet { player_index, frame, data } => self.receive_orders(player_index, frame, &data),
+            Event::Packet {
+                player_index,
+                frame,
+                data,
+                received_ms,
+            } => {
+                let delay = run_time(self.start).saturating_sub(received_ms);
+                self.max_packet_delay = self.max_packet_delay.max(delay);
+                self.receive_orders(player_index, frame, &data);
+            }
             Event::Ping { player_index, history, .. } => self.receive_ping(player_index, &history),
             Event::Disconnect { player_index } => self.drop_client(player_index),
             Event::Authenticated { player_index, profile } => self.finish_authentication(player_index, profile),
@@ -1179,8 +1202,48 @@ impl Server {
             "GameSaveTraitData" => self.add_game_save_trait_data(target, &o.order_string),
             "CreateGameSave" => self.create_game_save(target),
             "LoadGameSave" => self.load_game_save(target),
+            extensions::CLIENT_SOFTWARE => self.set_client_software(player_index, target),
             _ => {}
         }
+    }
+
+    /// The `ClientSoftware` extension: keeps the software of the client and tells all clients.
+    fn set_client_software(&mut self, player_index: i32, software: &str) {
+        const MAX_LENGTH: usize = 64;
+        let software: String = software.chars().filter(|c| !c.is_control()).take(MAX_LENGTH).collect();
+        self.client_software.insert(player_index, software.trim().to_string());
+        let text = self.client_software_text();
+        self.broadcast_order(extensions::SYNC_CLIENT_SOFTWARE, &text);
+    }
+
+    pub(crate) fn client_software_text(&self) -> String {
+        let software: Vec<(i32, String)> = self.client_software.iter().map(|(&i, s)| (i, s.clone())).collect();
+        extensions::serialize_client_software(&software)
+    }
+
+    /// Sends the `LagReport` extension once per second while a game runs.
+    fn lag_report_tick(&mut self) {
+        const INTERVAL: u64 = 1000;
+        let now = run_time(self.start);
+        if self.state != ServerState::GameStarted || now.saturating_sub(self.last_lag_report) < INTERVAL {
+            return;
+        }
+        self.last_lag_report = now;
+        let lateness = self.order_buffer.as_ref().map(OrderBuffer::lateness).unwrap_or_default();
+        let clients = self
+            .validated_conn_indices()
+            .into_iter()
+            .map(|index| extensions::ClientLag {
+                index,
+                lateness_ms: lateness.iter().find(|l| l.0 == index).map_or(0, |l| l.1) as i32,
+                ping_ms: self.latencies.get(&index).copied(),
+            })
+            .collect();
+        let report = extensions::LagReport {
+            server_delay_ms: std::mem::take(&mut self.max_packet_delay) as i32,
+            clients,
+        };
+        self.broadcast_order(extensions::LAG_REPORT, &report.serialize());
     }
 
     /// `SendOrderTo`.
@@ -1215,6 +1278,7 @@ impl Server {
             return;
         }
         let latency = history.iter().sum::<i32>() / history.len() as i32;
+        self.latencies.insert(player_index, latency);
         let quality = if latency < 240 {
             ConnectionQuality::Good
         } else if latency < 360 {
@@ -1244,6 +1308,8 @@ impl Server {
         if let Some(b) = &mut self.order_buffer {
             b.remove_player(player_index);
         }
+        self.client_software.shift_remove(&player_index);
+        self.latencies.remove(&player_index);
         let Some(position) = self.conns.iter().position(|c| c.player_index == player_index) else {
             return;
         };

@@ -897,6 +897,10 @@ impl Server {
 
     /// `IClientJoined` of `LobbyCommands` and `LobbySettingsNotification`.
     pub fn client_joined(&mut self, conn: i32) {
+        if !self.client_software.is_empty() {
+            let text = self.client_software_text();
+            self.send_order_to(conn, rustora_net::extensions::SYNC_CLIENT_SOFTWARE, &text);
+        }
         if let Some(pool) = &self.map_pool {
             let pool = pool.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
             self.send_order_to(conn, "SyncMapPool", &pool);

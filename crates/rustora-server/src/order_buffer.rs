@@ -79,6 +79,19 @@ impl OrderBuffer {
             .collect()
     }
 
+    /// How much later the orders of each player arrive than those of the earliest one, the median of the recent
+    /// frames in milliseconds. Players without measured frames are left out.
+    pub fn lateness(&self) -> Vec<(i32, i64)> {
+        let medians: Vec<(i32, i64)> = self
+            .deltas
+            .iter()
+            .filter(|(_, q)| !q.is_empty())
+            .map(|(&p, q)| (p, median(q)))
+            .collect();
+        let earliest = medians.iter().map(|m| m.1).max().unwrap_or(0);
+        medians.into_iter().map(|(p, m)| (p, earliest - m)).collect()
+    }
+
     pub fn remove_player(&mut self, player: i32) {
         self.players.retain(|&p| p != player);
         if player == self.baseline_player
@@ -115,6 +128,14 @@ mod tests {
         b.add_order_timestamp(0);
         b.add_order_timestamp(1);
         assert!(b.get_tick_scales().is_empty());
+    }
+
+    #[test]
+    fn lateness_is_measured_from_the_earliest_player() {
+        let mut b = OrderBuffer::start(40, vec![0, 1]);
+        b.deltas.insert(0, VecDeque::from([0, 0, 0]));
+        b.deltas.insert(1, VecDeque::from([-300, -400, -350]));
+        assert_eq!(b.lateness(), vec![(0, 0), (1, 350)]);
     }
 
     #[test]

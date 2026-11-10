@@ -5,6 +5,7 @@
 
 pub mod beacon;
 pub mod binary;
+pub mod extensions;
 pub mod game_save;
 pub mod game_server;
 pub mod handshake;

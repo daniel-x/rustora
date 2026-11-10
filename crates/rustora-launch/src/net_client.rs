@@ -413,6 +413,7 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
         stage: 0,
     };
     let mut load_requested = false;
+    let mut software_announced = false;
     loop {
         let Some(incoming) = connection.next_incoming() else {
             if !connection.is_connected() {
@@ -439,6 +440,15 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
                     is_host,
                 });
             }
+        }
+        if !software_announced && lobby.client_with_index(connection.local_client_id()).is_some() {
+            software_announced = true;
+            let software = rustora_net::extensions::own_software();
+            connection.send_immediate(vec![RawOrder::from_target_string(
+                rustora_net::extensions::CLIENT_SOFTWARE,
+                &software,
+                true,
+            )]);
         }
         if let Some(save) = &options.load_save {
             if !load_requested && lobby.client_with_index(connection.local_client_id()).is_some() {

@@ -135,6 +135,13 @@ pub struct NetState {
     pub authentication_failed: bool,
     pub error_message: Option<String>,
     pub server_map_pool: Option<Vec<String>>,
+    /// The software of the clients that announced it, from rustora's `SyncClientSoftware` extension. Others count
+    /// as OpenRA.
+    pub client_software: std::collections::HashMap<i32, String>,
+    /// The last `LagReport` of a rustora server and the `Game.RunTime` it arrived at.
+    pub lag_report: Option<(i64, rustora_net::extensions::LagReport)>,
+    /// Whether this client announced its software on the current connection.
+    pub software_announced: bool,
     /// Grows with every change of `session`, in place of the `Game.LobbyInfoChanged` event.
     pub revision: u64,
     /// `Game.RunTime` until which chat is disabled, `i64::MAX` until further notice.

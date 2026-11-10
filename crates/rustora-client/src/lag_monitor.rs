@@ -4,8 +4,9 @@
 //! Tells how much a game slows down and why, from what the client sees alone, so it also works on OpenRA servers.
 //! The client attempts a world tick once per timestep. An attempt at a net frame waits while the orders of a client
 //! for that frame are missing; each waiting attempt costs one timestep and counts for its causes. A timestep that
-//! the server stretched with its tick scale counts its extra time for the slower players. The rest of the lost time
-//! counts for this computer, which did not attempt the ticks in time.
+//! the server stretched with its tick scale counts its extra time for the slower players, or for the latest client
+//! if a rustora server reports it. The rest of the lost time counts for this computer, which did not attempt the
+//! ticks in time.
 
 use std::collections::VecDeque;
 
@@ -53,8 +54,9 @@ pub fn wait_causes(missing: &[i32], local_client: i32, own_connection_poor: bool
 }
 
 enum Attempt {
-    /// A tick with the timestep it was scheduled with.
-    Tick { timestep: i32 },
+    /// A tick with the timestep it was scheduled with, and the client whose late orders made the server stretch the
+    /// timestep, if known.
+    Tick { timestep: i32, slower: Option<i32> },
     /// A waiting attempt with its timestep and causes.
     Wait { timestep: i32, causes: Vec<LagCause> },
 }
@@ -87,9 +89,10 @@ impl LagMonitor {
         }
     }
 
-    /// A tick at `now` that was scheduled with `timestep`.
-    pub fn tick(&mut self, now: i64, timestep: i32) {
-        self.push(now, Attempt::Tick { timestep });
+    /// A tick at `now` that was scheduled with `timestep`. `slower` is the client whose late orders made the server
+    /// stretch the timestep, if a rustora server reported it.
+    pub fn tick(&mut self, now: i64, timestep: i32, slower: Option<i32>) {
+        self.push(now, Attempt::Tick { timestep, slower });
     }
 
     /// A waiting attempt at `now` that was scheduled with `timestep`.
@@ -122,6 +125,7 @@ impl LagMonitor {
         let mut ticked = 0i64;
         let mut waited = 0i64;
         let mut stretched = 0i64;
+        let mut stretched_unknown = 0i64;
         let mut by_cause: Vec<(LagCause, i64)> = Vec::new();
         let mut add = |cause: LagCause, ms: i64| match by_cause.iter_mut().find(|(c, _)| *c == cause) {
             Some((_, t)) => *t += ms,
@@ -132,9 +136,14 @@ impl LagMonitor {
                 continue;
             }
             match attempt {
-                Attempt::Tick { timestep } => {
+                Attempt::Tick { timestep, slower } => {
                     ticked += nominal;
-                    stretched += (*timestep as i64 - nominal).max(0);
+                    let extra = (*timestep as i64 - nominal).max(0);
+                    stretched += extra;
+                    match slower {
+                        Some(client) if extra > 0 => add(LagCause::Client(*client), extra),
+                        _ => stretched_unknown += extra,
+                    }
                 }
                 Attempt::Wait { timestep, causes } => {
                     waited += *timestep as i64;
@@ -144,8 +153,8 @@ impl LagMonitor {
                 }
             }
         }
-        if stretched > 0 {
-            add(LagCause::SlowerPlayers, stretched);
+        if stretched_unknown > 0 {
+            add(LagCause::SlowerPlayers, stretched_unknown);
         }
         let computer = span - ticked.min(span) - waited - stretched;
         if computer > 0 {
@@ -192,7 +201,7 @@ mod tests {
     #[test]
     fn a_game_at_full_speed_shows_nothing() {
         let mut m = LagMonitor::new(40);
-        run(&mut m, 0, 6000, 40, |m, t| m.tick(t, 40));
+        run(&mut m, 0, 6000, 40, |m, t| m.tick(t, 40, None));
         let r = m.measure(6000).unwrap();
         assert_eq!(r.speed_percent, 100);
         assert!(r.causes.is_empty());
@@ -208,7 +217,7 @@ mod tests {
             if n % 4 == 0 {
                 m.wait(t, 40, vec![LagCause::Client(2)]);
             } else {
-                m.tick(t, 40);
+                m.tick(t, 40, None);
             }
         });
         let r = m.report(6000).unwrap();
@@ -219,16 +228,20 @@ mod tests {
     #[test]
     fn late_attempts_count_for_this_computer_and_stretched_ones_for_slower_players() {
         let mut m = LagMonitor::new(40);
-        run(&mut m, 0, 6000, 50, |m, t| m.tick(t, 40));
+        run(&mut m, 0, 6000, 50, |m, t| m.tick(t, 40, None));
         let r = m.measure(6000).unwrap();
         assert_eq!(r.speed_percent, 80);
         assert_eq!(r.causes, vec![(LagCause::ThisComputer, 20)]);
 
         let mut m = LagMonitor::new(40);
-        run(&mut m, 0, 6000, 44, |m, t| m.tick(t, 44));
+        run(&mut m, 0, 6000, 44, |m, t| m.tick(t, 44, None));
         let r = m.measure(6000).unwrap();
         assert_eq!(r.speed_percent, 91);
         assert_eq!(r.causes, vec![(LagCause::SlowerPlayers, 9)]);
+
+        let mut m = LagMonitor::new(40);
+        run(&mut m, 0, 6000, 44, |m, t| m.tick(t, 44, Some(3)));
+        assert_eq!(m.measure(6000).unwrap().causes, vec![(LagCause::Client(3), 9)]);
     }
 
     #[test]
@@ -245,12 +258,12 @@ mod tests {
         let mut m = LagMonitor::new(40);
         run(&mut m, 0, 3000, 40, |m, t| m.wait(t, 40, vec![LagCause::Server]));
         assert!(m.report(3000).is_some());
-        run(&mut m, 3000, 9000, 40, |m, t| m.tick(t, 40));
+        run(&mut m, 3000, 9000, 40, |m, t| m.tick(t, 40, None));
         assert!(m.report(9000).is_none());
         m.reset();
         run(&mut m, 0, 3000, 40, |m, t| m.wait(t, 40, vec![LagCause::Server]));
         assert!(m.report(3000).is_some());
-        run(&mut m, 3000, 5000, 40, |m, t| m.tick(t, 40));
+        run(&mut m, 3000, 5000, 40, |m, t| m.tick(t, 40, None));
         assert!(m.report(5000).is_some(), "held");
     }
 }
