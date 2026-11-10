@@ -11,7 +11,7 @@
 //! players.
 //! Usage: `rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
 //! [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>]
-//! [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices]
+//! [--enable-singleplayer] [--enable-sync-reports] [--disable-geoip] [--advertise-online] [--discover-nat-devices]
 //! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]
 //! [--player-profile-url <url>] [--server-advertise-url <url>]`.
 
@@ -29,7 +29,7 @@ fn usage(problem: &str) -> ! {
     eprintln!(
         "usage: rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
          [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>] \
-         [--enable-singleplayer] [--enable-sync-reports] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
+         [--enable-singleplayer] [--enable-sync-reports] [--disable-geoip] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
          [--profile-blacklist <id,id>] [--player-profile-url <url>] [--server-advertise-url <url>]"
     );
     std::process::exit(2);
@@ -87,6 +87,7 @@ fn main() {
                 exit_on_stdin_close();
             }
             "--enable-sync-reports" => settings.enable_sync_reports = true,
+            "--disable-geoip" => settings.enable_geoip = false,
             "--advertise-online" => settings.advertise_online = true,
             "--discover-nat-devices" => settings.discover_nat_devices = true,
             "--require-authentication" => settings.require_authentication = true,

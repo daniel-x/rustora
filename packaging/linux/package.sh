@@ -22,6 +22,7 @@ for m in common common-content ra ra-content; do
 done
 sed -i 's/{DEV_VERSION}/release-20250330/g' "$stage"/mods/*/mod.yaml
 cp "$openra/global mix database.dat" "$stage/"
+[ -f "$openra/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP" ] && cp "$openra/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP" "$stage/"
 cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$stage/"
 tar -C "$out" -czf "$out/$name.tar.gz" "$name"
 echo "$out/$name.tar.gz"

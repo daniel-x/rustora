@@ -141,9 +141,15 @@ struct ServerList {
 }
 
 impl ServerList {
-    /// `RefreshServerList`.
+    /// `RefreshServerList`. A query whose answer arrived while the list was hidden, and therefore not ticked, counts as
+    /// finished, like the C# task that completes on its own; the new query supersedes its answer.
     fn refresh(&self, ui: &Ui) {
-        if self.query.borrow().is_some() {
+        let in_flight = self
+            .query
+            .borrow()
+            .as_ref()
+            .is_some_and(|r| matches!(r.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)));
+        if in_flight {
             return;
         }
         self.status.set(SearchStatus::Fetching);

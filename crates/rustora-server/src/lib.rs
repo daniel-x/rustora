@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod connection;
+pub mod geoip;
 pub mod lobby;
 pub mod master_server;
 pub mod mod_info;

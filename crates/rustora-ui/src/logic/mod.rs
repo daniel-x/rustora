@@ -499,6 +499,8 @@ pub fn create(
         "LobbyOptionsLogic" => lobby_options::create(ui, id, args),
         "LatencyTooltipLogic" => lobby_utils::latency_tooltip(ui, id, args),
         "SpawnSelectorTooltipLogic" => lobby_utils::spawn_tooltip(ui, id, args),
+        "AnonymousProfileTooltipLogic" => lobby_utils::anonymous_profile_tooltip(ui, id, args),
+        "BotTooltipLogic" => lobby_utils::bot_tooltip(ui, id, args),
         "KickClientLogic" => lobby_utils::kick_client(ui, id, args),
         "KickSpectatorsLogic" => lobby_utils::kick_spectators(ui, id, args),
         "PerfDebugLogic" => {

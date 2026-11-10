@@ -21,6 +21,7 @@ Get-ChildItem "$stage/mods/*/mod.yaml" | ForEach-Object {
   (Get-Content -Raw $_.FullName).Replace("{DEV_VERSION}", "release-20250330") | Set-Content -NoNewline $_.FullName
 }
 Copy-Item "$OpenRA/global mix database.dat", "$root/COPYING", "$root/AUTHORS", "$root/README.md" $stage
+if (Test-Path "$OpenRA/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP") { Copy-Item "$OpenRA/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP" $stage }
 $zip = Join-Path $Out "$name.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path $stage -DestinationPath $zip

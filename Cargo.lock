@@ -2753,6 +2753,7 @@ dependencies = [
  "rustora-net",
  "sha1 0.10.7",
  "socket2",
+ "zip",
 ]
 
 [[package]]

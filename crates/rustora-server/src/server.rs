@@ -28,6 +28,7 @@ use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Sessi
 
 use crate::auth::{PlayerProfile, check_profile};
 use crate::connection::{Connection, Event, run_time};
+use crate::geoip::{self, GeoIp};
 use crate::master_server::MasterServerPinger;
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
 use crate::nat::PortForward;
@@ -70,6 +71,8 @@ pub struct ServerSettings {
     pub enable_singleplayer: bool,
     pub enable_sync_reports: bool,
     pub share_anonymized_ips: bool,
+    /// `EnableGeoIP`: looks up the country of each multiplayer client.
+    pub enable_geoip: bool,
     pub ban: Vec<String>,
     pub map_pool: Vec<String>,
     pub seed: Option<i32>,
@@ -102,6 +105,7 @@ impl Default for ServerSettings {
             enable_singleplayer: false,
             enable_sync_reports: false,
             share_anonymized_ips: true,
+            enable_geoip: true,
             ban: Vec::new(),
             map_pool: Vec::new(),
             seed: None,
@@ -341,6 +345,8 @@ pub struct Server {
     is_initial_ping: bool,
     last_conn_report: u64,
     game_save: Option<GameSave>,
+    /// `GeoIP.database`, loaded for multiplayer servers.
+    geoip: Option<GeoIp>,
 }
 
 impl Server {
@@ -430,6 +436,9 @@ impl Server {
         } else {
             None
         };
+        let geoip = (is_multiplayer && settings.enable_geoip)
+            .then(|| GeoIp::load(&game_mod.data.platform.engine_dir.join(geoip::DATABASE_FILE)))
+            .flatten();
         log::info!(target: "server", "Initial mod: {}", game_mod.data.manifest.id);
         log::info!(target: "server", "Initial map: {}", map.uid);
 
@@ -465,6 +474,7 @@ impl Server {
             is_initial_ping: true,
             last_conn_report: 0,
             game_save: None,
+            geoip,
         })
     }
 
@@ -646,11 +656,12 @@ impl Server {
         }
         let client = Client {
             name: Some(sanitized_player_name(handshake.client.name.as_deref().unwrap_or(""))),
-            anonymized_ip_address: if self.settings.share_anonymized_ips {
+            anonymized_ip_address: if self.is_multiplayer() && self.settings.share_anonymized_ips {
                 anonymize_ip(ip)
             } else {
                 None
             },
+            location: self.geoip.as_ref().and_then(|db| db.lookup_country(ip)),
             index: player_index,
             preferred_color: handshake.client.preferred_color,
             color: handshake.client.color,

@@ -1063,3 +1063,72 @@ pub fn spawn_occupants(ui: &Ui, session: &Session) -> HashMap<i32, crate::widget
         })
         .collect()
 }
+
+/// The text of `label` as `LabelWidget.GetText` returns it: the getter if set, else the resolved `Text` key.
+fn label_text(ui: &Ui, label: WidgetId) -> String {
+    let (get_text, key) = {
+        let l = ui.label(label);
+        (l.get_text.clone(), l.text.clone())
+    };
+    match get_text {
+        Some(get) => get(),
+        None => key.map(|k| message(ui, &k)).unwrap_or_default(),
+    }
+}
+
+/// Sets the width of `widget` to fit the text of `label` with the label's left margin on both sides.
+fn fit_width_to_label(ui: &mut Ui, widget: WidgetId, label: WidgetId) {
+    let font = ui.label(label).font.clone();
+    let width = ui.measure(&font, &label_text(ui, label)).0 + 2 * ui.node(label).bounds.x;
+    ui.node_mut(widget).bounds.w = width;
+}
+
+/// Port of `AnonymousProfileTooltipLogic`.
+pub fn anonymous_profile_tooltip(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+    let client = args.value::<Option<Client>>("client").flatten().unwrap_or_default();
+    let name = ui.child(widget, "NAME");
+    fit_width_to_label(ui, widget, name);
+    let location_label = ui.child(widget, "LOCATION");
+    let ip_label = ui.child(widget, "IP");
+    let admin = ui.child(widget, "GAME_ADMIN");
+    let location_height = ui.node(location_label).bounds.h;
+    if let Some(location) = client.location.as_deref() {
+        let font = ui.label(location_label).font.clone();
+        let width = ui.node(widget).bounds.w - 2 * ui.node(location_label).bounds.x;
+        let location = ui.truncate_text(&font, location, width);
+        ui.set_visible_fn(location_label, || true);
+        set_label_text(ui, location_label, location);
+        ui.node_mut(widget).bounds.h += location_height;
+        ui.node_mut(ip_label).bounds.y += location_height;
+        ui.node_mut(admin).bounds.y += location_height;
+    }
+    if let Some(ip) = client.anonymized_ip_address.clone() {
+        ui.set_visible_fn(ip_label, || true);
+        set_label_text(ui, ip_label, ip);
+        ui.node_mut(widget).bounds.h += ui.node(ip_label).bounds.h;
+        ui.node_mut(admin).bounds.y += location_height;
+    }
+    if client.is_admin {
+        ui.set_visible_fn(admin, || true);
+        ui.node_mut(widget).bounds.h += ui.node(admin).bounds.h;
+    }
+    cell(NoLogic)
+}
+
+/// Port of `BotTooltipLogic`.
+pub fn bot_tooltip(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
+    let client = args.value::<Option<Client>>("client").flatten().unwrap_or_default();
+    let name = ui.child(widget, "NAME");
+    let controller = services(ui)
+        .net
+        .borrow()
+        .session
+        .client_with_index(client.bot_controller_client_index)
+        .map(client_name);
+    if let Some(controller) = controller {
+        let text = message_with(ui, "label-bot-managed-by-tooltip", &[("name", MessageArg::Text(&controller))]);
+        set_label_text(ui, name, text);
+    }
+    fit_width_to_label(ui, widget, name);
+    cell(NoLogic)
+}

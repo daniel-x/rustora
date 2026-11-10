@@ -25,6 +25,7 @@ for m in common common-content ra ra-content; do
 done
 sed -i '' 's/{DEV_VERSION}/release-20250330/g' "$app"/Contents/Resources/mods/*/mod.yaml
 cp "$openra/global mix database.dat" "$app/Contents/Resources/"
+[ -f "$openra/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP" ] && cp "$openra/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP" "$app/Contents/Resources/"
 cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$out/$name/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

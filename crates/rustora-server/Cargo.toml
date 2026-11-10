@@ -19,6 +19,7 @@ rustora-game = { path = "../rustora-game" }
 rustora-net = { path = "../rustora-net" }
 sha1 = { version = "0.10", features = ["oid"] }
 socket2 = "0.5"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 rand = "0.8"
