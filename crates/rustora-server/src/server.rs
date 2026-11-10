@@ -23,11 +23,13 @@ use rustora_game::players::{make_slot, sync_client_to_player_reference};
 use rustora_net::binary::Reader;
 use rustora_net::game_save::{GameSave, sanitized_file_name, saves_dir};
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
+use rustora_net::lobby_setup::InitialLobby;
 use rustora_net::order::{RawOrder, SYNC_HASH_ORDER_LENGTH, order_type};
 use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Session};
+use rustora_net::stream::{ByteStream, PipeEnd, pipe};
 
 use crate::auth::{PlayerProfile, check_profile};
-use crate::connection::{Connection, Event, run_time};
+use crate::connection::{Connection, Event, Peer, run_time};
 use crate::geoip::{self, GeoIp};
 use crate::master_server::MasterServerPinger;
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
@@ -50,14 +52,16 @@ pub enum ServerState {
     ShuttingDown,
 }
 
-/// `ServerType`. An independent server runs on its own (`Dedicated` in C#). The other kinds are dependent servers:
-/// a client starts them for its game, and they end with that client.
+/// `ServerType`, by who hosts the server and who can join.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServerType {
-    Local,
+    /// A server inside a client process for a game of that client alone: skirmish, mission, loaded save or restart
+    /// (`Local` and `Skirmish` in C#). It opens no port, and the client connects through an in-memory pipe.
+    SinglePlayer,
+    /// A server process that a client starts for a game that others join. It ends with that client.
     Multiplayer,
+    /// A server process that runs on its own and starts a new server instance after each game (`Dedicated` in C#).
     Independent,
-    Skirmish,
 }
 
 /// The `ServerSettings` the server uses.
@@ -92,6 +96,8 @@ pub struct ServerSettings {
     pub player_profile_url: String,
     pub discover_nat_devices: bool,
     pub nat_port_mapping_lifetime: u32,
+    /// What the server does to the lobby when the host joins.
+    pub initial_lobby: InitialLobby,
 }
 
 impl Default for ServerSettings {
@@ -125,6 +131,7 @@ impl Default for ServerSettings {
             player_profile_url: rustora_net::web::PLAYER_PROFILE_URL.to_string(),
             discover_nat_devices: false,
             nat_port_mapping_lifetime: 36000,
+            initial_lobby: InitialLobby::Plain,
         }
     }
 }
@@ -286,11 +293,33 @@ fn open_listeners(addresses: &[IpAddr], port: u16, last_error: &mut Option<std::
 fn listen_loop(listener: TcpListener, events: Sender<Event>, accepting: Arc<AtomicBool>) {
     while accepting.load(Ordering::Relaxed) {
         match listener.accept() {
-            Ok((stream, _)) => {
-                let _ = events.send(Event::Connect(stream));
+            Ok((stream, end_point)) => {
+                if stream.set_nonblocking(false).and_then(|()| stream.set_nodelay(true)).is_ok() {
+                    let _ = events.send(Event::Connect(Box::new(stream), Peer::Network(end_point)));
+                }
             }
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
         }
+    }
+}
+
+/// Connects a client in the same process to a server through an in-memory pipe.
+#[derive(Clone)]
+pub struct LocalConnector {
+    events: Sender<Event>,
+}
+
+impl LocalConnector {
+    /// The client end of a new connection, or `None` once the server is gone.
+    pub fn connect(&self) -> Option<PipeEnd> {
+        let (client, server) = pipe();
+        self.events.send(Event::Connect(Box::new(server), Peer::InProcess)).ok()?;
+        Some(client)
+    }
+
+    /// `Shutdown`: ends the server, which closes its connections.
+    pub fn shutdown(&self) {
+        let _ = self.events.send(Event::Shutdown);
     }
 }
 
@@ -323,7 +352,8 @@ pub struct Server {
     pub random: MersenneTwister,
     pub order_latency: i32,
     pub temp_bans: Vec<String>,
-    pub map_pool: IndexSet<String>,
+    /// `MapPool`: the maps an independent server offers. Other servers offer every map.
+    pub map_pool: Option<IndexSet<String>>,
     pub vote_kick: VoteKickTracker,
     pub(crate) master_server: MasterServerPinger,
     pending_authentication: HashMap<i32, Client>,
@@ -357,20 +387,18 @@ impl Server {
         let mut listener_threads = Vec::new();
         let mut last_error = None;
         let independent = settings.server_type == ServerType::Independent;
-        let is_multiplayer = matches!(settings.server_type, ServerType::Multiplayer | ServerType::Independent);
-        let addresses = if is_multiplayer {
-            [IpAddr::V6(Ipv6Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::UNSPECIFIED)]
-        } else {
-            [IpAddr::V6(Ipv6Addr::LOCALHOST), IpAddr::V4(Ipv4Addr::LOCALHOST)]
-        };
-        let (listeners, port) = open_listeners(&addresses, settings.listen_port, &mut last_error);
-        settings.listen_port = port;
-        for l in listeners {
-            let (tx, flag) = (events_tx.clone(), accepting.clone());
-            listener_threads.push(std::thread::spawn(move || listen_loop(l, tx, flag)));
-        }
-        if listener_threads.is_empty() {
-            return Err(last_error.map_or_else(|| "no listeners".to_string(), |e| e.to_string()));
+        let is_multiplayer = settings.server_type != ServerType::SinglePlayer;
+        if is_multiplayer {
+            let addresses = [IpAddr::V6(Ipv6Addr::UNSPECIFIED), IpAddr::V4(Ipv4Addr::UNSPECIFIED)];
+            let (listeners, port) = open_listeners(&addresses, settings.listen_port, &mut last_error);
+            settings.listen_port = port;
+            for l in listeners {
+                let (tx, flag) = (events_tx.clone(), accepting.clone());
+                listener_threads.push(std::thread::spawn(move || listen_loop(l, tx, flag)));
+            }
+            if listener_threads.is_empty() {
+                return Err(last_error.map_or_else(|| "no listeners".to_string(), |e| e.to_string()));
+            }
         }
 
         let clock = SystemTime::now()
@@ -388,20 +416,21 @@ impl Server {
             clean_name
         };
 
-        let map_pool: IndexSet<String> = if settings.map_pool.is_empty() {
-            game_mod.lobby_maps().into_iter().collect()
-        } else {
-            settings.map_pool.iter().filter(|m| game_mod.map_exists(m)).cloned().collect()
+        let map_pool: Option<IndexSet<String>> = match (independent, settings.map_pool.is_empty()) {
+            (false, _) => None,
+            (true, true) => Some(game_mod.lobby_maps().into_iter().collect()),
+            (true, false) => Some(settings.map_pool.iter().filter(|m| game_mod.map_exists(m)).cloned().collect()),
         };
         let known = settings
             .map
             .as_deref()
             .and_then(|m| game_mod.resolve_map(m))
-            .filter(|uid| !independent || map_pool.contains(uid));
+            .filter(|uid| map_pool.as_ref().is_none_or(|p| p.contains(uid)));
         let uid = known
             .or_else(|| {
-                let n = map_pool.len() as i32;
-                map_pool.get_index(random.next_max(n) as usize).cloned()
+                let candidates = map_pool.clone().unwrap_or_else(|| game_mod.lobby_maps().into_iter().collect());
+                let n = candidates.len() as i32;
+                candidates.get_index(random.next_max(n) as usize).cloned()
             })
             .ok_or("Unable to resolve a valid initial map")?;
         settings.map = Some(uid.clone());
@@ -511,12 +540,13 @@ impl Server {
 
     fn handle_event(&mut self, event: Event) {
         match event {
-            Event::Connect(socket) => self.accept_connection(socket),
+            Event::Connect(socket, peer) => self.accept_connection(socket, peer),
             Event::Packet { player_index, frame, data } => self.receive_orders(player_index, frame, &data),
             Event::Ping { player_index, history, .. } => self.receive_ping(player_index, &history),
             Event::Disconnect { player_index } => self.drop_client(player_index),
             Event::Authenticated { player_index, profile } => self.finish_authentication(player_index, profile),
             Event::MasterServerMessage(key) => self.send_fluent_message(&key, &[]),
+            Event::Shutdown => self.state = ServerState::ShuttingDown,
         }
     }
 
@@ -531,7 +561,19 @@ impl Server {
 
     /// `IsMultiplayer`.
     pub fn is_multiplayer(&self) -> bool {
-        matches!(self.settings.server_type, ServerType::Multiplayer | ServerType::Independent)
+        self.settings.server_type != ServerType::SinglePlayer
+    }
+
+    /// The connector of a client in the same process.
+    pub fn local_connector(&self) -> LocalConnector {
+        LocalConnector {
+            events: self.events_tx.clone(),
+        }
+    }
+
+    /// The mod of the server after its game, for the next server.
+    pub fn into_mod(self) -> ServerMod {
+        self.game_mod
     }
 
     fn is_independent(&self) -> bool {
@@ -556,7 +598,7 @@ impl Server {
         i
     }
 
-    fn accept_connection(&mut self, socket: std::net::TcpStream) {
+    fn accept_connection(&mut self, socket: Box<dyn ByteStream>, peer: Peer) {
         if self.state != ServerState::WaitingPlayers {
             return;
         }
@@ -567,6 +609,7 @@ impl Server {
             index,
             token.clone(),
             socket,
+            peer,
             self.events_tx.clone(),
             self.start,
             self.is_multiplayer(),
@@ -592,7 +635,7 @@ impl Server {
 
     fn reject(&mut self, player_index: i32, order: &str, message: &str, reason: &str) {
         if let Some(c) = self.conn(player_index) {
-            log::info!(target: "server", "Rejected connection from {}; {reason}.", c.end_point);
+            log::info!(target: "server", "Rejected connection from {}; {reason}.", c.peer);
         }
         self.send_order_to(player_index, order, message);
         self.drop_client(player_index);
@@ -624,7 +667,7 @@ impl Server {
             };
             return self.reject(player_index, "AuthenticationError", message, "wrong password");
         }
-        let Some(ip) = self.conn(player_index).map(|c| c.end_point.ip().to_canonical()) else {
+        let Some(ip) = self.conn(player_index).map(|c| c.peer.ip()) else {
             return;
         };
         let manifest = &self.game_mod.data.manifest;
@@ -647,21 +690,20 @@ impl Server {
                 "incompatible orders protocol",
             );
         }
-        let ip_text = ip.to_string();
-        if self.settings.ban.contains(&ip_text) {
-            return self.reject(player_index, "ServerError", "notification-you-were-banned", "banned");
-        }
-        if self.temp_bans.contains(&ip_text) {
-            return self.reject(player_index, "ServerError", "notification-you-were-temp-banned", "banned");
+        if let Some(ip_text) = ip.map(|ip| ip.to_string()) {
+            if self.settings.ban.contains(&ip_text) {
+                return self.reject(player_index, "ServerError", "notification-you-were-banned", "banned");
+            }
+            if self.temp_bans.contains(&ip_text) {
+                return self.reject(player_index, "ServerError", "notification-you-were-temp-banned", "banned");
+            }
         }
         let client = Client {
             name: Some(sanitized_player_name(handshake.client.name.as_deref().unwrap_or(""))),
-            anonymized_ip_address: if self.is_multiplayer() && self.settings.share_anonymized_ips {
-                anonymize_ip(ip)
-            } else {
-                None
-            },
-            location: self.geoip.as_ref().and_then(|db| db.lookup_country(ip)),
+            anonymized_ip_address: ip
+                .filter(|_| self.is_multiplayer() && self.settings.share_anonymized_ips)
+                .and_then(anonymize_ip),
+            location: ip.and_then(|ip| self.geoip.as_ref()?.lookup_country(ip)),
             index: player_index,
             preferred_color: handshake.client.preferred_color,
             color: handshake.client.color,
@@ -777,14 +819,14 @@ impl Server {
         self.lobby.clients.push(client);
         if let Some(c) = self.conn_mut(player_index) {
             c.validated = true;
-            log::info!(target: "server", "Client {player_index}: Accepted connection from {}.", c.end_point);
+            log::info!(target: "server", "Client {player_index}: Accepted connection from {}.", c.peer);
         }
         let join_cooldown = self.settings.flood_limit_join_cooldown;
         if !is_admin && join_cooldown > 0 {
             self.disable_chat_ui(player_index, join_cooldown);
         }
         self.client_joined(player_index);
-        self.skirmish_client_joined(player_index);
+        self.apply_initial_lobby(player_index);
         self.sync_lobby_info();
         log::info!(target: "server", "{name} has joined the game.");
         self.send_fluent_message("notification-joined", &[("player", (&name).into())]);
@@ -1258,7 +1300,6 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncInfo", &self.lobby.serialize());
-            self.skirmish_lobby_info_synced();
         }
     }
 
@@ -1267,7 +1308,6 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbyClients", &self.lobby.serialize_clients());
-            self.skirmish_lobby_info_synced();
             self.ping_updated = Instant::now();
         }
     }
@@ -1277,7 +1317,6 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbySlots", &self.lobby.serialize_slots());
-            self.skirmish_lobby_info_synced();
         }
     }
 
@@ -1286,7 +1325,6 @@ impl Server {
         self.master_server_changed();
         if self.state == ServerState::WaitingPlayers {
             self.broadcast_order("SyncLobbyGlobalSettings", &self.lobby.serialize_global_settings());
-            self.skirmish_lobby_info_synced();
         }
     }
 

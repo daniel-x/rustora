@@ -3,25 +3,56 @@
 
 //! A client connection of the server (`OpenRA.Game/Server/Connection.cs`). A reader thread parses packets and
 //! answers ping replies, a writer thread drains the send queue and sends pings; everything else goes to the
-//! server thread as an [`Event`]. Two blocking threads send each packet as soon as it is queued.
+//! server thread as an [`Event`]. Two blocking threads send each packet as soon as it is queued. The stream is a TCP
+//! socket, or an in-memory pipe for a client in the same process.
 
 use std::io::{Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::time::{Duration, Instant};
 
 use rustora_net::order::order_type;
+use rustora_net::stream::ByteStream;
 
 /// The largest order packet accepted from a multiplayer client.
 pub const MAX_ORDER_LENGTH: i32 = 131072;
 const MAX_PING_SAMPLES: usize = 15;
 const PING_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Where a client connects from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Peer {
+    /// A client on the network, at this address.
+    Network(SocketAddr),
+    /// A client in the same process, connected through an in-memory pipe.
+    InProcess,
+}
+
+impl Peer {
+    /// The IP address of a network client, mapped IPv4 addresses as IPv4.
+    pub fn ip(self) -> Option<std::net::IpAddr> {
+        match self {
+            Peer::Network(address) => Some(address.ip().to_canonical()),
+            Peer::InProcess => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Peer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Peer::Network(address) => write!(f, "{address}"),
+            Peer::InProcess => f.write_str("in-process client"),
+        }
+    }
+}
+
 /// Events the listener and connection threads send to the server thread.
 pub enum Event {
-    Connect(TcpStream),
+    /// A new client stream and where it comes from.
+    Connect(Box<dyn ByteStream>, Peer),
     Packet {
         player_index: i32,
         frame: i32,
@@ -42,13 +73,15 @@ pub enum Event {
     },
     /// A fluent message to all clients, from the master server thread.
     MasterServerMessage(String),
+    /// Ends the server, from the client process that hosts it.
+    Shutdown,
 }
 
 /// The server thread's handle of a connection.
 pub struct Connection {
     pub player_index: i32,
     pub auth_token: String,
-    pub end_point: SocketAddr,
+    pub peer: Peer,
     pub validated: bool,
     pub last_orders_frame: i32,
     pub timeout_message_shown: bool,
@@ -73,35 +106,31 @@ fn ping_frame(now: u64) -> Vec<u8> {
 }
 
 impl Connection {
-    /// Starts the threads of `socket`.
+    /// Starts the threads of `socket`, which comes from `peer`.
     pub fn new(
         player_index: i32,
         auth_token: String,
-        socket: TcpStream,
+        socket: Box<dyn ByteStream>,
+        peer: Peer,
         events: Sender<Event>,
         start: Instant,
         is_multiplayer: bool,
     ) -> std::io::Result<Connection> {
-        let end_point = socket.peer_addr()?;
-        socket.set_nodelay(true)?;
-        socket.set_nonblocking(false)?;
-        let writer_socket = socket.try_clone()?;
+        let writer_socket = socket.try_clone_stream()?;
         let (send, queue) = channel();
         let last_received = Arc::new(AtomicU64::new(run_time(start)));
         let lr = last_received.clone();
+        std::thread::Builder::new().name(format!("Client read ({peer})")).spawn(move || {
+            let _ = read_loop(player_index, socket, &events, start, is_multiplayer, &lr);
+            let _ = events.send(Event::Disconnect { player_index });
+        })?;
         std::thread::Builder::new()
-            .name(format!("Client read ({end_point})"))
-            .spawn(move || {
-                let _ = read_loop(player_index, socket, &events, start, is_multiplayer, &lr);
-                let _ = events.send(Event::Disconnect { player_index });
-            })?;
-        std::thread::Builder::new()
-            .name(format!("Client write ({end_point})"))
+            .name(format!("Client write ({peer})"))
             .spawn(move || write_loop(writer_socket, &queue, start))?;
         Ok(Connection {
             player_index,
             auth_token,
-            end_point,
+            peer,
             validated: false,
             last_orders_frame: 0,
             timeout_message_shown: false,
@@ -134,7 +163,7 @@ impl Connection {
 
 /// Sends queued data and pings until the queue is closed or a write fails, then closes the socket,
 /// which also ends the read loop.
-fn write_loop(mut socket: TcpStream, queue: &Receiver<Vec<u8>>, start: Instant) {
+fn write_loop(mut socket: Box<dyn ByteStream>, queue: &Receiver<Vec<u8>>, start: Instant) {
     let mut next_ping = Instant::now() + PING_INTERVAL;
     loop {
         let result = match queue.recv_timeout(next_ping.saturating_duration_since(Instant::now())) {
@@ -149,10 +178,10 @@ fn write_loop(mut socket: TcpStream, queue: &Receiver<Vec<u8>>, start: Instant) 
             break;
         }
     }
-    let _ = socket.shutdown(Shutdown::Both);
+    socket.shutdown_stream();
 }
 
-fn read_exact_counted(socket: &mut TcpStream, buf: &mut [u8], start: Instant, last_received: &AtomicU64) -> std::io::Result<()> {
+fn read_exact_counted(socket: &mut Box<dyn ByteStream>, buf: &mut [u8], start: Instant, last_received: &AtomicU64) -> std::io::Result<()> {
     let mut filled = 0;
     while filled < buf.len() {
         match socket.read(&mut buf[filled..])? {
@@ -168,7 +197,7 @@ fn read_exact_counted(socket: &mut TcpStream, buf: &mut [u8], start: Instant, la
 
 fn read_loop(
     player_index: i32,
-    mut socket: TcpStream,
+    mut socket: Box<dyn ByteStream>,
     events: &Sender<Event>,
     start: Instant,
     is_multiplayer: bool,

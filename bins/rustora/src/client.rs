@@ -496,7 +496,7 @@ pub struct Client {
     net: NetClient,
     /// The replay file of the running replay, for `Game.RestartGame`.
     replay_path: Option<String>,
-    /// The game save that the local server loads, whose state snapshot the client restores if it can.
+    /// The game save that the single player server loads, whose state snapshot the client restores if it can.
     loading_save: Option<PathBuf>,
     /// The hidden in-game root while a game save loads.
     loading_root: Option<rustora_ui::widget::WidgetId>,
@@ -568,7 +568,7 @@ impl Client {
             mod_audio,
             music: RefCell::new(None),
         };
-        let net = NetClient::new(engine, support, services.net.clone());
+        let net = NetClient::new(engine, support, &mod_data.manifest.id, services.net.clone());
         let services = Rc::new(services);
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
@@ -817,18 +817,21 @@ impl Client {
         for request in requests {
             match request {
                 AppRequest::LeaveGame => leave = true,
-                AppRequest::CreateLocalServer { map, skirmish } => self.net.create_local_server(map, skirmish),
+                AppRequest::StartSinglePlayer { map, skirmish } => self.net.start_single_player(map, skirmish),
                 AppRequest::CreateServer {
                     name,
                     port,
                     password,
                     advertise_online,
                     map,
-                } => self.net.create_server(name, port, password, advertise_online, map),
+                } => {
+                    let packages = self.map_packages(&map);
+                    self.net.create_server(name, port, password, advertise_online, map, packages)
+                }
                 AppRequest::JoinServer { target, password } => self.net.join(&target, &password),
                 AppRequest::JoinReplay(path) => replay = Some(path),
                 AppRequest::RestartGame => restart = true,
-                AppRequest::CreateAndStartLocalServer { map, orders } => self.create_and_start_local_server(map, orders),
+                AppRequest::StartSinglePlayerGame { map, orders } => self.start_single_player_game(map, orders),
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
@@ -920,7 +923,7 @@ impl Client {
         self.ui.load_widget("MAINMENU", Some(self.ui.root), &WidgetArgs::default());
     }
 
-    /// `Game.RestartGame` for a game: a new local server gets the lobby of the current game with a new random seed,
+    /// `Game.RestartGame` for a game: a new single player server gets the lobby of the current game with a new random seed,
     /// and the game starts at once.
     fn restart_game(&mut self) {
         let mut lobby = self.services.net.borrow().session.clone();
@@ -944,18 +947,30 @@ impl Client {
             RawOrder::command(&format!("sync_lobby {}", lobby.serialize())),
             RawOrder::command("startgame"),
         ];
-        self.create_and_start_local_server(map, orders);
+        self.start_single_player_game(map, orders);
+    }
+
+    /// The package path of the map `uid`, if it is installed.
+    fn map_packages(&self, uid: &str) -> Vec<String> {
+        self.services
+            .maps
+            .borrow()
+            .get(uid)
+            .map(|p| p.package_name.clone())
+            .filter(|name| !name.is_empty())
+            .into_iter()
+            .collect()
     }
 
     /// `Game.CreateAndStartLocalServer`.
-    fn create_and_start_local_server(&mut self, map: String, orders: Vec<RawOrder>) {
+    fn start_single_player_game(&mut self, map: String, orders: Vec<RawOrder>) {
         self.loading_save = orders
             .iter()
             .find(|o| o.order_string == "LoadGameSave")
             .and_then(|o| o.target_string.as_deref())
             .map(|name| self.services.save_dir.join(name));
-        self.net.create_local_server(map, true);
-        self.net.join(rustora_ui::net::LOCAL_SERVER_TARGET, "");
+        self.net.start_single_player(map, false);
+        self.net.join(&rustora_ui::net::JoinTarget::SinglePlayer, "");
         self.net.set_setup_orders(orders);
     }
 

@@ -496,14 +496,14 @@ impl Browser {
                 self.fullscreen_visible.set(true);
                 let fs_player = self.fullscreen_player;
                 let on_complete: Action = Rc::new(move |ui| {
-                    ui.requests.push(AppRequest::CreateAndStartLocalServer {
+                    ui.requests.push(AppRequest::StartSinglePlayerGame {
                         map: map.clone(),
                         orders: orders.clone(),
                     });
                 });
                 self.play_video(ui, fs_player, &video, PlayingVideo::GameStart, Some(on_complete));
             }
-            None => ui.requests.push(AppRequest::CreateAndStartLocalServer { map, orders }),
+            None => ui.requests.push(AppRequest::StartSinglePlayerGame { map, orders }),
         }
     }
 }

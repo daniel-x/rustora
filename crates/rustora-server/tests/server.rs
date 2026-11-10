@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Drives the `rustora-server` binary over TCP with raw protocol clients. Skips without the OpenRA reference checkout.
+//! Drives the `rustora-server` binary over TCP, and the single player server in a thread through an in-memory pipe,
+//! with raw protocol clients. Skips without the OpenRA reference checkout.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -15,8 +17,12 @@ use rsa::pkcs8::{EncodePublicKey, LineEnding};
 use rsa::{Pkcs1v15Sign, RsaPrivateKey};
 use rustora_net::binary::Reader;
 use rustora_net::handshake::{HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
+use rustora_net::lobby_setup::{BotSetup, InitialLobby, LobbySetup, SlotSetup};
 use rustora_net::order::{RawOrder, order_type};
 use rustora_net::session::{Client, ClientState, Session};
+use rustora_net::stream::ByteStream;
+use rustora_server::mod_info::ServerMod;
+use rustora_server::server::{LocalConnector, Server, ServerSettings, ServerType};
 use sha1::{Digest, Sha1};
 
 const MAP: &str = "ore-lord.oramap";
@@ -90,19 +96,88 @@ struct Frame {
 /// The fingerprint and key a client authenticates with.
 type Identity = (String, RsaPrivateKey);
 
+/// A single player server in a thread of the test, ended when dropped.
+struct SinglePlayerServer {
+    connector: LocalConnector,
+    support: PathBuf,
+}
+
+impl Drop for SinglePlayerServer {
+    fn drop(&mut self) {
+        self.connector.shutdown();
+    }
+}
+
+/// Starts a single player server with the test map and seed, in the support directory `support`.
+fn single_player_server(engine: &Path, support: &Path, initial_lobby: InitialLobby) -> SinglePlayerServer {
+    let settings = ServerSettings {
+        server_type: ServerType::SinglePlayer,
+        map: Some(MAP.to_string()),
+        seed: Some(7),
+        support_dir: support.to_path_buf(),
+        initial_lobby,
+        ..Default::default()
+    };
+    let (engine_dir, support_dir) = (engine.to_path_buf(), support.to_string_lossy().into_owned());
+    let (send, receive) = channel();
+    std::thread::spawn(move || {
+        let game_mod = ServerMod::load(&engine_dir, &support_dir, "ra", &[]).expect("load the mod");
+        let mut server = Server::new(settings, game_mod).expect("start the server");
+        let _ = send.send(server.local_connector());
+        server.run();
+    });
+    let connector = receive.recv_timeout(STARTUP_PATIENCE).expect("the server starts");
+    SinglePlayerServer {
+        connector,
+        support: support.to_path_buf(),
+    }
+}
+
+/// The uid of the test map.
+fn test_map_uid(engine: &Path) -> String {
+    let support = std::env::temp_dir().join(format!("rustora-uid-test-{}", std::process::id()));
+    let mut game_mod = ServerMod::load(engine, &support.to_string_lossy(), "ra", &[]).expect("load the mod");
+    game_mod.resolve_map(MAP).expect("the test map exists")
+}
+
+/// How long a test client waits for the next packet.
+const READ_PATIENCE: Duration = Duration::from_secs(10);
+
 struct TestClient {
     identity: Option<Identity>,
-    stream: TcpStream,
+    stream: Box<dyn ByteStream>,
+    received: Receiver<Frame>,
     index: i32,
     lobby: Session,
     messages: Vec<String>,
     frames: Vec<Frame>,
 }
 
+/// Closes the stream, so the server notices at once that the client left.
+impl Drop for TestClient {
+    fn drop(&mut self) {
+        self.stream.shutdown_stream();
+    }
+}
+
+fn read_frame(stream: &mut dyn ByteStream) -> Option<Frame> {
+    let mut header = [0u8; 8];
+    stream.read_exact(&mut header).ok()?;
+    let length = i32::from_le_bytes(header[0..4].try_into().unwrap());
+    let client = i32::from_le_bytes(header[4..8].try_into().unwrap());
+    let mut body = vec![0u8; length as usize];
+    stream.read_exact(&mut body).ok()?;
+    Some(Frame {
+        client,
+        frame: i32::from_le_bytes(body[0..4].try_into().unwrap()),
+        data: body[4..].to_vec(),
+    })
+}
+
 impl TestClient {
     fn connect(port: u16) -> TestClient {
         let deadline = Instant::now() + Duration::from_secs(60);
-        let mut stream = loop {
+        let stream = loop {
             match TcpStream::connect(("127.0.0.1", port)) {
                 Ok(s) => break s,
                 Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
@@ -110,13 +185,27 @@ impl TestClient {
             }
         };
         stream.set_nodelay(true).unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        TestClient::from_stream(Box::new(stream))
+    }
+
+    /// Reads the handshake version and the client index; a thread reads the packets after that.
+    fn from_stream(mut stream: Box<dyn ByteStream>) -> TestClient {
         let mut hello = [0u8; 8];
         stream.read_exact(&mut hello).unwrap();
         assert_eq!(i32::from_le_bytes(hello[0..4].try_into().unwrap()), 7);
+        let mut reader = stream.try_clone_stream().unwrap();
+        let (send, received) = channel();
+        std::thread::spawn(move || {
+            while let Some(frame) = read_frame(reader.as_mut()) {
+                if send.send(frame).is_err() {
+                    break;
+                }
+            }
+        });
         TestClient {
             identity: None,
             stream,
+            received,
             index: i32::from_le_bytes(hello[4..8].try_into().unwrap()),
             lobby: Session::default(),
             messages: Vec::new(),
@@ -136,17 +225,7 @@ impl TestClient {
     }
 
     fn read_frame(&mut self) -> Option<Frame> {
-        let mut header = [0u8; 8];
-        self.stream.read_exact(&mut header).ok()?;
-        let length = i32::from_le_bytes(header[0..4].try_into().unwrap());
-        let client = i32::from_le_bytes(header[4..8].try_into().unwrap());
-        let mut body = vec![0u8; length as usize];
-        self.stream.read_exact(&mut body).ok()?;
-        Some(Frame {
-            client,
-            frame: i32::from_le_bytes(body[0..4].try_into().unwrap()),
-            data: body[4..].to_vec(),
-        })
+        self.received.recv_timeout(READ_PATIENCE).ok()
     }
 
     /// Applies server orders until `done` holds. Returns false if the server closes the connection first.
@@ -411,18 +490,21 @@ fn sync_packet(hash: i32) -> Vec<u8> {
     p
 }
 
-fn local_server(engine: &Path, support: &Path) -> ServerProcess {
-    start_server(engine, &["--dependent", "local", "--support-dir", support.to_str().unwrap()])
+/// Joins a single player server through the in-memory pipe.
+fn join_single_player(server: &SinglePlayerServer) -> TestClient {
+    let mut c = TestClient::from_stream(Box::new(server.connector.connect().expect("the server runs")));
+    assert!(c.pump(VERSION, TestClient::joined), "client was not accepted");
+    c
 }
 
 #[test]
-fn local_server_saves_a_game_and_loads_it_again() {
+fn single_player_server_saves_a_game_and_loads_it_again() {
     let Some(engine) = engine_dir() else { return };
     let support = std::env::temp_dir().join(format!("rustora-save-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&support);
 
-    let server_a = local_server(&engine, &support);
-    let mut a = join(server_a.port);
+    let server_a = single_player_server(&engine, &support, InitialLobby::Plain);
+    let mut a = join_single_player(&server_a);
     a.command("spectate");
     a.command("slot_bot Multi0 0 normal");
     assert!(a.pump(VERSION, |c| c.lobby.client_in_slot("Multi0").is_some()));
@@ -442,8 +524,8 @@ fn local_server_saves_a_game_and_loads_it_again() {
     assert!(file.exists());
     drop(a);
 
-    let server_b = local_server(&engine, &support);
-    let mut b = join(server_b.port);
+    let server_b = single_player_server(&engine, &support, InitialLobby::Plain);
+    let mut b = join_single_player(&server_b);
     let load = RawOrder::from_target_string("LoadGameSave", "..test.orasav", true);
     b.send_packet(0, &load.serialize());
     assert!(b.pump(VERSION, |c| {
@@ -565,7 +647,7 @@ fn servers_are_silent_towards_the_master_server_by_default() {
 #[test]
 fn a_dependent_server_ends_with_its_client_process() {
     let Some(engine) = engine_dir() else { return };
-    let mut server = start_server(&engine, &["--dependent", "skirmish"]);
+    let mut server = start_server(&engine, &["--dependent"]);
     assert!(join(server.port).joined());
     drop(server.child.stdin.take());
     let start = Instant::now();
@@ -582,7 +664,7 @@ fn a_dependent_server_ends_with_its_client_process() {
 fn servers_write_their_log_channels() {
     let Some(engine) = engine_dir() else { return };
     let independent = start_server(&engine, &[]);
-    let dependent = start_server(&engine, &["--dependent", "local"]);
+    let dependent = start_server(&engine, &["--dependent"]);
     for (server, file) in [(&independent, "independent-server.log"), (&dependent, "server.log")] {
         let log = rustora_core::own_files::logs_dir(&server.support).join(file);
         let start = Instant::now();
@@ -591,4 +673,54 @@ fn servers_write_their_log_channels() {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+}
+
+#[test]
+fn skirmish_without_setup_gets_a_bot() {
+    let Some(engine) = engine_dir() else { return };
+    let support = std::env::temp_dir().join(format!("rustora-skirmish-test-{}", std::process::id()));
+    let server = single_player_server(&engine, &support, InitialLobby::Skirmish(None));
+    let mut c = join_single_player(&server);
+    assert!(c.pump(VERSION, |c| c.lobby.clients.iter().any(Client::is_bot)));
+    assert!(!support.join("skirmish.ra.yaml").exists(), "the server writes no skirmish file");
+    assert_eq!(server.support, support);
+}
+
+#[test]
+fn skirmish_setup_is_applied_when_the_host_joins() {
+    let Some(engine) = engine_dir() else { return };
+    let support = std::env::temp_dir().join(format!("rustora-setup-test-{}", std::process::id()));
+    let slot = |slot: &str, team: i32| SlotSetup {
+        slot: Some(slot.to_string()),
+        faction: Some("england".to_string()),
+        team,
+        ..Default::default()
+    };
+    let setup = LobbySetup {
+        map: test_map_uid(&engine),
+        options: vec![("startingcash".to_string(), "10000".to_string())],
+        player: Some(slot("Multi1", 2)),
+        bots: vec![BotSetup {
+            bot_type: "normal".to_string(),
+            slot: slot("Multi0", 1),
+        }],
+    };
+    let server = single_player_server(&engine, &support, InitialLobby::Skirmish(Some(setup)));
+    let mut c = join_single_player(&server);
+    let index = c.index;
+    assert!(c.pump(VERSION, |c| c.lobby.client_in_slot("Multi0").is_some()));
+    let host = c.lobby.client_with_index(index).unwrap();
+    assert_eq!((host.slot.as_deref(), host.team), (Some("Multi1"), 2));
+    let bot = c.lobby.client_in_slot("Multi0").unwrap();
+    assert_eq!(
+        (bot.bot.as_deref(), bot.team, bot.faction.as_deref()),
+        (Some("normal"), 1, Some("england"))
+    );
+    let cash = c
+        .lobby
+        .global_settings
+        .lobby_options
+        .get("startingcash")
+        .and_then(|o| o.value.clone());
+    assert_eq!(cash.as_deref(), Some("10000"));
 }

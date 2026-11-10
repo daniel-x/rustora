@@ -9,7 +9,7 @@ use std::rc::Rc;
 use crate::fluent::MessageArg;
 use crate::loader::cell;
 use crate::logic::{message, message_with, services};
-use crate::net::{ConnectionState, Net};
+use crate::net::{ConnectionState, JoinTarget, Net};
 use crate::widget::{Action, AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
 use crate::widgets::{LabelWidget, TextFieldWidget};
 
@@ -17,20 +17,22 @@ use crate::widgets::{LabelWidget, TextFieldWidget};
 pub type OnRetry = Rc<dyn Fn(&mut Ui, String)>;
 
 /// Port of `ConnectionLogic.Connect`.
-pub fn connect(ui: &mut Ui, target: &str, password: &str, on_connect: Action, on_abort: Action) {
+pub fn connect(ui: &mut Ui, target: JoinTarget, password: &str, on_connect: Action, on_abort: Action) {
     ui.requests.push(AppRequest::JoinServer {
-        target: target.to_string(),
+        target: target.clone(),
         password: password.to_string(),
     });
     let net = services(ui).net.clone();
-    net.borrow_mut().connection_state = ConnectionState::Connecting;
-    let retry_target = target.to_string();
+    {
+        let mut net = net.borrow_mut();
+        net.connection_state = ConnectionState::Connecting;
+        net.target = target.clone();
+    }
     let (retry_connect, retry_abort) = (on_connect.clone(), on_abort.clone());
     let on_retry: OnRetry = Rc::new(move |ui, password| {
-        connect(ui, &retry_target, &password, retry_connect.clone(), retry_abort.clone());
+        connect(ui, target.clone(), &password, retry_connect.clone(), retry_abort.clone());
     });
     let args = WidgetArgs::default()
-        .with_value("endpoint", target.to_string())
         .with_action("onConnect", on_connect)
         .with_action("onAbort", on_abort)
         .with_value("onRetry", on_retry);
@@ -97,12 +99,13 @@ pub fn create_connection(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc
         ui.close_window();
         abort_action(ui);
     }));
-    let endpoint: String = args.value("endpoint").unwrap_or_default();
-    let text = message_with(ui, "label-connecting-to-endpoint", &[("endpoint", MessageArg::Text(&endpoint))]);
+    let net = services(ui).net.clone();
+    let target = net.borrow().target.to_string();
+    let text = message_with(ui, "label-connecting-to-endpoint", &[("endpoint", MessageArg::Text(&target))]);
     let label = ui.child(widget, "CONNECTING_DESC");
     ui.get::<LabelWidget>(label).get_text = Some(Rc::new(move || text.clone()));
     cell(ConnectionLogic {
-        net: services(ui).net.clone(),
+        net,
         on_connect: args.action("onConnect"),
         on_abort,
         on_retry: args
@@ -194,7 +197,7 @@ pub fn create_connection_failed(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs
         } else {
             "label-connection-failed"
         };
-        (n.target.clone(), error, message(ui, title))
+        (n.target.to_string(), error, message(ui, title))
     };
     let desc_text = message_with(ui, "label-could-not-connect-to-target", &[("target", MessageArg::Text(&target))]);
     let desc = ui.child(widget, "CONNECTING_DESC");

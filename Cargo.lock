@@ -2572,6 +2572,7 @@ dependencies = [
  "rustora-net",
  "rustora-render",
  "rustora-scripting",
+ "rustora-server",
  "rustora-ui",
  "winit",
 ]

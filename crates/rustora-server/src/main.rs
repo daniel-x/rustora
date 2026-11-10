@@ -4,13 +4,15 @@
 //! The rustora game server, the counterpart of `OpenRA.Server`. It reads the RA mod from the OpenRA engine directory,
 //! by default the one the client finds too, and it uses the support directory of OpenRA by default.
 //! By default it is independent: it runs on its own and starts a new server instance after each game, like a C#
-//! dedicated server. `--dependent <local|skirmish|multiplayer>` makes it the server that a client starts for its
-//! game, like `Game.CreateLocalServer` and `Game.CreateServer`: it serves one game, and it exits when its standard
-//! input closes, which happens when the client is gone.
+//! dedicated server. `--dependent` makes it the multiplayer server that a client starts for its game, like
+//! `Game.CreateServer`: it serves one game, and it exits when its standard input closes, which happens when the
+//! client is gone. Single player servers run inside the client.
+//! Each `--map-package` names the package path of a map that the server needs first, like the `--map` map, so the
+//! server finds it without scanning the map folders.
 //! With `--port 0` the system chooses a free port. The server prints `Listening on port <port>` once it accepts
 //! players.
-//! Usage: `rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234]
-//! [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>]
+//! Usage: `rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--map-package <path>] [--port 1234]
+//! [--name <text>] [--password <text>] [--seed <int>] [--dependent]
 //! [--enable-singleplayer] [--enable-sync-reports] [--disable-geoip] [--advertise-online] [--discover-nat-devices]
 //! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]
 //! [--player-profile-url <url>] [--server-advertise-url <url>]`.
@@ -27,8 +29,8 @@ const LISTENING_ON_PORT: &str = "Listening on port ";
 fn usage(problem: &str) -> ! {
     eprintln!("{problem}");
     eprintln!(
-        "usage: rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--port 1234] \
-         [--name <text>] [--password <text>] [--seed <int>] [--dependent <local|skirmish|multiplayer>] \
+        "usage: rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--map-package <path>] [--port 1234] \
+         [--name <text>] [--password <text>] [--seed <int>] [--dependent] \
          [--enable-singleplayer] [--enable-sync-reports] [--disable-geoip] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
          [--profile-blacklist <id,id>] [--player-profile-url <url>] [--server-advertise-url <url>]"
     );
@@ -63,6 +65,7 @@ fn main() {
     let mut engine = None;
     let mut support = None;
     let mut mod_id = "ra".to_string();
+    let mut map_packages = Vec::new();
     let mut settings = ServerSettings::default();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -72,18 +75,14 @@ fn main() {
             "--support-dir" => support = Some(value()),
             "--mod" => mod_id = value(),
             "--map" => settings.map = Some(value()),
+            "--map-package" => map_packages.push(value()),
             "--port" => settings.listen_port = value().parse().unwrap_or_else(|_| usage("invalid port")),
             "--name" => settings.name = value(),
             "--password" => settings.password = value(),
             "--seed" => settings.seed = Some(value().parse().unwrap_or_else(|_| usage("invalid seed"))),
             "--enable-singleplayer" => settings.enable_singleplayer = true,
             "--dependent" => {
-                settings.server_type = match value().as_str() {
-                    "local" => ServerType::Local,
-                    "skirmish" => ServerType::Skirmish,
-                    "multiplayer" => ServerType::Multiplayer,
-                    _ => usage("--dependent needs local, skirmish or multiplayer"),
-                };
+                settings.server_type = ServerType::Multiplayer;
                 exit_on_stdin_close();
             }
             "--enable-sync-reports" => settings.enable_sync_reports = true,
@@ -115,7 +114,7 @@ fn main() {
         println!("Starting independent server for mod: {mod_id}");
     }
     loop {
-        let result = ServerMod::load(&engine, &support, &mod_id)
+        let result = ServerMod::load(&engine, &support, &mod_id, &std::mem::take(&mut map_packages))
             .and_then(|game_mod| Server::new(settings.clone(), game_mod))
             .map(|mut server| {
                 settings.listen_port = server.settings.listen_port;

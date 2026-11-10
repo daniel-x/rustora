@@ -7,6 +7,8 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+
+use rustora_net::stream::ByteStream;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,16 +32,16 @@ use crate::skirmish::BotSpec;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-fn read_i32(stream: &mut TcpStream) -> std::io::Result<i32> {
+fn read_i32(stream: &mut dyn ByteStream) -> std::io::Result<i32> {
     let mut b = [0u8; 4];
     stream.read_exact(&mut b)?;
     Ok(i32::from_le_bytes(b))
 }
 
-fn receive_loop(mut stream: TcpStream, packets: std::sync::mpsc::Sender<(i32, Vec<u8>)>) -> std::io::Result<()> {
+fn receive_loop(mut stream: Box<dyn ByteStream>, packets: std::sync::mpsc::Sender<(i32, Vec<u8>)>) -> std::io::Result<()> {
     loop {
-        let length = read_i32(&mut stream)?;
-        let client = read_i32(&mut stream)?;
+        let length = read_i32(stream.as_mut())?;
+        let client = read_i32(stream.as_mut())?;
         if length <= 0 {
             return Err(std::io::ErrorKind::InvalidData.into());
         }
@@ -54,7 +56,7 @@ fn receive_loop(mut stream: TcpStream, packets: std::sync::mpsc::Sender<(i32, Ve
 /// `NetworkConnection`: a thread reads packets; orders the client sent wait in queues until the server
 /// acknowledges them, because the server does not send a client's own orders back.
 pub struct NetworkConnection {
-    stream: TcpStream,
+    stream: Box<dyn ByteStream>,
     client_id: i32,
     received: Receiver<(i32, Vec<u8>)>,
     connected: Arc<AtomicBool>,
@@ -65,23 +67,35 @@ pub struct NetworkConnection {
     recorder: Option<ReplayRecorder>,
 }
 
+/// Closes the stream, so the server notices at once that the client left.
+impl Drop for NetworkConnection {
+    fn drop(&mut self) {
+        self.stream.shutdown_stream();
+    }
+}
+
 impl NetworkConnection {
     /// Connects to `address` and reads the handshake version and the client index.
     pub fn connect(address: &str) -> Result<NetworkConnection, String> {
         let addresses: Vec<_> = address.to_socket_addrs().map_err(|e| format!("{address}: {e}"))?.collect();
-        let mut stream = addresses
+        let stream = addresses
             .iter()
             .find_map(|a| TcpStream::connect_timeout(a, CONNECT_TIMEOUT).ok())
             .ok_or_else(|| format!("Failed to connect to {address}"))?;
         stream.set_nodelay(true).map_err(|e| e.to_string())?;
-        let protocol = read_i32(&mut stream).map_err(|e| e.to_string())?;
+        NetworkConnection::from_stream(Box::new(stream))
+    }
+
+    /// Reads the handshake version and the client index from a connected `stream`.
+    pub fn from_stream(mut stream: Box<dyn ByteStream>) -> Result<NetworkConnection, String> {
+        let protocol = read_i32(stream.as_mut()).map_err(|e| e.to_string())?;
         if protocol != HANDSHAKE_PROTOCOL {
             return Err(format!(
                 "Handshake protocol version mismatch. Server={protocol} Client={HANDSHAKE_PROTOCOL}"
             ));
         }
-        let client_id = read_i32(&mut stream).map_err(|e| e.to_string())?;
-        let reader = stream.try_clone().map_err(|e| e.to_string())?;
+        let client_id = read_i32(stream.as_mut()).map_err(|e| e.to_string())?;
+        let reader = stream.try_clone_stream().map_err(|e| e.to_string())?;
         let (send, received) = channel();
         let connected = Arc::new(AtomicBool::new(true));
         let flag = connected.clone();

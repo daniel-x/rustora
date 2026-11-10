@@ -10,7 +10,7 @@ use rustora_client::map_cache::{MapClassification, MapVisibility};
 
 use crate::loader::cell;
 use crate::logic::{NoLogic, connection, cosmetic_random, lobby, services};
-use crate::net::LOCAL_SERVER_TARGET;
+use crate::net::JoinTarget;
 use crate::widget::{Action, AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -73,7 +73,7 @@ fn start_skirmish_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
             log::warn!("Cannot save the settings: {e}");
         }
     }
-    ui.requests.push(AppRequest::CreateLocalServer { map, skirmish: true });
+    ui.requests.push(AppRequest::StartSinglePlayer { map, skirmish: true });
 
     let to_singleplayer = menu.clone();
     let on_exit: Action = Rc::new(move |ui| {
@@ -86,7 +86,7 @@ fn start_skirmish_game(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
         ui.requests.push(AppRequest::Disconnect);
         to_main.set(MenuType::Main);
     });
-    connection::connect(ui, LOCAL_SERVER_TARGET, "", on_connect, on_abort);
+    connection::connect(ui, JoinTarget::SinglePlayer, "", on_connect, on_abort);
 }
 
 /// Port of `OpenMissionBrowserPanel`.
@@ -162,7 +162,7 @@ fn direct_connect(ui: &mut Ui, target: &str, menu: &Rc<Cell<MenuType>>) {
     });
     let on_abort = on_exit.clone();
     let on_connect: Action = Rc::new(move |ui| lobby::open_lobby(ui, on_exit.clone(), Rc::new(|_| {}), false));
-    connection::connect(ui, target, "", on_connect, on_abort);
+    connection::connect(ui, JoinTarget::Address(target.to_string()), "", on_connect, on_abort);
 }
 
 pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {

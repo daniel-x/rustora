@@ -10,6 +10,7 @@ mod net;
 mod palettes;
 mod scene;
 mod script_host;
+mod single_player;
 mod snapshot;
 mod sprites;
 mod ui_sprites;

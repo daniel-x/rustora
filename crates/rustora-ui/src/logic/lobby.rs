@@ -379,7 +379,7 @@ impl Lobby {
             let on_connect: Action = Rc::new(move |ui| open_lobby(ui, exit.clone(), start.clone(), false));
             let (connect_action, exit, target) = (on_connect, on_exit.clone(), target.clone());
             let on_retry: connection::OnRetry = Rc::new(move |ui, pass| {
-                connection::connect(ui, &target, &pass, connect_action.clone(), exit.clone());
+                connection::connect(ui, target.clone(), &pass, connect_action.clone(), exit.clone());
             });
             connection::open_connection_failed(ui, &password, on_exit.clone(), on_retry);
         });

@@ -333,7 +333,7 @@ impl Server {
             self.send_fluent_message_to(conn, "notification-admin-change-map", &[]);
             return true;
         }
-        if !self.map_pool.contains(s) || !self.game_mod.map_exists(s) {
+        if self.map_pool.as_ref().is_some_and(|p| !p.contains(s)) || !self.game_mod.map_exists(s) {
             self.send_fluent_message_to(conn, "notification-unknown-map", &[]);
             return true;
         }
@@ -587,7 +587,7 @@ impl Server {
         }
         let admin = client.name.clone().unwrap_or_default();
         let player = target.name.clone().unwrap_or_default();
-        let address = self.conn(target.index).map(|c| c.end_point.ip().to_canonical().to_string());
+        let address = self.conn(target.index).and_then(|c| c.peer.ip()).map(|ip| ip.to_string());
         self.send_fluent_message(
             "notification-admin-kicked",
             &[("admin", (&admin).into()), ("player", (&player).into())],
@@ -897,9 +897,10 @@ impl Server {
 
     /// `IClientJoined` of `LobbyCommands` and `LobbySettingsNotification`.
     pub fn client_joined(&mut self, conn: i32) {
-        let pool: Vec<&str> = self.map_pool.iter().map(String::as_str).collect();
-        let pool = pool.join(", ");
-        self.send_order_to(conn, "SyncMapPool", &pool);
+        if let Some(pool) = &self.map_pool {
+            let pool = pool.iter().map(String::as_str).collect::<Vec<_>>().join(", ");
+            self.send_order_to(conn, "SyncMapPool", &pool);
+        }
         let map = self.map.clone();
         if let Some(client) = self.lobby.client_with_index(conn).cloned()
             && self.target_slot(&client).is_some_and(|s| !s.lock_color)

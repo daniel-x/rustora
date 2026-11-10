@@ -10,3 +10,4 @@ pub mod installer;
 pub mod map_cache;
 pub mod replay;
 pub mod settings;
+pub mod skirmish_file;

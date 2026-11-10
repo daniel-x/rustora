@@ -896,7 +896,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         if !server.is_joinable {
             return;
         }
-        crate::logic::connection::connect(ui, &server.address(), "", lobby_action.clone(), Rc::new(|_| {}));
+        let target = crate::net::JoinTarget::Address(server.address());
+        crate::logic::connection::connect(ui, target, "", lobby_action.clone(), Rc::new(|_| {}));
     });
     let (list, selected, selected_status, selected_map, selected_version) = setup_server_list(ui, widget, on_join);
     list.refresh(ui);
@@ -944,7 +945,7 @@ pub fn create_direct_connect(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -
             ui.close_window();
             lobby(ui);
         });
-        crate::logic::connection::connect(ui, &target, "", on_connect, Rc::new(|_| {}));
+        crate::logic::connection::connect(ui, crate::net::JoinTarget::Address(target), "", on_connect, Rc::new(|_| {}));
     }));
     let back = ui.child(widget, "BACK_BUTTON");
     ui.button(back).on_click = Some(Rc::new(move |ui| {
@@ -1074,7 +1075,7 @@ impl ServerCreation {
         ui.close_window();
         crate::logic::connection::connect(
             ui,
-            &format!("localhost:{port}"),
+            crate::net::JoinTarget::Address(format!("localhost:{port}")),
             &password,
             self.on_create.clone(),
             self.on_exit.clone(),

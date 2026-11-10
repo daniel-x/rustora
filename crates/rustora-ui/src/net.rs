@@ -11,8 +11,29 @@ use rustora_core::fieldloader::Color;
 use rustora_net::order::RawOrder;
 use rustora_net::session::{Client, Session};
 
-/// The join target that stands for the server of the last `AppRequest::CreateLocalServer`.
-pub const LOCAL_SERVER_TARGET: &str = "{local}";
+/// The server that a connection goes to, the `ConnectionTarget` of C#.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JoinTarget {
+    /// The single player server inside this client, of the last `AppRequest::StartSinglePlayer`.
+    SinglePlayer,
+    /// A server at `host:port`.
+    Address(String),
+}
+
+impl Default for JoinTarget {
+    fn default() -> Self {
+        JoinTarget::Address(String::new())
+    }
+}
+
+impl std::fmt::Display for JoinTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JoinTarget::SinglePlayer => f.write_str("the single player server"),
+            JoinTarget::Address(address) => f.write_str(address),
+        }
+    }
+}
 
 /// `ConnectionState`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -108,7 +129,7 @@ pub struct NetState {
     pub session: Session,
     pub local_client_id: i32,
     pub connection_state: ConnectionState,
-    pub target: String,
+    pub target: JoinTarget,
     pub password: String,
     pub server_error: Option<String>,
     pub authentication_failed: bool,

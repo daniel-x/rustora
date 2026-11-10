@@ -54,8 +54,10 @@ impl ChannelSpec {
 }
 
 /// The channels of the game client, from `Game.Initialize`, `ScriptContext`, `SyncReport`, the installation logic
-/// and `TraitDictionary`. The dependent server of the client runs as its own process and writes `server.log`.
+/// and `TraitDictionary`. The single player server runs inside the client and writes `server.log`; a multiplayer
+/// server that the client starts runs as its own process and appends to the same file.
 pub const CLIENT_CHANNELS: &[ChannelSpec] = &[
+    ChannelSpec::new("server", "server.log", true, true),
     ChannelSpec::new("perf", "perf.log", false, true),
     ChannelSpec::new("debug", "debug.log", false, true),
     ChannelSpec::new("sound", "sound.log", false, true),
@@ -79,9 +81,9 @@ pub const INDEPENDENT_SERVER_CHANNELS: &[ChannelSpec] = &[
     ChannelSpec::new("geoip", "independent-geoip.log", true, true),
 ];
 
-/// The channels of a dependent server, which a client started for its game. In C# it runs inside the client and
-/// writes the `server.log` of the client for the whole session, so each server appends to it. Its other lines go
-/// there too.
+/// The channels of a dependent server, the multiplayer server process that a client started for its game. In C# it
+/// runs inside the client and writes the `server.log` of the client for the whole session, so each server appends
+/// to it. Its other lines go there too.
 pub const DEPENDENT_SERVER_CHANNELS: &[ChannelSpec] = &[ChannelSpec::new("server", "server.log", true, true).appending()];
 
 struct Channel {
@@ -159,17 +161,17 @@ pub fn install_panic_hook(support_dir: &Path) {
     }));
 }
 
+/// Opens the log file in append mode, so lines that another process appends to the same file stay intact. Without
+/// `append` the file is emptied first.
 fn create_log_file(dir: &Path, base: &str, append: bool) -> Option<File> {
     std::fs::create_dir_all(dir).ok()?;
     (0..CREATE_LOG_FILE_MAX_RETRY_COUNT).find_map(|i| {
         let name = if i > 0 { format!("{base}.{i}") } else { base.to_string() };
-        let mut options = OpenOptions::new();
-        if append {
-            options.append(true).create(true);
-        } else {
-            options.write(true).create(true).truncate(true);
+        let file = OpenOptions::new().append(true).create(true).open(dir.join(name)).ok()?;
+        if !append {
+            file.set_len(0).ok()?;
         }
-        options.open(dir.join(name)).ok()
+        Some(file)
     })
 }
 

@@ -8,8 +8,10 @@ pub mod binary;
 pub mod game_save;
 pub mod game_server;
 pub mod handshake;
+pub mod lobby_setup;
 pub mod order;
 pub mod session;
+pub mod stream;
 pub mod web;
 
 #[derive(Debug, thiserror::Error)]

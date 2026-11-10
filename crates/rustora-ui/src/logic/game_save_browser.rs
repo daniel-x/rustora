@@ -222,7 +222,7 @@ impl Browser {
         (self.on_exit)(ui);
     }
 
-    /// `Load`: a new local server loads the save, and the client reports ready.
+    /// `Load`: a new single player server loads the save, and the client reports ready.
     fn load(&self, ui: &mut Ui) {
         let Some(path) = self.selected_path() else { return };
         let save = match GameSave::read(&path) {
@@ -239,7 +239,7 @@ impl Browser {
         }
         ui.close_window();
         let file_name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        ui.requests.push(AppRequest::CreateAndStartLocalServer {
+        ui.requests.push(AppRequest::StartSinglePlayerGame {
             map,
             orders: vec![
                 RawOrder::from_target_string("LoadGameSave", &file_name, true),

@@ -238,9 +238,9 @@ pub enum AppRequest {
     Quit,
     /// `Game.InitializeMod`: replaces the running mod.
     InitializeMod(String),
-    /// `Game.CreateLocalServer` for a map. The connection follows with `JoinServer`, whose target `{local}` stands for
-    /// the local server.
-    CreateLocalServer {
+    /// `Game.CreateLocalServer` for a map: starts the single player server. The connection follows with
+    /// `JoinServer` to `JoinTarget::SinglePlayer`. A skirmish restores the last skirmish setup.
+    StartSinglePlayer {
         map: String,
         skirmish: bool,
     },
@@ -254,7 +254,7 @@ pub enum AppRequest {
     },
     /// `Game.JoinServer`.
     JoinServer {
-        target: String,
+        target: crate::net::JoinTarget,
         password: String,
     },
     /// `Game.Disconnect`.
@@ -263,12 +263,13 @@ pub enum AppRequest {
     LeaveGame,
     /// `Game.JoinReplay` for the replay file at this path.
     JoinReplay(String),
-    /// `Game.CreateAndStartLocalServer`: a local server for `map`, and these orders once the lobby is ready.
-    CreateAndStartLocalServer {
+    /// `Game.CreateAndStartLocalServer`: a single player server for `map`, joined, and these orders once the lobby
+    /// is ready.
+    StartSinglePlayerGame {
         map: String,
         orders: Vec<rustora_net::order::RawOrder>,
     },
-    /// `Game.RestartGame`: the same replay again, or a new local server with the lobby of the current game.
+    /// `Game.RestartGame`: the same replay again, or a new single player server with the lobby of the current game.
     RestartGame,
 }
 
