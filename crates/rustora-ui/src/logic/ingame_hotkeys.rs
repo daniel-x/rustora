@@ -2,8 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `Ingame/Hotkeys/*HotkeyLogic.cs`, `StanceSelectorLogic.cs`, `IngameTransientNotificationsLogic.cs`,
-//! `DisconnectWatcherLogic.cs` and `MuteIndicatorLogic.cs`. Sounds and the player stance colors are not ported, and
-//! jumping to the last event waits for `RadarPings`.
+//! `DisconnectWatcherLogic.cs` and `MuteIndicatorLogic.cs`. Sounds and the player stance colors are not ported.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,6 +18,7 @@ use rustora_mods_common::base::BaseBuilding;
 use rustora_mods_common::building::Building;
 use rustora_mods_common::harvester::Harvester;
 use rustora_mods_common::production::{Production, is_primary_building};
+use rustora_mods_common::radar::RadarPings;
 use rustora_mods_common::selection::{ControlGroups, SelectableInfo, selection_class};
 
 use super::{NoLogic, message, message_with, services};
@@ -142,6 +142,17 @@ fn cycle_production_actors(_ui: &mut Ui, ingame: &Rc<Ingame>, _e: &KeyInput) -> 
 
 fn jump_to_selected(_ui: &mut Ui, ingame: &Rc<Ingame>, _e: &KeyInput) -> bool {
     center_on_actors(ingame, &ingame.selection.actors());
+    true
+}
+
+/// `JumpToLastEventHotkeyLogic`: centers the view on the last radar ping, like a beacon or an attack warning.
+fn jump_to_last_event(_ui: &mut Ui, ingame: &Rc<Ingame>, _e: &KeyInput) -> bool {
+    let Some(pings) = ingame.world.world_actor().trait_or_default::<RadarPings>() else {
+        return true;
+    };
+    if let Some(p) = pings.last_ping_position.get() {
+        ingame.viewport.borrow_mut().center_on((p.x * 24 / 1024, (p.y - p.z) * 24 / 1024));
+    }
     true
 }
 
@@ -289,6 +300,7 @@ pub fn create(name: &str, ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode]
         "CycleHarvestersHotkeyLogic" => ("CycleHarvestersKey", "WORLD_KEYHANDLER", Rc::new(cycle_harvesters)),
         "CycleProductionActorsHotkeyLogic" => ("CycleProductionActorsKey", "WORLD_KEYHANDLER", Rc::new(cycle_production_actors)),
         "JumpToSelectedActorsHotkeyLogic" => ("JumpToSelectedActorsKey", "WORLD_KEYHANDLER", Rc::new(jump_to_selected)),
+        "JumpToLastEventHotkeyLogic" => ("JumpToLastEventKey", "WORLD_KEYHANDLER", Rc::new(jump_to_last_event)),
         "ResetZoomHotkeyLogic" => ("ResetZoomKey", "WORLD_KEYHANDLER", Rc::new(reset_zoom)),
         "CycleStatusBarsHotkeyLogic" => ("CycleStatusBarsKey", "WORLD_KEYHANDLER", Rc::new(cycle_status_bars)),
         "PauseHotkeyLogic" => ("PauseKey", "WORLD_KEYHANDLER", Rc::new(pause)),

@@ -182,6 +182,21 @@ pub struct SupportPowerInfo {
     pub door_image: String,
     pub door_sequence: String,
     pub requires_active_radar: bool,
+
+    // Beacon (SupportPowerInfo), plus BeaconRemoveAdvance of NukePowerInfo.
+    pub display_beacon: bool,
+    pub beacon_palette_is_player_palette: bool,
+    pub beacon_palette: String,
+    pub beacon_image: String,
+    pub beacon_poster: Option<String>,
+    pub beacon_poster_palette: String,
+    pub clock_sequence: Option<String>,
+    pub beacon_sequence: Option<String>,
+    pub arrow_sequence: Option<String>,
+    pub circle_sequence: Option<String>,
+    pub beacon_delay: i32,
+    pub beacon_remove_advance: i32,
+
     // NukePower
     pub missile_weapon: String,
     pub missile_delay: i32,
@@ -298,6 +313,18 @@ impl Default for SupportPowerInfo {
             door_image: "atek".into(),
             door_sequence: "active".into(),
             requires_active_radar: true,
+            display_beacon: false,
+            beacon_palette_is_player_palette: true,
+            beacon_palette: "player".into(),
+            beacon_image: "beacon".into(),
+            beacon_poster: None,
+            beacon_poster_palette: "chrome".into(),
+            clock_sequence: None,
+            beacon_sequence: None,
+            arrow_sequence: None,
+            circle_sequence: None,
+            beacon_delay: 0,
+            beacon_remove_advance: 25,
             missile_weapon: String::new(),
             missile_delay: 0,
             spawn_offset: WVec::ZERO,
@@ -1398,6 +1425,20 @@ impl SupportPower {
             _ => rustora_core::world_types::WPos::ZERO,
         };
         let missile = NukeLaunch::new(self_.owner(), weapon, launch_pos, target_position, info, skip_ascent);
+        if info.display_beacon {
+            let missile = Rc::downgrade(&missile);
+            let fraction: Box<dyn Fn() -> f32> = Box::new(move || missile.upgrade().map_or(1.0, |m| m.fraction_complete()));
+            let beacon: rustora_engine::effect::EffectRef = crate::beacon::Beacon::for_support_power(
+                &self_.owner(),
+                target_position,
+                info,
+                Some(fraction),
+                info.beacon_delay,
+                info.flight_delay - info.beacon_remove_advance,
+            );
+            w.add_frame_end_task(Box::new(move |w| w.add_effect(beacon)));
+        }
+        let missile: rustora_engine::effect::EffectRef = missile;
         w.add_frame_end_task(Box::new(move |w| w.add_effect(missile)));
         if info.camera_range != WDist::ZERO {
             let ty = if info.reveal_generated_shroud {
@@ -1461,7 +1502,7 @@ impl NukeLaunch {
         target_pos: rustora_core::world_types::WPos,
         info: &SupportPowerInfo,
         skip_ascent: bool,
-    ) -> rustora_engine::effect::EffectRef {
+    ) -> Rc<NukeLaunch> {
         let impact_delay = info.flight_delay;
         let turn = if skip_ascent { 0 } else { impact_delay / 2 };
         let offset = WVec::new(0, 0, info.flight_velocity.length * (impact_delay - turn));
@@ -1487,6 +1528,11 @@ impl NukeLaunch {
             launch_delay: Cell::new(info.missile_delay),
             detonated: Cell::new(false),
         })
+    }
+
+    /// `NukeLaunch.FractionComplete`: the share of the flight that is over.
+    pub fn fraction_complete(&self) -> f32 {
+        self.ticks.get() as f32 / self.impact_delay.max(1) as f32
     }
 
     fn explode(&self, world: &Rc<World>, remove: bool) {

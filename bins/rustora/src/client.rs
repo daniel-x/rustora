@@ -325,7 +325,11 @@ impl ShellWorld {
     }
 
     fn tick(&mut self) {
-        if !self.ended && self.driver.step() == Step::Ended {
+        if self.ended {
+            // The simulation has stopped advancing, but keep exchanging immediate orders, like OpenRA's
+            // decoupled `OrderManager.TickImmediate`, so chat still works after the game ends.
+            self.driver.orders.tick_immediate();
+        } else if self.driver.step() == Step::Ended {
             self.ended = true;
         }
         if self.world.is_replay() && self.driver.orders.out_of_sync.is_some() {

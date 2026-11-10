@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `Effects/Beacon.cs`, `Effects/FloatingText.cs` and `Traits/Player/PlaceBeacon.cs`. The poster and
-//! clock of the support power beacons are left out: nothing in RA creates them.
+//! Ports of `Effects/Beacon.cs`, `Effects/FloatingText.cs` and `Traits/Player/PlaceBeacon.cs`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -22,6 +21,7 @@ use rustora_engine::world::World;
 use rustora_engine::{info_impl, load_info, register_traits};
 
 use crate::radar::{PingVisibility, RadarPing, RadarPings};
+use crate::support_powers::SupportPowerInfo;
 
 const MAX_ARROW_HEIGHT: i32 = 512;
 
@@ -38,6 +38,9 @@ pub struct Beacon {
     arrow: Option<Rc<Animation>>,
     beacon: Option<Rc<Animation>>,
     circles: Option<Rc<Animation>>,
+    poster: Option<Rc<Animation>>,
+    clock: Option<Rc<Animation>>,
+    poster_palette: PaletteRef,
     duration: i32,
     delay: Cell<i32>,
     arrow_height: Cell<i32>,
@@ -76,8 +79,71 @@ impl Beacon {
             arrow,
             beacon,
             circles,
+            poster: None,
+            clock: None,
+            poster_palette: PaletteRef::named(&info.palette),
             duration,
             delay: Cell::new(0),
+            arrow_height: Cell::new(MAX_ARROW_HEIGHT),
+            arrow_speed: Cell::new(50),
+            tick: Cell::new(0),
+        })
+    }
+
+    /// The support-power `Beacon` with an optional poster and a countdown clock, from the second `Beacon`
+    /// constructor. `clock_fraction` is the share of the flight that is over, which fills the clock.
+    pub fn for_support_power(
+        owner: &PlayerRef,
+        position: WPos,
+        info: &SupportPowerInfo,
+        clock_fraction: Option<Box<dyn Fn() -> f32>>,
+        delay: i32,
+        duration: i32,
+    ) -> Rc<Beacon> {
+        let world = owner.player_actor().world();
+        let anim = |sequence: &Option<String>, repeat: bool| {
+            sequence.as_deref().filter(|s| !s.is_empty()).map(|s| {
+                let a = Animation::new(world.map().sequences().clone(), &info.beacon_image, None, None);
+                if repeat {
+                    a.play_repeating(s);
+                } else {
+                    a.play(s);
+                }
+                a
+            })
+        };
+        let palette = if info.beacon_palette_is_player_palette {
+            PaletteRef::player(&info.beacon_palette, owner)
+        } else {
+            PaletteRef::named(&info.beacon_palette)
+        };
+        let poster = anim(&info.beacon_poster, false);
+        let clock = poster.as_ref().and(info.clock_sequence.as_deref()).filter(|s| !s.is_empty()).map(|s| {
+            let a = Animation::new(world.map().sequences().clone(), &info.beacon_image, None, None);
+            let fraction = clock_fraction.unwrap_or_else(|| Box::new(|| 0.0));
+            let weak = Rc::downgrade(&a);
+            a.play_fetch_index(
+                s,
+                Rc::new(move || {
+                    let len = weak.upgrade().and_then(|a| a.current_sequence()).map_or(1, |s| s.length());
+                    ((fraction() * (len - 1) as f32) as i32).clamp(0, len - 1)
+                }),
+            );
+            a
+        });
+        Rc::new_cyclic(|me| Beacon {
+            me: me.clone(),
+            owner: owner.clone(),
+            position,
+            palette,
+            arrow: anim(&info.arrow_sequence, false),
+            beacon: anim(&info.beacon_sequence, true),
+            circles: anim(&info.circle_sequence, false),
+            poster,
+            clock,
+            poster_palette: PaletteRef::named(&info.beacon_poster_palette),
+            duration,
+            delay: Cell::new(delay),
             arrow_height: Cell::new(MAX_ARROW_HEIGHT),
             arrow_speed: Cell::new(50),
             tick: Cell::new(0),
@@ -102,7 +168,7 @@ impl Effect for Beacon {
         if height != clamped {
             self.arrow_speed.set(-self.arrow_speed.get());
         }
-        for a in [&self.arrow, &self.beacon, &self.circles].into_iter().flatten() {
+        for a in [&self.arrow, &self.beacon, &self.circles, &self.clock].into_iter().flatten() {
             a.tick();
         }
         let tick = self.tick.get();
@@ -130,6 +196,12 @@ impl Effect for Beacon {
                 &self.palette,
                 out,
             );
+        }
+        if let Some(a) = &self.poster {
+            render_animation(a, self.position, zero, 0, &self.poster_palette, out);
+            if let Some(clock) = &self.clock {
+                render_animation(clock, self.position, zero, 0, &self.poster_palette, out);
+            }
         }
     }
 
