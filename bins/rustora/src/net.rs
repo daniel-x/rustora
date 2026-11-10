@@ -28,7 +28,7 @@ use rustora_game::moddata::ModData;
 use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_response};
 use rustora_net::lobby_setup::InitialLobby;
 use rustora_net::order::RawOrder;
-use rustora_net::session::{ClientState, Session};
+use rustora_net::session::{ClientState, ConnectionQuality, Session};
 use rustora_server::server::{ServerSettings, ServerType};
 use rustora_ui::fluent::{MessageArg, Messages};
 use rustora_ui::logic::color_picker::ColorRules;
@@ -656,7 +656,18 @@ pub fn process_client_order(
             net.session.global_settings = parse(text)?.global_settings;
             net.revision += 1;
         }
-        "SyncClientPings" | "SyncConnectionQuality" => {}
+        "SyncConnectionQuality" => {
+            for node in MiniYaml::from_str(text, &order.order_string, true).unwrap_or_default() {
+                let index = node.key.strip_prefix("ConnectionQuality@").and_then(|i| i.parse::<i32>().ok());
+                let quality = ConnectionQuality::from_name(node.value.value_str());
+                if let (Some(index), Some(quality)) = (index, quality)
+                    && let Some(c) = net.session.clients.iter_mut().find(|c| c.index == index)
+                {
+                    c.connection_quality = quality;
+                }
+            }
+        }
+        "SyncClientPings" => {}
         "Message" => net.notifications.push(notification(
             TextNotificationPool::System,
             Some("Battlefield Control".to_string()),

@@ -427,6 +427,15 @@ impl OrderManager {
         self.receive_all_orders_and_check_sync();
     }
 
+    /// The clients whose orders for the current net frame are still missing, the local client included while the
+    /// server has not acknowledged its orders yet. Empty unless the next tick is at a net frame and waits.
+    pub fn missing_clients(&self) -> Vec<i32> {
+        if !self.game_started() || !self.is_net_frame() {
+            return Vec::new();
+        }
+        self.pending_orders.iter().filter(|(_, q)| q.is_empty()).map(|(&k, _)| k).collect()
+    }
+
     fn is_net_frame(&self) -> bool {
         self.local_frame_number % self.net_frame_interval == 0
     }

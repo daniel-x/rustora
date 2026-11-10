@@ -1,0 +1,9 @@
+Label@LAG_DISPLAY:
+	X: WINDOW_WIDTH / 2 - 256
+	Y: 70
+	Width: 512
+	Height: 120
+	Font: Bold
+	Align: Center
+	VAlign: Top
+	Contrast: true

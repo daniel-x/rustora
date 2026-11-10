@@ -255,6 +255,13 @@ pub(crate) fn yaml(fields: Vec<(&str, String)>) -> MiniYaml {
 }
 
 impl ConnectionQuality {
+    /// The quality of its name, as `name` writes it.
+    pub fn from_name(name: &str) -> Option<ConnectionQuality> {
+        [ConnectionQuality::Good, ConnectionQuality::Moderate, ConnectionQuality::Poor]
+            .into_iter()
+            .find(|q| q.name().eq_ignore_ascii_case(name.trim()))
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             ConnectionQuality::Good => "Good",

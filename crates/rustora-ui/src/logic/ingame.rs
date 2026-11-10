@@ -38,6 +38,8 @@ pub struct Ingame {
     unit_order_generator: UnitOrderGenerator,
     /// The state of a replay, `None` for a game.
     pub replay: Option<ReplayStatus>,
+    /// The lines of the lag display, empty while the game runs at its speed.
+    pub lag_text: RefCell<String>,
 }
 
 /// What `ReplayControlBarLogic` reads of a `ReplayConnection` and its `OrderManager`.
@@ -97,6 +99,7 @@ impl Ingame {
             default_order_generator,
             unit_order_generator,
             replay: None,
+            lag_text: RefCell::default(),
         }
     }
 

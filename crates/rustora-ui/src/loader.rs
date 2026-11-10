@@ -27,18 +27,26 @@ fn parse_bool(value: &str) -> bool {
     value.eq_ignore_ascii_case("true")
 }
 
+/// The widgets that rustora adds to the chrome layouts of the mod, like the lag display.
+const RUSTORA_CHROME: &str = include_str!("../chrome/rustora.yaml");
+
 impl WidgetLoader {
+    /// Loads the chrome layout `files` and the widgets of rustora.
     pub fn new(files: &[String], fs: &dyn ReadFs) -> Result<WidgetLoader, String> {
         let mut widgets = HashMap::new();
-        for file in files {
-            let data = fs.open(file).map_err(|e| e.to_string())?;
-            for w in MiniYaml::from_bytes(&data, file, true).map_err(|e| e.to_string())? {
+        let mut add = |data: &[u8], file: &str| -> Result<(), String> {
+            for w in MiniYaml::from_bytes(data, file, true).map_err(|e| e.to_string())? {
                 let key = w.key.split_once('@').map_or(w.key.as_str(), |k| k.1).to_string();
                 if widgets.insert(key, w.clone()).is_some() {
                     return Err(format!("Widget has duplicate key `{}`", w.key));
                 }
             }
+            Ok(())
+        };
+        for file in files {
+            add(&fs.open(file).map_err(|e| e.to_string())?, file)?;
         }
+        add(RUSTORA_CHROME.as_bytes(), "rustora.yaml")?;
         Ok(WidgetLoader {
             widgets,
             missing: RefCell::new(BTreeMap::new()),

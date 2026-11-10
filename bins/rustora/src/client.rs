@@ -11,6 +11,7 @@ use std::sync::Arc;
 use rustora_audio::MixerDevice;
 use rustora_client::game_information::ReplayMetadata;
 use rustora_client::installer::ModContent;
+use rustora_client::lag_monitor::{LagCause, LagMonitor, LagReport, wait_causes};
 use rustora_client::map_cache::MapCache;
 use rustora_client::replay::Replay;
 use rustora_client::settings::{Settings, WorldViewport};
@@ -73,10 +74,50 @@ struct ShellWorld {
     ingame: Option<Rc<Ingame>>,
     ended: bool,
     game_over_seen: bool,
+    /// The slowdown of a running game that is not a replay, from its first tick attempt on.
+    lag: Option<LagMonitor>,
+    /// The time of the last tick attempt.
+    last_attempt: Option<i64>,
 }
 
 /// `Ui.Timestep`.
 pub const UI_TIMESTEP: i32 = 40;
+/// A longer pause between two tick attempts, like a minimized window, starts the lag measurement anew.
+const LAG_GAP_MS: i64 = 1000;
+
+/// True if the server reports a poor connection for this client while another human client's is fine. A stalled
+/// server delays the pings of all clients, so a poor connection of every client points at the server instead.
+fn own_connection_alone_poor(net: &rustora_ui::net::NetState) -> bool {
+    use rustora_net::session::ConnectionQuality;
+    let Some(own) = net.local_client() else {
+        return false;
+    };
+    own.connection_quality == ConnectionQuality::Poor
+        && net
+            .session
+            .non_bot_clients()
+            .any(|c| c.index != own.index && c.connection_quality != ConnectionQuality::Poor)
+}
+
+/// The lines of the lag display for `report`.
+fn lag_text(report: &LagReport, world: &World) -> String {
+    let mut lines = vec![format!("Game slowed to {}%", report.speed_percent)];
+    for &(cause, percent) in &report.causes {
+        let what = match cause {
+            LagCause::Client(index) => world
+                .lobby_info
+                .client_with_index(index)
+                .and_then(|c| c.name.clone())
+                .unwrap_or_else(|| format!("player {index}")),
+            LagCause::Server => "server".to_string(),
+            LagCause::OwnConnection => "your connection".to_string(),
+            LagCause::SlowerPlayers => "slower players".to_string(),
+            LagCause::ThisComputer => "this computer".to_string(),
+        };
+        lines.push(format!("Waiting for {what}: {percent}%"));
+    }
+    lines.join("\n")
+}
 /// `Game.TimestepJankThreshold`.
 const TIMESTEP_JANK_THRESHOLD: i64 = 250;
 
@@ -250,6 +291,8 @@ impl ShellWorld {
             ingame: None,
             ended: false,
             game_over_seen: false,
+            lag: None,
+            last_attempt: None,
         }
     }
 
@@ -279,6 +322,8 @@ impl ShellWorld {
             ingame: None,
             ended: false,
             game_over_seen: false,
+            lag: None,
+            last_attempt: None,
         }
     }
 
@@ -307,6 +352,8 @@ impl ShellWorld {
             ingame: None,
             ended: false,
             game_over_seen: false,
+            lag: None,
+            last_attempt: None,
         })
     }
 
@@ -324,13 +371,19 @@ impl ShellWorld {
         }
     }
 
-    fn tick(&mut self) {
+    /// Attempts a world tick at `now` that was scheduled with `timestep`. `own_connection_poor` tells whether the
+    /// server reports a poor connection for this client alone.
+    fn tick(&mut self, now: i64, timestep: i32, own_connection_poor: bool) {
         if self.ended {
             // The simulation has stopped advancing, but keep exchanging immediate orders, like OpenRA's
             // decoupled `OrderManager.TickImmediate`, so chat still works after the game ends.
             self.driver.orders.tick_immediate();
-        } else if self.driver.step() == Step::Ended {
-            self.ended = true;
+        } else {
+            let step = self.driver.step();
+            if step == Step::Ended {
+                self.ended = true;
+            }
+            self.measure_lag(now, timestep, step, own_connection_poor);
         }
         if self.world.is_replay() && self.driver.orders.out_of_sync.is_some() {
             self.world.replay_timestep.set(0);
@@ -344,6 +397,34 @@ impl ShellWorld {
                 groups.tick();
             }
         }
+    }
+
+    /// Records the tick attempt in the lag monitor and puts its report into the in-game state.
+    fn measure_lag(&mut self, now: i64, timestep: i32, step: Step, own_connection_poor: bool) {
+        let Some(ingame) = self.ingame.clone() else {
+            return;
+        };
+        let orders = &self.driver.orders;
+        if self.world.is_replay() || self.world.is_loading_game_save() || !orders.game_started() || step == Step::Ended {
+            self.lag = None;
+            ingame.lag_text.borrow_mut().clear();
+            return;
+        }
+        let monitor = self.lag.get_or_insert_with(|| LagMonitor::new(self.world.timestep));
+        if self.last_attempt.is_some_and(|t| now - t > LAG_GAP_MS) {
+            monitor.reset();
+        }
+        self.last_attempt = Some(now);
+        match step {
+            Step::Waiting => {
+                let local = orders.connection.local_client_id();
+                let causes = wait_causes(&orders.missing_clients(), local, own_connection_poor);
+                monitor.wait(now, timestep, causes);
+            }
+            _ => monitor.tick(now, timestep),
+        }
+        let text = monitor.report(now).map(|r| lag_text(&r, &self.world)).unwrap_or_default();
+        *ingame.lag_text.borrow_mut() = text;
     }
 
     /// Feeds the user interface with the orders that the world ignores, and sends the chat lines it wrote.
@@ -784,8 +865,9 @@ impl Client {
         if self.world_tick_time.should_advance(now, timestep) {
             self.world_tick_time.advance(now, timestep);
             self.update_script_host();
+            let own_connection_poor = own_connection_alone_poor(&self.services.net.borrow());
             if let Some(shell) = &mut self.shell {
-                shell.tick();
+                shell.tick(now, timestep, own_connection_poor);
                 if shell.ingame.is_some() {
                     let assets = self.ui.assets.clone();
                     shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, now, &self.services.save_dir);
@@ -1128,6 +1210,10 @@ impl Client {
             start_music(&self.services, self.shell.as_ref());
         }
         let root = self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
+        let lag_display = self.ui.load_widget("LAG_DISPLAY", Some(root), &WidgetArgs::default());
+        if let Some(ingame) = self.services.ingame.borrow().clone() {
+            self.ui.label(lag_display).get_text = Some(Rc::new(move || ingame.lag_text.borrow().clone()));
+        }
         if let Some(label) = self.ui.find(root, "MISSION_TEXT") {
             let (host, color_host) = (self.script_host.clone(), self.script_host.clone());
             let mut label = self.ui.label(label);
