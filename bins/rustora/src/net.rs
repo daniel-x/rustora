@@ -25,7 +25,7 @@ use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
 use rustora_launch::net_client::{JoinOptions, NetworkConnection, handshake_response};
 use rustora_net::order::RawOrder;
-use rustora_net::session::Session;
+use rustora_net::session::{ClientState, Session};
 use rustora_ui::fluent::{MessageArg, Messages};
 use rustora_ui::logic::color_picker::ColorRules;
 use rustora_ui::logic::{ColorRulesLookup, LobbyRulesLookup};
@@ -533,6 +533,12 @@ pub fn process_client_order(
                 && let Some(line) = chat_notification(net, client_id, order)
             {
                 net.notifications.push(line);
+            }
+            return Ok(());
+        }
+        "Disconnected" => {
+            if let Some(c) = net.session.clients.iter_mut().find(|c| c.index == client_id) {
+                c.state = ClientState::Disconnected;
             }
             return Ok(());
         }

@@ -259,6 +259,11 @@ impl OrderManager {
                     if self.game_started() {
                         self.enqueue(client_id, frame, None);
                     }
+                    // Tell the user interface, which marks the client "Gone", like `OrderManager.ReceiveDisconnect`
+                    // setting the unsynced `Client.State` to `Disconnected`.
+                    if self.collect_client_orders {
+                        self.client_orders.push((client_id, RawOrder::new("Disconnected")));
+                    }
                 }
                 Incoming::Immediate { client_id, orders } => {
                     for raw in &orders.orders {
