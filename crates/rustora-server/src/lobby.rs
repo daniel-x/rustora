@@ -587,7 +587,7 @@ impl Server {
         }
         let admin = client.name.clone().unwrap_or_default();
         let player = target.name.clone().unwrap_or_default();
-        let address = self.conn(target.index).and_then(|c| c.peer.ip()).map(|ip| ip.to_string());
+        let address = self.conn(target.index).and_then(|c| c.origin.ip()).map(|ip| ip.to_string());
         self.send_fluent_message(
             "notification-admin-kicked",
             &[("admin", (&admin).into()), ("player", (&player).into())],

@@ -23,28 +23,28 @@ const PING_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Where a client connects from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Peer {
+pub enum ClientOrigin {
     /// A client on the network, at this address.
     Network(SocketAddr),
     /// A client in the same process, connected through an in-memory pipe.
     InProcess,
 }
 
-impl Peer {
+impl ClientOrigin {
     /// The IP address of a network client, mapped IPv4 addresses as IPv4.
     pub fn ip(self) -> Option<std::net::IpAddr> {
         match self {
-            Peer::Network(address) => Some(address.ip().to_canonical()),
-            Peer::InProcess => None,
+            ClientOrigin::Network(address) => Some(address.ip().to_canonical()),
+            ClientOrigin::InProcess => None,
         }
     }
 }
 
-impl std::fmt::Display for Peer {
+impl std::fmt::Display for ClientOrigin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Peer::Network(address) => write!(f, "{address}"),
-            Peer::InProcess => f.write_str("in-process client"),
+            ClientOrigin::Network(address) => write!(f, "{address}"),
+            ClientOrigin::InProcess => f.write_str("in-process client"),
         }
     }
 }
@@ -52,7 +52,7 @@ impl std::fmt::Display for Peer {
 /// Events the listener and connection threads send to the server thread.
 pub enum Event {
     /// A new client stream and where it comes from.
-    Connect(Box<dyn ByteStream>, Peer),
+    Connect(Box<dyn ByteStream>, ClientOrigin),
     Packet {
         player_index: i32,
         frame: i32,
@@ -81,7 +81,7 @@ pub enum Event {
 pub struct Connection {
     pub player_index: i32,
     pub auth_token: String,
-    pub peer: Peer,
+    pub origin: ClientOrigin,
     pub validated: bool,
     pub last_orders_frame: i32,
     pub timeout_message_shown: bool,
@@ -106,12 +106,12 @@ fn ping_frame(now: u64) -> Vec<u8> {
 }
 
 impl Connection {
-    /// Starts the threads of `socket`, which comes from `peer`.
+    /// Starts the threads of `socket`, which comes from `origin`.
     pub fn new(
         player_index: i32,
         auth_token: String,
         socket: Box<dyn ByteStream>,
-        peer: Peer,
+        origin: ClientOrigin,
         events: Sender<Event>,
         start: Instant,
         is_multiplayer: bool,
@@ -120,17 +120,17 @@ impl Connection {
         let (send, queue) = channel();
         let last_received = Arc::new(AtomicU64::new(run_time(start)));
         let lr = last_received.clone();
-        std::thread::Builder::new().name(format!("Client read ({peer})")).spawn(move || {
+        std::thread::Builder::new().name(format!("Client read ({origin})")).spawn(move || {
             let _ = read_loop(player_index, socket, &events, start, is_multiplayer, &lr);
             let _ = events.send(Event::Disconnect { player_index });
         })?;
         std::thread::Builder::new()
-            .name(format!("Client write ({peer})"))
+            .name(format!("Client write ({origin})"))
             .spawn(move || write_loop(writer_socket, &queue, start))?;
         Ok(Connection {
             player_index,
             auth_token,
-            peer,
+            origin,
             validated: false,
             last_orders_frame: 0,
             timeout_message_shown: false,

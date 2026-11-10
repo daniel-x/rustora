@@ -29,7 +29,7 @@ use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Sessi
 use rustora_net::stream::{ByteStream, PipeEnd, pipe};
 
 use crate::auth::{PlayerProfile, check_profile};
-use crate::connection::{Connection, Event, Peer, run_time};
+use crate::connection::{ClientOrigin, Connection, Event, run_time};
 use crate::geoip::{self, GeoIp};
 use crate::master_server::MasterServerPinger;
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
@@ -295,7 +295,7 @@ fn listen_loop(listener: TcpListener, events: Sender<Event>, accepting: Arc<Atom
         match listener.accept() {
             Ok((stream, end_point)) => {
                 if stream.set_nonblocking(false).and_then(|()| stream.set_nodelay(true)).is_ok() {
-                    let _ = events.send(Event::Connect(Box::new(stream), Peer::Network(end_point)));
+                    let _ = events.send(Event::Connect(Box::new(stream), ClientOrigin::Network(end_point)));
                 }
             }
             Err(_) => std::thread::sleep(Duration::from_millis(50)),
@@ -313,7 +313,7 @@ impl LocalConnector {
     /// The client end of a new connection, or `None` once the server is gone.
     pub fn connect(&self) -> Option<PipeEnd> {
         let (client, server) = pipe();
-        self.events.send(Event::Connect(Box::new(server), Peer::InProcess)).ok()?;
+        self.events.send(Event::Connect(Box::new(server), ClientOrigin::InProcess)).ok()?;
         Some(client)
     }
 
@@ -540,7 +540,7 @@ impl Server {
 
     fn handle_event(&mut self, event: Event) {
         match event {
-            Event::Connect(socket, peer) => self.accept_connection(socket, peer),
+            Event::Connect(socket, origin) => self.accept_connection(socket, origin),
             Event::Packet { player_index, frame, data } => self.receive_orders(player_index, frame, &data),
             Event::Ping { player_index, history, .. } => self.receive_ping(player_index, &history),
             Event::Disconnect { player_index } => self.drop_client(player_index),
@@ -598,7 +598,7 @@ impl Server {
         i
     }
 
-    fn accept_connection(&mut self, socket: Box<dyn ByteStream>, peer: Peer) {
+    fn accept_connection(&mut self, socket: Box<dyn ByteStream>, origin: ClientOrigin) {
         if self.state != ServerState::WaitingPlayers {
             return;
         }
@@ -609,7 +609,7 @@ impl Server {
             index,
             token.clone(),
             socket,
-            peer,
+            origin,
             self.events_tx.clone(),
             self.start,
             self.is_multiplayer(),
@@ -635,7 +635,7 @@ impl Server {
 
     fn reject(&mut self, player_index: i32, order: &str, message: &str, reason: &str) {
         if let Some(c) = self.conn(player_index) {
-            log::info!(target: "server", "Rejected connection from {}; {reason}.", c.peer);
+            log::info!(target: "server", "Rejected connection from {}; {reason}.", c.origin);
         }
         self.send_order_to(player_index, order, message);
         self.drop_client(player_index);
@@ -667,7 +667,7 @@ impl Server {
             };
             return self.reject(player_index, "AuthenticationError", message, "wrong password");
         }
-        let Some(ip) = self.conn(player_index).map(|c| c.peer.ip()) else {
+        let Some(ip) = self.conn(player_index).map(|c| c.origin.ip()) else {
             return;
         };
         let manifest = &self.game_mod.data.manifest;
@@ -819,7 +819,7 @@ impl Server {
         self.lobby.clients.push(client);
         if let Some(c) = self.conn_mut(player_index) {
             c.validated = true;
-            log::info!(target: "server", "Client {player_index}: Accepted connection from {}.", c.peer);
+            log::info!(target: "server", "Client {player_index}: Accepted connection from {}.", c.origin);
         }
         let join_cooldown = self.settings.flood_limit_join_cooldown;
         if !is_admin && join_cooldown > 0 {
