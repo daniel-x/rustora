@@ -46,7 +46,7 @@ impl Platform {
 
     /// The directories [`Platform::find_engine_dir`] searches for the RA mod: the executable's directory,
     /// `../share/rustora` (installed layout) and `../Resources` (macOS app bundle), and then for a build in a source
-    /// checkout each directory beside the executable's ancestors, which finds an OpenRA source tree next to it.
+    /// checkout each directory beside the executable's ancestors, which finds the `data` directory of the checkout.
     pub fn engine_dir_candidates() -> Vec<PathBuf> {
         let bin = std::env::current_exe()
             .ok()

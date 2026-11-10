@@ -5,7 +5,32 @@ compatibility with OpenRA release-20250330 (data, replays, network play and save
 target is the Red Alert mod.
 
 The original game content is not part of this repository. It is installed by the content
-installer, like in OpenRA.
+installer, like in OpenRA. The RA mod data of OpenRA release-20250330 (rules, maps, chrome and scripts,
+GPL-3.0-or-later like OpenRA) is in `data/`; `scripts/update-mod-data.sh [openra-ref]` replaces it with
+the mod data of another OpenRA tag or commit from GitHub.
+
+## System requirements and first start
+
+- Windows 10 or 11, 64-bit, with a graphics driver for DirectX 12, Vulkan or OpenGL.
+- macOS 11 or newer, on Intel or Apple Silicon.
+- Linux on x86_64 with glibc 2.28 or newer (Debian 10, Ubuntu 20.04, Fedora 29, RHEL 8 or newer), X11 or
+  Wayland, and a Vulkan or OpenGL driver. Sound needs ALSA (`libasound2`), which practically every desktop
+  has; without it the game runs silently.
+
+Unpack the archive and start `rustora` (`rustora.exe` on Windows, `Rustora.app` on macOS). On the first
+start the game asks for the content of the original Red Alert: **Quick Install** downloads 13 MB from a mirror
+of the 2008 freeware release, without music and videos, and opens the main menu when it is done. **Advanced
+Install** also copies the music and videos from an original game disc or installation.
+
+The packages are not signed by a known developer, so Windows and macOS warn on the first start:
+
+- Windows shows "Windows protected your PC". Click **More info**, then **Run anyway**.
+- macOS refuses to open the app because it cannot verify the developer. The app has only an ad-hoc signature,
+  which Apple Silicon needs to run it at all, but which names no developer. Open **System Settings**,
+  **Privacy & Security**, and click **Open Anyway** next to the message about Rustora, or remove the
+  quarantine flag of the download in a terminal: `xattr -dr com.apple.quarantine Rustora.app`. After that the
+  app opens normally. Without a developer identity, macOS may ask again after an update whether the app may
+  accept incoming network connections, when you host a multiplayer game.
 
 ## Building
 
@@ -17,8 +42,8 @@ cargo build --release
 
 `rustora` opens the main menu like the OpenRA launcher; `rustora <host>:<port>` joins a server. The mod
 data is looked up next to the executable, in `../share/rustora`, in `../Resources` (macOS app bundle), or,
-for a build in a source checkout, in an OpenRA release-20250330 source tree in a directory beside the
-executable's parent directories; `--engine-dir <dir>` overrides it. Settings, content and maps live in
+for a build in a source checkout, in a directory beside the executable's parent directories, which finds
+`data/`; `--engine-dir <dir>` overrides it. Settings, content and maps live in
 the OpenRA support directory, so they are shared with an OpenRA installation, or in a `Support`
 directory next to the mod data if one exists; `--support-dir <dir>` overrides it. The files rustora
 writes for itself, logs, exception reports, replays and saves, go to `rustora` in that directory, for
@@ -39,9 +64,11 @@ player games run their server inside the client.
 
 ## Packaging
 
-`packaging/linux/package.sh <openra-dir>`, `packaging/windows/package.ps1 <openra-dir>` and
-`packaging/macos/package.sh <openra-dir>` build archives with the binaries and the RA mod data of an
-OpenRA release-20250330 source tree. The release workflow runs them for tags `v*`.
+`packaging/linux/package.sh`, `packaging/windows/package.ps1` and `packaging/macos/package.sh` build
+archives with the binaries, the RA mod data of `data/` and the current GeoIP database of OpenRA, which
+they download. The release workflow runs them for tags `v*`. The Linux script builds against glibc 2.28 with
+[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild), which needs zig. The Windows binaries link the
+C runtime statically (`.cargo/config.toml`), so they need no Visual C++ Redistributable.
 
 ## License
 

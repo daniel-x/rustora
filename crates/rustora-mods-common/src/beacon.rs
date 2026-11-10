@@ -118,19 +118,23 @@ impl Beacon {
             PaletteRef::named(&info.beacon_palette)
         };
         let poster = anim(&info.beacon_poster, false);
-        let clock = poster.as_ref().and(info.clock_sequence.as_deref()).filter(|s| !s.is_empty()).map(|s| {
-            let a = Animation::new(world.map().sequences().clone(), &info.beacon_image, None, None);
-            let fraction = clock_fraction.unwrap_or_else(|| Box::new(|| 0.0));
-            let weak = Rc::downgrade(&a);
-            a.play_fetch_index(
-                s,
-                Rc::new(move || {
-                    let len = weak.upgrade().and_then(|a| a.current_sequence()).map_or(1, |s| s.length());
-                    ((fraction() * (len - 1) as f32) as i32).clamp(0, len - 1)
-                }),
-            );
-            a
-        });
+        let clock = poster
+            .as_ref()
+            .and(info.clock_sequence.as_deref())
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let a = Animation::new(world.map().sequences().clone(), &info.beacon_image, None, None);
+                let fraction = clock_fraction.unwrap_or_else(|| Box::new(|| 0.0));
+                let weak = Rc::downgrade(&a);
+                a.play_fetch_index(
+                    s,
+                    Rc::new(move || {
+                        let len = weak.upgrade().and_then(|a| a.current_sequence()).map_or(1, |s| s.length());
+                        ((fraction() * (len - 1) as f32) as i32).clamp(0, len - 1)
+                    }),
+                );
+                a
+            });
         Rc::new_cyclic(|me| Beacon {
             me: me.clone(),
             owner: owner.clone(),

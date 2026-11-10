@@ -2,7 +2,7 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Drives the `rustora-server` binary over TCP, and the single player server in a thread through an in-memory pipe,
-//! with raw protocol clients. Skips without the OpenRA reference checkout.
+//! with raw protocol clients, on the mod data of `data/`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -28,7 +28,7 @@ use sha1::{Digest, Sha1};
 const MAP: &str = "ore-lord.oramap";
 
 fn engine_dir() -> Option<PathBuf> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../openra-ref");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data");
     p.join("mods/ra/mod.yaml").exists().then_some(p)
 }
 

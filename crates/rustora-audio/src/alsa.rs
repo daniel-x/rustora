@@ -3,7 +3,7 @@
 
 //! The Linux audio output: ALSA's `libasound.so.2`, loaded when sound starts. The binary does not link it, so it
 //! also starts on systems without ALSA, such as minimal servers running `--headless`. Calling a library loaded at
-//! runtime needs `unsafe`; this module is the only place in the workspace that allows it.
+//! runtime needs `unsafe`, which this module allows, like the Windows console module of the client.
 #![allow(unsafe_code)]
 
 use std::ffi::{CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};

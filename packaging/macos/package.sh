@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Usage: packaging/macos/package.sh <openra-source-dir> [out-dir]
+# Usage: packaging/macos/package.sh [out-dir]
 # Builds universal (x86_64 and arm64) release binaries and writes rustora-<version>-macos.zip with Rustora.app,
-# whose Contents/Resources hold the mod data of the RA mod from an OpenRA release-20250330 source tree.
+# whose Contents/Resources hold the RA mod data of data/.
 # Needs the rustup targets x86_64-apple-darwin and aarch64-apple-darwin. The app is not signed.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-openra="$(cd "$1" && pwd)"
-out="$(mkdir -p "${2:-$root/target/distrib}" && cd "${2:-$root/target/distrib}" && pwd)"
+out="$(mkdir -p "${1:-$root/target/distrib}" && cd "${1:-$root/target/distrib}" && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-macos"
 for t in x86_64-apple-darwin aarch64-apple-darwin; do
@@ -15,32 +14,19 @@ for t in x86_64-apple-darwin aarch64-apple-darwin; do
 done
 app="$out/$name/Rustora.app"
 rm -rf "$out/$name"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/mods"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 for b in rustora rustora-server; do
   lipo -create -output "$app/Contents/MacOS/$b" \
     "$root/target/x86_64-apple-darwin/dist/$b" "$root/target/aarch64-apple-darwin/dist/$b"
 done
-for m in common common-content ra ra-content; do
-  cp -r "$openra/mods/$m" "$app/Contents/Resources/mods/"
-done
-sed -i '' 's/{DEV_VERSION}/release-20250330/g' "$app"/Contents/Resources/mods/*/mod.yaml
-cp "$openra/global mix database.dat" "$app/Contents/Resources/"
-# The GeoIP database of the server: the one of the OpenRA tree if it is younger than 30 days, else a download of
-# the current monthly one like OpenRA's fetch-geoip.sh, else an older one of the OpenRA tree.
+res="$app/Contents/Resources"
+cp -R "$root/data/mods" "$root/data/global mix database.dat" "$res/"
+# The GeoIP database of the server, the current monthly one like OpenRA's fetch-geoip.sh downloads it.
 geoip=IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP
-copy_geoip() {
-  if [ -n "$(find "$openra" -maxdepth 1 -name "$geoip" -mtime -30 -print)" ]; then
-    cp "$openra/$geoip" "$1/"
-  elif ! curl -fsSL -o "$1/$geoip" "https://github.com/OpenRA/GeoIP-Database/releases/download/monthly/$geoip"; then
-    rm -f "$1/$geoip"
-    if [ -f "$openra/$geoip" ]; then
-      cp "$openra/$geoip" "$1/"
-    else
-      echo "Warning: no GeoIP database; the server of this package looks up no countries" >&2
-    fi
-  fi
-}
-copy_geoip "$app/Contents/Resources"
+if ! curl -fsSL -o "$res/$geoip" "https://github.com/OpenRA/GeoIP-Database/releases/download/monthly/$geoip"; then
+  rm -f "$res/$geoip"
+  echo "Warning: no GeoIP database; the server of this package looks up no countries" >&2
+fi
 cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$out/$name/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

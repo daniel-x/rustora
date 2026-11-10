@@ -60,14 +60,22 @@ fn spawn_server(engine: &Path, support: &str, args: &[&str]) -> Option<(Child, A
     let exe = std::env::current_exe()
         .ok()?
         .with_file_name(format!("rustora-server{}", std::env::consts::EXE_SUFFIX));
-    let result = Command::new(&exe)
+    let mut command = Command::new(&exe);
+    command
         .arg("--engine-dir")
         .arg(engine)
         .args(["--support-dir", support, "--dependent"])
         .args(args)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn();
+        .stdout(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        /// `CREATE_NO_WINDOW`: the console program gets no console window of its own next to the game.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let result = command.spawn();
     let mut child = result
         .inspect_err(|e| log::error!("Starting the server {} failed: {e}", exe.display()))
         .ok()?;
@@ -667,4 +675,3 @@ pub fn process_client_order(
     }
     Ok(())
 }
-

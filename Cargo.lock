@@ -2574,6 +2574,7 @@ dependencies = [
  "rustora-scripting",
  "rustora-server",
  "rustora-ui",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

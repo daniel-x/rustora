@@ -1,0 +1,4 @@
+# The Windows binaries link the C runtime (vcruntime and the UCRT) statically, so they run without the Visual C++
+# Redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

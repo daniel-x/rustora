@@ -316,10 +316,16 @@ fn home_dir() -> PathBuf {
         .unwrap_or_default()
 }
 
-/// The value of a registry entry, read with the `reg` tool of Windows.
+/// The value of a registry entry, read with the `reg` tool of Windows, which gets no console window.
 #[cfg(windows)]
 fn registry_value(key: &str, value: &str) -> Option<String> {
-    let output = std::process::Command::new("reg").args(["query", key, "/v", value]).output().ok()?;
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let output = std::process::Command::new("reg")
+        .args(["query", key, "/v", value])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -958,7 +964,7 @@ mod tests {
 
     #[test]
     fn ra_content_manifest_loads() {
-        let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../openra-ref");
+        let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
         if !engine.join("mods/ra-content/mod.yaml").exists() {
             return;
         }

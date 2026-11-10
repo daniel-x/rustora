@@ -14,31 +14,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The oldest supported Ubuntu runner keeps the glibc requirement of the Linux binaries low.
-          - os: ubuntu-22.04
-            script: packaging/linux/package.sh openra target/distrib
+          # The Linux binaries are built against glibc 2.28 with cargo-zigbuild, independent of the runner.
+          - os: ubuntu-latest
+            script: packaging/linux/package.sh target/distrib
           - os: windows-latest
-            script: pwsh packaging/windows/package.ps1 openra target/distrib
+            script: pwsh packaging/windows/package.ps1 target/distrib
           - os: macos-latest
-            script: packaging/macos/package.sh openra target/distrib
+            script: packaging/macos/package.sh target/distrib
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/checkout@v5
-        with:
-          repository: OpenRA/OpenRA
-          ref: release-20250330
-          path: openra
-          sparse-checkout: |
-            mods/common
-            mods/common-content
-            mods/ra
-            mods/ra-content
-            global mix database.dat
-          sparse-checkout-cone-mode: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+      - if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@v2
+      - if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
       - shell: bash
         run: ${{ matrix.script }}
       - uses: actions/upload-artifact@v6

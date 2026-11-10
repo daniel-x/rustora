@@ -2,6 +2,8 @@
 // Copyright (c) The rustora authors.
 
 //! rustora client. `rustora` opens the main menu with the default directories; see [`HELP`] for the arguments.
+//! On Windows it is a GUI program without a console window of its own.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
 mod client;
@@ -15,6 +17,8 @@ mod snapshot;
 mod sprites;
 mod ui_sprites;
 mod window;
+#[cfg(windows)]
+mod windows_console;
 
 use std::path::{Path, PathBuf};
 
@@ -227,6 +231,8 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
 }
 
 fn main() {
+    #[cfg(windows)]
+    windows_console::attach_parent_console();
     let raw: Vec<String> = std::env::args().skip(1).collect();
     if matches!(raw.first().map(String::as_str), Some("--help" | "-h")) {
         print!("{HELP}");

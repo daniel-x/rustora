@@ -65,7 +65,9 @@ impl GeoIp {
 
     fn bytes(&self, pos: u64, len: usize) -> Result<&[u8], String> {
         let start = usize::try_from(pos).map_err(|e| e.to_string())?;
-        self.data.get(start..start + len).ok_or_else(|| format!("read past the end at {pos}"))
+        self.data
+            .get(start..start + len)
+            .ok_or_else(|| format!("read past the end at {pos}"))
     }
 
     fn row(&self, index: u64, v6: bool) -> u64 {
@@ -123,15 +125,25 @@ mod tests {
     use super::*;
 
     fn database() -> Option<GeoIp> {
-        GeoIp::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../openra-ref").join(DATABASE_FILE))
+        GeoIp::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../openra-ref")
+                .join(DATABASE_FILE),
+        )
     }
 
     #[test]
     fn looks_up_countries() {
         let Some(db) = database() else { return };
-        assert_eq!(db.lookup_country("8.8.8.8".parse().unwrap()).as_deref(), Some("United States of America"));
+        assert_eq!(
+            db.lookup_country("8.8.8.8".parse().unwrap()).as_deref(),
+            Some("United States of America")
+        );
         assert_eq!(db.lookup_country("127.0.0.1".parse().unwrap()), None);
-        assert_eq!(db.lookup_country("2001:4860:4860::8888".parse().unwrap()).as_deref(), Some("United States of America"));
+        assert_eq!(
+            db.lookup_country("2001:4860:4860::8888".parse().unwrap()).as_deref(),
+            Some("United States of America")
+        );
         assert_eq!(db.lookup_country("::ffff:8.8.8.8".parse().unwrap()), None);
     }
 }

@@ -27,5 +27,8 @@ arboard = "3"
 image-webp = "0.2"
 mimalloc = { version = "0.1.52", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
 [lints]
 workspace = true
