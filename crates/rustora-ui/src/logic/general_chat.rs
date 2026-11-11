@@ -153,12 +153,14 @@ pub fn widget_args(ui: &Ui) -> WidgetArgs {
     args
 }
 
-/// Whether the server list or a multiplayer lobby is open, also below other windows.
+/// Whether the server list, a multiplayer lobby, or the connecting or connection failed dialog of a multiplayer
+/// server is open, also below other windows. The dialogs count on their own, because the lobby is gone when a
+/// player is kicked or the connection is lost.
 fn multiplayer_menu_open(ui: &Ui) -> bool {
-    let multiplayer_lobby = services(ui).net.borrow().target != JoinTarget::SinglePlayer;
+    let multiplayer = services(ui).net.borrow().target != JoinTarget::SinglePlayer;
     ui.windows().iter().any(|&w| match ui.node(w).id.as_deref() {
         Some("MULTIPLAYER_PANEL") => true,
-        Some("SERVER_LOBBY") => multiplayer_lobby,
+        Some("SERVER_LOBBY" | "CONNECTING_PANEL" | "CONNECTIONFAILED_PANEL") => multiplayer,
         _ => false,
     })
 }
