@@ -37,6 +37,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("DebugPauseState", |n| load_info!(DebugPauseStateInfo, n));
     r.register("MapOptions", |n| load_info!(MapOptionsInfo, n));
     r.register("MapBuildRadius", |n| load_info!(MapBuildRadiusInfo, n));
+    r.register("MapCreeps", |n| load_info!(MapCreepsInfo, n));
     r.register("PowerManager", |n| load_info!(PowerManagerInfo, n));
     r.register("Power", |n| load_info!(PowerInfo, n));
     r.register("ScalePowerWithHealth", |n| load_info!(ScalePowerWithHealthInfo, n));
@@ -366,6 +367,39 @@ impl INotifyCreated for MapBuildRadius {
             .set(gs.option_bool("allybuild", self.info.ally_build_radius_checkbox_enabled));
         self.build_radius_enabled
             .set(gs.option_bool("buildradius", self.info.build_radius_checkbox_enabled));
+    }
+}
+
+/// `MapCreepsInfo`: the lobby option `creeps`.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct MapCreepsInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    pub checkbox_enabled: bool,
+}
+
+impl Default for MapCreepsInfo {
+    fn default() -> Self {
+        MapCreepsInfo {
+            instance_name: None,
+            checkbox_enabled: true,
+        }
+    }
+}
+
+#[derive(rustora_engine::persist::Persist)]
+pub struct MapCreeps {
+    info: Rc<MapCreepsInfo>,
+    pub enabled: Cell<bool>,
+}
+
+register_traits!(MapCreeps: INotifyCreated);
+info_impl!(MapCreepsInfo => |info, _| Some(Rc::new(MapCreeps { info, enabled: Cell::new(false) })));
+
+impl INotifyCreated for MapCreeps {
+    fn created(&self, self_: &ActorRef) {
+        let gs = &self_.world().lobby_info.global_settings;
+        self.enabled.set(gs.option_bool("creeps", self.info.checkbox_enabled));
     }
 }
 

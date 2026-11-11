@@ -29,6 +29,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("Huntable", |n| load_info!(HuntableInfo, n));
     r.register("ScaredyCat", |n| load_info!(ScaredyCatInfo, n));
     r.register("Wanders", |n| load_info!(WandersInfo, n));
+    r.register("AttackWander", |n| load_info!(AttackWanderInfo, n));
     r.register("RejectsOrders", |n| load_info!(RejectsOrdersInfo, n));
     r.register("ValidateOrder", |n| load_info!(ValidateOrderInfo, n));
     r.register("WithInfantryBody", |n| load_info!(WithInfantryBodyInfo, n));
@@ -758,32 +759,108 @@ impl INotifyIdle for Wanders {
         if self.countdown.get() > 0 {
             return;
         }
-        if let Some(cell) = self.pick_target_location(self_) {
+        if let Some(cell) = pick_wander_target(self_, &self.info, &self.ticks_idle, &self.effective_move_radius) {
             self_.queue_activity(self.mv.move_to(cell, 0, None, false));
         }
     }
 }
 
-impl Wanders {
-    fn pick_target_location(&self, self_: &ActorRef) -> Option<rustora_core::world_types::CPos> {
-        let w = self_.world();
-        let facing = w.shared_random.borrow_mut().next_max(255);
-        let target = self_.center_position()
-            + WVec::new(0, -1024 * self.effective_move_radius.get(), 0).rotate(&rustora_core::world_types::WRot::from_facing(facing));
-        let cell = w.map().cell_containing(target);
-        if !w.map().contains(cell) {
-            self.ticks_idle.set(self.ticks_idle.get() + 1);
-            if self.ticks_idle.get() % self.info.reduce_move_radius_delay == 0 {
-                self.effective_move_radius.set(self.effective_move_radius.get() - 1);
-            }
-            return None;
+/// `Wanders.PickTargetLocation`.
+fn pick_wander_target(
+    self_: &ActorRef,
+    info: &WandersInfo,
+    ticks_idle: &Cell<i32>,
+    effective_move_radius: &Cell<i32>,
+) -> Option<rustora_core::world_types::CPos> {
+    let w = self_.world();
+    let facing = w.shared_random.borrow_mut().next_max(255);
+    let target = self_.center_position()
+        + WVec::new(0, -1024 * effective_move_radius.get(), 0).rotate(&rustora_core::world_types::WRot::from_facing(facing));
+    let cell = w.map().cell_containing(target);
+    if !w.map().contains(cell) {
+        ticks_idle.set(ticks_idle.get() + 1);
+        if ticks_idle.get() % info.reduce_move_radius_delay == 0 {
+            effective_move_radius.set(effective_move_radius.get() - 1);
         }
-        if !self.info.avoid_terrain_types.is_empty() && self.info.avoid_terrain_types.contains(&w.map().terrain_type_info(cell).ty) {
-            return None;
+        return None;
+    }
+    if !info.avoid_terrain_types.is_empty() && info.avoid_terrain_types.contains(&w.map().terrain_type_info(cell).ty) {
+        return None;
+    }
+    ticks_idle.set(0);
+    effective_move_radius.set(info.wander_move_radius);
+    Some(cell)
+}
+
+/// `Traits/AttackWander.cs`: [`Wanders`] that attack-moves to the picked cell.
+#[derive(Clone, Debug, Default, FieldLoad)]
+pub struct AttackWanderInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub wanders: WandersInfo,
+}
+
+#[derive(rustora_engine::persist::Persist)]
+pub struct AttackWander {
+    info: Rc<AttackWanderInfo>,
+    state: ConditionalState,
+    mv: Rc<dyn IMove>,
+    countdown: Cell<i32>,
+    ticks_idle: Cell<i32>,
+    effective_move_radius: Cell<i32>,
+}
+
+register_traits!(AttackWander: INotifyIdle, INotifyBecomingIdle, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(AttackWanderInfo => |info, init| {
+    let w = &info.wanders;
+    let state = ConditionalState::new(&w.base);
+    let countdown = init.world().shared_random.borrow_mut().next_range(w.min_move_delay, w.max_move_delay);
+    Some(Rc::new(AttackWander {
+        mv: init.self_.trait_::<dyn IMove>(),
+        effective_move_radius: Cell::new(w.wander_move_radius),
+        countdown: Cell::new(countdown),
+        ticks_idle: Cell::new(0),
+        info,
+        state,
+    }))
+});
+
+rustora_engine::conditional_simple!(AttackWander);
+
+impl INotifyBecomingIdle for AttackWander {
+    fn on_becoming_idle(&self, self_: &ActorRef) {
+        let w = &self.info.wanders;
+        self.countdown.set(
+            self_
+                .world()
+                .shared_random
+                .borrow_mut()
+                .next_range(w.min_move_delay, w.max_move_delay),
+        );
+    }
+}
+
+impl INotifyIdle for AttackWander {
+    fn tick_idle(&self, self_: &ActorRef) {
+        if self.state.is_trait_disabled() {
+            return;
         }
-        self.ticks_idle.set(0);
-        self.effective_move_radius.set(self.info.wander_move_radius);
-        Some(cell)
+        self.countdown.set(self.countdown.get() - 1);
+        if self.countdown.get() > 0 {
+            return;
+        }
+        if let Some(cell) = pick_wander_target(self_, &self.info.wanders, &self.ticks_idle, &self.effective_move_radius) {
+            let order = crate::attack_move::MoveOrder::To {
+                mv: self.mv.clone(),
+                cell,
+                near_enough: 0,
+                ignore_actor: None,
+                evaluate_nearest_movable_cell: false,
+                line_color: Some(rustora_engine::activity::LINE_ORANGE_RED),
+            };
+            self_.queue_activity(crate::attack_move::AttackMoveActivity::new(self_, order, false));
+        }
     }
 }
 

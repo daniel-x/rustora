@@ -446,7 +446,7 @@ info_impl!(WithChargeSpriteBodyInfo => |info, init| {
         .find(|a| a.type_name() == "AttackCharges")
         .expect("WithChargeSpriteBody requires AttackCharges");
     let body = new_sprite_body(Rc::new(info.base.clone()), init, "WithChargeSpriteBody", None, BodyVariant::Charge { attack });
-    body.configure_animation(&init.self_);
+    body.configure_animation_of(&init.self_, body.clone());
     Some(body)
 });
 
@@ -792,7 +792,11 @@ impl WithSpriteBody {
     }
 
     fn configure_animation(&self, self_: &ActorRef) {
-        let body = crate::util::trait_rc(self_, self);
+        self.configure_animation_of(self_, crate::util::trait_rc(self_, self));
+    }
+
+    /// `ConfigureAnimation` with the `Rc` of this body, which the actor does not list yet while it is created.
+    fn configure_animation_of(&self, self_: &ActorRef, body: Rc<WithSpriteBody>) {
         if let BodyVariant::Charge { attack } = &self.variant {
             self.default_animation.play_fetch_index_saved(
                 &self.normalize_sequence(self_, &self.info.sequence),

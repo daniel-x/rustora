@@ -392,13 +392,13 @@ impl ShellWorld {
     }
 
     /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map.
-    fn load(engine: &Path, support: &str, view: (i32, i32), distance: WorldViewport) -> Option<ShellWorld> {
-        let names = shellmaps(engine);
+    fn load(engine: &Path, support: &str, mod_id: &str, view: (i32, i32), distance: WorldViewport) -> Option<ShellWorld> {
+        let names = shellmaps(engine, mod_id);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
         let name = names.get(now.subsec_nanos() as usize % names.len().max(1))?;
-        let package = open_map(engine, name)?;
+        let package = open_map(engine, mod_id, name)?;
         let map = MapPackage::load(package.clone()).ok()?;
         let lobby = skirmish_session(&map, &[], now.subsec_nanos() as i32).ok()?;
         let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Shellmap, true);
@@ -666,11 +666,14 @@ pub struct Client {
     ui_tick_time: TickTime,
     world_tick_time: TickTime,
     script_host: Rc<crate::script_host::ClientScriptHost>,
+    widget_roots: rustora_game::lobby_rules::WidgetRoots,
 }
 
 impl Client {
+    /// Starts the mod of the `Game.Mod=<id>` argument, `ra` without one.
     pub fn new(engine: &Path, support: &str, resolution: (i32, i32), args: &[String]) -> Client {
-        Client::initialize_mod(engine, support, resolution, args, "ra")
+        let mod_id = args.iter().rev().find_map(|a| a.strip_prefix("Game.Mod=")).unwrap_or("ra");
+        Client::initialize_mod(engine, support, resolution, args, mod_id)
     }
 
     pub fn mod_id(&self) -> &str {
@@ -693,6 +696,7 @@ impl Client {
             .is_none()
             .then(|| ModContent::load(&mod_data).expect("load mod content"));
         let mod_data = Rc::new(mod_data);
+        let widget_roots = rustora_game::lobby_rules::WidgetRoots::load(&mod_data);
         let load_screen = rustora_ui::load_screen::LoadScreen::new(&mod_data.manifest.load_screen);
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
         let mut assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
@@ -743,7 +747,7 @@ impl Client {
         let script_host = Rc::new(crate::script_host::ClientScriptHost::new(assets.clone()));
         rustora_scripting::host::set_host(script_host.clone());
         let shell = if mod_data.content_available && content.is_none() {
-            ShellWorld::load(engine, support, resolution, distance)
+            ShellWorld::load(engine, support, &mod_data.manifest.id, resolution, distance)
         } else {
             None
         };
@@ -768,7 +772,7 @@ impl Client {
                 ui.load_widget("MODCONTENT_BACKGROUND", Some(ui.root), &args);
             }
             None => {
-                ui.load_widget("MAINMENU", Some(ui.root), &menu_args);
+                ui.load_widget(&widget_roots.shellmap, Some(ui.root), &menu_args);
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("Launch.Replay=")) {
                     let meta = ReplayMetadata::read(Path::new(path));
                     if prompt_confirm_replay_compatibility(&mut ui, meta.as_ref(), Rc::new(|_| {})) {
@@ -806,6 +810,7 @@ impl Client {
                 value: -(UI_TIMESTEP as i64),
             },
             script_host,
+            widget_roots,
         }
     }
 
@@ -1101,7 +1106,13 @@ impl Client {
             (settings.graphics.viewport_distance, settings.game.pause_shellmap)
         };
         self.shell = if self.mod_data.content_available {
-            ShellWorld::load(&self.engine, &self.support, self.ui.resolution, distance)
+            ShellWorld::load(
+                &self.engine,
+                &self.support,
+                &self.mod_data.manifest.id,
+                self.ui.resolution,
+                distance,
+            )
         } else {
             None
         };
@@ -1109,7 +1120,8 @@ impl Client {
             shell.world.pause_shellmap.set(pause_shellmap);
         }
         start_music(&self.services, self.shell.as_ref());
-        self.ui.load_widget("MAINMENU", Some(self.ui.root), &WidgetArgs::default());
+        let root = self.widget_roots.shellmap.clone();
+        self.ui.load_widget(&root, Some(self.ui.root), &WidgetArgs::default());
     }
 
     /// `Game.RestartGame` for a game: a new single player server gets the lobby of the current game with a new random seed,
@@ -1320,7 +1332,8 @@ impl Client {
         if !loading {
             start_music(&self.services, self.shell.as_ref());
         }
-        let root = self.ui.load_widget("INGAME_ROOT", Some(self.ui.root), &WidgetArgs::default());
+        let ingame_root = self.widget_roots.ingame.clone();
+        let root = self.ui.load_widget(&ingame_root, Some(self.ui.root), &WidgetArgs::default());
         let lag_display = self.ui.load_widget("LAG_DISPLAY", Some(root), &WidgetArgs::default());
         if let Some(ingame) = self.services.ingame.borrow().clone() {
             self.ui.label(lag_display).get_text = Some(Rc::new(move || ingame.lag_text.borrow().clone()));
@@ -1333,8 +1346,10 @@ impl Client {
         }
         if let Some(world) = world.filter(|_| loading) {
             self.ui.set_visible_fn(root, || false);
-            self.ui
-                .open_window("GAMESAVE_LOADING_SCREEN", WidgetArgs::default().with_value("world", world));
+            self.ui.open_window(
+                &self.widget_roots.game_save_loading,
+                WidgetArgs::default().with_value("world", world),
+            );
             self.loading_root = Some(root);
         }
         for (what, count) in self.ui.loader.missing.borrow().iter() {
@@ -1418,7 +1433,8 @@ impl Client {
         }
         self.ui.reset_all();
         let args = WidgetArgs::default().with_value("openSettings", true);
-        self.ui.load_widget("MAINMENU", Some(self.ui.root), &args);
+        let root = self.widget_roots.shellmap.clone();
+        self.ui.load_widget(&root, Some(self.ui.root), &args);
     }
 
     /// `Game.TakeScreenshotInner` with the RGBA rows of a rendered frame.

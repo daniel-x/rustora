@@ -82,7 +82,10 @@ impl TerrainInfo {
         for n in &section("Templates")?.nodes {
             let t = &n.value;
             let f = |k: &str| t.nodes.iter().find(|n| n.key == k);
-            let id: u16 = get_value("Id", f("Id").map(|n| n.value.value_str())).map_err(|e| e.to_string())?;
+            let id: u16 = match f("Id") {
+                Some(i) => get_value("Id", Some(i.value.value_str())).map_err(|e| format!("{}: {e}", n.key))?,
+                None => 0,
+            };
             let size = match f("Size") {
                 Some(s) => {
                     let v: rustora_core::world_types::Int2 = get_value("Size", Some(s.value.value_str())).map_err(|e| e.to_string())?;

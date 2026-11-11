@@ -257,6 +257,32 @@ impl Messages<'_> {
     }
 }
 
+/// The widget trees of `LoadWidgetAtGameStartInfo` on the world actor of the default mod rules.
+#[derive(Clone, Debug)]
+pub struct WidgetRoots {
+    pub shellmap: String,
+    pub ingame: String,
+    pub game_save_loading: String,
+}
+
+impl WidgetRoots {
+    pub fn load(data: &ModData) -> WidgetRoots {
+        let rules = ModData::load_yaml(&data.file_system, &data.manifest.rules, None).unwrap_or_default();
+        let traits = rules
+            .iter()
+            .find(|n| n.key.eq_ignore_ascii_case("World"))
+            .and_then(|w| parse_trait_nodes("World", &w.value.nodes).ok())
+            .unwrap_or_default();
+        let info = traits.iter().find(|t| t.name == "LoadWidgetAtGameStart");
+        let get = |key: &str, default: &str| info.and_then(|t| field(t, key)).unwrap_or(default).to_string();
+        WidgetRoots {
+            shellmap: get("ShellmapRoot", "MAINMENU"),
+            ingame: get("IngameRoot", "INGAME_ROOT"),
+            game_save_loading: get("GameSaveLoadingRoot", "GAMESAVE_LOADING_SCREEN"),
+        }
+    }
+}
+
 /// The lobby relevant rules of a mod: game speeds, Fluent messages and the colors that tile sets restrict.
 pub struct ModLobbyRules {
     pub default_speed: String,

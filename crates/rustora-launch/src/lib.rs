@@ -22,11 +22,11 @@ use rustora_fs::{Folder, MapFs, Package, Platform, ZipPackage};
 use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
 
-/// Opens the map with the given uid from the `maps` folder of the RA mod or from the user map folders
-/// `<support>/maps/ra/<version>`, like the `MapFolders` of the RA manifest.
-pub fn find_map(engine: &Path, support: &str, uid: &str) -> Option<Arc<dyn Package>> {
-    let mut folders = vec![engine.join("mods/ra/maps")];
-    if let Ok(versions) = std::fs::read_dir(Path::new(support).join("maps/ra")) {
+/// Opens the map with the given uid from the `maps` folder of the mod `mod_id` or from the user map folders
+/// `<support>/maps/<mod_id>/<version>`, like the `MapFolders` of the mod manifests.
+pub fn find_map(engine: &Path, support: &str, mod_id: &str, uid: &str) -> Option<Arc<dyn Package>> {
+    let mut folders = vec![engine.join("mods").join(mod_id).join("maps")];
+    if let Ok(versions) = std::fs::read_dir(Path::new(support).join("maps").join(mod_id)) {
         let mut versions: Vec<_> = versions.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
         versions.sort();
         folders.extend(versions);
@@ -54,6 +54,27 @@ fn find_map_in(folder: &Path, uid: &str) -> Option<Arc<dyn Package>> {
     None
 }
 
+/// The mod of a map: its `RequiresMod`, or `ra` for a map without one.
+pub fn map_mod_id(map: &MapPackage) -> String {
+    map.yaml
+        .nodes
+        .iter()
+        .find(|n| n.key == "RequiresMod")
+        .map(|n| n.value.value_str().trim().to_string())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| "ra".to_string())
+}
+
+/// The mod of a replay: the `Mod` of its metadata, or `ra` for a replay without metadata.
+pub fn replay_mod_id(replay: &Replay) -> String {
+    replay
+        .metadata
+        .as_deref()
+        .and_then(|m| rustora_client::game_information::GameInformation::deserialize(m, "replay").ok())
+        .and_then(|info| info.root.mod_id)
+        .unwrap_or_else(|| "ra".to_string())
+}
+
 fn load_terrain(md: &ModData, tileset: &str) -> TerrainInfo {
     for f in &md.manifest.tile_sets {
         let y = ModData::load_yaml(&md.file_system, std::slice::from_ref(f), None).expect("tileset");
@@ -78,7 +99,7 @@ pub fn load_game(engine: &Path, support: &str, replay_path: &str) -> LoadedGame 
     let mut replay = Replay::parse(&std::fs::read(replay_path).expect("read replay")).expect("parse replay");
     let lobby = replay.lobby_info.take().expect("lobby info");
     let uid = lobby.global_settings.map.clone().expect("map uid");
-    let pkg = find_map(engine, support, &uid).expect("map not found");
+    let pkg = find_map(engine, support, &replay_mod_id(&replay), &uid).expect("map not found");
     let (world, mod_data, read_file) = load_world(engine, support, pkg, lobby, true);
     LoadedGame {
         world,
@@ -88,9 +109,9 @@ pub fn load_game(engine: &Path, support: &str, replay_path: &str) -> LoadedGame 
     }
 }
 
-/// Opens a map of the RA mod by its file or folder name, like `Launch.Map=ore-lord.oramap`.
-pub fn open_map(engine: &Path, name: &str) -> Option<Arc<dyn Package>> {
-    let p = engine.join("mods/ra/maps").join(name);
+/// Opens a map of the mod `mod_id` by its file or folder name, like `Launch.Map=ore-lord.oramap`.
+pub fn open_map(engine: &Path, mod_id: &str, name: &str) -> Option<Arc<dyn Package>> {
+    let p = engine.join("mods").join(mod_id).join("maps").join(name);
     if p.is_dir() {
         Some(Arc::new(Folder::new(&p)))
     } else {
@@ -98,7 +119,7 @@ pub fn open_map(engine: &Path, name: &str) -> Option<Arc<dyn Package>> {
     }
 }
 
-/// Loads the RA mod and the map `pkg` with its custom rules and creates a regular world for `lobby`.
+/// Loads the mod of the map and the map `pkg` with its custom rules and creates a regular world for `lobby`.
 pub fn load_world(
     engine: &Path,
     support: &str,
@@ -109,15 +130,15 @@ pub fn load_world(
     load_world_of_type(engine, support, pkg, lobby, is_replay, WorldType::Regular)
 }
 
-/// The maps of the RA mod folder with the `Shellmap` visibility, by file or folder name.
-pub fn shellmaps(engine: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(engine.join("mods/ra/maps"))
+/// The maps of the folder of the mod `mod_id` with the `Shellmap` visibility, by file or folder name.
+pub fn shellmaps(engine: &Path, mod_id: &str) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(engine.join("mods").join(mod_id).join("maps"))
         .into_iter()
         .flatten()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|name| {
-            open_map(engine, name)
+            open_map(engine, mod_id, name)
                 .and_then(|pkg| MapPackage::load(pkg).ok())
                 .is_some_and(|map| {
                     map.yaml
@@ -132,7 +153,7 @@ pub fn shellmaps(engine: &Path) -> Vec<String> {
     names
 }
 
-/// Loads the RA mod and the map `pkg` with its custom rules and creates the world for `lobby`.
+/// Loads the mod of the map and the map `pkg` with its custom rules and creates the world for `lobby`.
 pub fn load_world_of_type(
     engine: &Path,
     support: &str,
@@ -166,7 +187,7 @@ pub fn restore_game(
     sound: bool,
 ) -> Result<(Rc<World>, Rc<ModData>, ReadFile), String> {
     let (header, _) = rustora_engine::savegame::SaveHeader::read(save)?;
-    let pkg = find_map(engine, support, &header.map_uid).ok_or_else(|| format!("map {} not found", header.map_uid))?;
+    let pkg = find_map(engine, support, &header.mod_id, &header.map_uid).ok_or_else(|| format!("map {} not found", header.map_uid))?;
     restore_game_from(engine, support, pkg, save, is_replay, sound)
 }
 
@@ -188,7 +209,7 @@ pub fn restore_game_from(
 
 /// Writes the save game of `world`.
 pub fn save_game(world: &Rc<World>) -> Result<Vec<u8>, String> {
-    rustora_engine::savegame::save(world, "ra")
+    rustora_engine::savegame::save(world, &map_mod_id(&world.map().package))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -203,8 +224,8 @@ fn build_world(
     restoring: bool,
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
     rustora_mods_common::register_persist();
-    let md = ModData::load(Platform::new(engine, support), "ra").expect("load mod");
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
+    let md = ModData::load(Platform::new(engine, support), &map_mod_id(&map_package)).expect("load mod");
 
     let fs = MapFs {
         package: pkg.as_ref(),

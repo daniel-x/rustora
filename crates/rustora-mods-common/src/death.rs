@@ -318,22 +318,23 @@ pub struct SpawnActorOnDeath {
     info: Rc<SpawnActorOnDeathInfo>,
     state: ConditionalState,
     faction: String,
+    enabled: bool,
     attacking_player: RefCell<Option<PlayerRef>>,
 }
 
 register_traits!(SpawnActorOnDeath: INotifyKilled, INotifyRemovedFromWorld, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(SpawnActorOnDeathInfo => |info, init| {
-    assert!(!info.requires_lobby_creeps, "SpawnActorOnDeath: MapCreeps is not ported");
+    let enabled = !info.requires_lobby_creeps || init.self_.world().world_actor().trait_::<crate::base::MapCreeps>().enabled.get();
     let state = ConditionalState::new(&info.base);
     let faction = init.inits.get::<FactionInit>().map_or_else(|| init.self_.owner().faction.clone(), |f| f.value.clone());
-    Some(Rc::new(SpawnActorOnDeath { info, state, faction, attacking_player: RefCell::new(None) }))
+    Some(Rc::new(SpawnActorOnDeath { info, state, faction, enabled, attacking_player: RefCell::new(None) }))
 });
 
 rustora_engine::conditional_simple!(SpawnActorOnDeath);
 
 impl INotifyKilled for SpawnActorOnDeath {
     fn killed(&self, self_: &ActorRef, e: &AttackInfo) {
-        if self.state.is_trait_disabled() || !self_.is_in_world() {
+        if !self.enabled || self.state.is_trait_disabled() || !self_.is_in_world() {
             return;
         }
         if self_.world().shared_random.borrow_mut().next_max(100) > self.info.probability {

@@ -19,6 +19,8 @@ use crate::fluent::MessageArg;
 use crate::loader::cell;
 use crate::widget::{ChromeLogic, Getter, Ui, WidgetId};
 use crate::widgets::production::{LogicTickerWidget, ProductionIcon, ProductionPaletteWidget, ProductionTypeButtonWidget};
+use crate::widgets::production_tabs::ProductionTabsWidget;
+use crate::widgets::resource_bar::ResourceBarWidget;
 use crate::widgets::{BackgroundWidget, ImageWidget, LabelWithTooltipWidget, ScrollPanelWidget, TextFieldWidget};
 
 /// `Widget.Get`, which also finds the widget itself.
@@ -56,6 +58,11 @@ pub fn add_faction_suffix(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLog
         sp.background += &suffix;
         sp.scrollbar_background += &suffix;
         sp.decorations += &suffix;
+    } else if let Some(tabs) = any.downcast_mut::<ProductionTabsWidget>() {
+        tabs.arrow_button += &suffix;
+        tabs.tab_button += &suffix;
+        tabs.decorations += &suffix;
+        tabs.background += &suffix;
     } else if let Some(b) = kind.as_button() {
         b.background += &suffix;
     } else {
@@ -233,6 +240,212 @@ pub fn classic_production(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLog
         let max_offset = (ui.resolution.1 - y) / p.icon_size.1 - 1;
         p.max_icon_row_offset = max_offset.min(p.maximum_rows);
     }
+    cell(NoLogic)
+}
+
+/// `IngamePowerBarLogic`.
+pub fn power_bar(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
+    let Some(player) = local_player(ui) else {
+        return cell(NoLogic);
+    };
+    let pa = player.player_actor();
+    let (developer, power) = (pa.trait_::<DeveloperMode>(), pa.trait_::<PowerManager>());
+    let bar = get_self_or_child(ui, id, "POWERBAR");
+    let assets = ui.assets.clone();
+    let mut w = ui.get::<ResourceBarWidget>(bar);
+    let (d, p) = (developer.clone(), power.clone());
+    w.get_provided = Some(Rc::new(move || if d.unlimited_power() { -1.0 } else { p.power_provided() as f32 }));
+    let p = power.clone();
+    w.get_used = Some(Rc::new(move || p.power_drained() as f32));
+    let (d, p) = (developer, power.clone());
+    w.tooltip_text = Some(Rc::new(move |usage: f32, _capacity: f32| {
+        let assets = assets.borrow();
+        let capacity = if d.unlimited_power() {
+            assets.messages.get("label-infinite-power")
+        } else {
+            p.power_provided().to_string()
+        };
+        assets.messages.get_with(
+            "label-power-usage",
+            &[
+                ("usage", MessageArg::Number(usage as i64)),
+                ("capacity", MessageArg::Text(&capacity)),
+            ],
+        )
+    }));
+    w.get_bar_color = Some(Rc::new(move || {
+        let state = power.power_state();
+        if state == rustora_mods_common::base::PowerState::Critical {
+            Color::from_argb(255, 255, 0, 0)
+        } else if state == rustora_mods_common::base::PowerState::Low {
+            Color::from_argb(255, 255, 165, 0)
+        } else {
+            Color::from_argb(255, 50, 205, 50)
+        }
+    }));
+    cell(NoLogic)
+}
+
+/// `IngameSiloBarLogic`.
+pub fn silo_bar(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
+    let Some(player) = local_player(ui) else {
+        return cell(NoLogic);
+    };
+    let resources = player.player_actor().trait_::<PlayerResources>();
+    let bar = get_self_or_child(ui, id, "SILOBAR");
+    let assets = ui.assets.clone();
+    let mut w = ui.get::<ResourceBarWidget>(bar);
+    let r = resources.clone();
+    w.get_provided = Some(Rc::new(move || r.resource_capacity.get() as f32));
+    let r = resources.clone();
+    w.get_used = Some(Rc::new(move || r.resources.get() as f32));
+    w.tooltip_text = Some(Rc::new(move |usage: f32, capacity: f32| {
+        assets.borrow().messages.get_with(
+            "label-silo-usage",
+            &[
+                ("usage", MessageArg::Number(usage as i64)),
+                ("capacity", MessageArg::Number(capacity as i64)),
+            ],
+        )
+    }));
+    w.get_bar_color = Some(Rc::new(move || {
+        let (used, capacity) = (resources.resources.get(), resources.resource_capacity.get());
+        if used == capacity {
+            Color::from_argb(255, 255, 0, 0)
+        } else if used as f64 >= 0.8 * capacity as f64 {
+            Color::from_argb(255, 255, 165, 0)
+        } else {
+            Color::from_argb(255, 50, 205, 50)
+        }
+    }));
+    cell(NoLogic)
+}
+
+/// `ProductionTabsLogic`.
+pub fn production_tabs(ui: &mut Ui, id: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
+    let Some(world) = services(ui).ingame.borrow().as_ref().map(|i| i.world.clone()) else {
+        return cell(NoLogic);
+    };
+    let tabs = get_self_or_child(ui, id, "PRODUCTION_TABS");
+    let tabs_kind = ui.kind(tabs);
+    let (changed, visible, types_container, background_container, palette_name) = {
+        let t = ui.get::<ProductionTabsWidget>(tabs);
+        (
+            t.actors_changed.clone(),
+            t.visible.clone(),
+            t.types_container.clone(),
+            t.background_container.clone(),
+            t.palette_widget.clone(),
+        )
+    };
+    let pending = changed.clone();
+    world.on_actor_changed(Rc::new(move |a| {
+        if a.info.has_trait_info::<rustora_mods_common::production::ProductionQueueInfo>() {
+            pending.set(true);
+        }
+    }));
+    ui.set_visible_fn(tabs, move || visible.get());
+
+    let with_tabs = {
+        let k = tabs_kind.clone();
+        move |f: &mut dyn FnMut(&mut ProductionTabsWidget)| {
+            let mut kind = k.borrow_mut();
+            if let Some(t) = kind.as_any().downcast_mut::<ProductionTabsWidget>() {
+                f(t);
+            }
+        }
+    };
+    let types = ui.find(ui.root, &types_container).expect("production types container");
+    for button in ui.node(types).children.clone() {
+        if !ui.kind(button).borrow_mut().as_any().is::<ProductionTypeButtonWidget>() {
+            continue;
+        }
+        let group = ui.get::<ProductionTypeButtonWidget>(button).production_group.clone();
+        let select_tab = {
+            let (k, group) = (tabs_kind.clone(), group.clone());
+            Rc::new(move |ui: &mut Ui| {
+                let reverse = ui.modifiers.shift;
+                let mut kind = k.borrow_mut();
+                let Some(t) = kind.as_any().downcast_mut::<ProductionTabsWidget>() else {
+                    return;
+                };
+                if t.queue_group() == Some(group.as_str()) {
+                    t.select_next_tab(ui, reverse);
+                } else {
+                    t.set_queue_group(ui, Some(group.clone()));
+                }
+                t.pick_up_completed_building(ui);
+            })
+        };
+        let is_disabled: Rc<dyn Fn() -> bool> = {
+            let (with_tabs, group) = (with_tabs.clone(), group.clone());
+            Rc::new(move || {
+                let mut disabled = true;
+                with_tabs(&mut |t| {
+                    disabled = !t
+                        .groups
+                        .get(&group)
+                        .is_some_and(|g| g.tabs.iter().any(|t| !t.queue.buildable_items().is_empty()));
+                });
+                disabled
+            })
+        };
+        {
+            let mut b = ui.button(button);
+            b.is_disabled = Some(is_disabled.clone());
+            b.on_click = Some(select_tab.clone());
+            b.on_key_press = Some(select_tab);
+            let (with_tabs, group) = (with_tabs.clone(), group.clone());
+            b.is_highlighted = Some(Rc::new(move || {
+                let mut highlighted = false;
+                with_tabs(&mut |t| highlighted = t.queue_group() == Some(group.as_str()));
+                highlighted
+            }));
+        }
+        let chrome_name = group.to_lowercase();
+        let icon = ui.child(button, "ICON");
+        let with_tabs = with_tabs.clone();
+        ui.get::<ImageWidget>(icon).get_image_name = Some(Rc::new(move || {
+            if is_disabled() {
+                return format!("{chrome_name}-disabled");
+            }
+            let mut alert = false;
+            with_tabs(&mut |t| alert = t.groups.get(&group).is_some_and(|g| g.alert()));
+            if alert {
+                format!("{chrome_name}-alert")
+            } else {
+                chrome_name.clone()
+            }
+        }));
+    }
+
+    if let Some(background) = background_container.and_then(|b| ui.find(ui.root, &b)) {
+        let palette = ui.find(ui.root, &palette_name).expect("production palette");
+        let template = ui.child(background, "ICON_TEMPLATE");
+        let update = Rc::new(move |ui: &mut Ui, _old: i32, new: i32| {
+            let (columns, icon_size) = {
+                let p = ui.get::<ProductionPaletteWidget>(palette);
+                (p.columns, p.icon_size)
+            };
+            ui.remove_children(background);
+            for i in 0..new {
+                let bg = ui.clone_widget(template);
+                ui.node_mut(bg).bounds.x = icon_size.0 * (i % columns);
+                ui.node_mut(bg).bounds.y = icon_size.1 * (i / columns);
+                ui.add_child(background, bg);
+            }
+        });
+        ui.get::<ProductionPaletteWidget>(palette).on_icon_count_changed = Some(update.clone());
+        update(ui, 0, 0);
+    }
+    ui.add_widget_ticker(tabs, move |ui: &mut Ui| {
+        if changed.replace(false) {
+            let mut kind = tabs_kind.borrow_mut();
+            if let Some(t) = kind.as_any().downcast_mut::<ProductionTabsWidget>() {
+                t.actor_changed(ui);
+            }
+        }
+    });
     cell(NoLogic)
 }
 

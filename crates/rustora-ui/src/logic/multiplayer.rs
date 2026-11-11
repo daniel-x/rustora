@@ -28,7 +28,6 @@ const LAN_BEACON: &str = "OpenRALANGame";
 const STATE_WAITING: i32 = 1;
 const STATE_STARTED: i32 = 2;
 const STATE_SHUTTING_DOWN: i32 = 3;
-const MOD_ID: &str = "ra";
 const DEFAULT_PORT: u16 = 1234;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -50,7 +49,8 @@ struct ServerEntry {
 impl ServerEntry {
     fn new(ui: &Ui, game: GameServer) -> ServerEntry {
         let service = services(ui);
-        let is_compatible = game.mod_id.as_deref() == Some(MOD_ID) && game.version.as_deref() == Some(service.mod_version.as_str());
+        let is_compatible =
+            game.mod_id.as_deref() == Some(service.mod_id.as_str()) && game.version.as_deref() == Some(service.mod_version.as_str());
         let map_available = service.settings.borrow().game.allow_downloading
             || game
                 .map
@@ -76,8 +76,8 @@ impl ServerEntry {
     }
 
     /// `GroupSortOrder`.
-    fn group_sort_order(&self, version: &str) -> i32 {
-        let same_mod = self.game.mod_id.as_deref() == Some(MOD_ID);
+    fn group_sort_order(&self, mod_id: &str, version: &str) -> i32 {
+        let same_mod = self.game.mod_id.as_deref() == Some(mod_id);
         if !self.is_compatible {
             return i32::from(same_mod);
         }
@@ -154,7 +154,7 @@ impl ServerList {
         }
         self.status.set(SearchStatus::Fetching);
         let version = services(ui).mod_version.clone();
-        let url = server_list_url(rustora_net::web::SERVER_LIST_URL, &version, MOD_ID, &version);
+        let url = server_list_url(rustora_net::web::SERVER_LIST_URL, &version, &services(ui).mod_id, &version);
         let (send, receive) = channel();
         std::thread::spawn(move || {
             let _ = send.send(rustora_net::web::get(&url));
@@ -242,7 +242,8 @@ impl ServerList {
                 None => mods.push((e.mod_label.clone(), vec![e.clone()])),
             }
         }
-        mods.sort_by_key(|(_, group)| (-group[0].group_sort_order(&version), -(group.len() as i64)));
+        let mod_id = services(ui).mod_id.clone();
+        mods.sort_by_key(|(_, group)| (-group[0].group_sort_order(&mod_id, &version), -(group.len() as i64)));
 
         let mut rows = Vec::new();
         let mut next = None;
@@ -464,7 +465,7 @@ impl ServerList {
             let members = game.clients.iter().filter(|c| c.is_spectator).collect();
             groups.push((message(ui, "label-spectators"), members));
         }
-        let same_mod = game.mod_id.as_deref() == Some(MOD_ID);
+        let same_mod = game.mod_id.as_deref() == Some(services(ui).mod_id.as_str());
         for (group, members) in groups {
             let header = ScrollItemWidget::setup(ui, clients.header, Rc::new(|| false), Rc::new(|_| {}));
             let label = ui.child(header, "LABEL");

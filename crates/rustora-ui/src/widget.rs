@@ -318,6 +318,9 @@ pub struct Ui {
     nodes: Vec<Option<Widget>>,
     free: Vec<WidgetId>,
     run_after_tick: Vec<Action>,
+    /// Actions of widgets that run on every tick, also while the widget is hidden, for the logic that C# runs from
+    /// world events.
+    widget_tickers: Vec<(WidgetId, Action)>,
 }
 
 #[derive(Clone)]
@@ -364,6 +367,7 @@ impl Ui {
             nodes: Vec::new(),
             free: Vec::new(),
             run_after_tick: Vec::new(),
+            widget_tickers: Vec::new(),
         };
         ui.root = ui.alloc(Rc::new(RefCell::new(Container)));
         ui.node_mut(ui.root).ignore_mouse_over = true;
@@ -575,6 +579,11 @@ impl Ui {
             Some(f) => f(),
             None => node.visible,
         }
+    }
+
+    /// Runs `action` on every tick while widget `id` exists, whether it is visible or not.
+    pub fn add_widget_ticker(&mut self, id: WidgetId, action: impl Fn(&mut Ui) + 'static) {
+        self.widget_tickers.push((id, Rc::new(action)));
     }
 
     pub fn run_after_tick(&mut self, action: impl Fn(&mut Ui) + 'static) {
@@ -799,6 +808,13 @@ impl Ui {
     /// Port of `Ui.Tick`, followed by the actions of `Game.RunAfterTick`.
     pub fn tick(&mut self) {
         self.run_deferred();
+        let tickers = std::mem::take(&mut self.widget_tickers);
+        self.widget_tickers = tickers.into_iter().filter(|(id, _)| self.exists(*id)).collect();
+        for (id, action) in self.widget_tickers.clone() {
+            if self.exists(id) {
+                action(self);
+            }
+        }
         self.tick_outer(self.root);
         self.run_deferred();
         for action in std::mem::take(&mut self.run_after_tick) {

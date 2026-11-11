@@ -52,6 +52,13 @@ pub fn bounds_rect(center: (i32, i32), bounds: &[WDist]) -> Rect {
 const ALL_CORNERS: u8 = 0x0f;
 const ALL_SIDES: u8 = 0xf0;
 
+/// The shroud variant of a cell. `ShroudRenderer` draws it with `Game.CosmeticRandom` once per map load; a hash of
+/// the cell keeps it stable without per-map state.
+fn cell_variant(x: i32, y: i32, count: usize) -> usize {
+    let h = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA77);
+    (h ^ (h >> 15)) as usize % count
+}
+
 /// `ShroudRenderer.GetEdges` for the neighbors of a cell, where `set` tells which cells do not need an edge.
 fn neighbor_edges(x: i32, y: i32, set: &impl Fn(i32, i32) -> bool, extended: bool) -> u8 {
     const TL: u8 = 0x01;
@@ -369,9 +376,7 @@ impl Scene {
         self.add_above_world(world, cam, &mut quads);
         self.after_world = quads.len();
 
-        if let Some(v) = viewer {
-            self.add_shroud(renderer, world, v, cam, &mut quads);
-        }
+        self.add_shroud(renderer, world, viewer, cam, &mut quads);
         let mut above = Vec::new();
         for e in world.effects() {
             e.render_above_shroud(viewer, &mut above);
@@ -501,20 +506,41 @@ impl Scene {
     }
 
     /// `ShroudRenderer.RenderShroud`, evaluated per frame for the cells on the camera, including the first row outside
-    /// the map bounds.
-    fn add_shroud(&mut self, renderer: &mut Renderer, world: &World, viewer: &PlayerRef, cam: &Camera, quads: &mut Vec<Quad>) {
+    /// the map bounds. Without a viewer all cells inside the map bounds are visible and the others hidden.
+    fn add_shroud(&mut self, renderer: &mut Renderer, world: &World, viewer: Option<&PlayerRef>, cam: &Camera, quads: &mut Vec<Quad>) {
         let Some(info) = world.world_actor().info.trait_info::<ShroudRendererInfo>() else {
             return;
         };
         let seqs = world.map().sequences().clone();
-        let shroud_seq = seqs.get_sequence(&info.sequence, &info.shroud_variants[0]);
-        let fog_seq = seqs.get_sequence(&info.sequence, &info.fog_variants[0]);
-        let (Some(shroud_sprites), Some(fog_sprites)) = (
-            self.sprites.sequence(renderer, &shroud_seq),
-            self.sprites.sequence(renderer, &fog_seq),
-        ) else {
+        let mut variants = Vec::new();
+        for (shroud_variant, fog_variant) in info.shroud_variants.iter().zip(&info.fog_variants) {
+            let shroud_seq = seqs.get_sequence(&info.sequence, shroud_variant);
+            let fog_seq = seqs.get_sequence(&info.sequence, fog_variant);
+            let (Some(shroud_sprites), Some(fog_sprites)) = (
+                self.sprites.sequence(renderer, &shroud_seq),
+                self.sprites.sequence(renderer, &fog_seq),
+            ) else {
+                return;
+            };
+            let full = match (&info.override_full_shroud, &info.override_full_fog) {
+                (Some(shroud_full), Some(fog_full)) => {
+                    let shroud_full = seqs.get_sequence(&info.sequence, shroud_full);
+                    let fog_full = seqs.get_sequence(&info.sequence, fog_full);
+                    match (
+                        self.sprites.sequence(renderer, &shroud_full),
+                        self.sprites.sequence(renderer, &fog_full),
+                    ) {
+                        (Some(a), Some(b)) => Some((a, b)),
+                        _ => return,
+                    }
+                }
+                _ => None,
+            };
+            variants.push((shroud_sprites, fog_sprites, full));
+        }
+        if variants.is_empty() {
             return;
-        };
+        }
         let (fog_row, shroud_row) = (self.palettes.named(&info.fog_palette), self.palettes.named(&info.shroud_palette));
         let extended = info.use_extended_index;
         let not_visible = if extended { ALL_SIDES } else { ALL_CORNERS };
@@ -522,14 +548,15 @@ impl Scene {
         for (i, &e) in info.index.iter().enumerate() {
             index_of[e as usize] = i as u8;
         }
-        let shroud = viewer.shroud();
+        let override_index = info.override_full_shroud.as_ref().map(|_| info.override_shroud_index as usize);
+        let shroud = viewer.map(|v| v.shroud());
         let map = world.map();
         let contains = |x: i32, y: i32| {
             let c = CPos::new(x, y);
             map.contains(c).then_some(c)
         };
-        let visible = |x: i32, y: i32| contains(x, y).is_some_and(|c| shroud.is_visible(c));
-        let explored = |x: i32, y: i32| contains(x, y).is_some_and(|c| shroud.is_explored(c));
+        let visible = |x: i32, y: i32| contains(x, y).is_some_and(|c| shroud.as_ref().is_none_or(|s| s.is_visible(c)));
+        let explored = |x: i32, y: i32| contains(x, y).is_some_and(|c| shroud.as_ref().is_none_or(|s| s.is_explored(c)));
         let ts = TILE_SIZE;
         let (x0, y0) = ((cam.x / ts).floor() as i32 - 1, (cam.y / ts).floor() as i32 - 1);
         let x1 = ((cam.x + cam.width as f32 / cam.zoom) / ts).ceil() as i32 + 1;
@@ -549,13 +576,25 @@ impl Scene {
                     };
                     (neighbor_edges(x, y, &explored, extended), fog)
                 };
-                for (edges, sprites, row, out) in [
-                    (edges_fog, &fog_sprites, fog_row, &mut fog_quads),
-                    (edges_shroud, &shroud_sprites, shroud_row, &mut shroud_quads),
+                let (shroud_sprites, fog_sprites, full) = &variants[cell_variant(x, y, variants.len())];
+                for (edges, sprites, full, row, out) in [
+                    (edges_fog, fog_sprites, full.as_ref().map(|f| &f.1), fog_row, &mut fog_quads),
+                    (
+                        edges_shroud,
+                        shroud_sprites,
+                        full.as_ref().map(|f| &f.0),
+                        shroud_row,
+                        &mut shroud_quads,
+                    ),
                 ] {
-                    if edges != 0
-                        && let Some(s) = sprites.sprite(index_of[edges as usize] as i32, WAngle::ZERO)
-                    {
+                    if edges == 0 {
+                        continue;
+                    }
+                    let sprite = match full {
+                        Some(full) if override_index == Some(edges as usize) => full.sprite(0, WAngle::ZERO),
+                        _ => sprites.sprite(index_of[edges as usize] as i32, WAngle::ZERO),
+                    };
+                    if let Some(s) = sprite {
                         out.push(cell_quad(&s, x, y, row));
                     }
                 }

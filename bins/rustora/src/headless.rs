@@ -168,7 +168,8 @@ fn skirmish(args: &[String]) {
     };
     let engine = PathBuf::from(engine);
     let (ticks, seed): (i32, i32) = (ticks.parse().expect("ticks"), seed.parse().expect("seed"));
-    let pkg = rustora_launch::open_map(&engine, map).expect("map not found");
+    let (mod_id, map) = map.split_once(':').unwrap_or(("ra", map));
+    let pkg = rustora_launch::open_map(&engine, mod_id, map).expect("map not found");
     let map_package = rustora_game::map::MapPackage::load(pkg.clone()).expect("load map");
     let lobby = skirmish_session(&map_package, &parse_bots(bots).expect("bots"), seed).expect("lobby");
     let (world, _, _) = rustora_launch::load_world(&engine, support, pkg, lobby, false);
@@ -179,9 +180,22 @@ fn skirmish(args: &[String]) {
     let start = std::time::Instant::now();
     let mut driver = SkirmishDriver::new(&world);
     let mut mismatch = None;
+    let trace: Option<u32> = std::env::var("TRACE_ACTOR").ok().and_then(|v| v.parse().ok());
     while world.world_tick() < ticks {
         match driver.step() {
             Step::Ticked => {
+                if let Some(a) = trace.and_then(|id| world.get_actor_by_id(id)) {
+                    let facing = a
+                        .trait_or_default::<dyn rustora_engine::traits::IFacing>()
+                        .map(|f| f.facing().angle);
+                    eprintln!(
+                        "trace {} pos={:?} facing={:?} activity={:?}",
+                        world.world_tick(),
+                        a.center_position(),
+                        facing,
+                        activity_chain(&a, a.current_activity())
+                    );
+                }
                 let line = format!(
                     "{} {} {}",
                     world.world_tick(),
@@ -364,6 +378,9 @@ Commands:
   join           Joins a server. With --bots it hosts the bots like the C# Harness.Bots, without them it
                  spectates.
   map-uid        Prints the uid of a map, given by uid or file name.
+
+A <map> of skirmish and map-uid is a file or folder name in the maps of the RA mod, or <mod>:<name> for
+another mod, like cnc:chokepoint.oramap.
   lan-probe      Lists the LAN games that answer within <seconds>, broadcasting unless a beacon address
                  is given.
   server-list    Lists the RA games of the master server for an engine version.
@@ -385,7 +402,7 @@ Join options:
 Environment:
   PROGRESS=<n>          replay commands: print the seconds per <n> ticks and the actor count
   EXTRA_STEPS=<n>       world: run n more replay steps after the last tick
-  TRACE_ACTOR=<id>      world: print position, facing and activity chain of an actor each tick
+  TRACE_ACTOR=<id>      world, skirmish: print position, facing and activity chain of an actor each tick
   TRACE_CELL=<x>,<y>    world: print the actors in a cell each tick
   TRACE_FROZEN=<player-actor-id>:<frozen-id>
                         world: print the state of a frozen actor of a player each tick
@@ -405,7 +422,8 @@ pub fn main(args: Vec<String>) {
         Some("lan-probe") if args.len() >= 3 => return lan_probe(args[2].parse().expect("seconds"), args.get(3)),
         Some("server-list") if args.len() == 3 => return server_list(&args[2]),
         Some("map-uid") if args.len() == 4 => {
-            let pkg = rustora_launch::open_map(&PathBuf::from(&args[2]), &args[3]).expect("map not found");
+            let (mod_id, map) = args[3].split_once(':').unwrap_or(("ra", &args[3]));
+            let pkg = rustora_launch::open_map(&PathBuf::from(&args[2]), mod_id, map).expect("map not found");
             println!("{}", rustora_game::map::MapPackage::load(pkg).expect("load map").uid);
             return;
         }

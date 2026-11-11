@@ -26,8 +26,10 @@ pub mod menu_button;
 pub mod observer;
 pub mod perf_graph;
 pub mod production;
+pub mod production_tabs;
 mod progress_bar;
 pub mod radar;
+pub mod resource_bar;
 mod scroll_item;
 mod scroll_panel;
 mod slider;
@@ -76,6 +78,8 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "Radar" => cell(radar::RadarWidget::default()),
         "VideoPlayer" => cell(video_player::VideoPlayerWidget::default()),
         "ProductionPalette" => cell(production::ProductionPaletteWidget::new(assets)),
+        "ResourceBar" => cell(resource_bar::ResourceBarWidget::default()),
+        "ProductionTabs" => cell(production_tabs::ProductionTabsWidget::new(assets)),
         "Background" => cell(BackgroundWidget::default()),
         "Label" => cell(LabelWidget::new(assets)),
         "LabelForInput" => cell(LabelWidget {
@@ -96,9 +100,9 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "ObserverSupportPowerIcons" => cell(observer::ObserverSupportPowerIconsWidget::default()),
         "ObserverArmyIcons" => cell(observer::ObserverArmyIconsWidget::default()),
         "ClientTooltipRegion" => cell(ClientTooltipRegionWidget::default()),
-        "LabelWithTooltip" => cell(LabelWithTooltipWidget::new(assets)),
+        "LabelWithTooltip" | "WorldLabelWithTooltip" => cell(LabelWithTooltipWidget::new(assets)),
         "MapPreview" => cell(MapPreviewWidget::new(assets)),
-        "Button" => cell(ButtonWidget::new(assets)),
+        "Button" | "WorldButton" => cell(ButtonWidget::new(assets)),
         "Image" => cell(ImageWidget::default()),
         "ScrollPanel" => cell(ScrollPanelWidget::new(assets)),
         "ScrollItem" => cell(ScrollItemWidget::new(assets)),

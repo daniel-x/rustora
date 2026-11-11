@@ -39,6 +39,7 @@ use crate::tooltip::IProvideTooltipInfo;
 
 pub fn register(r: &mut TraitRegistry) {
     r.register("TransformsIntoMobile", |n| load_info!(TransformsIntoMobileInfo, n));
+    r.register("TransformsNearResources", |n| load_info!(TransformsNearResourcesInfo, n));
     r.register("TransformsIntoPassenger", |n| load_info!(TransformsIntoPassengerInfo, n));
     r.register("TransformsIntoRepairable", |n| load_info!(TransformsIntoRepairableInfo, n));
     r.register("TransformsIntoTransforms", |n| load_info!(TransformsIntoTransformsInfo, n));
@@ -1182,4 +1183,87 @@ impl rustora_engine::persist::SavedFn for TransformDone {
 pub(crate) fn register_persist() {
     rustora_engine::persist_activities!(Transform, IssueOrderAfterTransform, Sell);
     rustora_engine::persist_values!(dyn rustora_engine::persist::SavedFn: TransformDone);
+}
+
+/// `Cnc/Traits/TransformsNearResources.cs`: replaces the actor with another one when enough resources of a type
+/// grow next to it.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct TransformsNearResourcesInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(require)]
+    pub into_actor: String,
+    pub offset: CVec,
+    pub skip_make_anims: bool,
+    #[field(require)]
+    #[field(name = "Type")]
+    pub ty: String,
+    pub density: i32,
+    pub adjacency: i32,
+    pub delay: Vec<i32>,
+}
+
+impl Default for TransformsNearResourcesInfo {
+    fn default() -> Self {
+        TransformsNearResourcesInfo {
+            instance_name: None,
+            into_actor: String::new(),
+            offset: CVec::ZERO,
+            skip_make_anims: false,
+            ty: String::new(),
+            density: 1,
+            adjacency: 1,
+            delay: vec![1000, 3000],
+        }
+    }
+}
+
+#[derive(rustora_engine::persist::Persist)]
+pub struct TransformsNearResources {
+    info: Rc<TransformsNearResourcesInfo>,
+    resource_layer: Rc<crate::resources::ResourceLayer>,
+    delay: Cell<i32>,
+}
+
+register_traits!(TransformsNearResources: ITick);
+info_impl!(TransformsNearResourcesInfo => |info, init| {
+    let w = init.world();
+    let delay = crate::util::random_in_range(&mut w.shared_random.borrow_mut(), &info.delay);
+    Some(Rc::new(TransformsNearResources {
+        resource_layer: w.world_actor().trait_::<crate::resources::ResourceLayer>(),
+        delay: Cell::new(delay),
+        info,
+    }))
+});
+
+impl ITick for TransformsNearResources {
+    fn tick(&self, self_: &ActorRef) {
+        if self.delay.get() < 0 {
+            return;
+        }
+        let mut adjacent = 0;
+        for direction in CVec::DIRECTIONS {
+            let resource = self.resource_layer.get_resource(self_.location() + direction);
+            if resource.ty.as_deref() != Some(self.info.ty.as_str()) || resource.density < self.info.density {
+                continue;
+            }
+            adjacent += 1;
+            if adjacent < self.info.adjacency {
+                continue;
+            }
+            self.delay.set(self.delay.get() - 1);
+            break;
+        }
+        if self.delay.get() < 0 {
+            let mut args = TransformArgs {
+                offset: self.info.offset,
+                skip_make_anims: self.info.skip_make_anims,
+                ..TransformArgs::default()
+            };
+            if let Some(facing) = self_.trait_or_default::<dyn IFacing>() {
+                args.facing = facing.facing();
+            }
+            self_.queue_activity_queued(false, Transform::new(&self.info.into_actor, args));
+        }
+    }
 }

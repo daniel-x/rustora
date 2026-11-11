@@ -267,6 +267,8 @@ pub struct JoinOptions {
     pub wait_clients: usize,
     /// The name of a save the server should load instead of following the lobby script.
     pub load_save: Option<String>,
+    /// The mod of the game, `ra` by default.
+    pub mod_id: String,
 }
 
 impl Default for JoinOptions {
@@ -278,6 +280,7 @@ impl Default for JoinOptions {
             bots: Vec::new(),
             wait_clients: 1,
             load_save: None,
+            mod_id: "ra".to_string(),
         }
     }
 }
@@ -404,7 +407,7 @@ fn process_lobby_order(
 
 /// Connects to a server, follows the lobby script until the game starts and loads the world.
 pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOptions) -> Result<JoinedGame, String> {
-    let md = ModData::load(Platform::new(engine, support), "ra").map_err(|e| e.to_string())?;
+    let md = ModData::load(Platform::new(engine, support), &options.mod_id).map_err(|e| e.to_string())?;
     let mut connection = NetworkConnection::connect(address)?;
     let mut lobby = Session::default();
     let mut script = LobbyScript {
@@ -428,7 +431,7 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
         for order in &orders.orders {
             if process_lobby_order(&md, &mut connection, &mut lobby, options, order)? {
                 let uid = lobby.global_settings.map.clone().ok_or("lobby has no map")?;
-                let package = crate::find_map(engine, support, &uid).ok_or_else(|| format!("map {uid} not found"))?;
+                let package = crate::find_map(engine, support, &options.mod_id, &uid).ok_or_else(|| format!("map {uid} not found"))?;
                 let is_host = lobby.client_with_index(connection.local_client_id()).is_some_and(|c| c.is_admin);
                 let (world, _, _) = crate::load_world(engine, support, package, lobby, false);
                 if let Some((last_frame, last_sync_frame)) = parse_game_save_frames(order) {
