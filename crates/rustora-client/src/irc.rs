@@ -29,6 +29,8 @@ pub enum IrcEvent {
     Joined(String),
     /// A message in the channel, or a private message to this client.
     Message { nick: String, text: String, private: bool },
+    /// The users of the channel changed; these are all of them, sorted.
+    Users(Vec<String>),
     /// The connection is gone, with the reason.
     Disconnected(String),
 }
@@ -133,6 +135,72 @@ struct Line<'a> {
     source_nick: Option<&'a str>,
     command: &'a str,
     params: Vec<&'a str>,
+}
+
+/// The users of the channel, from the `NAMES` replies and the joins, parts, quits, nick changes and kicks.
+#[derive(Default)]
+struct ChannelUsers {
+    users: Vec<String>,
+    /// The names of a `NAMES` reply that is not complete yet.
+    reply: Option<Vec<String>>,
+}
+
+impl ChannelUsers {
+    /// Applies the line; returns whether the users changed.
+    fn apply(&mut self, line: &Line) -> bool {
+        let in_channel = |channel: &str| channel.eq_ignore_ascii_case(CHANNEL);
+        let source = line.source_nick.unwrap_or_default();
+        match (line.command, line.params.as_slice()) {
+            ("353", [_, _, channel, names]) if in_channel(channel) => {
+                let reply = self.reply.get_or_insert_with(Vec::new);
+                reply.extend(
+                    names
+                        .split(' ')
+                        .map(|n| n.trim_start_matches(['~', '&', '@', '%', '+']))
+                        .filter(|n| !n.is_empty())
+                        .map(str::to_string),
+                );
+                false
+            }
+            ("366", [_, channel, ..]) if in_channel(channel) => match self.reply.take() {
+                Some(names) => {
+                    self.users = names;
+                    true
+                }
+                None => false,
+            },
+            ("JOIN", [channel, ..]) if in_channel(channel) && self.position(source).is_none() => {
+                self.users.push(source.to_string());
+                true
+            }
+            ("PART", [channel, ..]) if in_channel(channel) => self.remove(source),
+            ("QUIT", _) => self.remove(source),
+            ("KICK", [channel, target, ..]) if in_channel(channel) => self.remove(target),
+            ("NICK", [new_nick, ..]) => match self.position(source) {
+                Some(i) => {
+                    self.users[i] = new_nick.to_string();
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn position(&self, nick: &str) -> Option<usize> {
+        self.users.iter().position(|u| u.eq_ignore_ascii_case(nick))
+    }
+
+    fn remove(&mut self, nick: &str) -> bool {
+        self.position(nick).map(|i| self.users.remove(i)).is_some()
+    }
+
+    /// The users, sorted without regard to case.
+    fn sorted(&self) -> Vec<String> {
+        let mut users = self.users.clone();
+        users.sort_by_key(|u| u.to_ascii_lowercase());
+        users
+    }
 }
 
 fn parse_line(line: &str) -> Option<Line<'_>> {
@@ -242,6 +310,7 @@ fn run(escaped: &str, commands: &Receiver<Command>, events: &Sender<IrcEvent>) -
     let mut attempt = 1;
     let mut own_nick = nick(escaped, attempt);
     let mut joined = false;
+    let mut users = ChannelUsers::default();
     let write = |stream: &mut BufReader<TlsStream>, line: &str| -> std::io::Result<()> {
         let s = stream.get_mut();
         s.write_all(line.as_bytes())?;
@@ -277,6 +346,9 @@ fn run(escaped: &str, commands: &Receiver<Command>, events: &Sender<IrcEvent>) -
         let text = String::from_utf8_lossy(&buffer).into_owned();
         buffer.clear();
         let Some(line) = parse_line(&text) else { continue };
+        if users.apply(&line) {
+            let _ = events.send(IrcEvent::Users(users.sorted()));
+        }
         match (line.command, line.params.as_slice()) {
             ("PING", params) => write(&mut stream, &format!("PONG :{}", params.first().unwrap_or(&"")))?,
             ("001", [nick, ..]) => {
@@ -357,6 +429,23 @@ mod tests {
     }
 
     #[test]
+    fn channel_users() {
+        let mut users = ChannelUsers::default();
+        let mut apply = |text: &str| users.apply(&parse_line(text).unwrap());
+        assert!(!apply(":srv 353 me = ##openra-ingame-general :me @op +voiced"));
+        assert!(!apply(":srv 353 me = ##openra-ingame-general :Zed"));
+        assert!(apply(":srv 366 me ##openra-ingame-general :End of /NAMES list."));
+        assert!(apply(":ora_Bob!u@h JOIN ##openra-ingame-general"));
+        assert!(!apply(":x!u@h JOIN #other"));
+        assert!(apply(":op!u@h NICK :op2"));
+        assert!(apply(":voiced!u@h PART ##openra-ingame-general :bye"));
+        assert!(apply(":Zed!u@h QUIT :gone"));
+        assert!(!apply(":nobody!u@h QUIT :gone"));
+        assert!(apply(":op2!u@h KICK ##openra-ingame-general ora_bob :out"));
+        assert_eq!(users.sorted(), ["me", "op2"]);
+    }
+
+    #[test]
     fn texts() {
         assert_eq!(plain_text("\u{2}bold\u{2} \u{3}04,12red\u{3} end").unwrap(), "bold red end");
         assert_eq!(plain_text("\u{1}ACTION waves\u{1}").unwrap(), "* waves");
@@ -376,7 +465,7 @@ mod live_tests {
                 match event {
                     IrcEvent::Joined(nick) => return nick,
                     IrcEvent::Disconnected(reason) => panic!("disconnected: {reason}"),
-                    IrcEvent::Message { .. } => {}
+                    IrcEvent::Message { .. } | IrcEvent::Users(_) => {}
                 }
             }
             std::thread::sleep(Duration::from_millis(100));

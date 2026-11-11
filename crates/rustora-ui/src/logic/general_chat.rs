@@ -40,6 +40,10 @@ pub struct GeneralChat {
     lines: VecDeque<TextNotification>,
     /// The count of lines ever added, including the ones dropped from `lines`.
     total: usize,
+    /// The nicks in the channel, sorted.
+    users: Vec<String>,
+    /// Grows with every change of `users`.
+    users_revision: u64,
 }
 
 impl GeneralChat {
@@ -68,9 +72,15 @@ impl GeneralChat {
         );
     }
 
+    fn set_users(&mut self, users: Vec<String>) {
+        self.users = users;
+        self.users_revision += 1;
+    }
+
     fn disconnect(&mut self) {
         if self.irc.take().is_some() {
             self.nick = None;
+            self.set_users(Vec::new());
             self.retry_at = 0;
             self.push(None, "Disconnected.".into(), TextNotificationPool::System);
         }
@@ -89,9 +99,11 @@ impl GeneralChat {
                     let prefix = if private { format!("{name} (private)") } else { name.to_string() };
                     self.push(Some(prefix), text, TextNotificationPool::Chat);
                 }
+                IrcEvent::Users(users) => self.set_users(users),
                 IrcEvent::Disconnected(reason) => {
                     self.irc = None;
                     self.nick = None;
+                    self.set_users(Vec::new());
                     self.retry_at = now + RETRY_DELAY;
                     self.push(None, format!("Disconnected: {reason}"), TextNotificationPool::System);
                 }
@@ -168,11 +180,31 @@ fn multiplayer_menu_open(ui: &Ui) -> bool {
 struct GeneralChatLogic {
     panel: WidgetId,
     display: WidgetId,
+    user_list: WidgetId,
     templates: [(TextNotificationPool, WidgetId); 2],
+    user_template: WidgetId,
     seen: usize,
+    /// The `users_revision` that the user list shows.
+    users_shown: Option<u64>,
 }
 
 impl GeneralChatLogic {
+    /// Fills the user list with the names of the users, without the nick prefixes.
+    fn show_users(&self, ui: &mut Ui, users: &[String]) {
+        ui.remove_children(self.user_list);
+        let scrollbar = ui.get::<crate::widgets::ScrollPanelWidget>(self.user_list).scrollbar_width;
+        let template_x = ui.node(self.user_template).bounds.x;
+        let width = ui.node(self.user_list).bounds.w - scrollbar - template_x;
+        let font = ui.label(self.user_template).font.clone();
+        for nick in users {
+            let row = ui.clone_widget(self.user_template);
+            ui.node_mut(row).bounds.w = width;
+            let name = ui.truncate_text(&font, irc::display_name(nick), width);
+            ui.label(row).get_text = Some(Rc::new(move || name.clone()));
+            ui.add_child(self.user_list, row);
+        }
+    }
+
     fn add_line(&self, ui: &mut Ui, line: &TextNotification) {
         let Some(&(_, template)) = self.templates.iter().find(|(pool, _)| *pool == line.pool) else {
             return;
@@ -219,6 +251,14 @@ impl ChromeLogic for GeneralChatLogic {
         for line in &new_lines {
             self.add_line(ui, line);
         }
+        let users = {
+            let chat = services.general_chat.borrow();
+            (self.users_shown != Some(chat.users_revision)).then(|| (chat.users_revision, chat.users.clone()))
+        };
+        if let Some((revision, users)) = users {
+            self.show_users(ui, &users);
+            self.users_shown = Some(revision);
+        }
         let visible = wanted && self.uncovered(ui);
         ui.node_mut(self.panel).visible = visible;
     }
@@ -228,6 +268,7 @@ impl ChromeLogic for GeneralChatLogic {
         for (_, template) in self.templates {
             ui.dispose_detached(template);
         }
+        ui.dispose_detached(self.user_template);
     }
 }
 
@@ -239,6 +280,9 @@ pub fn create(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     ui.label(title).get_text = Some(Rc::new(|| format!("General Chat - {}", irc::CHANNEL)));
     let display = ui.child(panel, "CHAT_DISPLAY");
     ui.remove_children(display);
+    let user_list = ui.child(panel, "USER_LIST");
+    ui.remove_children(user_list);
+    let user_template = ui.load_widget("GENERAL_CHAT_USER", None, &WidgetArgs::default());
     let templates = [
         (
             TextNotificationPool::Chat,
@@ -266,8 +310,11 @@ pub fn create(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let logic = GeneralChatLogic {
         panel,
         display,
+        user_list,
         templates,
+        user_template,
         seen: 0,
+        users_shown: None,
     };
     let history: Vec<_> = services(ui).general_chat.borrow().lines.iter().cloned().collect();
     for line in &history {

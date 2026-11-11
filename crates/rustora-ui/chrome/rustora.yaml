@@ -26,12 +26,24 @@ Container@GENERAL_CHAT:
 				ScrollPanel@CHAT_DISPLAY:
 					X: 15
 					Y: 45
-					Width: PARENT_WIDTH - 30
+					Width: PARENT_WIDTH * 3 / 4 - 20
 					Height: PARENT_HEIGHT - 45 - 50
 					TopBottomSpacing: 2
 					ItemSpacing: 2
 				TextField@CHAT_TEXTFIELD:
 					X: 15
 					Y: PARENT_HEIGHT - HEIGHT - 15
-					Width: PARENT_WIDTH - 30
+					Width: PARENT_WIDTH * 3 / 4 - 20
 					Height: 25
+				ScrollPanel@USER_LIST:
+					X: PARENT_WIDTH * 3 / 4
+					Y: 45
+					Width: PARENT_WIDTH / 4 - 15
+					Height: PARENT_HEIGHT - 45 - 15
+					TopBottomSpacing: 2
+					ItemSpacing: 2
+
+Label@GENERAL_CHAT_USER:
+	X: 5
+	Height: 16
+	Shadow: true
