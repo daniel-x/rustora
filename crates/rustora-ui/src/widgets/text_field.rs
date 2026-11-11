@@ -292,7 +292,7 @@ impl WidgetKind for TextFieldWidget {
 
     fn yield_keyboard_focus(&mut self, ui: &mut Ui, id: WidgetId) -> bool {
         if let Some(action) = self.on_lose_focus.clone() {
-            ui.defer(move |ui| action(ui));
+            ui.defer_for(id, move |ui| action(ui));
         }
         if ui.keyboard_focus == Some(id) {
             ui.keyboard_focus = None;

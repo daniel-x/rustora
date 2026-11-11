@@ -436,3 +436,16 @@ fn tooltip_container_loads_after_the_delay_and_ignores_the_mouse() {
     ui.tick();
     assert!(ui.node(id).children.is_empty());
 }
+
+#[test]
+fn the_lose_focus_action_of_a_removed_text_field_does_not_run() {
+    let mut ui = new_ui();
+    let field = add_text_field(&mut ui);
+    ui.get::<TextFieldWidget>(field).on_lose_focus = Some(Rc::new(move |ui| {
+        ui.get::<TextFieldWidget>(field).set_text("");
+    }));
+    ui.yield_keyboard_focus(field);
+    ui.remove_child(ui.root, field);
+    ui.tick();
+    assert!(!ui.exists(field));
+}
