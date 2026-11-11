@@ -281,6 +281,8 @@ pub enum AppRequest {
     OpenUrl(String),
     /// `Renderer.SetUIScale` with the new layout: the user interface scale changed to this.
     SetUiScale(f32),
+    /// `Game.TakeScreenshot`: saves the next frame.
+    TakeScreenshot,
 }
 
 /// Port of the static `Ui` class and the widget tree.

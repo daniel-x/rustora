@@ -134,6 +134,11 @@ impl Viewport {
         self.size = ((self.resolution.0 as f32 / zoom) as i32, (self.resolution.1 as f32 / zoom) as i32);
     }
 
+    /// The size of the visible world area in world pixels.
+    pub fn size(&self) -> (i32, i32) {
+        self.size
+    }
+
     /// `TopLeft`.
     pub fn top_left(&self) -> (i32, i32) {
         (self.center.0 - self.size.0 / 2, self.center.1 - self.size.1 / 2)

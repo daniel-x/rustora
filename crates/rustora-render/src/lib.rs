@@ -121,6 +121,8 @@ struct Vertex {
     palette: f32,
     color: [f32; 4],
     tint: [f32; 3],
+    /// The sprite's texels: the lowest u and v and the highest u and v, exclusive.
+    rect: [f32; 4],
 }
 
 #[repr(C)]
@@ -148,6 +150,8 @@ pub struct Renderer {
     pub ui: ui::UiPass,
     /// `Graphics.UIScale`: user interface pixels per window pixel.
     pub ui_scale: f32,
+    /// The draw calls since the last [`Renderer::take_draw_calls`], as `PerfHistory` "batches" counts them.
+    draw_calls: std::cell::Cell<u32>,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
@@ -207,7 +211,7 @@ impl Renderer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Float32x4, 4 => Float32x3];
+        let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Float32x4, 4 => Float32x3, 5 => Float32x4];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sprite"),
             layout: Some(&pipeline_layout),
@@ -264,6 +268,7 @@ impl Renderer {
         Renderer {
             ui,
             ui_scale: 1.0,
+            draw_calls: std::cell::Cell::new(0),
             device,
             queue,
             pipeline,
@@ -328,6 +333,11 @@ impl Renderer {
     }
 
     /// Draws the user interface over the current content of `target`.
+    /// The draw calls since the last call.
+    pub fn take_draw_calls(&mut self) -> u32 {
+        self.draw_calls.take() + std::mem::take(&mut self.ui.draw_calls)
+    }
+
     pub fn render_ui(&mut self, target: &wgpu::TextureView, size: (u32, u32), list: &ui::UiList) {
         self.ui.render(&self.device, &self.queue, target, size, self.ui_scale, list);
     }
@@ -450,12 +460,14 @@ impl Renderer {
             } else {
                 q.color
             };
+            let rect = [u0.min(u1), v0.min(v1), u0.max(u1), v0.max(v1)];
             let v = |x: f32, y: f32, u: f32, w: f32, corner: usize| Vertex {
                 pos: [x, y],
                 uv: [u, w],
                 palette,
                 color,
                 tint: q.tint[corner],
+                rect,
             };
             if let Some(l) = &q.line {
                 let [a, b, c, d] = l.corners;
@@ -465,6 +477,7 @@ impl Renderer {
                     palette,
                     color,
                     tint: [1.0; 3],
+                    rect: [0.0; 4],
                 };
                 vertices.extend_from_slice(&[
                     p(a, q.color),
@@ -570,6 +583,7 @@ impl Renderer {
             if s < e {
                 pass.set_bind_group(0, &self.sheets[sheet as usize].bind_group, &[]);
                 pass.draw(s..e, 0..1);
+                self.draw_calls.set(self.draw_calls.get() + 1);
             }
         }
     }
@@ -623,6 +637,18 @@ pub fn render_to_rgba(renderer: &mut Renderer, camera: Camera, quads: &[Quad]) -
 
 /// Runs `draw` on an offscreen RGBA texture of the given size and reads it back as tightly packed RGBA rows.
 pub fn render_offscreen(renderer: &mut Renderer, w: u32, h: u32, draw: impl FnOnce(&mut Renderer, &wgpu::TextureView)) -> Vec<u8> {
+    render_offscreen_as(renderer, w, h, wgpu::TextureFormat::Rgba8Unorm, draw)
+}
+
+/// Runs `draw` on an offscreen texture of the given size and 8 bit, 4 channel format, and reads it back as tightly
+/// packed rows in that format.
+pub fn render_offscreen_as(
+    renderer: &mut Renderer,
+    w: u32,
+    h: u32,
+    format: wgpu::TextureFormat,
+    draw: impl FnOnce(&mut Renderer, &wgpu::TextureView),
+) -> Vec<u8> {
     let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("offscreen"),
         size: wgpu::Extent3d {
@@ -633,7 +659,7 @@ pub fn render_offscreen(renderer: &mut Renderer, w: u32, h: u32, draw: impl FnOn
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });

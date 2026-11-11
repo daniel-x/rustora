@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use rustora_core::fieldloader::Color;
+use rustora_engine::player::PlayerRef;
 use rustora_engine::render::PaletteRef;
 use rustora_engine::sequence::ReadFile;
 use rustora_engine::world::World;
@@ -28,6 +30,8 @@ pub struct Palettes {
     rotations: Vec<Rc<RotationPaletteEffectInfo>>,
     lights: Vec<Rc<LightPaletteRotatorInfo>>,
     last_tick: i32,
+    /// The players with the color that their palettes have.
+    player_colors: Vec<(PlayerRef, Color)>,
 }
 
 impl Palettes {
@@ -39,6 +43,7 @@ impl Palettes {
             rotations: Vec::new(),
             lights: Vec::new(),
             last_tick: -1,
+            player_colors: Vec::new(),
         };
         let info = &world.world_actor().info;
         let tileset = world.map().tileset.as_str();
@@ -89,41 +94,67 @@ impl Palettes {
             }
         }
         for pl in world.players() {
-            let id = pl.player_actor().id;
-            for f in info.trait_infos::<IndexedPlayerPaletteInfo>() {
-                let base = p.base(&f.base_palette);
-                let mut pal = base;
-                if let Some(remap) = f.player_index.get(&pl.internal_name) {
-                    let ramp: Vec<i32> = if f.remap_index.is_empty() {
-                        (0..256).collect()
-                    } else {
-                        f.remap_index.clone()
-                    };
-                    for (&i, &r) in ramp.iter().zip(remap) {
-                        pal[i as usize] = base[r as usize];
-                    }
-                }
-                p.add_player(&f.base_name, id, &pl.internal_name, pal);
-            }
-            for f in info.trait_infos::<PlayerColorPaletteInfo>() {
-                let base = p.base(&f.base_palette);
-                let c = pl.color.argb;
-                let remap: Vec<usize> = f.remap_index.iter().map(|&i| i as usize).collect();
-                let pal = palette::player_remap(&base, &remap, [(c >> 16) as u8, (c >> 8) as u8, c as u8]);
-                p.add_player(&f.base_name, id, &pl.internal_name, pal);
-            }
-            for f in info.trait_infos::<PaletteFromPlayerPaletteWithAlphaInfo>() {
-                if let Some(base) = p.try_base(&format!("{}{}", f.base_palette, pl.internal_name)) {
-                    let pal = palette::alpha_remap(&base, f.alpha, f.premultiply);
-                    p.add_player(&f.base_name, id, &pl.internal_name, pal);
-                }
-            }
+            p.load_player_palettes(world, &pl);
+            p.player_colors.push((pl.clone(), pl.color()));
         }
         p.rotations = info.trait_infos::<RotationPaletteEffectInfo>();
         p.filter_tileset(tileset);
         p.lights = info.trait_infos::<LightPaletteRotatorInfo>();
-        p.update(renderer, 0);
+        p.last_tick = 0;
+        p.update_all(renderer, 0);
         p
+    }
+
+    /// `ILoadsPlayerPalettes.LoadPlayerPalettes` of the world actor's traits for one player, which replaces the
+    /// palettes of that player if they exist.
+    fn load_player_palettes(&mut self, world: &World, pl: &PlayerRef) {
+        let info = &world.world_actor().info;
+        let id = pl.player_actor().id;
+        for f in info.trait_infos::<IndexedPlayerPaletteInfo>() {
+            let base = self.base(&f.base_palette);
+            let mut pal = base;
+            if let Some(remap) = f.player_index.get(&pl.internal_name) {
+                let ramp: Vec<i32> = if f.remap_index.is_empty() {
+                    (0..256).collect()
+                } else {
+                    f.remap_index.clone()
+                };
+                for (&i, &r) in ramp.iter().zip(remap) {
+                    pal[i as usize] = base[r as usize];
+                }
+            }
+            self.add_player(&f.base_name, id, &pl.internal_name, pal);
+        }
+        for f in info.trait_infos::<PlayerColorPaletteInfo>() {
+            let base = self.base(&f.base_palette);
+            let c = pl.color().argb;
+            let remap: Vec<usize> = f.remap_index.iter().map(|&i| i as usize).collect();
+            let pal = palette::player_remap(&base, &remap, [(c >> 16) as u8, (c >> 8) as u8, c as u8]);
+            self.add_player(&f.base_name, id, &pl.internal_name, pal);
+        }
+        for f in info.trait_infos::<PaletteFromPlayerPaletteWithAlphaInfo>() {
+            if let Some(base) = self.try_base(&format!("{}{}", f.base_palette, pl.internal_name)) {
+                let pal = palette::alpha_remap(&base, f.alpha, f.premultiply);
+                self.add_player(&f.base_name, id, &pl.internal_name, pal);
+            }
+        }
+    }
+
+    /// `WorldRenderer.UpdatePalettesForPlayer` for the players whose `Player.Color` changed.
+    fn update_player_colors(&mut self, world: &World) -> bool {
+        let changed: Vec<PlayerRef> = self
+            .player_colors
+            .iter_mut()
+            .filter(|(pl, c)| pl.color() != *c)
+            .map(|(pl, c)| {
+                *c = pl.color();
+                pl.clone()
+            })
+            .collect();
+        for pl in &changed {
+            self.load_player_palettes(world, pl);
+        }
+        !changed.is_empty()
     }
 
     fn base(&self, name: &str) -> Palette {
@@ -136,6 +167,10 @@ impl Palettes {
     }
 
     fn add(&mut self, name: &str, pal: Palette, allow_modifiers: bool) -> u32 {
+        if let Some(&row) = self.named.get(name) {
+            self.rows[row as usize].base = pal;
+            return row;
+        }
         let row = self.rows.len() as u32;
         assert!(row < MAX_PALETTES, "more than {MAX_PALETTES} palettes");
         self.rows.push(Row {
@@ -167,11 +202,16 @@ impl Palettes {
     }
 
     /// `RotationPaletteEffect.AdjustPalette` and `LightPaletteRotator.AdjustPalette`, once per world tick.
-    pub fn update(&mut self, renderer: &Renderer, world_tick: i32) {
-        if world_tick == self.last_tick {
+    pub fn update(&mut self, renderer: &Renderer, world: &World) {
+        let world_tick = world.world_tick();
+        if !self.update_player_colors(world) && world_tick == self.last_tick {
             return;
         }
         self.last_tick = world_tick;
+        self.update_all(renderer, world_tick);
+    }
+
+    fn update_all(&self, renderer: &Renderer, world_tick: i32) {
         for (i, row) in self.rows.iter().enumerate() {
             let mut pal = row.base;
             if row.allow_modifiers {

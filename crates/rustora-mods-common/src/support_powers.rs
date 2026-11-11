@@ -164,6 +164,9 @@ pub struct SupportPowerInfo {
     pub support_power_palette_order: i32,
     // DirectionalSupportPower
     pub use_directional_target: bool,
+    pub arrows: Vec<String>,
+    pub direction_arrow_animation: Option<String>,
+    pub direction_arrow_palette: String,
     // AirstrikePower, ParatroopersPower
     pub unit_type: String,
     pub squad_size: i32,
@@ -298,6 +301,11 @@ impl Default for SupportPowerInfo {
             prerequisites: Vec::new(),
             order_name: String::new(),
             use_directional_target: false,
+            arrows: ["arrow-t", "arrow-tl", "arrow-l", "arrow-bl", "arrow-b", "arrow-br", "arrow-r", "arrow-tr"]
+                .map(String::from)
+                .to_vec(),
+            direction_arrow_animation: None,
+            direction_arrow_palette: "chrome".into(),
             unit_type: String::new(),
             squad_size: 1,
             squad_offset: WVec::new(-1536, 1536, 0),
@@ -710,7 +718,7 @@ impl SupportPower {
                 &self_.world(),
                 crate::radar::PingVisibility::AlliesOf(player.clone()),
                 order.target.center_position(),
-                player.color,
+                player.color(),
                 self.info.radar_ping_duration,
             );
         }

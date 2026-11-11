@@ -20,6 +20,29 @@ pub struct CursorImage {
     pub hotspot: (u16, u16),
 }
 
+impl CursorImage {
+    /// `DoublePixelData` applied `log2(factor)` times: each pixel becomes a `factor` by `factor` square, and the
+    /// hotspot moves with it.
+    pub fn scaled(&self, factor: u16) -> CursorImage {
+        let f = factor.max(1) as usize;
+        let (w, h) = (self.width as usize, self.height as usize);
+        let mut rgba = vec![0; 4 * w * h * f * f];
+        for y in 0..h * f {
+            for x in 0..w * f {
+                let src = 4 * ((y / f) * w + x / f);
+                let dest = 4 * (y * w * f + x);
+                rgba[dest..dest + 4].copy_from_slice(&self.rgba[src..src + 4]);
+            }
+        }
+        CursorImage {
+            rgba,
+            width: self.width * factor.max(1),
+            height: self.height * factor.max(1),
+            hotspot: (self.hotspot.0 * factor.max(1), self.hotspot.1 * factor.max(1)),
+        }
+    }
+}
+
 /// All cursors of a mod by name.
 #[derive(Default)]
 pub struct Cursors {
@@ -268,6 +291,20 @@ mod tests {
         assert_eq!((images[0].width, images[0].height), (8, 8));
         assert_eq!((images[1].width, images[1].height), (8, 8));
         assert_eq!(images[0].hotspot, images[1].hotspot);
+    }
+
+    #[test]
+    fn scaling_doubles_pixels_and_hotspot() {
+        let image = CursorImage {
+            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            width: 2,
+            height: 1,
+            hotspot: (1, 0),
+        };
+        let doubled = image.scaled(2);
+        assert_eq!((doubled.width, doubled.height, doubled.hotspot), (4, 2, (2, 0)));
+        assert_eq!(&doubled.rgba[..16], &[1, 2, 3, 4, 1, 2, 3, 4, 5, 6, 7, 8, 5, 6, 7, 8]);
+        assert_eq!(doubled.rgba[..16], doubled.rgba[16..]);
     }
 
     #[test]

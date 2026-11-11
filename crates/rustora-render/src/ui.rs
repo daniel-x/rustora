@@ -110,6 +110,8 @@ struct Texture {
 
 /// GPU state of the user interface pass.
 pub struct UiPass {
+    /// The draw calls since the last reset.
+    pub draw_calls: u32,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
@@ -214,6 +216,7 @@ impl UiPass {
             })
         };
         let mut pass = UiPass {
+            draw_calls: 0,
             pipeline,
             layout,
             uniform,
@@ -405,6 +408,7 @@ impl UiPass {
                 }
                 pass.set_bind_group(0, &self.textures[texture.0 as usize].bind_group, &[]);
                 pass.draw(start as u32 * 6..end as u32 * 6, 0..1);
+                self.draw_calls += 1;
                 start = end;
             }
         }

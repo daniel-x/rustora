@@ -2078,7 +2078,7 @@ impl Default for LaserZapInfo {
 impl IProjectileInfo for LaserZapInfo {
     fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
         let w = args.source_actor.world();
-        let owner_color = args.source_actor.owner().color;
+        let owner_color = args.source_actor.owner().color();
         let color = if self.use_player_color { owner_color } else { self.color };
         let secondary_color = if self.secondary_beam_use_player_color {
             owner_color
@@ -2304,7 +2304,7 @@ impl Default for RailgunInfo {
 impl IProjectileInfo for RailgunInfo {
     fn create(&self, args: ProjectileArgs) -> Option<EffectRef> {
         let w = args.source_actor.world();
-        let c = args.source_actor.owner().color;
+        let c = args.source_actor.owner().color();
         let beam_color = if self.beam_player_color {
             Color::from_argb(self.beam_color.a(), c.r(), c.g(), c.b())
         } else {

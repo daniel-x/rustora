@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `ColorBlockWidget.cs` and `ClientTooltipRegionWidget.cs`.
+//! Ports of `ColorBlockWidget.cs`, `ClientTooltipRegionWidget.cs` and `BadgeWidget.cs`.
 
 use std::rc::Rc;
 
@@ -94,6 +94,29 @@ impl WidgetKind for ClientTooltipRegionWidget {
     fn mouse_exited(&mut self, ui: &mut Ui, _id: WidgetId) {
         if let Some(container) = self.tooltip_container.as_deref().and_then(|c| ui.find(ui.root, c)) {
             TooltipContainerWidget::remove_tooltip(ui, container);
+        }
+    }
+}
+
+/// Port of `BadgeWidget`: the icon of a profile badge, drawn once it has been downloaded.
+#[derive(Clone, Default)]
+pub struct BadgeWidget {
+    pub badge: Option<crate::player_database::PlayerBadge>,
+}
+
+impl WidgetKind for BadgeWidget {
+    impl_as_any!();
+
+    fn draw(&mut self, ui: &mut Ui, id: WidgetId, dc: &mut DrawContext) {
+        let Some(badge) = &self.badge else { return };
+        let ui_scale = crate::logic::services(ui).settings.borrow().graphics.ui_scale;
+        let Some((url, png)) = crate::player_database::icon(badge, ui_scale) else {
+            return;
+        };
+        if let Some(sprite) = dc.minimap(&url, Some(&png)) {
+            let size = crate::player_database::ICON_SIZE as f32;
+            let origin = ui.render_bounds(id);
+            dc.draw_sprite_sized(sprite, origin.x as f32, origin.y as f32, size, size);
         }
     }
 }

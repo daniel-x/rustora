@@ -40,6 +40,8 @@ pub struct Ingame {
     pub replay: Option<ReplayStatus>,
     /// The lines of the lag display, empty while the game runs at its speed.
     pub lag_text: RefCell<String>,
+    /// `TerrainGeometryOverlay.Enabled`.
+    pub terrain_geometry: Cell<bool>,
 }
 
 /// What `ReplayControlBarLogic` reads of a `ReplayConnection` and its `OrderManager`.
@@ -100,6 +102,14 @@ impl Ingame {
             unit_order_generator,
             replay: None,
             lag_text: RefCell::default(),
+            terrain_geometry: Cell::new(false),
+        }
+    }
+
+    /// `Player.SetupRelationshipColors` with `World.LocalPlayer` as the viewer.
+    pub fn setup_relationship_colors(&self, use_stance_colors: bool, metrics: &crate::chrome::Metrics) {
+        for p in self.world.players() {
+            p.set_color(relationship_color(&p, self.local_player.as_ref(), use_stance_colors, metrics));
         }
     }
 
@@ -245,4 +255,26 @@ pub fn load_player_or_observer_ui(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<d
         switched: false,
         game_over: false,
     })
+}
+
+/// `Player.PlayerRelationshipColor`.
+fn relationship_color(
+    player: &PlayerRef,
+    viewer: Option<&PlayerRef>,
+    use_stance_colors: bool,
+    metrics: &crate::chrome::Metrics,
+) -> rustora_core::fieldloader::Color {
+    let Some(viewer) = viewer.filter(|v| use_stance_colors && !v.spectating()) else {
+        return player.chosen_color;
+    };
+    let key = if Rc::ptr_eq(player, viewer) {
+        "PlayerStanceColorSelf"
+    } else if player.is_allied_with(Some(viewer)) {
+        "PlayerStanceColorAllies"
+    } else if player.non_combatant {
+        "PlayerStanceColorNeutrals"
+    } else {
+        "PlayerStanceColorEnemies"
+    };
+    metrics.color(key)
 }

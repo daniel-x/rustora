@@ -268,7 +268,7 @@ impl Contrail {
         if render_length <= 1 {
             return;
         }
-        let player = self.owner.owner().color;
+        let player = self.owner.owner().color();
         let resolve = |c: Color, use_player: bool| {
             if use_player {
                 Color::from_argb(c.a(), player.r(), player.g(), player.b())

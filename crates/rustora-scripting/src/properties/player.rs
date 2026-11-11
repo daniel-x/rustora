@@ -53,7 +53,7 @@ fn player() -> G {
     G::new("Player", &[])
         .get("InternalName", |_, p| Ok(p.internal_name.clone()))
         .get("Name", |lua, p| Ok(resolved_player_name(lua, p)))
-        .get("Color", |_, p| Ok(LuaColor(p.color)))
+        .get("Color", |_, p| Ok(LuaColor(p.color())))
         .get("Faction", |_, p| Ok(p.faction.clone()))
         .get("Spawn", |_, p| Ok(p.spawn_point))
         .get("HomeLocation", |_, p| Ok(LuaCPos(p.home_location)))

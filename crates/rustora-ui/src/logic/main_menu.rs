@@ -249,6 +249,13 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| to_extras.set(MenuType::Extras)));
         ui.open_window("MUSIC_PANEL", args);
     });
+    let credits_menu = menu.clone();
+    on_click(ui, extras, "CREDITS_BUTTON", move |ui| {
+        credits_menu.set(MenuType::None);
+        let to_extras = credits_menu.clone();
+        let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| to_extras.set(MenuType::Extras)));
+        ui.open_window("CREDITS_PANEL", args);
+    });
     on_click(ui, extras, "BACK_BUTTON", switch(MenuType::Main));
 
     let editor = panel(ui, "MAP_EDITOR_MENU", MenuType::MapEditor);
@@ -276,6 +283,11 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         direct_connect(ui, &target, &menu);
     } else if args.value::<bool>("openSettings") == Some(true) {
         open_settings(ui, &menu);
+    } else if super::prompts::should_show_introduction(ui) {
+        menu.set(MenuType::None);
+        let to_main = menu.clone();
+        let args = WidgetArgs::default().with_action("onComplete", Rc::new(move |_| to_main.set(MenuType::Main)));
+        ui.open_window("MAINMENU_INTRODUCTION_PROMPT", args);
     } else {
         open_menu_based_on_last_game(ui, &menu);
     }

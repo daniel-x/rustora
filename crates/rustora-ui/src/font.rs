@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Port of `SpriteFont.cs`, with swash in place of FreeType. Glyphs are packed on a shared texture.
+//! Port of `SpriteFont.cs`, with swash in place of FreeType. Glyphs are packed on a shared texture. Like C#, glyphs
+//! are rasterized at the device scale, which is the UI scale, and drawn at the reciprocal size, so text stays sharp
+//! when the UI is scaled up.
 
 use std::collections::HashMap;
 
@@ -30,6 +32,8 @@ pub struct SpriteFont {
     data: Vec<u8>,
     size: i32,
     pub top_offset: i32,
+    /// `deviceScale`.
+    scale: f32,
     glyphs: HashMap<char, Glyph>,
     advances: HashMap<char, i32>,
     alpha: HashMap<char, Vec<u8>>,
@@ -98,6 +102,7 @@ pub struct GlyphSheet {
     y: u32,
     row: u32,
     scale: ScaleContext,
+    clear_pending: bool,
 }
 
 impl Default for GlyphSheet {
@@ -108,6 +113,7 @@ impl Default for GlyphSheet {
             y: 0,
             row: 0,
             scale: ScaleContext::new(),
+            clear_pending: false,
         }
     }
 }
@@ -117,6 +123,10 @@ impl GlyphSheet {
         let texture = *self.texture.get_or_insert_with(|| {
             renderer.add_ui_texture(SHEET_SIZE, SHEET_SIZE, &vec![0; (SHEET_SIZE * SHEET_SIZE * 4) as usize], false)
         });
+        if self.clear_pending {
+            self.clear_pending = false;
+            renderer.update_ui_texture(texture, 0, 0, SHEET_SIZE, SHEET_SIZE, &vec![0; (SHEET_SIZE * SHEET_SIZE * 4) as usize]);
+        }
         if self.x + w + 1 > SHEET_SIZE {
             self.x = 0;
             self.y += self.row + 1;
@@ -127,6 +137,14 @@ impl GlyphSheet {
         self.row = self.row.max(h);
         at
     }
+
+    /// Frees all glyphs, for fonts that change their scale together.
+    pub fn reset(&mut self) {
+        self.x = 0;
+        self.y = 0;
+        self.row = 0;
+        self.clear_pending = self.texture.is_some();
+    }
 }
 
 impl SpriteFont {
@@ -135,12 +153,36 @@ impl SpriteFont {
             data,
             size,
             top_offset: size - ascender,
+            scale: 1.0,
             glyphs: HashMap::new(),
             advances: HashMap::new(),
             alpha: HashMap::new(),
             contrast_glyphs: HashMap::new(),
             dilation_elements: HashMap::new(),
         }
+    }
+
+    /// `SetScale`: glyphs are rasterized anew at `scale`. The glyph sheet must be reset with all fonts.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+        self.glyphs.clear();
+        self.advances.clear();
+        self.alpha.clear();
+        self.contrast_glyphs.clear();
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// The size in device pixels.
+    fn device_size(&self) -> f32 {
+        self.size as f32 * self.scale
+    }
+
+    /// A position in user interface pixels as device pixels, rounded like `screen` in C#.
+    fn to_device(&self, v: f32) -> i32 {
+        (v * self.scale + 0.5) as i32
     }
 
     fn create_glyph(&mut self, c: char, sheet: &mut GlyphSheet, renderer: &mut Renderer) -> Glyph {
@@ -155,12 +197,12 @@ impl SpriteFont {
             return Glyph::default();
         };
         let id = font.charmap().map(c);
-        let advance = font.glyph_metrics(&[]).scale(self.size as f32).advance_width(id);
+        let advance = font.glyph_metrics(&[]).scale(self.device_size()).advance_width(id);
         let mut glyph = Glyph {
             advance: (advance + 0.5) as i32,
             ..Default::default()
         };
-        let mut scaler = sheet.scale.builder(font).size(self.size as f32).hint(true).build();
+        let mut scaler = sheet.scale.builder(font).size(self.device_size()).hint(true).build();
         let sources = [Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline];
         let Some(image) = Render::new(&sources).format(Format::Alpha).render(&mut scaler, id) else {
             return glyph;
@@ -216,7 +258,7 @@ impl SpriteFont {
         }
         let advance = FontRef::from_index(&self.data, 0).map_or(0, |font| {
             let id = font.charmap().map(c);
-            (font.glyph_metrics(&[]).scale(self.size as f32).advance_width(id) + 0.5) as i32
+            (font.glyph_metrics(&[]).scale(self.device_size()).advance_width(id) + 0.5) as i32
         });
         self.advances.insert(c, advance);
         advance
@@ -231,10 +273,10 @@ impl SpriteFont {
         let mut rows = 0;
         for line in text.split('\n') {
             rows += 1;
-            let width = line.chars().map(|c| self.advance(c)).sum();
+            let width: i32 = line.chars().map(|c| self.advance(c)).sum();
             max_width = i32::max(max_width, width);
         }
-        (max_width, rows * self.size)
+        ((max_width as f32 / self.scale).ceil() as i32, rows * self.size)
     }
 
     /// Port of `DrawTextContrast`.
@@ -251,17 +293,23 @@ impl SpriteFont {
         list: &mut UiList,
     ) {
         let tint = [color.r() as f32 / 255.0, color.g() as f32 / 255.0, color.b() as f32 / 255.0, 1.0];
-        let y = y + self.size as f32;
+        let r = (r as f32 * self.scale) as i32;
+        let s = self.scale;
         for (row, line) in text.split('\n').enumerate() {
-            let mut pen = (x + 0.5) as i32;
-            let base = (y + (row as i32 * self.size) as f32 + 0.5) as i32;
+            let mut pen = self.to_device(x);
+            let base = self.to_device(y + ((row as i32 + 1) * self.size) as f32);
             for c in line.chars() {
                 let source = self.glyph(c, sheet, renderer);
                 if source.w > 0 {
                     let g = self.contrast_glyph(c, r, sheet, renderer);
                     list.quads.push(UiQuad {
                         texture: sheet.texture.expect("glyph sheet"),
-                        dst: [(pen + g.left - r) as f32, (base + g.top - r) as f32, g.w as f32, g.h as f32],
+                        dst: [
+                            (pen + g.left - r) as f32 / s,
+                            (base + g.top - r) as f32 / s,
+                            g.w as f32 / s,
+                            g.h as f32 / s,
+                        ],
                         src: [g.x as f32, g.y as f32, g.w as f32, g.h as f32],
                         color: tint,
                         gradient: None,
@@ -286,16 +334,16 @@ impl SpriteFont {
         list: &mut UiList,
     ) {
         let tint = [color.r() as f32 / 255.0, color.g() as f32 / 255.0, color.b() as f32 / 255.0, 1.0];
-        let y = y + self.size as f32;
+        let s = self.scale;
         for (row, line) in text.split('\n').enumerate() {
-            let mut pen = (x + 0.5) as i32;
-            let base = (y + (row as i32 * self.size) as f32 + 0.5) as i32;
+            let mut pen = self.to_device(x);
+            let base = self.to_device(y + ((row as i32 + 1) * self.size) as f32);
             for c in line.chars() {
                 let g = self.glyph(c, sheet, renderer);
                 if g.w > 0 {
                     list.quads.push(UiQuad {
                         texture: sheet.texture.expect("glyph sheet"),
-                        dst: [(pen + g.left) as f32, (base + g.top) as f32, g.w as f32, g.h as f32],
+                        dst: [(pen + g.left) as f32 / s, (base + g.top) as f32 / s, g.w as f32 / s, g.h as f32 / s],
                         src: [g.x as f32, g.y as f32, g.w as f32, g.h as f32],
                         color: tint,
                         gradient: None,

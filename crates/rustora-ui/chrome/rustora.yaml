@@ -18,8 +18,9 @@ Container@GENERAL_CHAT:
 			Height: CHAT_HEIGHT
 			Children:
 				Label@TITLE:
+					X: 10
 					Y: 12
-					Width: PARENT_WIDTH
+					Width: PARENT_WIDTH - 20
 					Height: 25
 					Font: Bold
 					Align: Center

@@ -310,7 +310,7 @@ impl Scene {
         cam: &Camera,
         overlay: &[Renderable],
     ) -> Vec<Quad> {
-        self.palettes.update(renderer, world.world_tick());
+        self.palettes.update(renderer, world);
         let terrain_row = self.palettes.named("terrain");
         let mut quads = Vec::new();
         let cells: Vec<CPos> = Self::visible_cells(world, cam).collect();

@@ -24,6 +24,7 @@ mod label;
 mod map_preview;
 pub mod menu_button;
 pub mod observer;
+pub mod perf_graph;
 pub mod production;
 mod progress_bar;
 pub mod radar;
@@ -41,7 +42,7 @@ pub mod world_interaction;
 pub use background::BackgroundWidget;
 pub use button::{ButtonWidget, draw_background};
 pub use checkbox::CheckboxWidget;
-pub use color_block::{ClientTooltipRegionWidget, ColorBlockWidget};
+pub use color_block::{BadgeWidget, ClientTooltipRegionWidget, ColorBlockWidget};
 pub use color_mixer::{ColorMixerWidget, HueSliderWidget};
 pub use container::ContainerWidget;
 pub use dropdown::{DropDownButtonWidget, MaskWidget};
@@ -86,6 +87,9 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
             ..LabelWidget::new(assets)
         }),
         "ColorBlock" => cell(ColorBlockWidget::default()),
+        "Badge" => cell(BadgeWidget::default()),
+        "PerfGraph" => cell(perf_graph::PerfGraphWidget),
+        "StrategicProgress" => cell(perf_graph::StrategicProgressWidget::default()),
         "GradientColorBlock" => cell(observer::GradientColorBlockWidget::default()),
         "LineGraph" => cell(observer::LineGraphWidget::new(assets)),
         "ObserverProductionIcons" => cell(observer::ObserverProductionIconsWidget::default()),

@@ -821,7 +821,7 @@ pub fn world_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs
         if let Some(o) = &owner_player {
             let name = resolved_player_name(ui, &ingame.world, o);
             *flag_faction.borrow_mut() = o.faction.clone();
-            owner_color.set(o.color);
+            owner_color.set(o.color());
             height = double_height;
             width = width.max(ui.node(owner).bounds.x + ui.measure(&owner_font, &name).0 + label_x);
             *owner_text.borrow_mut() = name;

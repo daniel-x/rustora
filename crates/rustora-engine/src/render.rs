@@ -87,6 +87,24 @@ pub enum Renderable {
 }
 
 impl Renderable {
+    /// `IRenderable.OffsetBy`.
+    pub fn offset_by(&mut self, vec: WVec) {
+        match self {
+            Renderable::Sprite(s) => s.pos = s.pos + vec,
+            Renderable::Line { from, to, .. } => {
+                *from = *from + vec;
+                *to = *to + vec;
+            }
+            Renderable::Tile { pos, .. } => *pos = *pos + vec,
+            Renderable::Group { pos, items, .. } => {
+                *pos = *pos + vec;
+                for item in items {
+                    item.offset_by(vec);
+                }
+            }
+        }
+    }
+
     pub fn pos(&self) -> WPos {
         match self {
             Renderable::Sprite(s) => s.pos + s.offset,

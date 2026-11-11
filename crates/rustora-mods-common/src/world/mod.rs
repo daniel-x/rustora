@@ -661,7 +661,7 @@ pub fn create_game_information(
             bot_type: p.bot_type.clone(),
             faction_name: faction_name(&p.faction),
             faction_id: Some(p.faction.clone()),
-            color: p.color,
+            color: p.color(),
             display_faction_name: faction_name(&p.display_faction),
             display_faction_id: Some(p.display_faction.clone()),
             team: client.team,

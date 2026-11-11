@@ -218,7 +218,7 @@ pub fn beacon() -> Group<()> {
                 PingVisibility::AlliesOf(owner.clone()),
                 viewer.as_ref(),
                 position,
-                owner.color,
+                owner.color(),
                 duration,
             );
         }

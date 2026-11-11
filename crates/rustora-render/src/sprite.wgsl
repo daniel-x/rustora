@@ -15,6 +15,7 @@ struct VertexIn {
     @location(2) palette: f32,
     @location(3) color: vec4<f32>,
     @location(4) tint: vec3<f32>,
+    @location(5) rect: vec4<f32>,
 };
 
 struct VertexOut {
@@ -23,6 +24,7 @@ struct VertexOut {
     @location(1) palette: f32,
     @location(2) color: vec4<f32>,
     @location(3) tint: vec3<f32>,
+    @location(4) @interpolate(flat) rect: vec4<f32>,
 };
 
 @vertex
@@ -33,17 +35,20 @@ fn vs_main(v: VertexIn) -> VertexOut {
     o.palette = v.palette;
     o.color = v.color;
     o.tint = v.tint;
+    o.rect = v.rect;
     return o;
 }
 
 // A negative palette row draws the vertex color; otherwise the sheet texel indexes the palette row, and the world
-// tint multiplies the color like `c *= vTint` of combined.frag.
+// tint multiplies the color like `c *= vTint` of combined.frag. The texel stays inside the sprite's rect: at a
+// scaled user interface, quad edges fall on pixel centers, where the interpolated uv can end just outside.
 @fragment
 fn fs_main(v: VertexOut) -> @location(0) vec4<f32> {
     if (v.palette < 0.0) {
         return v.color;
     }
-    let index = textureLoad(sheet, vec2<i32>(floor(v.uv)), 0).r;
+    let texel_pos = clamp(floor(v.uv), v.rect.xy, max(v.rect.xy, v.rect.zw - vec2<f32>(1.0)));
+    let index = textureLoad(sheet, vec2<i32>(texel_pos), 0).r;
     if (index == 0u) {
         discard;
     }

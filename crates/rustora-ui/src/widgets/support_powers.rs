@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `SupportPowersWidget.cs`, `SelectGenericPowerTarget` and the two target selections of
-//! `ChronoshiftPower`. The other powers target through the generic target selection, so the footprints of the iron
-//! curtain and the nuke and the directional targets of air powers are not shown; sounds, speech and icon overlay
-//! texts are not ported.
+//! Ports of `SupportPowersWidget.cs`, `SelectGenericPowerTarget`, `SelectDirectionalTarget`,
+//! `GrantExternalConditionPower.SelectConditionTarget` and the two target selections of `ChronoshiftPower`.
+//! `SelectNukePowerTarget` is the generic selection: it only adds the `CircleRanges` circles, which no RA rule sets.
+//! The `MouseAttachment` widget is the drawing of the direction arrow by `SelectDirectionalTarget` itself, and the
+//! cursor is not locked during the drag.
 
 use std::cell::Cell;
 use std::rc::{Rc, Weak};
@@ -96,6 +97,219 @@ fn footprint_tile(ctx: &OrderContext, power: &SupportPower, sequence: &str, pale
     })
 }
 
+/// `GrantExternalConditionPower.SelectConditionTarget`: the footprint around the mouse and red selection boxes on the
+/// units that would get the condition.
+pub struct SelectConditionTarget {
+    manager: Rc<SupportPowerManager>,
+    power: Rc<SupportPower>,
+    order_key: String,
+    mouse_cell: Cell<CPos>,
+}
+
+impl OrderGenerator for SelectConditionTarget {
+    fn order(&self, ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+        let left_down = mi.button == MouseButton::Left && mi.event == MouseEvent::Down;
+        let right_up = mi.button == MouseButton::Right && mi.event == MouseEvent::Up;
+        if !left_down && !right_up {
+            return Vec::new();
+        }
+        ctx.cancel_input_mode();
+        if left_down && !self.power.units_in_range(cell).is_empty() {
+            let mut order = Order::new(
+                &self.order_key,
+                Some(self.manager.self_.clone()),
+                Target::from_cell(ctx.world, cell, FULL_CELL),
+                false,
+            );
+            order.suppress_visual_feedback = true;
+            return vec![order];
+        }
+        Vec::new()
+    }
+
+    fn tick(&self, ctx: &OrderContext) {
+        if !power_usable(&self.manager, &self.order_key) {
+            ctx.cancel_input_mode();
+        }
+    }
+
+    fn get_cursor(&self, _ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), _mi: &MouseInput) -> Option<String> {
+        self.mouse_cell.set(cell);
+        let info = &self.power.info;
+        Some(if self.power.units_in_range(cell).is_empty() {
+            info.blocked_cursor.clone()
+        } else {
+            info.cursor.clone()
+        })
+    }
+
+    fn draw(&self, ctx: &OrderContext, dc: &mut DrawContext, viewport: &crate::viewport::Viewport) {
+        for unit in self.power.units_in_range(self.mouse_cell.get()) {
+            crate::annotations::draw_selection_box_of(dc, viewport, ctx.screen_map, &unit, RED);
+        }
+    }
+
+    fn render_above_shroud(&self, ctx: &OrderContext, out: &mut Vec<Renderable>) {
+        let info = &self.power.info;
+        for t in self.power.cells_matching(self.mouse_cell.get()) {
+            out.push(footprint_tile(ctx, &self.power, &info.footprint_sequence, TERRAIN_PALETTE, t));
+        }
+    }
+}
+
+/// The color of the selection boxes of the units that a power would affect.
+const RED: Color = Color::from_argb(255, 255, 0, 0);
+
+/// `TileSet.TerrainPaletteInternalName`.
+const TERRAIN_PALETTE: &str = "terrain";
+
+const MIN_DRAG_THRESHOLD: f32 = 20.0;
+
+/// `SelectDirectionalTarget.Arrow`: the sequence of an arrow, the angle where its sector ends and the direction.
+struct Arrow {
+    sequence: String,
+    end_angle: f64,
+    facing: i32,
+}
+
+/// `SelectDirectionalTarget`: the first click sets the target, dragging before the release chooses the direction
+/// from which the aircraft come.
+pub struct SelectDirectionalTarget {
+    ingame: Weak<Ingame>,
+    manager: Rc<SupportPowerManager>,
+    power: Rc<SupportPower>,
+    order_key: String,
+    arrows: Vec<Arrow>,
+    target: Cell<Option<(CPos, (i32, i32))>>,
+    drag: Cell<(f32, f32)>,
+    arrow: Cell<usize>,
+}
+
+impl SelectDirectionalTarget {
+    /// `LoadArrows`.
+    fn new(ingame: Weak<Ingame>, manager: Rc<SupportPowerManager>, power: Rc<SupportPower>, order_key: String) -> Self {
+        let names = &power.info.arrows;
+        let part = 360 / names.len().max(1) as i32;
+        let arrows = names
+            .iter()
+            .enumerate()
+            .map(|(i, sequence)| {
+                let angle = i as i32 * part;
+                Arrow {
+                    sequence: sequence.clone(),
+                    end_angle: angle as f64 + part as f64 / 2.0,
+                    facing: rustora_core::world_types::WAngle::from_degrees(angle).facing(),
+                }
+            })
+            .collect();
+        SelectDirectionalTarget {
+            ingame,
+            manager,
+            power,
+            order_key,
+            arrows,
+            target: Cell::new(None),
+            drag: Cell::new((0.0, 0.0)),
+            arrow: Cell::new(0),
+        }
+    }
+
+    /// `AngleOf`: the angle of the drag in degrees, counterclockwise from up.
+    fn angle_of(delta: (f32, f32)) -> f64 {
+        let mut d = (delta.1 as f64).atan2(delta.0 as f64).to_degrees();
+        if d < 0.0 {
+            d += 360.0;
+        }
+        let angle = 270.0 - d;
+        if angle < 0.0 { angle + 360.0 } else { angle }
+    }
+
+    /// `GetArrow`.
+    fn arrow_for(&self, angle: f64) -> usize {
+        self.arrows.iter().position(|a| a.end_angle >= angle).unwrap_or(0)
+    }
+
+    /// `IsOutsideDragZone`.
+    fn outside_drag_zone(&self) -> bool {
+        let (x, y) = self.drag.get();
+        (x * x + y * y).sqrt() > MIN_DRAG_THRESHOLD
+    }
+}
+
+impl OrderGenerator for SelectDirectionalTarget {
+    fn order(&self, ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+        if mi.button == MouseButton::Right && mi.event != MouseEvent::Move {
+            ctx.cancel_input_mode();
+            return Vec::new();
+        }
+        if mi.button == MouseButton::Left && mi.event == MouseEvent::Down {
+            if self.target.get().is_none() && ctx.world.map().contains(cell) {
+                self.target.set(Some((cell, (mi.x, mi.y))));
+            }
+            return Vec::new();
+        }
+        let Some((target_cell, location)) = self.target.get() else {
+            return Vec::new();
+        };
+        if mi.event == MouseEvent::Move {
+            let drag = ((mi.x - location.0) as f32, (mi.y - location.1) as f32);
+            self.drag.set(drag);
+            self.arrow.set(self.arrow_for(Self::angle_of(drag)));
+        }
+        if mi.button == MouseButton::Left && mi.event == MouseEvent::Up {
+            let mut order = Order::new(
+                &self.order_key,
+                Some(self.manager.self_.clone()),
+                Target::from_cell(ctx.world, target_cell, FULL_CELL),
+                false,
+            );
+            order.suppress_visual_feedback = true;
+            order.extra_data = match self.arrows.get(self.arrow.get()) {
+                Some(arrow) if self.outside_drag_zone() => arrow.facing as u32,
+                _ => u32::MAX,
+            };
+            ctx.cancel_input_mode();
+            return vec![order];
+        }
+        Vec::new()
+    }
+
+    fn tick(&self, ctx: &OrderContext) {
+        if !power_usable(&self.manager, &self.order_key) {
+            ctx.cancel_input_mode();
+        }
+    }
+
+    fn get_cursor(&self, ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), _mi: &MouseInput) -> Option<String> {
+        let info = &self.power.info;
+        Some(if ctx.world.map().contains(cell) {
+            info.cursor.clone()
+        } else {
+            info.blocked_cursor.clone()
+        })
+    }
+
+    /// `MouseAttachmentWidget.Draw`: the arrow of the drag direction centered on the target location.
+    fn draw(&self, _ctx: &OrderContext, dc: &mut DrawContext, _viewport: &crate::viewport::Viewport) {
+        let (Some((_, location)), Some(ingame)) = (self.target.get(), self.ingame.upgrade()) else {
+            return;
+        };
+        let info = &self.power.info;
+        let (Some(image), Some(arrow)) = (&info.direction_arrow_animation, self.arrows.get(self.arrow.get())) else {
+            return;
+        };
+        if self.drag.get() == (0.0, 0.0) {
+            return;
+        }
+        if let Some(f) = ingame
+            .world_sprites
+            .frame(dc.renderer, image, &arrow.sequence, 0, &info.direction_arrow_palette)
+        {
+            dc.draw_frame_centered(f, (location.0 as f32, location.1 as f32));
+        }
+    }
+}
+
 /// `ChronoshiftPower.SelectChronoshiftTarget`: the first click chooses the units to shift, the footprint around it.
 pub struct SelectChronoshiftTarget {
     ingame: Weak<Ingame>,
@@ -134,6 +348,10 @@ impl OrderGenerator for SelectChronoshiftTarget {
     fn get_cursor(&self, _ctx: &OrderContext, cell: CPos, _world_px: (i32, i32), _mi: &MouseInput) -> Option<String> {
         self.mouse_cell.set(cell);
         Some(self.power.info.selection_cursor.clone())
+    }
+
+    fn draw(&self, ctx: &OrderContext, dc: &mut DrawContext, viewport: &crate::viewport::Viewport) {
+        draw_chronoshift_boxes(&self.power, self.mouse_cell.get(), ctx, dc, viewport);
     }
 
     fn render_above_shroud(&self, ctx: &OrderContext, out: &mut Vec<Renderable>) {
@@ -217,8 +435,12 @@ impl OrderGenerator for SelectChronoshiftDestination {
         })
     }
 
-    /// `Render` and `RenderAboveShroud`: the source footprint, the destination footprint and the destination cell of
-    /// each unit, valid where explored and enterable. The unit previews of C# are not drawn.
+    fn draw(&self, ctx: &OrderContext, dc: &mut DrawContext, viewport: &crate::viewport::Viewport) {
+        draw_chronoshift_boxes(&self.power, self.source, ctx, dc, viewport);
+    }
+
+    /// `Render` and `RenderAboveShroud`: the source footprint, the destination footprint, the destination cell of each
+    /// unit, valid where explored and enterable, and the units drawn at their destination.
     fn render_above_shroud(&self, ctx: &OrderContext, out: &mut Vec<Renderable>) {
         let info = &self.power.info;
         let palette = &info.icon_palette;
@@ -250,7 +472,30 @@ impl OrderGenerator for SelectChronoshiftDestination {
                     &info.invalid_footprint_sequence
                 };
                 out.push(footprint_tile(ctx, &self.power, sequence, palette, cell));
+                let offset = ctx.world.map().center_of_cell(cell) - ctx.world.map().center_of_cell(unit.location());
+                let mut preview = Vec::new();
+                rustora_engine::render::render_actor(&unit, &mut preview);
+                for mut r in preview {
+                    r.offset_by(offset);
+                    out.push(r);
+                }
             }
+        }
+    }
+}
+
+/// `RenderAnnotations` of both chronoshift target selections: red selection boxes on the visible units around `xy`.
+fn draw_chronoshift_boxes(
+    power: &SupportPower,
+    xy: CPos,
+    ctx: &OrderContext,
+    dc: &mut DrawContext,
+    viewport: &crate::viewport::Viewport,
+) {
+    let viewer = power.self_.owner();
+    for unit in power.chronoshift_units_in_range(xy) {
+        if unit.can_be_viewed_by_player(Some(&viewer)) {
+            crate::annotations::draw_selection_box_of(dc, viewport, ctx.screen_map, &unit, RED);
         }
     }
 }
@@ -398,7 +643,7 @@ impl SupportPowersWidget {
     }
 
     /// `ClickIcon` and `SupportPowerInstance.Target`.
-    fn click_icon(&self, icon: &SupportPowerIcon) {
+    fn click_icon(&self, icon: &SupportPowerIcon, classic_mouse_style: bool) {
         let (Some(ingame), Some(manager)) = (&self.ingame, &self.manager) else {
             return;
         };
@@ -441,6 +686,30 @@ impl SupportPowersWidget {
                 mouse_cell: Cell::new(CPos::ZERO),
             }));
             return;
+        }
+        match instance.info.kind {
+            PowerKind::GrantExternalCondition => {
+                if classic_mouse_style {
+                    ingame.selection.clear();
+                }
+                ingame.set_order_generator(Rc::new(SelectConditionTarget {
+                    manager: manager.clone(),
+                    power: instance,
+                    order_key: icon.power.key.clone(),
+                    mouse_cell: Cell::new(CPos::ZERO),
+                }));
+                return;
+            }
+            PowerKind::Airstrike | PowerKind::Paratroopers if instance.info.use_directional_target => {
+                ingame.set_order_generator(Rc::new(SelectDirectionalTarget::new(
+                    Rc::downgrade(ingame),
+                    manager.clone(),
+                    instance,
+                    icon.power.key.clone(),
+                )));
+                return;
+            }
+            _ => {}
         }
         ingame.set_order_generator(Rc::new(SelectGenericPowerTarget {
             manager: manager.clone(),
@@ -523,7 +792,7 @@ impl WidgetKind for SupportPowersWidget {
         }
     }
 
-    fn handle_mouse(&mut self, _ui: &mut Ui, _id: WidgetId, mi: &MouseInput) -> bool {
+    fn handle_mouse(&mut self, ui: &mut Ui, _id: WidgetId, mi: &MouseInput) -> bool {
         let icon_at = |icons: &[(Rect, SupportPowerIcon)]| icons.iter().find(|(r, _)| r.contains(mi.x, mi.y)).map(|(_, i)| i.clone());
         if mi.event == MouseEvent::Move {
             self.tooltip_icon = icon_at(&self.icons);
@@ -534,7 +803,8 @@ impl WidgetKind for SupportPowersWidget {
         }
         let clicked = icon_at(&self.icons);
         if let Some(icon) = clicked {
-            self.click_icon(&icon);
+            let classic = services(ui).settings.borrow().game.use_classic_mouse_style;
+            self.click_icon(&icon, classic);
         }
         true
     }
@@ -553,7 +823,8 @@ impl WidgetKind for SupportPowersWidget {
         };
         match icon {
             Some(icon) => {
-                self.click_icon(&icon);
+                let classic = services(ui).settings.borrow().game.use_classic_mouse_style;
+                self.click_icon(&icon, classic);
                 true
             }
             None => false,

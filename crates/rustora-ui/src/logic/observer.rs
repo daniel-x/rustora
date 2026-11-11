@@ -195,7 +195,7 @@ pub fn shroud_selector(ui: &mut Ui, widget: WidgetId, logic_args: &[MiniYamlNode
         let team = world.lobby_info.client_with_index(p.client_index).map_or(0, |c| c.team);
         options.push(CameraOption {
             label: resolved_player_name(ui, &world, &p),
-            color: p.color,
+            color: p.color(),
             faction: Some(p.faction.clone()),
             player: Some(p),
         });

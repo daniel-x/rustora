@@ -103,7 +103,7 @@ impl AppearsOnRadar {
         {
             return;
         }
-        let mut color = owner.color;
+        let mut color = owner.color();
         if let Some(modifier) = self_.traits_implementing::<dyn IRadarColorModifier>().first() {
             color = modifier.radar_color_override(self_, color, local_player);
         }

@@ -2,7 +2,8 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `Ingame/Hotkeys/*HotkeyLogic.cs`, `StanceSelectorLogic.cs`, `IngameTransientNotificationsLogic.cs`,
-//! `DisconnectWatcherLogic.cs` and `MuteIndicatorLogic.cs`. Sounds and the player stance colors are not ported.
+//! `DisconnectWatcherLogic.cs` and `MuteIndicatorLogic.cs`, and of the global `MusicHotkeyLogic.cs`,
+//! `MuteHotkeyLogic.cs` and `ScreenshotHotkeyLogic.cs`.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -307,9 +308,114 @@ pub fn create(name: &str, ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode]
         "SelectAllUnitsHotkeyLogic" => ("SelectAllUnitsKey", "WORLD_KEYHANDLER", Rc::new(select_all_units)),
         "SelectUnitsByTypeHotkeyLogic" => ("SelectUnitsByTypeKey", "WORLD_KEYHANDLER", Rc::new(select_units_by_type)),
         "RemoveFromControlGroupHotkeyLogic" => ("RemoveFromControlGroupKey", "PLAYER_KEYHANDLER", Rc::new(remove_from_control_group)),
+        "TogglePlayerStanceColorHotkeyLogic" => ("TogglePlayerStanceColorKey", "WORLD_KEYHANDLER", Rc::new(toggle_stance_colors)),
+        "MuteHotkeyLogic" => return Some(global_hotkey(ui, id, logic_args, "MuteAudioKey", Rc::new(toggle_mute))),
+        "ScreenshotHotkeyLogic" => return Some(global_hotkey(ui, id, logic_args, "TakeScreenshotKey", Rc::new(screenshot))),
+        "MusicHotkeyLogic" => return Some(music_hotkeys(ui, id, logic_args)),
         _ => return None,
     };
     Some(single_hotkey(ui, id, logic_args, arg, parent, handler))
+}
+
+type GlobalHotkey = Rc<dyn Fn(&mut Ui)>;
+
+/// `SingleHotkeyBaseLogic` on the `GLOBAL_KEYHANDLER`, which also exists without a world.
+fn global_hotkey(ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode], arg: &str, on_activated: GlobalHotkey) -> Rc<RefCell<dyn ChromeLogic>> {
+    let Some(key) = logic_args.iter().find(|n| n.key == arg).and_then(|n| n.value.value.clone()) else {
+        return cell(NoLogic);
+    };
+    let listener = ui.child(id, "GLOBAL_KEYHANDLER");
+    ui.get::<LogicKeyListenerWidget>(listener)
+        .handlers
+        .push(Rc::new(move |ui: &mut Ui, e: &KeyInput| {
+            let activated = e.event == KeyEvent::Down && ui.assets.borrow().hotkeys.is_activated(&key, e);
+            if activated {
+                on_activated(ui);
+            }
+            activated
+        }));
+    cell(NoLogic)
+}
+
+/// `Player.SetupRelationshipColors` for the current world after `UsePlayerStanceColors` changed.
+pub fn apply_relationship_colors(ui: &mut Ui) {
+    let service = services(ui);
+    if let Some(ingame) = service.ingame.borrow().as_ref() {
+        let use_stance_colors = service.settings.borrow().game.use_player_stance_colors;
+        ingame.setup_relationship_colors(use_stance_colors, &ui.assets.borrow().metrics);
+    }
+}
+
+/// `TogglePlayerStanceColorHotkeyLogic`.
+fn toggle_stance_colors(ui: &mut Ui, _ingame: &Rc<Ingame>, _e: &KeyInput) -> bool {
+    {
+        let settings = &services(ui).settings;
+        let game = &mut settings.borrow_mut().game;
+        game.use_player_stance_colors ^= true;
+    }
+    apply_relationship_colors(ui);
+    true
+}
+
+/// `MuteHotkeyLogic`.
+fn toggle_mute(ui: &mut Ui) {
+    let service = services(ui);
+    let mute = {
+        let sound = &mut service.settings.borrow_mut().sound;
+        sound.mute ^= true;
+        sound.mute
+    };
+    if mute {
+        service.sound.mute_audio();
+    } else {
+        service.sound.unmute_audio();
+    }
+    let text = message(ui, if mute { "label-audio-muted" } else { "label-audio-unmuted" });
+    add_feedback_line(ui, text);
+}
+
+/// `ScreenshotHotkeyLogic`.
+fn screenshot(ui: &mut Ui) {
+    ui.requests.push(crate::widget::AppRequest::TakeScreenshot);
+}
+
+/// `MusicHotkeyLogic`: the handler never consumes the key.
+fn music_hotkeys(ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode]) -> Rc<RefCell<dyn ChromeLogic>> {
+    let Some(playlist) = services(ui).music.borrow().clone() else {
+        return cell(NoLogic);
+    };
+    let sound = services(ui).sound.clone();
+    let key = |arg: &str| logic_args.iter().find(|n| n.key == arg).and_then(|n| n.value.value.clone());
+    let keys = [key("NextMusicKey"), key("PrevMusicKey"), key("StopMusicKey"), key("PauseMusicKey")];
+    let listener = ui.child(id, "GLOBAL_KEYHANDLER");
+    ui.get::<LogicKeyListenerWidget>(listener)
+        .handlers
+        .push(Rc::new(move |ui: &mut Ui, e: &KeyInput| {
+            if e.event != KeyEvent::Down {
+                return false;
+            }
+            let pressed = {
+                let assets = ui.assets.borrow();
+                keys.iter().position(|k| k.as_ref().is_some_and(|k| assets.hotkeys.is_activated(k, e)))
+            };
+            let play = |song: Option<Rc<rustora_engine::sound::MusicInfo>>| {
+                if let Some(song) = song {
+                    playlist.play(&song);
+                }
+            };
+            match pressed {
+                Some(0) => play(playlist.next_song()),
+                Some(1) => play(playlist.prev_song()),
+                Some(2) if !playlist.current_song_is_background() => playlist.stop(),
+                Some(2) => play(playlist.next_song()),
+                Some(3) if sound.music_playing() => sound.pause_music(),
+                Some(3) if sound.current_music().is_some() => sound.resume_music(),
+                Some(3) => play(playlist.next_song()),
+                _ => {}
+            }
+            false
+        }));
+    cell(NoLogic)
 }
 
 /// `StanceSelectorLogic`.

@@ -42,7 +42,7 @@ impl UiSprites {
             .players()
             .iter()
             .map(|p| {
-                let c = p.color.argb;
+                let c = p.color().argb;
                 let rgb = [(c >> 16) as u8, (c >> 8) as u8, c as u8];
                 let remapped = rustora_formats::palette::player_remap(&player_base, &PLAYER_REMAP, rgb);
                 (p.internal_name.clone(), remapped)

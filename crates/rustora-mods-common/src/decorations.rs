@@ -858,7 +858,7 @@ impl IRenderCircles for WithRangeCircle {
         out.push(AnnotationCircle {
             center: self_.center_position(),
             radius: info.range,
-            color: if info.use_player_color { self_.owner().color } else { info.color },
+            color: if info.use_player_color { self_.owner().color() } else { info.color },
             width: info.width,
             border_color: info.border_color,
             border_width: info.border_width,
@@ -1007,7 +1007,7 @@ impl IDecoration for WithTextDecoration {
         self.info.deco.text_decoration(DecorationText {
             font: self.info.font.clone(),
             color: if self.info.use_player_color {
-                self_.owner().color
+                self_.owner().color()
             } else {
                 self.info.color
             },
@@ -1084,7 +1084,7 @@ pub(crate) fn owner_color(self_: &ActorRef, viewer: Option<&PlayerRef>) -> Color
         && e.disguised()
         && let Some(o) = e.owner()
     {
-        return o.color;
+        return o.color();
     }
-    self_.owner().color
+    self_.owner().color()
 }

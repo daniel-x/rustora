@@ -103,7 +103,7 @@ impl SettingsShell {
     }
 }
 
-fn save(ui: &Ui) {
+pub(super) fn save(ui: &Ui) {
     if let Err(e) = services(ui).settings.borrow_mut().save() {
         log::warn!("Failed to save the settings: {e}");
     }
@@ -242,7 +242,7 @@ type Get<T> = fn(&Settings) -> T;
 type Set<T> = fn(&mut Settings, T);
 
 /// Port of `SettingsUtils.BindCheckboxPref`.
-fn bind_checkbox(ui: &mut Ui, panel: WidgetId, name: &str, get: Get<bool>, set: Set<bool>) -> WidgetId {
+pub(super) fn bind_checkbox(ui: &mut Ui, panel: WidgetId, name: &str, get: Get<bool>, set: Set<bool>) -> WidgetId {
     let id = ui.child(panel, name);
     let settings = services(ui).settings.clone();
     let s = settings.clone();
@@ -360,7 +360,7 @@ fn set_with<T: 'static>(set: Set<T>) -> Rc<dyn Fn(&mut Ui, T)> {
 }
 
 /// Port of `SettingsUtils.AdjustSettingsScrollPanelLayout`.
-fn adjust_scroll_panel_layout(ui: &mut Ui, scroll_panel: WidgetId) {
+pub(super) fn adjust_scroll_panel_layout(ui: &mut Ui, scroll_panel: WidgetId) {
     for row in ui.node(scroll_panel).children.clone() {
         let children = ui.node(row).children.clone();
         if !children.is_empty() && !children.iter().any(|&c| ui.is_visible(c)) {
@@ -466,7 +466,8 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let frame_limit = checkbox!(ui, panel, "FRAME_LIMIT_CHECKBOX", graphics.cap_framerate);
     checkbox!(ui, panel, "FRAME_LIMIT_GAMESPEED_CHECKBOX", graphics.cap_framerate_to_game_fps);
     slider!(ui, panel, "FRAME_LIMIT_SLIDER", graphics.max_framerate);
-    checkbox!(ui, panel, "PLAYER_STANCE_COLORS_CHECKBOX", game.use_player_stance_colors);
+    let stance_colors = checkbox!(ui, panel, "PLAYER_STANCE_COLORS_CHECKBOX", game.use_player_stance_colors);
+    after_click(ui, stance_colors, super::ingame_hotkeys::apply_relationship_colors);
     if ui.find(panel, "PAUSE_SHELLMAP_CHECKBOX").is_some() {
         checkbox!(ui, panel, "PAUSE_SHELLMAP_CHECKBOX", game.pause_shellmap);
     }
@@ -547,64 +548,11 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         option_text(target_lines),
     );
 
-    let camera_names: Vec<(String, WorldViewport)> = [
-        WorldViewport::Close,
-        WorldViewport::Medium,
-        WorldViewport::Far,
-        WorldViewport::Native,
-    ]
-    .into_iter()
-    .map(|v| (viewport_size_name(ui, v), v))
-    .collect();
-    let all_cameras = camera_names.clone();
-    bind_dropdown(
-        ui,
-        panel,
-        "BATTLEFIELD_CAMERA_DROPDOWN",
-        move |ui| {
-            let window_height = ui.resolution.1 as f32;
-            all_cameras
-                .iter()
-                .filter(|(_, v)| crate::viewport::valid_viewport_distance(*v, window_height))
-                .cloned()
-                .collect()
-        },
-        |s| s.graphics.viewport_distance,
-        set_with(|s, v| s.graphics.viewport_distance = v),
-        option_text(camera_names),
-    );
+    bind_battlefield_camera(ui, panel);
 
     bind_text_notification_pool_filters(ui, panel);
 
-    let scale_options = |ui: &Ui| -> Vec<(String, f32)> {
-        let scale = services(ui).settings.borrow().graphics.ui_scale;
-        let window = (ui.resolution.0 as f32 * scale, ui.resolution.1 as f32 * scale);
-        let max_scale = (window.0 / MIN_EFFECTIVE_RESOLUTION.0).min(window.1 / MIN_EFFECTIVE_RESOLUTION.1);
-        [1.0f32, 1.25, 1.5, 1.75, 2.0]
-            .into_iter()
-            .filter(|&x| x <= max_scale)
-            .map(|x| (format!("{}%", (100.0 * x) as i32), x))
-            .collect()
-    };
-    let ui_scale = bind_dropdown(
-        ui,
-        panel,
-        "UI_SCALE_DROPDOWN",
-        scale_options,
-        |s| s.graphics.ui_scale,
-        Rc::new(|ui: &mut Ui, v: f32| {
-            if services(ui).settings.borrow().graphics.ui_scale != v {
-                services(ui).settings.borrow_mut().graphics.ui_scale = v;
-                ui.requests.push(AppRequest::SetUiScale(v));
-            }
-        }),
-        Rc::new(|s: &f32| format!("{}%", (100.0 * s) as i32)),
-    );
-    let scale = services(ui).settings.borrow().graphics.ui_scale;
-    let disable_ui_scale = in_game
-        || ui.resolution.0 as f32 * scale < 1.25 * MIN_EFFECTIVE_RESOLUTION.0
-        || ui.resolution.1 as f32 * scale < 1.25 * MIN_EFFECTIVE_RESOLUTION.1;
-    ui.button(ui_scale).is_disabled = Some(Rc::new(move || disable_ui_scale));
+    bind_ui_scale(ui, panel, in_game);
 
     let mode = settings_getter(ui, |s| s.graphics.mode);
     set_visible(ui, panel, "DISPLAY_SELECTION_CONTAINER", move || mode() != WindowMode::Windowed);
@@ -633,66 +581,8 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let slider = ui.child(panel, "FRAME_LIMIT_SLIDER");
     ui.get::<SliderWidget>(slider).is_disabled = Some(Rc::new(move || !limit_on() || gamespeed_on()));
 
-    let name_field = ui.child(panel, "PLAYERNAME");
-    let esc_pressed = Rc::new(Cell::new(false));
-    let player_name = services(ui).settings.borrow().player.name.clone();
-    {
-        let mut f = ui.get::<TextFieldWidget>(name_field);
-        f.is_disabled = Some(Rc::new(move || in_game));
-        f.set_text(&sanitized_player_name(&player_name));
-        let esc = esc_pressed.clone();
-        f.on_lose_focus = Some(Rc::new(move |ui| {
-            if esc.get() {
-                esc.set(false);
-                return;
-            }
-            let text = ui.get::<TextFieldWidget>(name_field).text().trim().to_string();
-            let settings = services(ui).settings.clone();
-            if text.is_empty() {
-                let name = sanitized_player_name(&settings.borrow().player.name);
-                ui.get::<TextFieldWidget>(name_field).set_text(&name);
-            } else {
-                let name = sanitized_player_name(&text);
-                ui.get::<TextFieldWidget>(name_field).set_text(&name);
-                settings.borrow_mut().player.name = name;
-            }
-        }));
-        let on_enter: KeyCallback = Rc::new(move |ui, _| {
-            ui.yield_keyboard_focus(name_field);
-            true
-        });
-        f.on_enter_key = Some(on_enter);
-        let esc = esc_pressed.clone();
-        let on_esc: KeyCallback = Rc::new(move |ui, _| {
-            let name = sanitized_player_name(&services(ui).settings.borrow().player.name);
-            ui.get::<TextFieldWidget>(name_field).set_text(&name);
-            esc.set(true);
-            ui.yield_keyboard_focus(name_field);
-            true
-        });
-        f.on_esc_key = Some(on_esc);
-    }
-
-    let color_dropdown = ui.child(panel, "PLAYERCOLOR");
-    {
-        let mut b = ui.button(color_dropdown);
-        b.is_disabled = Some(Rc::new(move || in_game));
-        b.on_mouse_down = Some(Rc::new(move |ui, _| {
-            let color = services(ui).settings.borrow().player.color;
-            super::color_picker::show_color_dropdown(
-                ui,
-                color_dropdown,
-                color,
-                Rc::new(|ui, color| {
-                    services(ui).settings.borrow_mut().player.color = color;
-                    save(ui);
-                }),
-            );
-        }));
-    }
-    let color_block = ui.child(color_dropdown, "COLORBLOCK");
-    let color = settings_getter(ui, |s| s.player.color);
-    ui.get::<ColorBlockWidget>(color_block).get_color = Some(Rc::new(color));
+    let name_field = bind_player_name(ui, panel, in_game);
+    bind_player_color(ui, panel, in_game);
 
     adjust_scroll_panel_layout(ui, scroll_panel);
 
@@ -738,6 +628,181 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         window_height,
         original_text: (w.to_string(), h.to_string()),
     })
+}
+
+/// The `BATTLEFIELD_CAMERA_DROPDOWN` of `DisplaySettingsLogic` and `IntroductionPromptLogic`.
+pub(super) fn bind_battlefield_camera(ui: &mut Ui, panel: WidgetId) {
+    let camera_names: Vec<(String, WorldViewport)> = [
+        WorldViewport::Close,
+        WorldViewport::Medium,
+        WorldViewport::Far,
+        WorldViewport::Native,
+    ]
+    .into_iter()
+    .map(|v| (viewport_size_name(ui, v), v))
+    .collect();
+    let all_cameras = camera_names.clone();
+    bind_dropdown(
+        ui,
+        panel,
+        "BATTLEFIELD_CAMERA_DROPDOWN",
+        move |ui| {
+            let window_height = ui.resolution.1 as f32;
+            all_cameras
+                .iter()
+                .filter(|(_, v)| crate::viewport::valid_viewport_distance(*v, window_height))
+                .cloned()
+                .collect()
+        },
+        |s| s.graphics.viewport_distance,
+        set_with(|s, v| s.graphics.viewport_distance = v),
+        option_text(camera_names),
+    );
+}
+
+/// The `UI_SCALE_DROPDOWN` of `DisplaySettingsLogic` and `IntroductionPromptLogic`, disabled in a game.
+pub(super) fn bind_ui_scale(ui: &mut Ui, panel: WidgetId, in_game: bool) {
+    let scale_options = |ui: &Ui| -> Vec<(String, f32)> {
+        let scale = services(ui).settings.borrow().graphics.ui_scale;
+        let window = (ui.resolution.0 as f32 * scale, ui.resolution.1 as f32 * scale);
+        let max_scale = (window.0 / MIN_EFFECTIVE_RESOLUTION.0).min(window.1 / MIN_EFFECTIVE_RESOLUTION.1);
+        [1.0f32, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0]
+            .into_iter()
+            .filter(|&x| x <= max_scale)
+            .map(|x| (format!("{}%", (100.0 * x) as i32), x))
+            .collect()
+    };
+    let ui_scale = bind_dropdown(
+        ui,
+        panel,
+        "UI_SCALE_DROPDOWN",
+        scale_options,
+        |s| s.graphics.ui_scale,
+        Rc::new(|ui: &mut Ui, v: f32| {
+            if services(ui).settings.borrow().graphics.ui_scale != v {
+                services(ui).settings.borrow_mut().graphics.ui_scale = v;
+                ui.requests.push(AppRequest::SetUiScale(v));
+            }
+        }),
+        Rc::new(|s: &f32| format!("{}%", (100.0 * s) as i32)),
+    );
+    let scale = services(ui).settings.borrow().graphics.ui_scale;
+    let disable_ui_scale = in_game
+        || ui.resolution.0 as f32 * scale < 1.25 * MIN_EFFECTIVE_RESOLUTION.0
+        || ui.resolution.1 as f32 * scale < 1.25 * MIN_EFFECTIVE_RESOLUTION.1;
+    ui.button(ui_scale).is_disabled = Some(Rc::new(move || disable_ui_scale));
+}
+
+/// The `PLAYERNAME` field of `DisplaySettingsLogic` and `IntroductionPromptLogic`, disabled in a game.
+pub(super) fn bind_player_name(ui: &mut Ui, panel: WidgetId, in_game: bool) -> WidgetId {
+    let name_field = ui.child(panel, "PLAYERNAME");
+    let esc_pressed = Rc::new(Cell::new(false));
+    let player_name = services(ui).settings.borrow().player.name.clone();
+    {
+        let mut f = ui.get::<TextFieldWidget>(name_field);
+        f.is_disabled = Some(Rc::new(move || in_game));
+        f.set_text(&sanitized_player_name(&player_name));
+        let esc = esc_pressed.clone();
+        f.on_lose_focus = Some(Rc::new(move |ui| {
+            if esc.get() {
+                esc.set(false);
+                return;
+            }
+            let text = ui.get::<TextFieldWidget>(name_field).text().trim().to_string();
+            let settings = services(ui).settings.clone();
+            if text.is_empty() {
+                let name = sanitized_player_name(&settings.borrow().player.name);
+                ui.get::<TextFieldWidget>(name_field).set_text(&name);
+            } else {
+                let name = sanitized_player_name(&text);
+                ui.get::<TextFieldWidget>(name_field).set_text(&name);
+                settings.borrow_mut().player.name = name;
+            }
+        }));
+        let on_enter: KeyCallback = Rc::new(move |ui, _| {
+            ui.yield_keyboard_focus(name_field);
+            true
+        });
+        f.on_enter_key = Some(on_enter);
+        let esc = esc_pressed.clone();
+        let on_esc: KeyCallback = Rc::new(move |ui, _| {
+            let name = sanitized_player_name(&services(ui).settings.borrow().player.name);
+            ui.get::<TextFieldWidget>(name_field).set_text(&name);
+            esc.set(true);
+            ui.yield_keyboard_focus(name_field);
+            true
+        });
+        f.on_esc_key = Some(on_esc);
+    }
+    name_field
+}
+
+/// The `PLAYERCOLOR` drop down of `DisplaySettingsLogic` and `IntroductionPromptLogic`, disabled in a game.
+pub(super) fn bind_player_color(ui: &mut Ui, panel: WidgetId, in_game: bool) {
+    let color_dropdown = ui.child(panel, "PLAYERCOLOR");
+    {
+        let mut b = ui.button(color_dropdown);
+        b.is_disabled = Some(Rc::new(move || in_game));
+        b.on_mouse_down = Some(Rc::new(move |ui, _| {
+            let color = services(ui).settings.borrow().player.color;
+            super::color_picker::show_color_dropdown(
+                ui,
+                color_dropdown,
+                color,
+                Rc::new(|ui, color| {
+                    services(ui).settings.borrow_mut().player.color = color;
+                    save(ui);
+                }),
+            );
+        }));
+    }
+    let color_block = ui.child(color_dropdown, "COLORBLOCK");
+    let color = settings_getter(ui, |s| s.player.color);
+    ui.get::<ColorBlockWidget>(color_block).get_color = Some(Rc::new(color));
+}
+
+/// The `MOUSE_CONTROL_DROPDOWN` of `InputSettingsLogic` and `IntroductionPromptLogic`.
+pub(super) fn bind_mouse_control(ui: &mut Ui, panel: WidgetId) {
+    let control = vec![
+        (message(ui, "options-control-scheme.classic"), true),
+        (message(ui, "options-control-scheme.modern"), false),
+    ];
+    let o = control.clone();
+    bind_dropdown(
+        ui,
+        panel,
+        "MOUSE_CONTROL_DROPDOWN",
+        move |_| o.clone(),
+        |s| s.game.use_classic_mouse_style,
+        set_with(|s, v| s.game.use_classic_mouse_style = v),
+        option_text(control),
+    );
+}
+
+/// The mouse control descriptions of `InputSettingsLogic` and `IntroductionPromptLogic`.
+pub(super) fn bind_mouse_control_descs(ui: &mut Ui, panel: WidgetId) {
+    let classic = settings_getter(ui, |s| s.game.use_classic_mouse_style);
+    set_visible(ui, panel, "MOUSE_CONTROL_DESC_CLASSIC", classic);
+    let classic = settings_getter(ui, |s| s.game.use_classic_mouse_style);
+    set_visible(ui, panel, "MOUSE_CONTROL_DESC_MODERN", move || !classic());
+    for name in ["MOUSE_CONTROL_DESC_CLASSIC", "MOUSE_CONTROL_DESC_MODERN"] {
+        let container = ui.child(panel, name);
+        let scroll = settings_getter(ui, |s| s.game.use_classic_mouse_style ^ s.game.use_alternate_scroll_button);
+        set_visible(ui, container, "DESC_SCROLL_RIGHT", scroll);
+        let scroll = settings_getter(ui, |s| !s.game.use_classic_mouse_style ^ s.game.use_alternate_scroll_button);
+        set_visible(ui, container, "DESC_SCROLL_MIDDLE", scroll);
+        let zoom = settings_getter(ui, |s| s.game.zoom_modifier);
+        set_visible(ui, container, "DESC_ZOOM", move || zoom() == ModifierFlags::None);
+        let zoom = settings_getter(ui, |s| s.game.zoom_modifier);
+        set_visible(ui, container, "DESC_ZOOM_MODIFIER", move || zoom() != ModifierFlags::None);
+        let modifier_label = ui.child(container, "DESC_ZOOM_MODIFIER");
+        let key = ui.label(modifier_label).text.clone().unwrap_or_default();
+        let template = message(ui, &key);
+        let zoom = settings_getter(ui, |s| s.game.zoom_modifier);
+        ui.label(modifier_label).get_text = Some(Rc::new(move || template.replace("MODIFIER", &zoom().format_setting())));
+        let edge = settings_getter(ui, |s| s.game.viewport_edge_scroll);
+        set_visible(ui, container, "DESC_EDGESCROLL", edge);
+    }
 }
 
 /// Port of `DisplaySettingsLogic.BindTextNotificationPoolFilterSettings`.
@@ -878,20 +943,7 @@ pub fn input(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn 
     slider!(ui, panel, "SCROLLSPEED_SLIDER", game.viewport_edge_scroll_step);
     slider!(ui, panel, "UI_SCROLLSPEED_SLIDER", game.ui_scroll_speed);
 
-    let control = vec![
-        (message(ui, "options-control-scheme.classic"), true),
-        (message(ui, "options-control-scheme.modern"), false),
-    ];
-    let o = control.clone();
-    bind_dropdown(
-        ui,
-        panel,
-        "MOUSE_CONTROL_DROPDOWN",
-        move |_| o.clone(),
-        |s| s.game.use_classic_mouse_style,
-        set_with(|s, v| s.game.use_classic_mouse_style = v),
-        option_text(control),
-    );
+    bind_mouse_control(ui, panel);
     let scroll_types = vec![
         (message(ui, "options-mouse-scroll-type.disabled"), MouseScrollType::Disabled),
         (message(ui, "options-mouse-scroll-type.standard"), MouseScrollType::Standard),
@@ -908,28 +960,7 @@ pub fn input(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn 
         Rc::new(|v: &MouseScrollType| v.format_setting()),
     );
 
-    let classic = settings_getter(ui, |s| s.game.use_classic_mouse_style);
-    set_visible(ui, panel, "MOUSE_CONTROL_DESC_CLASSIC", classic);
-    let classic = settings_getter(ui, |s| s.game.use_classic_mouse_style);
-    set_visible(ui, panel, "MOUSE_CONTROL_DESC_MODERN", move || !classic());
-    for name in ["MOUSE_CONTROL_DESC_CLASSIC", "MOUSE_CONTROL_DESC_MODERN"] {
-        let container = ui.child(panel, name);
-        let scroll = settings_getter(ui, |s| s.game.use_classic_mouse_style ^ s.game.use_alternate_scroll_button);
-        set_visible(ui, container, "DESC_SCROLL_RIGHT", scroll);
-        let scroll = settings_getter(ui, |s| !s.game.use_classic_mouse_style ^ s.game.use_alternate_scroll_button);
-        set_visible(ui, container, "DESC_SCROLL_MIDDLE", scroll);
-        let zoom = settings_getter(ui, |s| s.game.zoom_modifier);
-        set_visible(ui, container, "DESC_ZOOM", move || zoom() == ModifierFlags::None);
-        let zoom = settings_getter(ui, |s| s.game.zoom_modifier);
-        set_visible(ui, container, "DESC_ZOOM_MODIFIER", move || zoom() != ModifierFlags::None);
-        let modifier_label = ui.child(container, "DESC_ZOOM_MODIFIER");
-        let key = ui.label(modifier_label).text.clone().unwrap_or_default();
-        let template = message(ui, &key);
-        let zoom = settings_getter(ui, |s| s.game.zoom_modifier);
-        ui.label(modifier_label).get_text = Some(Rc::new(move || template.replace("MODIFIER", &zoom().format_setting())));
-        let edge = settings_getter(ui, |s| s.game.viewport_edge_scroll);
-        set_visible(ui, container, "DESC_EDGESCROLL", edge);
-    }
+    bind_mouse_control_descs(ui, panel);
 
     let modifiers: Vec<(String, ModifierFlags)> = [
         ModifierFlags::Alt,

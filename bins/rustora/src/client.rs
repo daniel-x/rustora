@@ -640,6 +640,8 @@ pub struct Client {
     pub link_cursor: bool,
     /// The links to open in the browser, which the window opens.
     pub open_urls: Vec<String>,
+    /// `Game.TakeScreenshot` was called: the window saves its next frame.
+    pub screenshot_requested: bool,
     /// The size of the window in its pixels.
     window_size: (i32, i32),
     /// The user interface scale in use: window pixels per user interface pixel.
@@ -736,6 +738,7 @@ impl Client {
             .unwrap_or(1.0);
         let window_size = resolution;
         let resolution = effective_resolution(window_size, ui_scale);
+        assets.set_font_scale(ui_scale);
         let assets = Rc::new(RefCell::new(assets));
         let script_host = Rc::new(crate::script_host::ClientScriptHost::new(assets.clone()));
         rustora_scripting::host::set_host(script_host.clone());
@@ -780,6 +783,7 @@ impl Client {
             cursor: CursorState::default(),
             link_cursor: false,
             open_urls: Vec::new(),
+            screenshot_requested: false,
             window_size,
             ui_scale,
             list: UiList::default(),
@@ -952,8 +956,16 @@ impl Client {
             self.world_tick_time.advance(now, timestep);
             self.update_script_host();
             let lag = LagContext::new(&self.services.net.borrow(), now);
+            let sample = rustora_ui::perf::PerfSample::new("tick_time");
             if let Some(shell) = &mut self.shell {
+                let tick_before = shell.world.world_tick();
                 shell.tick(now, timestep, &lag);
+                if shell.world.world_tick() != tick_before {
+                    if tick_before == 0 {
+                        rustora_ui::perf::reset();
+                    }
+                    rustora_ui::perf::tick();
+                }
                 if shell.ingame.is_some() {
                     let assets = self.ui.assets.clone();
                     shell.exchange_client_orders(&assets.borrow().messages, &self.services.net, now, &self.services.save_dir);
@@ -964,6 +976,7 @@ impl Client {
             self.drain_script_host();
             self.finish_loading_game_save();
             self.services.sound.tick();
+            drop(sample);
         }
         if ui_due {
             self.cursor.tick(&self.cursors);
@@ -1006,6 +1019,7 @@ impl Client {
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
                 AppRequest::OpenUrl(url) => self.open_urls.push(url),
                 AppRequest::SetUiScale(scale) => scale_change = Some(scale),
+                AppRequest::TakeScreenshot => self.screenshot_requested = true,
             }
         }
         if let Some(scale) = scale_change {
@@ -1293,6 +1307,10 @@ impl Client {
             default_cursor,
         );
         ingame.replay = replay;
+        ingame.setup_relationship_colors(
+            self.services.settings.borrow().game.use_player_stance_colors,
+            &self.ui.assets.borrow().metrics,
+        );
         let ingame = Rc::new(ingame);
         shell.ingame = Some(ingame.clone());
         *self.services.ingame.borrow_mut() = Some(ingame);
@@ -1348,13 +1366,21 @@ impl Client {
         }
         let loading = self.shell.as_ref().is_some_and(|s| s.world.is_loading_game_save());
         if let Some(shell) = self.shell.as_mut().filter(|_| !loading) {
+            let _sample = rustora_ui::perf::PerfSample::new("render_world");
             shell.prepare(renderer, size);
         }
+        let _sample = rustora_ui::perf::PerfSample::new("render_widgets");
         self.list.clear();
         let assets = self.ui.assets.clone();
         let mut dc = DrawContext::new(renderer, &mut self.list, assets.borrow_mut());
         if let Some(ingame) = self.shell.as_ref().and_then(|s| s.ingame.as_ref()).filter(|_| !loading) {
-            rustora_ui::annotations::draw_selection_annotations(&mut dc, ingame, &self.services.settings.borrow(), self.ui.modifiers.shift);
+            rustora_ui::annotations::draw_selection_annotations(
+                &mut dc,
+                ingame,
+                &self.services.settings.borrow(),
+                self.ui.modifiers.shift,
+                self.ui.last_mouse,
+            );
         }
         self.ui.draw(&mut dc);
         drop(dc);
@@ -1362,6 +1388,11 @@ impl Client {
     }
 
     /// The user interface scale in use: window pixels per user interface pixel.
+    /// The `CursorDouble` setting.
+    pub fn cursor_double(&self) -> bool {
+        self.services.settings.borrow().graphics.cursor_double
+    }
+
     pub fn ui_scale(&self) -> f32 {
         self.ui_scale
     }
@@ -1379,6 +1410,7 @@ impl Client {
         self.ui_scale = if scale > 0.0 { scale } else { 1.0 };
         let resolution = effective_resolution(self.window_size, self.ui_scale);
         self.ui.resolution = resolution;
+        self.ui.assets.borrow_mut().set_font_scale(self.ui_scale);
         if let Some(shell) = &self.shell {
             let distance = self.services.settings.borrow().graphics.viewport_distance;
             let viewport = world_viewport(&shell.world, resolution, distance);
@@ -1387,6 +1419,12 @@ impl Client {
         self.ui.reset_all();
         let args = WidgetArgs::default().with_value("openSettings", true);
         self.ui.load_widget("MAINMENU", Some(self.ui.root), &args);
+    }
+
+    /// `Game.TakeScreenshotInner` with the RGBA rows of a rendered frame.
+    pub fn save_screenshot(&mut self, rgba: &[u8], width: u32, height: u32) {
+        let support_dir = self.mod_data.platform.support_dir.clone();
+        rustora_ui::screenshot::save(&self.ui, &support_dir, rgba, width, height);
     }
 
     pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {

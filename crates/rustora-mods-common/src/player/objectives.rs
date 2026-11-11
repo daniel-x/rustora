@@ -594,6 +594,12 @@ info_impl!(StrategicVictoryConditionsInfo => |info, init| {
 });
 
 impl StrategicVictoryConditions {
+    /// `Holding`: the allies of the owner of `self_` hold enough strategic points.
+    pub fn holding(&self, self_: &ActorRef) -> bool {
+        let (total, owned) = self.points(&self_.world(), &self_.owner());
+        owned >= self.info.ratio_required * total / 100
+    }
+
     /// `Total` and `Owned`: the count of all strategic points and of those owned by allies of `player`.
     fn points(&self, w: &World, player: &PlayerRef) -> (i32, i32) {
         let (mut total, mut owned) = (0, 0);

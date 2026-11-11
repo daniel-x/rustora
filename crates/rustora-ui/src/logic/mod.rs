@@ -44,6 +44,9 @@ pub mod multiplayer;
 pub mod music_player;
 pub mod observer;
 pub mod observer_stats;
+pub mod perf_debug;
+pub mod profile_tooltips;
+pub mod prompts;
 pub mod replay_browser;
 pub mod replay_control;
 pub mod settings;
@@ -437,6 +440,12 @@ pub fn create(
         "DisconnectWatcherLogic" => ingame_hotkeys::disconnect_watcher(ui, id),
         "MuteIndicatorLogic" => ingame_hotkeys::mute_indicator(ui, id),
         "MainMenuLogic" => main_menu::create(ui, id, args),
+        "CreditsLogic" => prompts::credits(ui, id, args),
+        "RegisteredProfileTooltipLogic" => profile_tooltips::registered(ui, id, args),
+        "PlayerProfileBadgesLogic" => profile_tooltips::badges(ui, id, args),
+        "IntroductionPromptLogic" => prompts::introduction(ui, id, args),
+        "ScriptErrorLogic" => prompts::script_error(ui, id),
+        "DebugLogic" => prompts::debug(ui, id),
         "GeneralChatLogic" => general_chat::create(ui, id),
         "AddFactionSuffixLogic" => sidebar::add_faction_suffix(ui, id),
         "ClassicProductionLogic" => sidebar::classic_production(ui, id),
@@ -508,13 +517,8 @@ pub fn create(
         "BotTooltipLogic" => lobby_utils::bot_tooltip(ui, id, args),
         "KickClientLogic" => lobby_utils::kick_client(ui, id, args),
         "KickSpectatorsLogic" => lobby_utils::kick_spectators(ui, id, args),
-        "PerfDebugLogic" => {
-            for name in ["GRAPH_BG", "PERF_TEXT"] {
-                let widget = ui.child(id, name);
-                ui.set_visible_fn(widget, || false);
-            }
-            cell(NoLogic)
-        }
+        "PerfDebugLogic" => perf_debug::perf_debug(ui, id),
+        "LoadIngamePerfLogic" => perf_debug::load_ingame_perf(ui, id),
         _ => return None,
     })
 }

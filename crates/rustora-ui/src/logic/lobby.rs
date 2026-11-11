@@ -449,7 +449,7 @@ pub fn setup_text_notification(ui: &mut Ui, widget: WidgetId, notification: &Tex
         }
     }
     ui.node_mut(text_label).bounds.w = text_width;
-    let text = ui.assets.borrow_mut().wrap_text(&text_font, &notification.text, text_width);
+    let text = ui.assets.borrow_mut().wrap_text_breaking_words(&text_font, &notification.text, text_width);
     let dh = ui.measure(&text_font, &text).1 - ui.node(text_label).bounds.h;
     ui.label(text_label).get_text = Some(Rc::new(move || text.clone()));
     if dh > 0 {

@@ -32,6 +32,15 @@ pub fn get(url: &str) -> Result<String, String> {
     response.body_mut().read_to_string().map_err(|e| format!("{url}: {e}"))
 }
 
+/// The response body of a GET request with status 200, as bytes.
+pub fn get_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let mut response = agent().get(url).call().map_err(|e| format!("{url}: {e}"))?;
+    if response.status() != 200 {
+        return Err(format!("{url}: status {}", response.status()));
+    }
+    response.body_mut().read_to_vec().map_err(|e| format!("{url}: {e}"))
+}
+
 /// Streams the response body of a GET request to `output`. `on_progress` receives the bytes read so far and the total
 /// when the server sends it. Returns an error for a status other than 200 and when `cancelled` gets set. The time limit
 /// covers only the connection, because the transfer of a large file takes as long as it takes.

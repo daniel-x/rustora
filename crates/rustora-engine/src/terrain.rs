@@ -51,6 +51,8 @@ pub struct TerrainInfo {
     pub id: String,
     pub sheet_size: i32,
     pub palette: Option<String>,
+    /// `HeightDebugColors`.
+    pub height_debug_colors: Vec<Color>,
     pub terrain_types: Vec<TerrainTypeInfo>,
     index_by_type: HashMap<String, u8>,
     default_walkable: u8,
@@ -148,6 +150,10 @@ impl TerrainInfo {
             id: g("Id").unwrap_or_default(),
             sheet_size: g("SheetSize").and_then(|s| s.parse().ok()).unwrap_or(512),
             palette: g("Palette"),
+            height_debug_colors: g("HeightDebugColors")
+                .map(|v| v.split(',').filter_map(|c| Color::parse(c.trim())).collect::<Vec<_>>())
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| vec![Color::from_argb(255, 255, 0, 0)]),
             terrain_types,
             index_by_type,
             default_walkable,

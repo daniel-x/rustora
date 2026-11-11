@@ -345,7 +345,7 @@ impl IResolveOrder for PlaceBeacon {
                     PingVisibility::AlliesOf(owner.clone()),
                     render_player.as_ref(),
                     position,
-                    owner.color,
+                    owner.color(),
                     info.duration,
                 );
                 *ping_slot.borrow_mut() = Some(ping);

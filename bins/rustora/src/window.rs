@@ -94,6 +94,8 @@ struct App {
     /// The mod whose cursors `hardware_cursors` holds.
     cursor_mod: String,
     hardware_cursors: HashMap<(String, usize), CustomCursor>,
+    /// The pixel doubling of `hardware_cursors`.
+    cursor_scale: u16,
     shown_cursor: ShownCursor,
     /// The links that wait for an activation token of the window system, with the time they were requested.
     links_awaiting_token: Vec<(winit::event_loop::AsyncRequestSerial, String, Instant)>,
@@ -224,6 +226,7 @@ impl App {
             key_taps: HashMap::new(),
             cursor_mod: client_mod,
             hardware_cursors: HashMap::new(),
+            cursor_scale: 1,
             shown_cursor: ShownCursor::Hidden,
             links_awaiting_token: Vec::new(),
             suspended: false,
@@ -463,6 +466,8 @@ impl App {
         }
     }
 
+    /// `Sdl2PlatformWindow.CreateHardwareCursor`: cursors are pixel doubled when the window scale is above 1.5 and
+    /// again when the player chose doubled cursors.
     fn apply_cursor(&mut self, el: &ActiveEventLoop) {
         if self.cursor_mod != self.client.mod_id() {
             self.cursor_mod = self.client.mod_id().to_string();
@@ -470,6 +475,12 @@ impl App {
             self.shown_cursor = ShownCursor::Hidden;
         }
         let Some(gpu) = &self.gpu else { return };
+        let cursor_scale = cursor_scale(self.client.cursor_double(), gpu.window.scale_factor());
+        if cursor_scale != self.cursor_scale {
+            self.cursor_scale = cursor_scale;
+            self.hardware_cursors.clear();
+            self.shown_cursor = ShownCursor::Hidden;
+        }
         self.client.update_cursor(self.mouse);
         let wanted = if self.client.link_cursor {
             ShownCursor::Link
@@ -491,7 +502,7 @@ impl App {
             ShownCursor::Mod(name, frame) => {
                 let key = (name.clone(), *frame);
                 if !self.hardware_cursors.contains_key(&key) {
-                    let image = self.client.cursors.image(&key.0, key.1).expect("known cursor");
+                    let image = self.client.cursors.image(&key.0, key.1).expect("known cursor").scaled(cursor_scale);
                     let source = CustomCursor::from_rgba(image.rgba.clone(), image.width, image.height, image.hotspot.0, image.hotspot.1)
                         .expect("valid cursor image");
                     self.hardware_cursors.insert(key.clone(), el.create_custom_cursor(source));
@@ -524,6 +535,7 @@ impl App {
     }
 
     fn render(&mut self, el: &ActiveEventLoop) {
+        let render = rustora_ui::perf::PerfSample::new("render");
         self.render_before_next_tick = false;
         self.redraw_requested = None;
         self.apply_cursor(el);
@@ -536,10 +548,28 @@ impl App {
                 return;
             }
         };
+        let size = (gpu.config.width, gpu.config.height);
+        if std::mem::take(&mut self.client.screenshot_requested) {
+            let client = &mut self.client;
+            let mut pixels = rustora_render::render_offscreen_as(&mut gpu.renderer, size.0, size.1, gpu.config.format, |r, v| {
+                client.render(r, v, size)
+            });
+            if matches!(gpu.config.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
+                pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p.swap(0, 2));
+            }
+            pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);
+            client.save_screenshot(&pixels, size.0, size.1);
+        }
         let view = frame.texture.create_view(&Default::default());
-        self.client.render(&mut gpu.renderer, &view, (gpu.config.width, gpu.config.height));
-        gpu.window.pre_present_notify();
-        gpu.renderer.queue.present(frame);
+        self.client.render(&mut gpu.renderer, &view, size);
+        {
+            let _flip = rustora_ui::perf::PerfSample::new("render_flip");
+            gpu.window.pre_present_notify();
+            gpu.renderer.queue.present(frame);
+        }
+        rustora_ui::perf::increment("batches", gpu.renderer.take_draw_calls() as f64);
+        drop(render);
+        rustora_ui::perf::frame_tick();
     }
 
     fn create_gpu(&self, el: &ActiveEventLoop) -> Gpu {
@@ -673,6 +703,12 @@ impl ApplicationHandler for App {
         }
         el.set_control_flow(ControlFlow::WaitUntil(self.next_logic.min(self.next_render)));
     }
+}
+
+/// The pixel doubling of the hardware cursors for the `CursorDouble` setting and the scale of the window system.
+fn cursor_scale(cursor_double: bool, window_scale: f64) -> u16 {
+    let native = if window_scale > 1.5 { 2 } else { 1 };
+    if cursor_double { 2 * native } else { native }
 }
 
 #[cfg(test)]

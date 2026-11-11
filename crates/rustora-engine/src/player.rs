@@ -98,7 +98,10 @@ pub struct Player {
     pub handicap: i32,
     pub bot_type: Option<String>,
     pub is_bot: bool,
-    pub color: Color,
+    /// `Player.color`: the color chosen in the lobby.
+    pub chosen_color: Color,
+    /// `Player.Color`: the shown color, which `UsePlayerStanceColors` replaces by the relationship color.
+    color: Cell<Color>,
     pub spawn_point: i32,
     pub display_spawn_point: i32,
     spectating: bool,
@@ -123,6 +126,16 @@ impl std::fmt::Debug for Player {
 }
 
 impl Player {
+    /// `Player.Color`.
+    pub fn color(&self) -> Color {
+        self.color.get()
+    }
+
+    /// Sets `Player.Color`, as `SetupRelationshipColors` does.
+    pub fn set_color(&self, color: Color) {
+        self.color.set(color);
+    }
+
     /// Creates the player and its player actor, like the C# constructor.
     pub fn create(world: &Rc<World>, s: PlayerSetup) -> PlayerRef {
         let player_mask = if s.spectating {
@@ -142,7 +155,8 @@ impl Player {
             home_location: s.home_location,
             handicap: s.handicap,
             bot_type: s.bot_type,
-            color: s.color,
+            chosen_color: s.color,
+            color: Cell::new(s.color),
             spawn_point: s.spawn_point,
             display_spawn_point: s.display_spawn_point,
             spectating: s.spectating,

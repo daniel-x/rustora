@@ -277,7 +277,9 @@ pub fn create(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
     let panel = ui.child(widget, "GENERAL_CHAT_PANEL");
     ui.node_mut(panel).visible = false;
     let title = ui.child(panel, "TITLE");
-    ui.label(title).get_text = Some(Rc::new(|| format!("General Chat - {}", irc::CHANNEL)));
+    let title_font = ui.label(title).font.clone();
+    let title_text = ui.truncate_text(&title_font, &format!("General Chat - {}", irc::CHANNEL), ui.node(title).bounds.w);
+    ui.label(title).get_text = Some(Rc::new(move || title_text.clone()));
     let display = ui.child(panel, "CHAT_DISPLAY");
     ui.remove_children(display);
     let user_list = ui.child(panel, "USER_LIST");

@@ -2,8 +2,8 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Ports of `GameInfoLogic.cs`, `GameInfoBriefingLogic.cs`, `GameInfoObjectivesLogic.cs`, `GameInfoStatsLogic.cs`
-//! and `DebugMenuLogic.cs`. The script error panel comes with Lua in P9. The debug visualizations and the terrain
-//! overlays are not ported, so their checkboxes are disabled.
+//! and `DebugMenuLogic.cs`. The debug visualizations and the custom
+//! terrain overlay are not ported, so their checkboxes are disabled.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -76,6 +76,15 @@ pub fn game_info(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell
         .and_then(|i| i.briefing.clone())
         .filter(|b| !b.is_empty());
 
+    let has_error = world
+        .world_actor()
+        .trait_or_default::<rustora_scripting::lua_script::LuaScript>()
+        .is_some_and(|s| s.fatal_error_occurred());
+    let objectives_panel = if has_error {
+        Some("SCRIPT_ERROR_PANEL".to_string())
+    } else {
+        objectives_panel
+    };
     let mut visible = Vec::new();
     if objectives_panel.is_some() {
         visible.push(IngameInfoPanel::Objectives);
@@ -658,7 +667,7 @@ pub fn stats(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn
             {
                 let mut l = ui.label(name_label);
                 l.get_text = Some(text);
-                let color = pp.color;
+                let color = pp.color();
                 l.get_color = Some(Rc::new(move || color));
             }
 
@@ -806,6 +815,13 @@ pub fn debug_menu(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>>
         let (w, pl) = (world.clone(), player.clone());
         ui.button(button).on_click = Some(Rc::new(move |_| issue_dev_order(&w, &pl, order)));
     }
+    let terrain_overlay = ui.find(widget, "SHOW_TERRAIN_OVERLAY");
+    if let Some(checkbox) = terrain_overlay.filter(|_| world.world_actor().info.has_trait_info_named("TerrainGeometryOverlay")) {
+        let (i, i2) = (ingame.clone(), ingame.clone());
+        let mut c = ui.get::<CheckboxWidget>(checkbox);
+        c.is_checked = Some(Rc::new(move || i.terrain_geometry.get()));
+        c.button.on_click = Some(Rc::new(move |_| i2.terrain_geometry.set(!i2.terrain_geometry.get())));
+    }
     for id in [
         "SHOW_COMBATOVERLAY",
         "SHOW_GEOMETRY",
@@ -813,7 +829,6 @@ pub fn debug_menu(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>>
         "SHOW_DEPTH_PREVIEW",
         "SHOW_ACTOR_TAGS",
         "SHOW_CUSTOMTERRAIN_OVERLAY",
-        "SHOW_TERRAIN_OVERLAY",
     ] {
         if let Some(checkbox) = ui.find(widget, id) {
             ui.get::<CheckboxWidget>(checkbox).button.disabled = true;

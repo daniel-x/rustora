@@ -87,6 +87,26 @@ fn draw_target_line(dc: &mut DrawContext, l: &TargetLine, view: &impl Fn(WPos) -
     }
 }
 
+/// `ISelectionDecorations.RenderSelectionAnnotations` with a given color: the selection box of `actor` around its
+/// decoration bounds in the screen map.
+pub(crate) fn draw_selection_box_of(
+    dc: &mut DrawContext,
+    viewport: &Viewport,
+    screen_map: &crate::screen_map::ScreenMap,
+    actor: &ActorRef,
+    c: Color,
+) {
+    let Some(e) = screen_map.entries().iter().find(|e| e.actor.id == actor.id) else {
+        return;
+    };
+    let b = e.decoration;
+    let view = |x: i32, y: i32| {
+        let (vx, vy) = viewport.world_to_view_px((x, y));
+        (vx as f32, vy as f32)
+    };
+    selection_box(dc, view(b.x, b.y), view(b.right(), b.bottom()), c);
+}
+
 /// `SelectionBoxAnnotationRenderable.Render`.
 fn selection_box(dc: &mut DrawContext, tl: (f32, f32), br: (f32, f32), c: Color) {
     let (tr, bl) = ((br.0, tl.1), (tl.0, br.1));
@@ -260,7 +280,8 @@ fn draw_decorations(
 }
 
 /// Draws the selection boxes and health bars of all actors in the screen map, in screen pixels.
-pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings, shift: bool) {
+pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings, shift: bool, mouse: (i32, i32)) {
+    draw_terrain_geometry(dc, ingame, mouse);
     draw_target_lines(dc, ingame, settings, shift);
     {
         let viewport = ingame.viewport.borrow();
@@ -336,6 +357,41 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
         draw_circle(dc, &viewport, c);
     }
     draw_effect_texts(dc, ingame, &viewport);
+}
+
+/// `TerrainGeometryOverlay.RenderAnnotations` on flat maps: the outline of each visible cell in the color of its
+/// height, thicker under the mouse, and the projected cell under the mouse in navy.
+fn draw_terrain_geometry(dc: &mut DrawContext, ingame: &Ingame, mouse: (i32, i32)) {
+    if !ingame.terrain_geometry.get() {
+        return;
+    }
+    let viewport = ingame.viewport.borrow();
+    let map = ingame.world.map();
+    let colors = &map.terrain.height_debug_colors;
+    let render_player = ingame.render_player();
+    let mouse_cell = crate::widgets::world_interaction::view_to_world(viewport.view_to_world_px(mouse));
+    let (tl, br) = (viewport.top_left(), viewport.bottom_right());
+    let view = |x: i32, y: i32| viewport.world_to_view_px((x * 24, y * 24));
+    for v in (tl.1.div_euclid(24) - 1)..=(br.1.div_euclid(24) + 1) {
+        for u in (tl.0.div_euclid(24) - 1)..=(br.0.div_euclid(24) + 1) {
+            let uv = rustora_core::world_types::MPos::new(u, v);
+            if !map.height.contains(uv) {
+                continue;
+            }
+            let cell = rustora_core::world_types::CPos::new(u, v);
+            if render_player.as_ref().is_some_and(|p| !p.shroud().is_explored(cell)) {
+                continue;
+            }
+            let height = *map.height.get(uv) as usize;
+            let color = colors[height.min(colors.len() - 1)];
+            let width = if cell == mouse_cell { 3.0 } else { 1.0 };
+            dc.draw_rect(view(u, v), view(u + 1, v + 1), width, color);
+        }
+    }
+    if map.height.contains_cell(mouse_cell) {
+        let (x, y) = (mouse_cell.x(), mouse_cell.y());
+        dc.draw_rect(view(x, y), view(x + 1, y + 1), 3.0, Color::from_argb(255, 0, 0, 128));
+    }
 }
 
 /// The `TextAnnotationRenderable`s of the `IEffectAnnotation` effects, centered on their position.

@@ -165,7 +165,7 @@ impl Stats {
             .iter()
             .map(|p| {
                 let name = resolved_player_name(ui, &self.world, p);
-                (name, p.color, p.player_actor().trait_or_default::<PlayerStatistics>())
+                (name, p.color(), p.player_actor().trait_or_default::<PlayerStatistics>())
             })
             .collect();
         ui.get::<LineGraphWidget>(graph).get_series = Some(Rc::new(move || {
@@ -252,7 +252,7 @@ impl Stats {
             l.get_text = Some(name_text);
             l.get_color = Some(Rc::new(|| Color::from_argb(255, 255, 255, 255)));
         }
-        self.setup_player_color(ui, item, player.color);
+        self.setup_player_color(ui, item, player.color());
 
         let get_player: Getter<Option<PlayerRef>> = {
             let p = player.clone();

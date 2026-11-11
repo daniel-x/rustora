@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! Ports of `ChatCommands.cs`, `HelpCommand.cs`, `PlayerCommands.cs` and `DevCommands.cs`. The commands of the debug
-//! overlays (`DebugVisualizationCommands` and the overlay traits) are not registered, since those overlays are not
-//! ported.
+//! Ports of `ChatCommands.cs`, `HelpCommand.cs`, `PlayerCommands.cs`, `DevCommands.cs` and the command of
+//! `TerrainGeometryOverlay`. The commands of the other debug overlays (`DebugVisualizationCommands` and the overlay
+//! traits) are not registered, since those overlays are not ported.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -27,6 +27,7 @@ enum Command {
     Help,
     Pause,
     Surrender,
+    TerrainGeometry,
     Dev(DevCommand),
 }
 
@@ -80,6 +81,9 @@ fn commands(world: &World) -> BTreeMap<&'static str, (Command, &'static str)> {
         commands.insert("pause", (Command::Pause, "description-pause-description"));
         commands.insert("surrender", (Command::Surrender, "description-surrender-description"));
     }
+    if info.has_trait_info_named("TerrainGeometryOverlay") {
+        commands.insert("terrain-geometry", (Command::TerrainGeometry, "description-terrain-geometry-overlay"));
+    }
     if info.has_trait_info_named("DevCommands") {
         for &(name, description, command) in DEV_COMMANDS {
             commands.insert(name, (Command::Dev(command), description));
@@ -89,7 +93,7 @@ fn commands(world: &World) -> BTreeMap<&'static str, (Command, &'static str)> {
 }
 
 /// `TextNotificationsManager.Debug`.
-pub(crate) fn add_debug_line(ui: &Ui, text: String) {
+pub fn add_debug_line(ui: &Ui, text: String) {
     services(ui).net.borrow_mut().notifications.push(TextNotification {
         pool: TextNotificationPool::System,
         client_id: SYSTEM_CLIENT_ID,
@@ -123,6 +127,7 @@ pub fn on_chat(ui: &mut Ui, ingame: &Rc<Ingame>, text: &str) {
                 add_debug_line(ui, text);
             }
         }
+        Command::TerrainGeometry => ingame.terrain_geometry.set(!ingame.terrain_geometry.get()),
         Command::Pause => {
             let world = &ingame.world;
             let is_host = services(ui).net.borrow().is_host();
