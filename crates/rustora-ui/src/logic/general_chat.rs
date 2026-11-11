@@ -116,21 +116,23 @@ pub fn place_dialog(ui: &mut Ui, window: WidgetId) {
     bounds.y = MARGIN;
 }
 
-/// The arguments that `GENERAL_CHAT` is loaded with: the place of the chat. It is right of the dialogs, from below
-/// the logo down, or below the dialogs when the window is too narrow for that.
+/// The arguments that `GENERAL_CHAT` is loaded with: the place of the chat. It takes the right half of the room
+/// right of the dialogs, from below the logo down, or the right half below the dialogs when the window is too
+/// narrow for that. It is at least `MIN_CHAT_WIDTH` wide where the room allows.
 pub fn widget_args(ui: &Ui) -> WidgetArgs {
     let (window_width, window_height) = ui.resolution;
-    let right_x = MARGIN + DIALOG_WIDTH + MARGIN;
+    let right_room = window_width - (MARGIN + DIALOG_WIDTH + MARGIN) - MARGIN;
     let below_y = MARGIN + DIALOG_HEIGHT + MARGIN;
-    let (x, y, width) = if window_width - right_x - MARGIN >= MIN_CHAT_WIDTH {
-        (right_x, CHAT_Y, window_width - right_x - MARGIN)
+    let half = |room: i32| (room / 2).max(MIN_CHAT_WIDTH).min(room);
+    let (width, y) = if right_room >= MIN_CHAT_WIDTH {
+        (half(right_room), CHAT_Y)
     } else if window_height - below_y - MARGIN >= MIN_CHAT_HEIGHT {
-        (MARGIN, below_y, window_width - 2 * MARGIN)
+        (half(window_width - 2 * MARGIN), below_y)
     } else {
-        (window_width - MIN_CHAT_WIDTH - MARGIN, CHAT_Y, MIN_CHAT_WIDTH)
+        (MIN_CHAT_WIDTH, CHAT_Y)
     };
     let mut args = WidgetArgs::default();
-    args.substitutions.insert("CHAT_X".into(), x);
+    args.substitutions.insert("CHAT_X".into(), window_width - width - MARGIN);
     args.substitutions.insert("CHAT_Y".into(), y);
     args.substitutions.insert("CHAT_WIDTH".into(), width);
     args.substitutions.insert("CHAT_HEIGHT".into(), window_height - y - MARGIN);
