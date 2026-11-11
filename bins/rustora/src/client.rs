@@ -283,6 +283,12 @@ fn awaits_game_loaded(world: &World) -> bool {
     world.is_loading_game_save() || (world.game_save_last_frame() >= 0 && !world.is_replay())
 }
 
+/// The size in user interface pixels of a window of `window_size` pixels at the user interface scale `scale`.
+fn effective_resolution(window_size: (i32, i32), scale: f32) -> (i32, i32) {
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    ((window_size.0 as f32 / scale) as i32, (window_size.1 as f32 / scale) as i32)
+}
+
 /// The viewport of a world, centered on its map.
 fn world_viewport(world: &World, resolution: (i32, i32), distance: WorldViewport) -> Rc<RefCell<Viewport>> {
     let map = world.map();
@@ -634,6 +640,10 @@ pub struct Client {
     pub link_cursor: bool,
     /// The links to open in the browser, which the window opens.
     pub open_urls: Vec<String>,
+    /// The size of the window in its pixels.
+    window_size: (i32, i32),
+    /// The user interface scale in use: window pixels per user interface pixel.
+    ui_scale: f32,
     list: UiList,
     shell: Option<ShellWorld>,
     engine: std::path::PathBuf,
@@ -721,6 +731,11 @@ impl Client {
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
         let distance = services.settings.borrow().graphics.viewport_distance;
+        let ui_scale = Some(services.settings.borrow().graphics.ui_scale)
+            .filter(|s| *s > 0.0)
+            .unwrap_or(1.0);
+        let window_size = resolution;
+        let resolution = effective_resolution(window_size, ui_scale);
         let assets = Rc::new(RefCell::new(assets));
         let script_host = Rc::new(crate::script_host::ClientScriptHost::new(assets.clone()));
         rustora_scripting::host::set_host(script_host.clone());
@@ -765,6 +780,8 @@ impl Client {
             cursor: CursorState::default(),
             link_cursor: false,
             open_urls: Vec::new(),
+            window_size,
+            ui_scale,
             list: UiList::default(),
             shell,
             engine: engine.to_path_buf(),
@@ -965,6 +982,7 @@ impl Client {
         let mut reload = None;
         let mut replay = None;
         let mut restart = false;
+        let mut scale_change = None;
         for request in requests {
             match request {
                 AppRequest::LeaveGame => leave = true,
@@ -987,7 +1005,12 @@ impl Client {
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
                 AppRequest::OpenUrl(url) => self.open_urls.push(url),
+                AppRequest::SetUiScale(scale) => scale_change = Some(scale),
             }
+        }
+        if let Some(scale) = scale_change {
+            self.set_ui_scale(scale);
+            return;
         }
         if leave {
             self.leave_game();
@@ -1133,7 +1156,7 @@ impl Client {
         *self.services.ingame.borrow_mut() = None;
         self.dispose_world();
         let clipboard = self.ui.clipboard.clone();
-        let (engine, support, resolution) = (self.engine.clone(), self.support.clone(), self.ui.resolution);
+        let (engine, support, resolution) = (self.engine.clone(), self.support.clone(), self.window_size);
         *self = Client::initialize_mod(&engine, &support, resolution, &[], mod_id);
         self.ui.clipboard = clipboard;
     }
@@ -1310,6 +1333,7 @@ impl Client {
 
     /// Fills the draw list of the current frame.
     pub fn prepare(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
+        let size = self.ui_size(size);
         if matches!(self.pending_load, Some(PendingLoad::Scene)) && self.load_screen_drawn {
             self.pending_load = None;
             self.load_screen_drawn = false;
@@ -1337,7 +1361,38 @@ impl Client {
         self.ui.after_draw();
     }
 
+    /// The user interface scale in use: window pixels per user interface pixel.
+    pub fn ui_scale(&self) -> f32 {
+        self.ui_scale
+    }
+
+    /// `size` window pixels in user interface pixels.
+    fn ui_size(&self, size: (u32, u32)) -> (u32, u32) {
+        let (w, h) = effective_resolution((size.0 as i32, size.1 as i32), self.ui_scale);
+        (w.max(1) as u32, h.max(1) as u32)
+    }
+
+    /// `Renderer.SetUIScale` and `RecalculateWidgetLayout`: the user interface gets the size of the window at the new
+    /// scale, and the main menu is built anew for it, with the settings open, from where the scale is changed. The
+    /// menu world keeps running with a viewport of the new size.
+    fn set_ui_scale(&mut self, scale: f32) {
+        self.ui_scale = if scale > 0.0 { scale } else { 1.0 };
+        let resolution = effective_resolution(self.window_size, self.ui_scale);
+        self.ui.resolution = resolution;
+        if let Some(shell) = &self.shell {
+            let distance = self.services.settings.borrow().graphics.viewport_distance;
+            let viewport = world_viewport(&shell.world, resolution, distance);
+            *shell.viewport.borrow_mut() = viewport.borrow().clone();
+        }
+        self.ui.reset_all();
+        let args = WidgetArgs::default().with_value("openSettings", true);
+        self.ui.load_widget("MAINMENU", Some(self.ui.root), &args);
+    }
+
     pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {
+        renderer.ui_scale = self.ui_scale;
+        let window = size;
+        let size = self.ui_size(size);
         match self.shell.as_ref().filter(|_| self.pending_load.is_none()) {
             Some(shell) => renderer.render_with_passes(target, shell.camera(size), &shell.quads, &shell.passes),
             None => renderer.render(
@@ -1352,7 +1407,7 @@ impl Client {
                 &[],
             ),
         }
-        renderer.render_ui(target, size, &self.list);
+        renderer.render_ui(target, window, &self.list);
     }
 
     /// Sends a left click at a screen position, as the window would.

@@ -307,9 +307,19 @@ impl UiPass {
     }
 
     /// Draws `list` over the current content of `target`.
-    pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, target: &wgpu::TextureView, size: (u32, u32), list: &UiList) {
+    /// Draws `list` into `target` of `size` window pixels. The list is in user interface pixels, `scale` window pixels
+    /// each.
+    pub fn render(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+        scale: f32,
+        list: &UiList,
+    ) {
         let (width, height) = size;
-        let screen: [f32; 4] = [2.0 / width as f32, -2.0 / height as f32, -1.0, 1.0];
+        let screen: [f32; 4] = [2.0 * scale / width as f32, -2.0 * scale / height as f32, -1.0, 1.0];
         queue.write_buffer(&self.uniform, 0, bytemuck::cast_slice(&screen));
 
         let mut vertices = Vec::with_capacity(list.quads.len() * 6);
@@ -382,7 +392,7 @@ impl UiPass {
             let mut start = 0;
             while start < list.quads.len() {
                 while next_clip < list.clips.len() && list.clips[next_clip].0 <= start {
-                    let clip = list.clips[next_clip].1;
+                    let clip = list.clips[next_clip].1.map(|c| c.map(|v| (v as f32 * scale).round() as i32));
                     let (x, y, w, h) = clip_rect(clip, width, height);
                     pass.set_scissor_rect(x, y, w, h);
                     next_clip += 1;

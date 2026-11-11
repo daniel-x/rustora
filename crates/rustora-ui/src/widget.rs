@@ -279,6 +279,8 @@ pub enum AppRequest {
     RestartGame,
     /// Opens a link in the browser of the system.
     OpenUrl(String),
+    /// `Renderer.SetUIScale` with the new layout: the user interface scale changed to this.
+    SetUiScale(f32),
 }
 
 /// Port of the static `Ui` class and the widget tree.

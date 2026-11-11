@@ -165,6 +165,16 @@ fn direct_connect(ui: &mut Ui, target: &str, menu: &Rc<Cell<MenuType>>) {
     connection::connect(ui, JoinTarget::Address(target.to_string()), "", on_connect, on_abort);
 }
 
+/// Opens the settings, which return to the main menu.
+fn open_settings(ui: &mut Ui, menu: &Rc<Cell<MenuType>>) {
+    menu.set(MenuType::None);
+    let to_main = menu.clone();
+    let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| to_main.set(MenuType::Main)));
+    ui.open_window("SETTINGS_PANEL", args);
+}
+
+/// `MainMenuLogic`'s constructor. `openSettings` opens the settings at once, after a change of the user interface
+/// scale rebuilt the menu.
 pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let menu = Rc::new(Cell::new(MenuType::Main));
     let switch = |target: MenuType| {
@@ -181,12 +191,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let main_menu = panel(ui, "MAIN_MENU", MenuType::Main);
     on_click(ui, main_menu, "EXTRAS_BUTTON", switch(MenuType::Extras));
     let settings_menu = menu.clone();
-    on_click(ui, main_menu, "SETTINGS_BUTTON", move |ui| {
-        settings_menu.set(MenuType::None);
-        let to_main = settings_menu.clone();
-        let args = WidgetArgs::default().with_action("onExit", Rc::new(move |_| to_main.set(MenuType::Main)));
-        ui.open_window("SETTINGS_PANEL", args);
-    });
+    on_click(ui, main_menu, "SETTINGS_BUTTON", move |ui| open_settings(ui, &settings_menu));
     let multiplayer_menu = menu.clone();
     on_click(ui, main_menu, "MULTIPLAYER_BUTTON", move |ui| {
         open_multiplayer_panel(ui, &multiplayer_menu)
@@ -269,6 +274,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     ui.load_widget("GENERAL_CHAT", Some(widget), &chat_args);
     if let Some(target) = args.value::<String>("directConnect") {
         direct_connect(ui, &target, &menu);
+    } else if args.value::<bool>("openSettings") == Some(true) {
+        open_settings(ui, &menu);
     } else {
         open_menu_based_on_last_game(ui, &menu);
     }

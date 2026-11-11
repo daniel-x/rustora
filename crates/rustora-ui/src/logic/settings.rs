@@ -18,7 +18,7 @@ use super::{ChromeLogic, NoLogic, button_prompt_with_cancel, message, message_wi
 use crate::fluent::MessageArg;
 use crate::hotkeys::{CONTEXT_FLUENT_PREFIX, Hotkey, hotkeys_equal};
 use crate::loader::cell;
-use crate::widget::{Action, KeyCallback, Ui, WidgetArgs, WidgetId};
+use crate::widget::{Action, AppRequest, KeyCallback, Ui, WidgetArgs, WidgetId};
 use crate::widgets::{
     ButtonWidget, CheckboxWidget, ColorBlockWidget, DropDownButtonWidget, HotkeyEntryWidget, LabelWidget, ScrollItemWidget, SliderWidget,
     TextFieldWidget,
@@ -577,7 +577,9 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     bind_text_notification_pool_filters(ui, panel);
 
     let scale_options = |ui: &Ui| -> Vec<(String, f32)> {
-        let max_scale = (ui.resolution.0 as f32 / MIN_EFFECTIVE_RESOLUTION.0).min(ui.resolution.1 as f32 / MIN_EFFECTIVE_RESOLUTION.1);
+        let scale = services(ui).settings.borrow().graphics.ui_scale;
+        let window = (ui.resolution.0 as f32 * scale, ui.resolution.1 as f32 * scale);
+        let max_scale = (window.0 / MIN_EFFECTIVE_RESOLUTION.0).min(window.1 / MIN_EFFECTIVE_RESOLUTION.1);
         [1.0f32, 1.25, 1.5, 1.75, 2.0]
             .into_iter()
             .filter(|&x| x <= max_scale)
@@ -590,7 +592,12 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         "UI_SCALE_DROPDOWN",
         scale_options,
         |s| s.graphics.ui_scale,
-        set_with(|s, v| s.graphics.ui_scale = v),
+        Rc::new(|ui: &mut Ui, v: f32| {
+            if services(ui).settings.borrow().graphics.ui_scale != v {
+                services(ui).settings.borrow_mut().graphics.ui_scale = v;
+                ui.requests.push(AppRequest::SetUiScale(v));
+            }
+        }),
         Rc::new(|s: &f32| format!("{}%", (100.0 * s) as i32)),
     );
     let scale = services(ui).settings.borrow().graphics.ui_scale;

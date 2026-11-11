@@ -146,6 +146,8 @@ pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub ui: ui::UiPass,
+    /// `Graphics.UIScale`: user interface pixels per window pixel.
+    pub ui_scale: f32,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
@@ -261,6 +263,7 @@ impl Renderer {
         let ui = ui::UiPass::new(&device, &queue, format);
         Renderer {
             ui,
+            ui_scale: 1.0,
             device,
             queue,
             pipeline,
@@ -326,7 +329,7 @@ impl Renderer {
 
     /// Draws the user interface over the current content of `target`.
     pub fn render_ui(&mut self, target: &wgpu::TextureView, size: (u32, u32), list: &ui::UiList) {
-        self.ui.render(&self.device, &self.queue, target, size, list);
+        self.ui.render(&self.device, &self.queue, target, size, self.ui_scale, list);
     }
 
     /// Creates a user interface texture from premultiplied RGBA rows.

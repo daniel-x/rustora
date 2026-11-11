@@ -604,7 +604,8 @@ impl ApplicationHandler for App {
                 self.client.ui.modifiers = self.modifiers;
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.mouse = (position.x as i32, position.y as i32);
+                let scale = f64::from(self.client.ui_scale());
+                self.mouse = ((position.x / scale) as i32, (position.y / scale) as i32);
                 self.pending_motion = true;
             }
             WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
