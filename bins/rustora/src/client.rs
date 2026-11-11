@@ -630,6 +630,10 @@ pub struct Client {
     pub ui: Ui,
     pub cursors: Cursors,
     pub cursor: CursorState,
+    /// The mouse is over a link, which shows the pointing hand of the system.
+    pub link_cursor: bool,
+    /// The links to open in the browser, which the window opens.
+    pub open_urls: Vec<String>,
     list: UiList,
     shell: Option<ShellWorld>,
     engine: std::path::PathBuf,
@@ -759,6 +763,8 @@ impl Client {
             ui,
             cursors,
             cursor: CursorState::default(),
+            link_cursor: false,
+            open_urls: Vec::new(),
             list: UiList::default(),
             shell,
             engine: engine.to_path_buf(),
@@ -980,6 +986,7 @@ impl Client {
                 AppRequest::Disconnect => self.net.disconnect(),
                 AppRequest::Quit => self.ui.requests.push(AppRequest::Quit),
                 AppRequest::InitializeMod(mod_id) => reload = Some(mod_id),
+                AppRequest::OpenUrl(url) => self.open_urls.push(url),
             }
         }
         if leave {
@@ -1297,6 +1304,7 @@ impl Client {
     /// Port of the cursor selection in `Game.RenderTick`.
     pub fn update_cursor(&mut self, mouse: (i32, i32)) {
         let name = self.ui.cursor_at(self.ui.root, mouse.0, mouse.1);
+        self.link_cursor = name.as_deref() == Some(rustora_ui::cursor::LINK_CURSOR);
         self.cursor.set(&self.cursors, Some(name.as_deref().unwrap_or("default")));
     }
 

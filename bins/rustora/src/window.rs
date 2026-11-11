@@ -38,6 +38,44 @@ struct Gpu {
     renderer: Renderer,
 }
 
+/// How long a link waits for an activation token of the window system before it opens without one.
+const ACTIVATION_TOKEN_WAIT: Duration = Duration::from_secs(1);
+
+/// The cursor that the window shows.
+#[derive(Clone, PartialEq, Eq)]
+enum ShownCursor {
+    Hidden,
+    /// A frame of a cursor of the mod.
+    Mod(String, usize),
+    /// The pointing hand of the system, over links.
+    Link,
+}
+
+/// Asks the window system for an activation token, which X11 and Wayland deliver with `ActivationTokenDone`.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+fn request_activation_token(window: &Window) -> Option<winit::event_loop::AsyncRequestSerial> {
+    use winit::platform::startup_notify::WindowExtStartupNotify;
+    window.request_activation_token().ok()
+}
+
+/// Other systems let the browser come to the front without a token.
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd"
+)))]
+fn request_activation_token(_window: &Window) -> Option<winit::event_loop::AsyncRequestSerial> {
+    None
+}
+
 struct App {
     client: Client,
     size: (u32, u32),
@@ -53,7 +91,9 @@ struct App {
     /// The mod whose cursors `hardware_cursors` holds.
     cursor_mod: String,
     hardware_cursors: HashMap<(String, usize), CustomCursor>,
-    shown_cursor: Option<(String, usize)>,
+    shown_cursor: ShownCursor,
+    /// The links that wait for an activation token of the window system, with the time they were requested.
+    links_awaiting_token: Vec<(winit::event_loop::AsyncRequestSerial, String, Instant)>,
     suspended: bool,
     next_logic: Instant,
     next_render: Instant,
@@ -179,7 +219,8 @@ impl App {
             key_taps: HashMap::new(),
             cursor_mod: client_mod,
             hardware_cursors: HashMap::new(),
-            shown_cursor: None,
+            shown_cursor: ShownCursor::Hidden,
+            links_awaiting_token: Vec::new(),
             suspended: false,
             next_logic: now,
             next_render: now,
@@ -420,28 +461,60 @@ impl App {
         if self.cursor_mod != self.client.mod_id() {
             self.cursor_mod = self.client.mod_id().to_string();
             self.hardware_cursors.clear();
-            self.shown_cursor = None;
+            self.shown_cursor = ShownCursor::Hidden;
         }
         let Some(gpu) = &self.gpu else { return };
         self.client.update_cursor(self.mouse);
-        let wanted = self.client.cursor.current(&self.client.cursors).map(|(n, f)| (n.to_string(), f));
+        let wanted = if self.client.link_cursor {
+            ShownCursor::Link
+        } else {
+            match self.client.cursor.current(&self.client.cursors) {
+                Some((name, frame)) => ShownCursor::Mod(name.to_string(), frame),
+                None => ShownCursor::Hidden,
+            }
+        };
         if wanted == self.shown_cursor {
             return;
         }
         match &wanted {
-            None => gpu.window.set_cursor_visible(false),
-            Some(key) => {
-                if !self.hardware_cursors.contains_key(key) {
+            ShownCursor::Hidden => gpu.window.set_cursor_visible(false),
+            ShownCursor::Link => {
+                gpu.window.set_cursor(winit::window::CursorIcon::Pointer);
+                gpu.window.set_cursor_visible(true);
+            }
+            ShownCursor::Mod(name, frame) => {
+                let key = (name.clone(), *frame);
+                if !self.hardware_cursors.contains_key(&key) {
                     let image = self.client.cursors.image(&key.0, key.1).expect("known cursor");
                     let source = CustomCursor::from_rgba(image.rgba.clone(), image.width, image.height, image.hotspot.0, image.hotspot.1)
                         .expect("valid cursor image");
                     self.hardware_cursors.insert(key.clone(), el.create_custom_cursor(source));
                 }
-                gpu.window.set_cursor(self.hardware_cursors[key].clone());
+                gpu.window.set_cursor(self.hardware_cursors[&key].clone());
                 gpu.window.set_cursor_visible(true);
             }
         }
         self.shown_cursor = wanted;
+    }
+
+    /// Opens the links that the client asked for. Where the window system hands out activation tokens, a link
+    /// waits for one, so that the browser may come to the front; without a token after [`ACTIVATION_TOKEN_WAIT`], it
+    /// opens anyway.
+    fn open_links(&mut self) {
+        let now = Instant::now();
+        for url in std::mem::take(&mut self.client.open_urls) {
+            match self.gpu.as_ref().and_then(|gpu| request_activation_token(&gpu.window)) {
+                Some(serial) => self.links_awaiting_token.push((serial, url, now)),
+                None => rustora_ui::links::open(&url),
+            }
+        }
+        self.links_awaiting_token.retain(|(_, url, requested)| {
+            let waiting = now.duration_since(*requested) < ACTIVATION_TOKEN_WAIT;
+            if !waiting {
+                rustora_ui::links::open(url);
+            }
+            waiting
+        });
     }
 
     fn render(&mut self, el: &ActiveEventLoop) {
@@ -532,6 +605,12 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } => self.keyboard(&event),
             WindowEvent::Focused(focused) => self.client.ui.window_has_focus = focused,
             WindowEvent::RedrawRequested => self.render(el),
+            WindowEvent::ActivationTokenDone { serial, token } => {
+                if let Some(i) = self.links_awaiting_token.iter().position(|(s, _, _)| *s == serial) {
+                    let (_, url, _) = self.links_awaiting_token.remove(i);
+                    rustora_ui::links::open_with_activation_token(&url, &token.into_raw());
+                }
+            }
             _ => {}
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
@@ -543,6 +622,7 @@ impl ApplicationHandler for App {
     /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`].
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.flush_motion();
+        self.open_links();
         let now = Instant::now();
         if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
             self.next_logic = now;

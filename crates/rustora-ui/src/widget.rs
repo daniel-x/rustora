@@ -165,6 +165,12 @@ pub trait WidgetKind: Any {
     fn cursor(&self, default: &str) -> Option<String> {
         Some(default.to_string())
     }
+
+    /// The cursor at the screen position `(x, y)` inside the widget; `cursor` for widgets whose cursor is the same
+    /// everywhere.
+    fn cursor_at_point(&self, default: &str, _x: i32, _y: i32) -> Option<String> {
+        self.cursor(default)
+    }
 }
 
 /// The part that all widgets share.
@@ -271,6 +277,8 @@ pub enum AppRequest {
     },
     /// `Game.RestartGame`: the same replay again, or a new single player server with the lobby of the current game.
     RestartGame,
+    /// Opens a link in the browser of the system.
+    OpenUrl(String),
 }
 
 /// Port of the static `Ui` class and the widget tree.
@@ -967,6 +975,6 @@ impl Ui {
             return None;
         }
         let default = self.assets.borrow().metrics.string("DefaultCursor");
-        self.node(id).kind.borrow().cursor(&default)
+        self.node(id).kind.borrow().cursor_at_point(&default, x, y)
     }
 }

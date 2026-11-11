@@ -233,15 +233,23 @@ impl WidgetKind for LabelWidget {
         }
     }
 
-    fn handle_mouse(&mut self, _ui: &mut Ui, _id: WidgetId, mi: &MouseInput) -> bool {
+    fn handle_mouse(&mut self, ui: &mut Ui, _id: WidgetId, mi: &MouseInput) -> bool {
         if mi.event != MouseEvent::Down || mi.button != MouseButton::Left {
             return false;
         }
         let Some((_, address)) = self.link_hits.iter().find(|(r, _)| r.contains(mi.x, mi.y)) else {
             return false;
         };
-        crate::links::open(address);
+        ui.requests.push(crate::widget::AppRequest::OpenUrl(address.clone()));
         true
+    }
+
+    fn cursor_at_point(&self, default: &str, x: i32, y: i32) -> Option<String> {
+        if self.link_hits.iter().any(|(r, _)| r.contains(x, y)) {
+            Some(crate::cursor::LINK_CURSOR.to_string())
+        } else {
+            self.cursor(default)
+        }
     }
 
     fn cursor(&self, _default: &str) -> Option<String> {

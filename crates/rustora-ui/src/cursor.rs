@@ -173,6 +173,9 @@ impl Cursors {
     }
 }
 
+/// The cursor over a link: the pointing hand of the system, which the mods do not have.
+pub const LINK_CURSOR: &str = "rustora-link";
+
 /// The animation state of `CursorManager`.
 #[derive(Default)]
 pub struct CursorState {

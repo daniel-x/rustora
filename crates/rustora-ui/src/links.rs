@@ -64,6 +64,24 @@ pub fn open(address: &str) {
     }
 }
 
+/// Opens the address in the browser of the system with the activation token of the window system, which lets the
+/// browser come to the front on X11 and Wayland.
+pub fn open_with_activation_token(address: &str, token: &str) {
+    for mut command in open::commands(address) {
+        command
+            .env("XDG_ACTIVATION_TOKEN", token)
+            .env("DESKTOP_STARTUP_ID", token)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Ok(mut child) = command.spawn() {
+            std::thread::spawn(move || child.wait());
+            return;
+        }
+    }
+    log::warn!("Cannot open {address}: no program to open links with");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
