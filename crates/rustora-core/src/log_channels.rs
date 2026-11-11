@@ -162,16 +162,17 @@ pub fn install_panic_hook(support_dir: &Path) {
 }
 
 /// Opens the log file in append mode, so lines that another process appends to the same file stay intact. Without
-/// `append` the file is emptied first.
+/// `append` the file is emptied first, by an open of its own: on Windows, a file opened for appending cannot be
+/// truncated.
 fn create_log_file(dir: &Path, base: &str, append: bool) -> Option<File> {
     std::fs::create_dir_all(dir).ok()?;
     (0..CREATE_LOG_FILE_MAX_RETRY_COUNT).find_map(|i| {
         let name = if i > 0 { format!("{base}.{i}") } else { base.to_string() };
-        let file = OpenOptions::new().append(true).create(true).open(dir.join(name)).ok()?;
+        let path = dir.join(name);
         if !append {
-            file.set_len(0).ok()?;
+            OpenOptions::new().write(true).create(true).truncate(true).open(&path).ok()?;
         }
-        Some(file)
+        OpenOptions::new().append(true).create(true).open(&path).ok()
     })
 }
 
