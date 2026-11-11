@@ -747,7 +747,7 @@ pub struct AffectedByPowerOutage {
     token: Cell<i32>,
 }
 
-register_traits!(AffectedByPowerOutage: INotifyOwnerChanged, INotifyCreated, INotifyAddedToWorld, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(AffectedByPowerOutage: INotifyOwnerChanged, INotifyCreated, INotifyAddedToWorld, IObservesVariables, IDisabledTrait, ISync, ISelectionBar);
 info_impl!(AffectedByPowerOutageInfo => |info, init| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new(AffectedByPowerOutage {
@@ -771,6 +771,22 @@ impl ConditionalHooks for AffectedByPowerOutage {
 }
 
 conditional_plumbing!(AffectedByPowerOutage);
+
+/// The remaining time of the power outage, in yellow.
+impl ISelectionBar for AffectedByPowerOutage {
+    fn value(&self, _self_: &ActorRef, _viewer: Option<&PlayerRef>) -> f32 {
+        let power = self.player_power.borrow();
+        let remaining = power.power_outage_remaining_ticks();
+        if self.state.is_trait_disabled() || remaining <= 0 {
+            return 0.0;
+        }
+        remaining as f32 / power.power_outage_total_ticks() as f32
+    }
+
+    fn color(&self) -> rustora_core::fieldloader::Color {
+        rustora_core::fieldloader::Color::from_argb(255, 255, 255, 0)
+    }
+}
 
 impl INotifyCreated for AffectedByPowerOutage {
     fn created(&self, self_: &ActorRef) {
