@@ -42,6 +42,8 @@ Container@GENERAL_CHAT:
 					Height: PARENT_HEIGHT - 45 - 15
 					TopBottomSpacing: 2
 					ItemSpacing: 2
+					ScrollBar: Hidden
+					ScrollbarWidth: 0
 
 Label@GENERAL_CHAT_USER:
 	X: 5
