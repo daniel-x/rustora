@@ -386,6 +386,12 @@ impl Lobby {
     }
 }
 
+/// The name of a `/nick <name>` chat line, which renames the local player.
+fn nick_command(text: &str) -> Option<&str> {
+    let name = text.strip_prefix("/nick")?;
+    name.starts_with(char::is_whitespace).then(|| name.trim()).filter(|n| !n.is_empty())
+}
+
 /// Opens the lobby window.
 pub fn open_lobby(ui: &mut Ui, on_exit: Action, on_start: Action, skirmish_mode: bool) {
     let args = WidgetArgs::default()
@@ -438,6 +444,9 @@ pub fn setup_text_notification(ui: &mut Ui, widget: WidgetId, notification: &Tex
         let mut label = ui.label(text_label);
         let color = notification.text_color.unwrap_or(label.text_color);
         label.get_color = Some(Rc::new(move || color));
+        if crate::links::has_link(&notification.text) {
+            label.link_color = Some(crate::links::LINK_COLOR);
+        }
     }
     ui.node_mut(text_label).bounds.w = text_width;
     let text = ui.assets.borrow_mut().wrap_text(&text_font, &notification.text, text_width);
@@ -983,6 +992,12 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
                 return true;
             }
             ui.scroll_to_bottom(chat_panel, false);
+            if let Some(name) = nick_command(&text) {
+                let settings = services(ui).settings.clone();
+                utils::change_player_name(&l.net, &settings, name);
+                ui.get::<TextFieldWidget>(chat_text_field).set_text("");
+                return true;
+            }
             let team = if l.team_chat.get() {
                 l.net
                     .borrow()
@@ -1015,4 +1030,19 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
 
     lobby.update_current_map(ui);
     cell(LobbyHandle(lobby))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::nick_command;
+
+    #[test]
+    fn nick_commands() {
+        assert_eq!(nick_command("/nick Tester"), Some("Tester"));
+        assert_eq!(nick_command("/nick  Two Words "), Some("Two Words"));
+        assert_eq!(nick_command("/nick"), None);
+        assert_eq!(nick_command("/nick "), None);
+        assert_eq!(nick_command("/nickname x"), None);
+        assert_eq!(nick_command("hello /nick x"), None);
+    }
 }

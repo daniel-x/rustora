@@ -7,7 +7,8 @@ use rustora_core::fieldloader::Color;
 
 use super::{TooltipContainerWidget, impl_as_any, parse_bool};
 use crate::assets::Assets;
-use crate::draw::{DrawContext, TextStyle};
+use crate::draw::{DrawContext, Rect, TextStyle};
+use crate::input::{MouseButton, MouseEvent, MouseInput};
 use crate::widget::{Getter, Ui, WidgetArgs, WidgetId, WidgetKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,6 +55,10 @@ pub struct LabelWidget {
     /// `LabelForInputWidget.For`: the sibling input whose disabled state selects `text_disabled_color`.
     pub for_input: Option<String>,
     pub text_disabled_color: Color,
+    /// Links in the text are underlined in this color and open in the browser on a click.
+    pub link_color: Option<Color>,
+    /// The screen rectangles of the links of the last draw, with their addresses.
+    pub(crate) link_hits: Vec<(Rect, String)>,
 }
 
 impl LabelWidget {
@@ -98,6 +103,34 @@ impl LabelWidget {
             highlight_color: None,
             for_input: None,
             text_disabled_color: m.color("TextDisabledColor"),
+            link_color: None,
+            link_hits: Vec::new(),
+        }
+    }
+}
+
+impl LabelWidget {
+    /// Draws the text line by line, with the links underlined in `link_color`, and keeps where the links are.
+    fn draw_with_links(&mut self, dc: &mut DrawContext, text: &str, origin: (i32, i32), color: Color, link_color: Color, style: TextStyle) {
+        self.link_hits.clear();
+        let line_height = dc.measure(&self.font, "").1;
+        let top = origin.1 + dc.font_top_offset(&self.font);
+        for (row, line) in text.split('\n').enumerate() {
+            let y = origin.1 + row as i32 * line_height;
+            let mut x = origin.0;
+            for (part, link) in crate::links::link_components(line) {
+                let width = dc.measure(&self.font, part).0;
+                match link {
+                    Some(address) => {
+                        dc.draw_text(&self.font, part, x, y, link_color, style);
+                        let line_top = top + row as i32 * line_height;
+                        dc.fill_rect_with_color(Rect::new(x, line_top + line_height - 2, width, 1), link_color);
+                        self.link_hits.push((Rect::new(x, line_top, width, line_height), address));
+                    }
+                    None => dc.draw_text(&self.font, part, x, y, color, style),
+                }
+                x += width;
+            }
         }
     }
 }
@@ -188,15 +221,27 @@ impl WidgetKind for LabelWidget {
         } else {
             TextStyle::Plain
         };
-        match self.highlight_color {
-            Some(highlight) => {
+        match (self.link_color, self.highlight_color) {
+            (Some(link_color), _) => self.draw_with_links(dc, &text, (x, y), color, link_color, style),
+            (None, Some(highlight)) => {
                 for (part, highlighted) in highlight_components(&text) {
                     dc.draw_text(&self.font, part, x, y, if highlighted { highlight } else { color }, style);
                     x += dc.measure(&self.font, part).0;
                 }
             }
-            None => dc.draw_text(&self.font, &text, x, y, color, style),
+            (None, None) => dc.draw_text(&self.font, &text, x, y, color, style),
         }
+    }
+
+    fn handle_mouse(&mut self, _ui: &mut Ui, _id: WidgetId, mi: &MouseInput) -> bool {
+        if mi.event != MouseEvent::Down || mi.button != MouseButton::Left {
+            return false;
+        }
+        let Some((_, address)) = self.link_hits.iter().find(|(r, _)| r.contains(mi.x, mi.y)) else {
+            return false;
+        };
+        crate::links::open(address);
+        true
     }
 
     fn cursor(&self, _default: &str) -> Option<String> {

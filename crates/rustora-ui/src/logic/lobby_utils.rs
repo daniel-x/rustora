@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use indexmap::IndexMap;
 use rustora_client::map_cache::{MapPreview, MapStatus};
-use rustora_client::settings::sanitized_player_name;
+use rustora_client::settings::{Settings, sanitized_player_name};
 use rustora_core::fieldloader::Color;
 use rustora_net::session::{Client, ConnectionQuality, Session, Slot};
 
@@ -346,6 +346,19 @@ pub(crate) fn setup_profile_widget(ui: &mut Ui, parent: WidgetId, client: &Clien
     }
 }
 
+/// Asks the server to rename the local player to the sanitized `name` and saves it as the player name; returns
+/// the sanitized name.
+pub fn change_player_name(net: &Net, settings: &RefCell<Settings>, name: &str) -> String {
+    let clean = sanitized_player_name(name);
+    net.borrow_mut().command(&format!("name {clean}"));
+    let mut settings = settings.borrow_mut();
+    settings.player.name = clean.clone();
+    if let Err(e) = settings.save() {
+        log::warn!("Cannot save the settings: {e}");
+    }
+    clean
+}
+
 /// `SetupEditableNameWidget`.
 pub fn setup_editable_name_widget(ui: &mut Ui, parent: WidgetId, client: &Client, net: &Net) {
     let name = ui.child(parent, "NAME");
@@ -367,14 +380,8 @@ pub fn setup_editable_name_widget(ui: &mut Ui, parent: WidgetId, client: &Client
             if text.is_empty() {
                 ui.get::<TextFieldWidget>(name).set_text(&original);
             } else if text != original {
-                let clean = sanitized_player_name(&text);
+                let clean = change_player_name(&n, &settings, &text);
                 ui.get::<TextFieldWidget>(name).set_text(&clean);
-                n.borrow_mut().command(&format!("name {clean}"));
-                let mut settings = settings.borrow_mut();
-                settings.player.name = clean;
-                if let Err(e) = settings.save() {
-                    log::warn!("Cannot save the settings: {e}");
-                }
             }
         }));
         field.on_enter_key = Some(Rc::new(move |ui, _| {
