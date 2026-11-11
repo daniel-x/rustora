@@ -666,7 +666,7 @@ pub(super) fn bind_ui_scale(ui: &mut Ui, panel: WidgetId, in_game: bool) {
         let scale = services(ui).settings.borrow().graphics.ui_scale;
         let window = (ui.resolution.0 as f32 * scale, ui.resolution.1 as f32 * scale);
         let max_scale = (window.0 / MIN_EFFECTIVE_RESOLUTION.0).min(window.1 / MIN_EFFECTIVE_RESOLUTION.1);
-        [1.0f32, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0]
+        [1.0f32, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
             .into_iter()
             .filter(|&x| x <= max_scale)
             .map(|x| (format!("{}%", (100.0 * x) as i32), x))

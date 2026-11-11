@@ -436,12 +436,23 @@ impl Renderer {
     }
 
     /// Draws `quads` like [`Renderer::render`], with the post-processing `passes` between them.
+    ///
+    /// Like `Renderer.BeginWorld` and `BeginUI`, the world draws into a buffer with one texel per world pixel, which
+    /// the pixel art scaling then stretches onto `target` by the zoom and the user interface scale. Without passes
+    /// and at a total scale of 1, the quads draw directly onto `target`.
     pub fn render_with_passes(&mut self, target: &wgpu::TextureView, camera: Camera, quads: &[Quad], passes: &[post::PostPass]) {
+        let world_size = (camera.width as f32 / camera.zoom, camera.height as f32 / camera.zoom);
+        let buffered = !passes.is_empty() || (camera.zoom * self.ui_scale - 1.0).abs() > 1e-6;
+        let (width, height, zoom) = if buffered {
+            (world_size.0.ceil().max(1.0) as u32, world_size.1.ceil().max(1.0) as u32, 1.0)
+        } else {
+            (camera.width, camera.height, camera.zoom)
+        };
         let cam = CameraUniform {
-            scale: [2.0 * camera.zoom / camera.width as f32, -2.0 * camera.zoom / camera.height as f32],
+            scale: [2.0 * zoom / width as f32, -2.0 * zoom / height as f32],
             offset: [
-                -1.0 - 2.0 * camera.zoom * camera.x / camera.width as f32,
-                1.0 + 2.0 * camera.zoom * camera.y / camera.height as f32,
+                -1.0 - 2.0 * zoom * camera.x / width as f32,
+                1.0 + 2.0 * zoom * camera.y / height as f32,
             ],
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
@@ -518,12 +529,12 @@ impl Renderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        if passes.is_empty() {
+        if !buffered {
             self.draw_batches(&mut encoder, target, true, &batches, 0, vertices.len() as u32);
             self.queue.submit([encoder.finish()]);
             return;
         }
-        let size = (camera.width, camera.height);
+        let size = (width, height);
         if self.post.as_ref().is_none_or(|p| p.size != size) {
             self.post = Some(post::PostResources::new(&self.device, self.format, size));
         }
@@ -539,9 +550,10 @@ impl Renderer {
             let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::of(pass.effect));
             Self::draw_post(&mut encoder, &post, &post.world_view, &bind_group, false);
         }
-        self.draw_batches(&mut encoder, &post.world_view, false, &batches, start, vertices.len() as u32);
+        self.draw_batches(&mut encoder, &post.world_view, first, &batches, start, vertices.len() as u32);
         post.snapshot(&mut encoder);
-        let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::COPY);
+        let region = [world_size.0 / width as f32, world_size.1 / height as f32];
+        let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::copy(region));
         Self::draw_post(&mut encoder, &post, target, &bind_group, true);
         self.queue.submit([encoder.finish()]);
         self.post = Some(post);

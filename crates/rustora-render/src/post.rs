@@ -35,19 +35,27 @@ pub(crate) struct PostUniform {
     from_effect: f32,
     to_effect: f32,
     color: [f32; 4],
+    /// The part of the buffer that the final copy stretches over the target, as a fraction of its size.
+    region: [f32; 2],
+    padding: [f32; 2],
 }
 
 impl PostUniform {
-    pub(crate) const COPY: PostUniform = PostUniform {
-        mode: 4,
-        blend: 0.0,
-        from_effect: 0.0,
-        to_effect: 0.0,
-        color: [0.0; 4],
-    };
+    /// The final copy of the buffer onto the target, with the pixel art scaling.
+    pub(crate) fn copy(region: [f32; 2]) -> PostUniform {
+        PostUniform {
+            mode: 4,
+            blend: 0.0,
+            from_effect: 0.0,
+            to_effect: 0.0,
+            color: [0.0; 4],
+            region,
+            padding: [0.0; 2],
+        }
+    }
 
     pub(crate) fn of(effect: PostEffect) -> PostUniform {
-        let mut u = PostUniform::COPY;
+        let mut u = PostUniform::copy([1.0; 2]);
         match effect {
             PostEffect::Tint(c) => {
                 u.mode = 0;
