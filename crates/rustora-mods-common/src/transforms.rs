@@ -873,6 +873,10 @@ impl Transform {
             for nt in a.traits_implementing::<dyn INotifyTransform>() {
                 nt.on_transform(&a);
             }
+            let selection = crate::selection::Selection::of(w);
+            let control_groups = crate::selection::ControlGroups::of(w);
+            let selected = selection.as_ref().is_some_and(|s| s.contains(&a));
+            let control_group = control_groups.as_ref().and_then(|g| g.control_group_for_actor(&a));
             a.dispose();
             rustora_engine::sound::play_all_to_owner(&a, rustora_engine::sound::SoundType::World, &me.args.sounds, a.center_position());
             rustora_engine::sound::notify_owner(&a, "Speech", me.args.notification.as_deref(), me.args.text_notification.as_deref());
@@ -916,6 +920,12 @@ impl Transform {
                 for r in n.traits_implementing::<dyn IResolveOrder>() {
                     r.resolve_order(&n, &order);
                 }
+            }
+            if let Some(selection) = selection.filter(|_| selected) {
+                selection.add(&n);
+            }
+            if let (Some(groups), Some(group)) = (control_groups, control_group) {
+                groups.add_to_control_group(&n, group);
             }
             *a.replaced_by_actor.borrow_mut() = Some(n);
         }));

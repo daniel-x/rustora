@@ -402,6 +402,14 @@ impl ControlGroups {
         selection.combine(&self.actors_in_control_group(group), true, false);
     }
 
+    /// `AddToControlGroup`.
+    pub fn add_to_control_group(&self, a: &ActorRef, group: usize) {
+        let mut groups = self.groups.borrow_mut();
+        if !contains(&groups[group], a) {
+            groups[group].push(a.clone());
+        }
+    }
+
     /// `RemoveFromControlGroup`.
     pub fn remove_from_control_group(&self, a: &ActorRef) {
         for g in self.groups.borrow_mut().iter_mut() {

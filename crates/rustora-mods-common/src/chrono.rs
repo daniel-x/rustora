@@ -540,6 +540,14 @@ impl ConyardChronoReturn {
         for nt in self_.traits_implementing::<dyn INotifyTransform>() {
             nt.after_transform(&a);
         }
+        if let Some(selection) = crate::selection::Selection::of(&world).filter(|s| s.contains(self_)) {
+            selection.add(&a);
+        }
+        if let Some(groups) = crate::selection::ControlGroups::of(&world)
+            && let Some(group) = groups.control_group_for_actor(self_)
+        {
+            groups.add_to_control_group(&a, group);
+        }
         *self_.replaced_by_actor.borrow_mut() = Some(a);
         sound::play_at(
             &world,
