@@ -174,7 +174,7 @@ fn health_bar(dc: &mut DrawContext, health: &dyn IHealth, start: (f32, f32), end
 const RANGE_CIRCLE_SEGMENTS: i32 = 32;
 
 /// `RangeCircleAnnotationRenderable.DrawRangeCircle` and the sweep lines of `DetectionCircleAnnotationRenderable`.
-fn draw_circle(dc: &mut DrawContext, viewport: &Viewport, c: &AnnotationCircle) {
+pub(crate) fn draw_circle(dc: &mut DrawContext, viewport: &Viewport, c: &AnnotationCircle) {
     let view = |p: WPos| {
         let (x, y) = viewport.world_to_view_px((p.x * 24 / 1024, (p.y - p.z) * 24 / 1024));
         [x as f32, y as f32]

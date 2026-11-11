@@ -322,6 +322,19 @@ impl OrderGenerator for PlaceBuildingOrderGenerator {
         Some(ctx.world_default_cursor.clone())
     }
 
+    /// `RenderAnnotations`: the circles of the placement decorations.
+    fn draw(&self, ctx: &OrderContext, dc: &mut crate::draw::DrawContext, viewport: &crate::viewport::Viewport) {
+        if self.preview.is_none() {
+            return;
+        }
+        let center = ctx.world.map().center_of_cell(self.top_left()) + self.building.center_offset(ctx.world);
+        let mut circles = Vec::new();
+        rustora_mods_common::decorations::place_building_circles(ctx.world, &self.actor, center, ctx.render_player, &mut circles);
+        for c in &circles {
+            crate::annotations::draw_circle(dc, viewport, c);
+        }
+    }
+
     fn render_above_shroud(&self, ctx: &OrderContext, out: &mut Vec<Renderable>) {
         let Some(preview) = &self.preview else {
             return;

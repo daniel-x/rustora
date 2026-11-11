@@ -26,6 +26,7 @@ use rustora_engine::{conditional_plumbing, conditional_simple, info_impl, load_i
 
 use crate::actor_map::{ById, WorldExt};
 use crate::building::{BuildingInfluence, BuildingInfo};
+use crate::decorations::{AnnotationCircle, IRenderCircles};
 use crate::interfaces::*;
 use crate::player::PlayerResources;
 use crate::resources::ResourceLayer;
@@ -890,6 +891,11 @@ pub struct BaseProviderInfo {
     pub range: WDist,
     pub cooldown: i32,
     pub initial_delay: i32,
+    pub circle_ready_color: rustora_core::fieldloader::Color,
+    pub circle_blocked_color: rustora_core::fieldloader::Color,
+    pub circle_width: f32,
+    pub circle_border_color: rustora_core::fieldloader::Color,
+    pub circle_border_width: f32,
 }
 
 impl Default for BaseProviderInfo {
@@ -900,6 +906,11 @@ impl Default for BaseProviderInfo {
             range: WDist::from_cells(10),
             cooldown: 0,
             initial_delay: 0,
+            circle_ready_color: rustora_core::fieldloader::Color::from_argb(128, 255, 255, 255),
+            circle_blocked_color: rustora_core::fieldloader::Color::from_argb(128, 255, 0, 0),
+            circle_width: 1.0,
+            circle_border_color: rustora_core::fieldloader::Color::from_argb(96, 0, 0, 0),
+            circle_border_width: 3.0,
         }
     }
 }
@@ -912,7 +923,7 @@ pub struct BaseProvider {
     progress: Cell<i32>,
 }
 
-register_traits!(BaseProvider: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(BaseProvider: ITick, INotifyCreated, IObservesVariables, IDisabledTrait, ISync, IRenderCircles);
 info_impl!(BaseProviderInfo => |info, init| {
     let state = ConditionalState::new_pausable(&info.base);
     Some(Rc::new(BaseProvider {
@@ -943,6 +954,48 @@ impl BaseProvider {
             return false;
         }
         self.dev_mode.fast_build() || self.progress.get() == 0
+    }
+
+    /// `ValidRenderPlayer`: the build radius is on, and the viewer owns the actor, or is an ally while allies may
+    /// build in it.
+    fn valid_render_player(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> bool {
+        let Some(radius) = self_.world().world_actor().trait_or_default::<MapBuildRadius>() else {
+            return false;
+        };
+        let Some(viewer) = viewer else {
+            return false;
+        };
+        radius.build_radius_enabled.get()
+            && (Rc::ptr_eq(&self_.owner(), viewer)
+                || (radius.ally_build_radius_enabled.get() && self_.owner().is_allied_with(Some(&**viewer))))
+    }
+
+    /// `RangeCircleRenderables`.
+    pub fn range_circle(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> Option<AnnotationCircle> {
+        if self.state.is_trait_disabled() || !self.valid_render_player(self_, viewer) {
+            return None;
+        }
+        Some(AnnotationCircle {
+            center: self_.center_position(),
+            radius: self.info.range,
+            color: if self.ready() {
+                self.info.circle_ready_color
+            } else {
+                self.info.circle_blocked_color
+            },
+            width: self.info.circle_width,
+            border_color: self.info.circle_border_color,
+            border_width: self.info.circle_border_width,
+            trail: None,
+        })
+    }
+}
+
+impl IRenderCircles for BaseProvider {
+    fn circles(&self, self_: &ActorRef, viewer: Option<&PlayerRef>, selected: bool, out: &mut Vec<AnnotationCircle>) {
+        if selected {
+            out.extend(self.range_circle(self_, viewer));
+        }
     }
 }
 

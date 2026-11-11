@@ -600,31 +600,58 @@ pub struct RenderRangeCircle {
 register_traits!(RenderRangeCircle: IRenderCircles);
 info_impl!(RenderRangeCircleInfo => |info, _init| Some(Rc::new(RenderRangeCircle { info })));
 
-impl IRenderCircles for RenderRangeCircle {
-    fn circles(&self, self_: &ActorRef, viewer: Option<&PlayerRef>, selected: bool, out: &mut Vec<AnnotationCircle>) {
-        if !selected || !allied_with_viewer(self_, viewer) {
-            return;
+impl RenderRangeCircleInfo {
+    /// The range of an actor of `actor` before it exists, for placing it: the longest weapon range of the armaments
+    /// that are enabled by default, or `fallback_range` without any. Range modifiers are not applied.
+    pub fn placement_range(&self, world: &rustora_engine::world::World, actor: &rustora_engine::actor_info::ActorInfo) -> WDist {
+        actor
+            .trait_infos::<crate::attack::ArmamentInfo>()
+            .iter()
+            .filter(|a| a.base.base.enabled_by_default())
+            .filter_map(|a| world.rules().weapon(&a.weapon.to_lowercase()).map(|w| w.range))
+            .max()
+            .unwrap_or(self.fallback_range)
+    }
+
+    /// The circle of this range at `center`, in `color`.
+    pub fn circle(&self, center: WPos, radius: WDist, color: Color) -> AnnotationCircle {
+        AnnotationCircle {
+            center,
+            radius,
+            color,
+            width: self.width,
+            border_color: self.border_color,
+            border_width: self.border_width,
+            trail: None,
         }
-        let Some(attack) = self_.trait_or_default::<crate::attack::AttackBase>() else {
-            return;
-        };
+    }
+}
+
+impl RenderRangeCircle {
+    pub fn info(&self) -> &RenderRangeCircleInfo {
+        &self.info
+    }
+
+    /// `RangeCircleRenderables`: the range of the actor, for allies of the viewer.
+    pub fn range_circle(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> Option<AnnotationCircle> {
+        if !allied_with_viewer(self_, viewer) {
+            return None;
+        }
+        let attack = self_.trait_or_default::<crate::attack::AttackBase>()?;
         let radius = if self.info.range_circle_mode == "Minimum" {
             attack.get_minimum_range()
         } else {
             attack.get_maximum_range()
         };
-        if radius == WDist::ZERO {
-            return;
+        (radius != WDist::ZERO).then(|| self.info.circle(self_.center_position(), radius, self.info.color))
+    }
+}
+
+impl IRenderCircles for RenderRangeCircle {
+    fn circles(&self, self_: &ActorRef, viewer: Option<&PlayerRef>, selected: bool, out: &mut Vec<AnnotationCircle>) {
+        if selected {
+            out.extend(self.range_circle(self_, viewer));
         }
-        out.push(AnnotationCircle {
-            center: self_.center_position(),
-            radius,
-            color: self.info.color,
-            width: self.info.width,
-            border_color: self.info.border_color,
-            border_width: self.info.border_width,
-            trail: None,
-        });
     }
 }
 
@@ -832,6 +859,95 @@ impl IRenderCircles for WithRangeCircle {
             center: self_.center_position(),
             radius: info.range,
             color: if info.use_player_color { self_.owner().color } else { info.color },
+            width: info.width,
+            border_color: info.border_color,
+            border_width: info.border_width,
+            trail: None,
+        });
+    }
+}
+
+/// The `IPlaceBuildingDecorationInfo.RenderAnnotations` circles of placing `actor` with its center at `center`: the
+/// build radius of the base providers if the building needs one, and the circles of the range, shroud and range
+/// circle traits of `actor`, each with the circles of the existing actors of the same kind.
+pub fn place_building_circles(
+    world: &rustora_engine::world::World,
+    actor: &rustora_engine::actor_info::ActorInfo,
+    center: WPos,
+    viewer: Option<&PlayerRef>,
+    out: &mut Vec<AnnotationCircle>,
+) {
+    let actors = world.actors();
+    let existing = |out: &mut Vec<AnnotationCircle>, f: &dyn Fn(&ActorRef, &mut Vec<AnnotationCircle>)| {
+        for a in actors.iter().filter(|a| a.is_in_world() && !a.is_dead()) {
+            f(a, out);
+        }
+    };
+    if actor
+        .trait_info::<crate::building::BuildingInfo>()
+        .is_some_and(|b| b.requires_base_provider)
+    {
+        existing(out, &|a, out| {
+            if let Some(p) = a.trait_or_default::<crate::base::BaseProvider>() {
+                out.extend(p.range_circle(a, viewer));
+            }
+        });
+    }
+    for info in actor.trait_infos::<RenderRangeCircleInfo>() {
+        let range = info.placement_range(world, actor);
+        if range == WDist::ZERO {
+            continue;
+        }
+        existing(out, &|a, out| {
+            for r in a.traits_implementing::<RenderRangeCircle>() {
+                if r.info.range_circle_type == info.range_circle_type {
+                    out.extend(r.range_circle(a, viewer));
+                }
+            }
+        });
+        out.push(info.circle(center, range, info.color));
+    }
+    for info in actor.trait_infos::<WithRangeCircleInfo>() {
+        if !info.base.enabled_by_default() {
+            continue;
+        }
+        out.push(AnnotationCircle {
+            center,
+            radius: info.range,
+            color: info.color,
+            width: info.width,
+            border_color: info.border_color,
+            border_width: info.border_width,
+            trail: None,
+        });
+        existing(out, &|a, out| {
+            for r in a.traits_implementing::<WithRangeCircle>() {
+                if r.info.circle_type == info.circle_type {
+                    r.circles(a, viewer, true, out);
+                }
+            }
+        });
+    }
+    for info in actor.trait_infos::<RenderShroudCircleInfo>() {
+        if !info.base.enabled_by_default() {
+            continue;
+        }
+        existing(out, &|a, out| {
+            for r in a.traits_implementing::<RenderShroudCircle>() {
+                r.circles(a, viewer, true, out);
+            }
+        });
+        let range = actor
+            .trait_infos::<crate::visibility::CreatesShroudInfo>()
+            .iter()
+            .filter(|c| c.affects.base.enabled_by_default())
+            .map(|c| c.affects.range)
+            .max()
+            .unwrap_or(WDist::ZERO);
+        out.push(AnnotationCircle {
+            center,
+            radius: range,
+            color: info.color,
             width: info.width,
             border_color: info.border_color,
             border_width: info.border_width,
