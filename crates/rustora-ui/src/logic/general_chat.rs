@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use rustora_client::irc::{self, IrcClient, IrcEvent};
 
+use crate::draw::Rect;
 use crate::logic::services;
 use crate::net::{JoinTarget, SYSTEM_CLIENT_ID, TextNotification, TextNotificationPool, local_time};
 use crate::widget::{ChromeLogic, KeyCallback, Ui, WidgetArgs, WidgetId};
@@ -109,18 +110,25 @@ impl GeneralChat {
     }
 }
 
-/// Moves the server list or the lobby to the upper left corner, to make room for the general chat.
+/// Places the server list or the lobby as close to the center as the general chat allows: centered, then moved
+/// left of the chat, or above it when the chat is below the dialogs.
 pub fn place_dialog(ui: &mut Ui, window: WidgetId) {
+    let (window_width, window_height) = ui.resolution;
+    let chat = chat_rect(ui.resolution);
     let bounds = &mut ui.node_mut(window).bounds;
-    bounds.x = MARGIN;
-    bounds.y = MARGIN;
+    bounds.x = (window_width - bounds.w) / 2;
+    bounds.y = (window_height - bounds.h) / 2;
+    if chat.y > CHAT_Y {
+        bounds.y = bounds.y.min(chat.y - MARGIN - bounds.h).max(MARGIN);
+    } else {
+        bounds.x = bounds.x.min(chat.x - MARGIN - bounds.w).max(MARGIN);
+    }
 }
 
-/// The arguments that `GENERAL_CHAT` is loaded with: the place of the chat. It takes the right half of the room
-/// right of the dialogs, from below the logo down, or the right half below the dialogs when the window is too
-/// narrow for that. It is at least `MIN_CHAT_WIDTH` wide where the room allows.
-pub fn widget_args(ui: &Ui) -> WidgetArgs {
-    let (window_width, window_height) = ui.resolution;
+/// The place of the general chat: the right half of the room right of the dialogs, from below the logo down, or
+/// the right half below the dialogs when the window is too narrow for that. It is at least `MIN_CHAT_WIDTH` wide
+/// where the room allows.
+fn chat_rect((window_width, window_height): (i32, i32)) -> Rect {
     let right_room = window_width - (MARGIN + DIALOG_WIDTH + MARGIN) - MARGIN;
     let below_y = MARGIN + DIALOG_HEIGHT + MARGIN;
     let half = |room: i32| (room / 2).max(MIN_CHAT_WIDTH).min(room);
@@ -131,11 +139,17 @@ pub fn widget_args(ui: &Ui) -> WidgetArgs {
     } else {
         (MIN_CHAT_WIDTH, CHAT_Y)
     };
+    Rect::new(window_width - width - MARGIN, y, width, window_height - y - MARGIN)
+}
+
+/// The arguments that `GENERAL_CHAT` is loaded with: the place of the chat.
+pub fn widget_args(ui: &Ui) -> WidgetArgs {
+    let chat = chat_rect(ui.resolution);
     let mut args = WidgetArgs::default();
-    args.substitutions.insert("CHAT_X".into(), window_width - width - MARGIN);
-    args.substitutions.insert("CHAT_Y".into(), y);
-    args.substitutions.insert("CHAT_WIDTH".into(), width);
-    args.substitutions.insert("CHAT_HEIGHT".into(), window_height - y - MARGIN);
+    args.substitutions.insert("CHAT_X".into(), chat.x);
+    args.substitutions.insert("CHAT_Y".into(), chat.y);
+    args.substitutions.insert("CHAT_WIDTH".into(), chat.w);
+    args.substitutions.insert("CHAT_HEIGHT".into(), chat.h);
     args
 }
 
