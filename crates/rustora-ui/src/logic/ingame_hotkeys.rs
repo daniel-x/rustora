@@ -320,7 +320,13 @@ pub fn create(name: &str, ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode]
 type GlobalHotkey = Rc<dyn Fn(&mut Ui)>;
 
 /// `SingleHotkeyBaseLogic` on the `GLOBAL_KEYHANDLER`, which also exists without a world.
-fn global_hotkey(ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode], arg: &str, on_activated: GlobalHotkey) -> Rc<RefCell<dyn ChromeLogic>> {
+fn global_hotkey(
+    ui: &mut Ui,
+    id: WidgetId,
+    logic_args: &[MiniYamlNode],
+    arg: &str,
+    on_activated: GlobalHotkey,
+) -> Rc<RefCell<dyn ChromeLogic>> {
     let Some(key) = logic_args.iter().find(|n| n.key == arg).and_then(|n| n.value.value.clone()) else {
         return cell(NoLogic);
     };
@@ -396,7 +402,8 @@ fn music_hotkeys(ui: &mut Ui, id: WidgetId, logic_args: &[MiniYamlNode]) -> Rc<R
             }
             let pressed = {
                 let assets = ui.assets.borrow();
-                keys.iter().position(|k| k.as_ref().is_some_and(|k| assets.hotkeys.is_activated(k, e)))
+                keys.iter()
+                    .position(|k| k.as_ref().is_some_and(|k| assets.hotkeys.is_activated(k, e)))
             };
             let play = |song: Option<Rc<rustora_engine::sound::MusicInfo>>| {
                 if let Some(song) = song {

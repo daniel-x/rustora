@@ -13,8 +13,8 @@ const SAMPLE_COUNT: usize = 100;
 
 /// `PerfHistory.Colors`.
 const COLORS: [u32; 14] = [
-    0xFF0000, 0x008000, 0xFFA500, 0xFFFF00, 0xFF00FF, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFFFFFF, 0x008080, 0xFFC0CB, 0x9370DB,
-    0x808000, 0x6495ED,
+    0xFF0000, 0x008000, 0xFFA500, 0xFFFF00, 0xFF00FF, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFFFFFF, 0x008080, 0xFFC0CB, 0x9370DB, 0x808000,
+    0x6495ED,
 ];
 
 /// `PerfItem`: a ring of the last 100 sums.
@@ -64,7 +64,11 @@ impl PerfItem {
     /// `Average` of the newest `count` samples.
     pub fn average(&self, count: usize) -> f64 {
         let newest: Vec<f64> = self.samples().into_iter().take(count).collect();
-        if newest.is_empty() { 0.0 } else { newest.iter().sum::<f64>() / newest.len() as f64 }
+        if newest.is_empty() {
+            0.0
+        } else {
+            newest.iter().sum::<f64>() / newest.len() as f64
+        }
     }
 
     /// `LastValue`.
@@ -91,7 +95,12 @@ impl History {
         let index = match self.items.iter().position(|i| i.name == name) {
             Some(i) => i,
             None => {
-                let color = Color::from_argb(255, (COLORS[self.next_color] >> 16) as u8, (COLORS[self.next_color] >> 8) as u8, COLORS[self.next_color] as u8);
+                let color = Color::from_argb(
+                    255,
+                    (COLORS[self.next_color] >> 16) as u8,
+                    (COLORS[self.next_color] >> 8) as u8,
+                    COLORS[self.next_color] as u8,
+                );
                 self.next_color = (self.next_color + 1) % COLORS.len();
                 self.items.push(PerfItem::new(name, color));
                 self.items.len() - 1
@@ -118,7 +127,10 @@ pub struct PerfSample {
 
 impl PerfSample {
     pub fn new(name: &'static str) -> PerfSample {
-        PerfSample { name, start: Instant::now() }
+        PerfSample {
+            name,
+            start: Instant::now(),
+        }
     }
 }
 
@@ -130,7 +142,13 @@ impl Drop for PerfSample {
 
 /// `PerfHistory.Tick`: a sample of each item that ticks with the world.
 pub fn tick() {
-    HISTORY.with(|h| h.borrow_mut().items.iter_mut().filter(|i| i.has_normal_tick).for_each(PerfItem::tick));
+    HISTORY.with(|h| {
+        h.borrow_mut()
+            .items
+            .iter_mut()
+            .filter(|i| i.has_normal_tick)
+            .for_each(PerfItem::tick)
+    });
 }
 
 /// The frame items of `Game.RenderTick`, which tick once per frame instead of with the world.

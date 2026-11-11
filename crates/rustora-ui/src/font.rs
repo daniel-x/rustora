@@ -125,7 +125,14 @@ impl GlyphSheet {
         });
         if self.clear_pending {
             self.clear_pending = false;
-            renderer.update_ui_texture(texture, 0, 0, SHEET_SIZE, SHEET_SIZE, &vec![0; (SHEET_SIZE * SHEET_SIZE * 4) as usize]);
+            renderer.update_ui_texture(
+                texture,
+                0,
+                0,
+                SHEET_SIZE,
+                SHEET_SIZE,
+                &vec![0; (SHEET_SIZE * SHEET_SIZE * 4) as usize],
+            );
         }
         if self.x + w + 1 > SHEET_SIZE {
             self.x = 0;

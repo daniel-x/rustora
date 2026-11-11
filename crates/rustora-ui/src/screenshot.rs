@@ -22,7 +22,10 @@ pub fn save(ui: &Ui, support_dir: &Path, rgba: &[u8], width: u32, height: u32) {
         log::warn!("Cannot save screenshot {}: {e}", path.display());
         return;
     }
-    add_debug_line(ui, message_with(ui, "notification-saved-screenshot", &[("filename", MessageArg::Text(&filename))]));
+    add_debug_line(
+        ui,
+        message_with(ui, "notification-saved-screenshot", &[("filename", MessageArg::Text(&filename))]),
+    );
 }
 
 fn write_png(path: &Path, rgba: &[u8], width: u32, height: u32) -> std::io::Result<()> {

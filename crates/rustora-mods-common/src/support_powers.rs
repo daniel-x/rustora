@@ -301,9 +301,11 @@ impl Default for SupportPowerInfo {
             prerequisites: Vec::new(),
             order_name: String::new(),
             use_directional_target: false,
-            arrows: ["arrow-t", "arrow-tl", "arrow-l", "arrow-bl", "arrow-b", "arrow-br", "arrow-r", "arrow-tr"]
-                .map(String::from)
-                .to_vec(),
+            arrows: [
+                "arrow-t", "arrow-tl", "arrow-l", "arrow-bl", "arrow-b", "arrow-br", "arrow-r", "arrow-tr",
+            ]
+            .map(String::from)
+            .to_vec(),
             direction_arrow_animation: None,
             direction_arrow_palette: "chrome".into(),
             unit_type: String::new(),

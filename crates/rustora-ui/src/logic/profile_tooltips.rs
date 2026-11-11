@@ -155,7 +155,11 @@ impl RegisteredTooltip {
         ui.node_mut(self.header).bounds.w = width;
         ui.node_mut(self.widget).bounds.w = width;
         ui.node_mut(self.badges).bounds.w = width;
-        let badges_height = if ui.node(self.badges).visible { ui.node(self.badges).bounds.h } else { 0 };
+        let badges_height = if ui.node(self.badges).visible {
+            ui.node(self.badges).bounds.h
+        } else {
+            0
+        };
         ui.node_mut(self.widget).bounds.h = ui.node(self.header).bounds.h + badges_height;
         if let Some(separator) = ui.find(self.badges, "SEPARATOR") {
             let x = ui.node(separator).bounds.x;
@@ -176,7 +180,9 @@ pub fn badges(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let Some(profile) = args.value::<PlayerProfile>("profile") else {
         return cell(NoLogic);
     };
-    let negotiate_width = args.value::<Rc<dyn Fn(i32) -> i32>>("negotiateWidth").unwrap_or_else(|| Rc::new(|w| w));
+    let negotiate_width = args
+        .value::<Rc<dyn Fn(i32) -> i32>>("negotiateWidth")
+        .unwrap_or_else(|| Rc::new(|w| w));
     let show = !profile.badges.is_empty();
     ui.set_visible_fn(widget, move || show);
     let template = ui.child(widget, "BADGE_TEMPLATE");

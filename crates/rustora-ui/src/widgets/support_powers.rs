@@ -485,13 +485,7 @@ impl OrderGenerator for SelectChronoshiftDestination {
 }
 
 /// `RenderAnnotations` of both chronoshift target selections: red selection boxes on the visible units around `xy`.
-fn draw_chronoshift_boxes(
-    power: &SupportPower,
-    xy: CPos,
-    ctx: &OrderContext,
-    dc: &mut DrawContext,
-    viewport: &crate::viewport::Viewport,
-) {
+fn draw_chronoshift_boxes(power: &SupportPower, xy: CPos, ctx: &OrderContext, dc: &mut DrawContext, viewport: &crate::viewport::Viewport) {
     let viewer = power.self_.owner();
     for unit in power.chronoshift_units_in_range(xy) {
         if unit.can_be_viewed_by_player(Some(&viewer)) {

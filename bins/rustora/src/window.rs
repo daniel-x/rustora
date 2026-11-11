@@ -554,7 +554,10 @@ impl App {
             let mut pixels = rustora_render::render_offscreen_as(&mut gpu.renderer, size.0, size.1, gpu.config.format, |r, v| {
                 client.render(r, v, size)
             });
-            if matches!(gpu.config.format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb) {
+            if matches!(
+                gpu.config.format,
+                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+            ) {
                 pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p.swap(0, 2));
             }
             pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);

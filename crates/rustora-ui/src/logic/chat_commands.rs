@@ -82,7 +82,10 @@ fn commands(world: &World) -> BTreeMap<&'static str, (Command, &'static str)> {
         commands.insert("surrender", (Command::Surrender, "description-surrender-description"));
     }
     if info.has_trait_info_named("TerrainGeometryOverlay") {
-        commands.insert("terrain-geometry", (Command::TerrainGeometry, "description-terrain-geometry-overlay"));
+        commands.insert(
+            "terrain-geometry",
+            (Command::TerrainGeometry, "description-terrain-geometry-overlay"),
+        );
     }
     if info.has_trait_info_named("DevCommands") {
         for &(name, description, command) in DEV_COMMANDS {

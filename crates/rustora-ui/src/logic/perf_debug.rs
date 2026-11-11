@@ -42,7 +42,11 @@ pub fn perf_debug(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>>
         }
         let (oldest, newest) = (timings[0], *timings.back().expect("timing"));
         let seconds = (newest.1 - oldest.1).as_secs_f64();
-        let fps = if seconds > 0.0 { (newest.0 - oldest.0) as f64 / seconds } else { 0.0 };
+        let fps = if seconds > 0.0 {
+            (newest.0 - oldest.0) as f64 / seconds
+        } else {
+            0.0
+        };
         let samples = service.settings.borrow().debug.samples.max(1) as usize;
         let tick = service.ingame.borrow().as_ref().map_or(0, |i| i.world.world_tick());
         let viewport = service.ingame.borrow().as_ref().map_or((0, 0), |i| i.viewport.borrow().size());

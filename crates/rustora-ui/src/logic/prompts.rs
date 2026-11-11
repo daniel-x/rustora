@@ -10,8 +10,8 @@ use std::rc::Rc;
 use rustora_scripting::lua_script::LuaScript;
 
 use super::settings::{
-    adjust_scroll_panel_layout, bind_battlefield_camera, bind_checkbox, bind_mouse_control, bind_mouse_control_descs,
-    bind_player_color, bind_player_name, bind_ui_scale, save,
+    adjust_scroll_panel_layout, bind_battlefield_camera, bind_checkbox, bind_mouse_control, bind_mouse_control_descs, bind_player_color,
+    bind_player_name, bind_ui_scale, save,
 };
 use super::{NoLogic, services};
 use crate::loader::cell;
@@ -68,7 +68,13 @@ pub fn introduction(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefC
     bind_player_color(ui, widget, false);
     bind_battlefield_camera(ui, widget);
     bind_ui_scale(ui, widget, false);
-    bind_checkbox(ui, widget, "CURSORDOUBLE_CHECKBOX", |s| s.graphics.cursor_double, |s, v| s.graphics.cursor_double = v);
+    bind_checkbox(
+        ui,
+        widget,
+        "CURSORDOUBLE_CHECKBOX",
+        |s| s.graphics.cursor_double,
+        |s, v| s.graphics.cursor_double = v,
+    );
     let continue_button = ui.child(widget, "CONTINUE_BUTTON");
     ui.button(continue_button).on_click = Some(Rc::new(move |ui| {
         services(ui).settings.borrow_mut().game.introduction_prompt_version = INTRODUCTION_VERSION;
