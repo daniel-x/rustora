@@ -729,7 +729,8 @@ pub fn open_multiplayer_panel(ui: &mut Ui, on_start: Action, on_exit: Action) {
     let args = WidgetArgs::default()
         .with_action("onStart", on_start)
         .with_action("onExit", on_exit);
-    ui.open_window("MULTIPLAYER_PANEL", args);
+    let window = ui.open_window("MULTIPLAYER_PANEL", args);
+    super::general_chat::place_dialog(ui, window);
 }
 
 /// `ServerListLogic`'s constructor: sets up the server list in `widget`; `on_join` joins a server.

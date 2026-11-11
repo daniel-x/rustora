@@ -763,6 +763,11 @@ impl Ui {
         window
     }
 
+    /// The open windows, the current one last.
+    pub fn windows(&self) -> &[WidgetId] {
+        &self.window_list
+    }
+
     pub fn current_window(&self) -> Option<WidgetId> {
         self.window_list.last().copied()
     }

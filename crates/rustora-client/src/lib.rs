@@ -7,6 +7,7 @@
 pub mod cab;
 pub mod game_information;
 pub mod installer;
+pub mod irc;
 pub mod lag_monitor;
 pub mod map_cache;
 pub mod replay;

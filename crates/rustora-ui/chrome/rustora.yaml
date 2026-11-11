@@ -7,3 +7,31 @@ Label@LAG_DISPLAY:
 	Align: Center
 	VAlign: Top
 	Contrast: true
+
+Container@GENERAL_CHAT:
+	Logic: GeneralChatLogic
+	Children:
+		Background@GENERAL_CHAT_PANEL:
+			X: CHAT_X
+			Y: CHAT_Y
+			Width: CHAT_WIDTH
+			Height: CHAT_HEIGHT
+			Children:
+				Label@TITLE:
+					Y: 12
+					Width: PARENT_WIDTH
+					Height: 25
+					Font: Bold
+					Align: Center
+				ScrollPanel@CHAT_DISPLAY:
+					X: 15
+					Y: 45
+					Width: PARENT_WIDTH - 30
+					Height: PARENT_HEIGHT - 45 - 50
+					TopBottomSpacing: 2
+					ItemSpacing: 2
+				TextField@CHAT_TEXTFIELD:
+					X: 15
+					Y: PARENT_HEIGHT - HEIGHT - 15
+					Width: PARENT_WIDTH - 30
+					Height: 25

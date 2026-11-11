@@ -706,6 +706,7 @@ impl Client {
             sound,
             mod_audio,
             music: RefCell::new(None),
+            general_chat: RefCell::default(),
         };
         let net = NetClient::new(engine, support, &mod_data.manifest.id, services.net.clone());
         let services = Rc::new(services);

@@ -265,6 +265,8 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     });
 
     hide_unported_notices(ui, widget);
+    let chat_args = super::general_chat::widget_args(ui);
+    ui.load_widget("GENERAL_CHAT", Some(widget), &chat_args);
     if let Some(target) = args.value::<String>("directConnect") {
         direct_connect(ui, &target, &menu);
     } else {

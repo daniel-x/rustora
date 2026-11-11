@@ -25,6 +25,7 @@ pub mod command_bar;
 pub mod connection;
 pub mod game_info;
 pub mod game_save_browser;
+pub mod general_chat;
 mod icon_tooltips;
 pub mod ingame;
 pub mod ingame_chat;
@@ -83,6 +84,8 @@ pub struct Services {
     pub mod_audio: Rc<AudioRules>,
     /// The `MusicPlaylist` of the current world.
     pub music: RefCell<Option<Rc<MusicPlaylist>>>,
+    /// The IRC general chat.
+    pub general_chat: RefCell<general_chat::GeneralChat>,
 }
 
 /// The function behind `Services::lobby_rules`.
@@ -111,6 +114,7 @@ impl Default for Services {
             sound: Rc::new(Sound::silent()),
             mod_audio: Rc::default(),
             music: RefCell::new(None),
+            general_chat: RefCell::default(),
         }
     }
 }
@@ -433,6 +437,7 @@ pub fn create(
         "DisconnectWatcherLogic" => ingame_hotkeys::disconnect_watcher(ui, id),
         "MuteIndicatorLogic" => ingame_hotkeys::mute_indicator(ui, id),
         "MainMenuLogic" => main_menu::create(ui, id, args),
+        "GeneralChatLogic" => general_chat::create(ui, id),
         "AddFactionSuffixLogic" => sidebar::add_faction_suffix(ui, id),
         "ClassicProductionLogic" => sidebar::classic_production(ui, id),
         "IngameCashCounterLogic" => sidebar::cash_counter(ui, id),

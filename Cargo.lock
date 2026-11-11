@@ -2598,12 +2598,14 @@ dependencies = [
  "flate2",
  "indexmap",
  "log",
+ "rustls",
  "rustora-core",
  "rustora-derive",
  "rustora-fs",
  "rustora-game",
  "rustora-net",
  "sha1 0.11.0",
+ "webpki-roots",
  "zip",
 ]
 

@@ -392,7 +392,10 @@ pub fn open_lobby(ui: &mut Ui, on_exit: Action, on_start: Action, skirmish_mode:
         .with_action("onExit", on_exit)
         .with_action("onStart", on_start)
         .with_value("skirmishMode", skirmish_mode);
-    ui.open_window("SERVER_LOBBY", args);
+    let window = ui.open_window("SERVER_LOBBY", args);
+    if !skirmish_mode {
+        super::general_chat::place_dialog(ui, window);
+    }
 }
 
 /// Port of `WidgetUtils.SetupTextNotification`.

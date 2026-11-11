@@ -102,6 +102,10 @@ Escape quits. `--screenshot <out.webp> --tick <n>` renders one frame offscreen i
 ALSA or a GPU. `rustora --headless verify-replay <engine-dir> <support-dir> <replay> [sync-dump]`
 replays a game and compares the sync hashes; `bins/rustora/src/headless.rs` lists all commands.
 
+The server list and the multiplayer lobby show a general chat: the IRC channel `##openra-ingame-general` on
+Libera.Chat, joined as `openra_user_<name>`, or `ora_<name>` when that is longer than 16 characters. It is connected
+only while the server list or a multiplayer lobby is open.
+
 `rustora-server` is the multiplayer game server. It runs independently, or dependent on a client that started it
 for its game and ends with that client. It finds the mod data and the support directory like the client. Single
 player games run their server inside the client.
