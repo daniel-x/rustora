@@ -14,8 +14,8 @@ use std::collections::VecDeque;
 pub const WINDOW_MS: i64 = 5000;
 /// The report shows a game that runs slower than this share of its nominal speed.
 const SHOW_BELOW_PERCENT: i32 = 90;
-/// How long the report stays after the game recovered.
-const HOLD_MS: i64 = 3000;
+/// How long the display says that the game runs normally again.
+const RECOVERED_MS: i64 = 4000;
 /// The report needs at least this much history.
 const MIN_HISTORY_MS: i64 = 2000;
 /// Causes below this share are left out.
@@ -70,13 +70,23 @@ pub struct LagReport {
     pub causes: Vec<(LagCause, i32)>,
 }
 
+/// What the lag display shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LagDisplay {
+    /// The game runs slower than [`SHOW_BELOW_PERCENT`].
+    Slow(LagReport),
+    /// The game runs normally again, at this speed in percent, for [`RECOVERED_MS`].
+    Recovered(i32),
+}
+
 /// Collects the tick attempts of a running game.
 pub struct LagMonitor {
     /// The nominal timestep of the game speed in milliseconds.
     nominal_timestep: i32,
     start: Option<i64>,
     attempts: VecDeque<(i64, Attempt)>,
-    shown: Option<(i64, LagReport)>,
+    /// When the game last ran slow.
+    last_slow: Option<i64>,
 }
 
 impl LagMonitor {
@@ -85,7 +95,7 @@ impl LagMonitor {
             nominal_timestep: nominal_timestep.max(1),
             start: None,
             attempts: VecDeque::new(),
-            shown: None,
+            last_slow: None,
         }
     }
 
@@ -104,7 +114,7 @@ impl LagMonitor {
     pub fn reset(&mut self) {
         self.start = None;
         self.attempts.clear();
-        self.shown = None;
+        self.last_slow = None;
     }
 
     fn push(&mut self, now: i64, attempt: Attempt) {
@@ -173,15 +183,19 @@ impl LagMonitor {
         })
     }
 
-    /// The report to show at `now`: while the game runs slower than [`SHOW_BELOW_PERCENT`], and for [`HOLD_MS`]
-    /// after it recovered.
-    pub fn report(&mut self, now: i64) -> Option<LagReport> {
-        match self.measure(now).filter(|r| r.speed_percent < SHOW_BELOW_PERCENT) {
-            Some(r) => {
-                self.shown = Some((now, r.clone()));
-                Some(r)
+    /// What to show at `now`: the report while the game runs slower than [`SHOW_BELOW_PERCENT`], and the current
+    /// speed for [`RECOVERED_MS`] after it recovered.
+    pub fn report(&mut self, now: i64) -> Option<LagDisplay> {
+        let report = self.measure(now);
+        match report {
+            Some(r) if r.speed_percent < SHOW_BELOW_PERCENT => {
+                self.last_slow = Some(now);
+                Some(LagDisplay::Slow(r))
             }
-            None => self.shown.as_ref().filter(|(t, _)| now - *t < HOLD_MS).map(|(_, r)| r.clone()),
+            _ => self
+                .last_slow
+                .filter(|t| now - t < RECOVERED_MS)
+                .map(|_| LagDisplay::Recovered(report.map_or(100, |r| r.speed_percent))),
         }
     }
 }
@@ -220,7 +234,9 @@ mod tests {
                 m.tick(t, 40, None);
             }
         });
-        let r = m.report(6000).unwrap();
+        let Some(LagDisplay::Slow(r)) = m.report(6000) else {
+            panic!("slow")
+        };
         assert_eq!(r.speed_percent, 75);
         assert_eq!(r.causes, vec![(LagCause::Client(2), 25)]);
     }
@@ -254,16 +270,26 @@ mod tests {
     }
 
     #[test]
-    fn the_report_stays_a_while_after_recovery() {
+    fn recovery_shows_the_current_speed_for_a_while() {
         let mut m = LagMonitor::new(40);
         run(&mut m, 0, 3000, 40, |m, t| m.wait(t, 40, vec![LagCause::Server]));
-        assert!(m.report(3000).is_some());
-        run(&mut m, 3000, 9000, 40, |m, t| m.tick(t, 40, None));
-        assert!(m.report(9000).is_none());
-        m.reset();
-        run(&mut m, 0, 3000, 40, |m, t| m.wait(t, 40, vec![LagCause::Server]));
-        assert!(m.report(3000).is_some());
-        run(&mut m, 3000, 5000, 40, |m, t| m.tick(t, 40, None));
-        assert!(m.report(5000).is_some(), "held");
+        assert!(matches!(m.report(3000), Some(LagDisplay::Slow(_))));
+        let mut last_slow = 0;
+        let mut t = 3000;
+        while matches!(m.report(t), Some(LagDisplay::Slow(_))) {
+            last_slow = t;
+            m.tick(t, 40, None);
+            t += 40;
+        }
+        let Some(LagDisplay::Recovered(first)) = m.report(t) else {
+            panic!("recovered")
+        };
+        assert!(first >= SHOW_BELOW_PERCENT);
+        run(&mut m, t, last_slow + RECOVERED_MS - 40, 40, |m, t| m.tick(t, 40, None));
+        assert_eq!(m.report(last_slow + RECOVERED_MS - 40), Some(LagDisplay::Recovered(100)));
+        run(&mut m, last_slow + RECOVERED_MS - 40, last_slow + RECOVERED_MS, 40, |m, t| {
+            m.tick(t, 40, None)
+        });
+        assert_eq!(m.report(last_slow + RECOVERED_MS), None);
     }
 }

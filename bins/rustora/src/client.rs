@@ -11,7 +11,7 @@ use std::sync::Arc;
 use rustora_audio::MixerDevice;
 use rustora_client::game_information::ReplayMetadata;
 use rustora_client::installer::ModContent;
-use rustora_client::lag_monitor::{LagCause, LagMonitor, LagReport, wait_causes};
+use rustora_client::lag_monitor::{LagCause, LagDisplay, LagMonitor, LagReport, wait_causes};
 use rustora_client::map_cache::MapCache;
 use rustora_client::replay::Replay;
 use rustora_client::settings::{Settings, WorldViewport};
@@ -481,7 +481,11 @@ impl ShellWorld {
             }
             _ => monitor.tick(now, timestep, lag.latest_client),
         }
-        let text = monitor.report(now).map(|r| lag.text(&r, &self.world)).unwrap_or_default();
+        let text = match monitor.report(now) {
+            Some(LagDisplay::Slow(report)) => lag.text(&report, &self.world),
+            Some(LagDisplay::Recovered(percent)) => format!("Game speed normal ({percent}%)"),
+            None => String::new(),
+        };
         *ingame.lag_text.borrow_mut() = text;
     }
 

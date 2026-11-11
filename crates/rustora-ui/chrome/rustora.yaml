@@ -1,10 +1,10 @@
 Label@LAG_DISPLAY:
-	X: WINDOW_WIDTH / 2 - 256
+	X: 10
 	Y: 70
 	Width: 512
 	Height: 120
-	Font: Bold
-	Align: Center
+	Font: Regular
+	Align: Left
 	VAlign: Top
 	Contrast: true
 
