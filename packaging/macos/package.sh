@@ -9,6 +9,8 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 out="$(mkdir -p "${1:-$root/target/distrib}" && cd "${1:-$root/target/distrib}" && pwd)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)"
 name="rustora-${version:-dev}-macos"
+# The bundle version is numeric: a development build 0.1.4-dev.g<commit> counts as 0.1.4.
+bundle_version="${version%%-*}"
 for t in x86_64-apple-darwin aarch64-apple-darwin; do
   cargo build --profile dist --manifest-path "$root/Cargo.toml" --target "$t" -p rustora -p rustora-server
 done
@@ -37,8 +39,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 	<key>CFBundleIdentifier</key><string>io.github.rustora</string>
 	<key>CFBundleName</key><string>Rustora</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>${version:-0.0.0}</string>
-	<key>CFBundleVersion</key><string>${version:-0.0.0}</string>
+	<key>CFBundleShortVersionString</key><string>${bundle_version:-0.0.0}</string>
+	<key>CFBundleVersion</key><string>${bundle_version:-0.0.0}</string>
 	<key>LSMinimumSystemVersion</key><string>11.0</string>
 	<key>NSHighResolutionCapable</key><true/>
 </dict>
