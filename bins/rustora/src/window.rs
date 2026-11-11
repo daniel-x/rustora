@@ -29,6 +29,9 @@ const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
 const RENDER_INTERVAL: Duration = Duration::from_millis(1);
 /// `1000 / MinReplayFps` of `Game.Loop`: the longest time between two renders while the logic falls behind.
 const MAX_RENDER_INTERVAL: Duration = Duration::from_millis(100);
+/// A requested redraw that has not come after this time means that the window system does not let the window draw,
+/// like Wayland for a hidden window, which sends no frame callbacks. The logic then runs without waiting for frames.
+const REDRAW_STALL: Duration = Duration::from_millis(100);
 const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
 
 struct Gpu {
@@ -95,6 +98,8 @@ struct App {
     /// The links that wait for an activation token of the window system, with the time they were requested.
     links_awaiting_token: Vec<(winit::event_loop::AsyncRequestSerial, String, Instant)>,
     suspended: bool,
+    /// When the redraw that the window waits for was requested.
+    redraw_requested: Option<Instant>,
     next_logic: Instant,
     next_render: Instant,
     forced_next_render: Instant,
@@ -222,6 +227,7 @@ impl App {
             shown_cursor: ShownCursor::Hidden,
             links_awaiting_token: Vec::new(),
             suspended: false,
+            redraw_requested: None,
             next_logic: now,
             next_render: now,
             forced_next_render: now,
@@ -519,6 +525,7 @@ impl App {
 
     fn render(&mut self, el: &ActiveEventLoop) {
         self.render_before_next_tick = false;
+        self.redraw_requested = None;
         self.apply_cursor(el);
         let Some(gpu) = self.gpu.as_mut() else { return };
         self.client.prepare(&mut gpu.renderer, (gpu.config.width, gpu.config.height));
@@ -619,7 +626,8 @@ impl ApplicationHandler for App {
     }
 
     /// One pass of `Game.Loop`: at most one logic tick and one render. A game renders after each world tick, and a
-    /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`].
+    /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`]. While the window cannot draw,
+    /// because it is suspended or its redraws stall, the logic runs on without waiting for frames.
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         self.flush_motion();
         self.open_links();
@@ -636,16 +644,26 @@ impl ApplicationHandler for App {
             }
         }
         let is_time_to_render = now >= self.next_render;
-        if self.suspended {
+        let redraw_stalled = self.redraw_requested.is_some_and(|t| now.duration_since(t) > REDRAW_STALL);
+        if self.suspended || redraw_stalled {
             if is_time_to_render {
                 self.next_render = now + RENDER_INTERVAL;
                 self.render_before_next_tick = false;
+            }
+            if redraw_stalled && now >= self.forced_next_render {
+                self.forced_next_render = now + MAX_RENDER_INTERVAL;
+                if let Some(gpu) = &self.gpu {
+                    gpu.window.request_redraw();
+                }
             }
         } else if (is_time_to_render && now < self.next_logic) || force_render {
             self.next_render = now + RENDER_INTERVAL;
             self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
             match &self.gpu {
-                Some(gpu) => gpu.window.request_redraw(),
+                Some(gpu) => {
+                    gpu.window.request_redraw();
+                    self.redraw_requested.get_or_insert(now);
+                }
                 None => self.render_before_next_tick = false,
             }
         }
