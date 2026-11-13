@@ -67,6 +67,13 @@ pub struct Barrel {
     pub yaw: WAngle,
 }
 
+impl Barrel {
+    /// Stands in for the reference equality of the C# `Barrel` class: the armament hands out clones.
+    pub fn same_as(&self, other: &Barrel) -> bool {
+        self.offset == other.offset && self.yaw == other.yaw
+    }
+}
+
 #[derive(Clone, Debug, FieldLoad)]
 pub struct ArmamentInfo {
     #[field(ignore)]

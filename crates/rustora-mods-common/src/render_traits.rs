@@ -338,6 +338,11 @@ impl rustora_engine::persist::PersistState for WithMuzzleOverlay {
 }
 
 impl WithMuzzleOverlay {
+    /// The count of muzzle flashes shown now.
+    pub fn visible_flashes(&self) -> usize {
+        self.flashes.get().map_or(0, |f| f.iter().filter(|f| f.visible.get()).count())
+    }
+
     fn flashes(&self, self_: &ActorRef) -> &Vec<MuzzleFlash> {
         self.flashes.get_or_init(|| {
             let image = self_.trait_::<RenderSprites>().get_image(self_);
@@ -394,7 +399,7 @@ impl INotifyAttack for WithMuzzleOverlay {
         };
         let me = crate::util::trait_rc(self_, self);
         for (i, f) in self.flashes(self_).iter().enumerate() {
-            if std::ptr::eq(Rc::as_ptr(&f.armament), a) && std::ptr::eq(&f.armament.barrels[f.barrel], barrel) {
+            if std::ptr::eq(Rc::as_ptr(&f.armament), a) && f.armament.barrels[f.barrel].same_as(barrel) {
                 f.visible.set(true);
                 f.animation
                     .animation
