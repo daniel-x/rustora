@@ -224,6 +224,7 @@ impl WidgetKind for WorldInteractionControllerWidget {
             return false;
         };
         self.mouse_pos = Self::world_px(&ingame, (mi.x, mi.y));
+        ingame.last_mouse.set(ui.last_mouse);
         let settings = services(ui).settings.clone();
         let settings = settings.borrow();
         ingame.with_order_context(&settings, |ctx| self.handle(ui, id, &ingame, ctx, mi))

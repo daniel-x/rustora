@@ -137,8 +137,10 @@ fn overlay_palette(palette: Option<&str>, is_player: bool, owner: &PlayerRef, fa
     }
 }
 
-/// `RenderSpritesInfo.RenderPreview` for the sprite traits that RA buildings use.
-pub fn render_previews(world: &World, ai: &ActorInfo, owner: &PlayerRef, faction: &str) -> Vec<ActorPreview> {
+/// `RenderSpritesInfo.RenderPreview` for the sprite traits that RA buildings use. `hide_bib` is the
+/// `HideBibPreviewInit` that `WithBuildingBib` adds to the inits of a preview from `IActorPreviewInitInfo`, like the
+/// one of the placement preview.
+pub fn render_previews(world: &World, ai: &ActorInfo, owner: &PlayerRef, faction: &str, hide_bib: bool) -> Vec<ActorPreview> {
     let Some(rsi) = ai.trait_info::<RenderSpritesInfo>() else {
         return Vec::new();
     };
@@ -166,7 +168,7 @@ pub fn render_previews(world: &World, ai: &ActorInfo, owner: &PlayerRef, faction
         });
     }
 
-    for info in ai.trait_infos::<WithBuildingBibInfo>() {
+    for info in ai.trait_infos::<WithBuildingBibInfo>().into_iter().filter(|_| !hide_bib) {
         let Some(bi) = ai.trait_info::<BuildingInfo>() else {
             continue;
         };

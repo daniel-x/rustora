@@ -13,7 +13,7 @@ use rustora_mods_common::selection::Selection;
 
 use super::services;
 use crate::loader::cell;
-use crate::orders::{OrderContext, OrderGenerator, UnitOrderGenerator};
+use crate::orders::{OrderContext, OrderGenerator, UnitOrderGenerator, ViewTransform};
 use crate::screen_map::ScreenMap;
 use crate::viewport::Viewport;
 use crate::widget::{ChromeLogic, Ui, WidgetArgs, WidgetId};
@@ -42,6 +42,8 @@ pub struct Ingame {
     pub lag_text: RefCell<String>,
     /// `TerrainGeometryOverlay.Enabled`.
     pub terrain_geometry: Cell<bool>,
+    /// `Viewport.LastMousePos`: the mouse position in screen pixels.
+    pub last_mouse: Cell<(i32, i32)>,
 }
 
 /// What `ReplayControlBarLogic` reads of a `ReplayConnection` and its `OrderManager`.
@@ -103,6 +105,7 @@ impl Ingame {
             replay: None,
             lag_text: RefCell::default(),
             terrain_geometry: Cell::new(false),
+            last_mouse: Cell::new((0, 0)),
         }
     }
 
@@ -151,6 +154,14 @@ impl Ingame {
         let screen_map = self.screen_map.borrow();
         let render_player = self.render_player();
         let cancel = || self.cancel_input_mode();
+        let view = {
+            let viewport = self.viewport.borrow();
+            ViewTransform {
+                top_left: viewport.top_left(),
+                zoom: viewport.zoom(),
+                last_mouse: self.last_mouse.get(),
+            }
+        };
         let ctx = OrderContext {
             world: &self.world,
             screen_map: &screen_map,
@@ -161,6 +172,7 @@ impl Ingame {
             selection_deadzone,
             world_default_cursor: self.world_default_cursor.clone(),
             cancel_input_mode: &cancel,
+            view,
         };
         f(&ctx)
     }

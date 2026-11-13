@@ -32,6 +32,26 @@ pub struct OrderContext<'a> {
     pub world_default_cursor: String,
     /// `World.CancelInputMode`.
     pub cancel_input_mode: &'a dyn Fn(),
+    pub view: ViewTransform,
+}
+
+/// The state of the `Viewport` that order generators read: its world pixel transform and `LastMousePos`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ViewTransform {
+    pub top_left: (i32, i32),
+    pub zoom: f32,
+    /// `Viewport.LastMousePos` in screen pixels.
+    pub last_mouse: (i32, i32),
+}
+
+impl ViewTransform {
+    /// `Viewport.ViewToWorldPx`.
+    pub fn view_to_world_px(&self, view: (i32, i32)) -> (i32, i32) {
+        (
+            (view.0 as f32 / self.zoom) as i32 + self.top_left.0,
+            (view.1 as f32 / self.zoom) as i32 + self.top_left.1,
+        )
+    }
 }
 
 impl<'a> OrderContext<'a> {

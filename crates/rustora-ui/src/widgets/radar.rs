@@ -375,6 +375,7 @@ impl WidgetKind for RadarWidget {
             return true;
         }
         let Some(ingame) = self.ingame.clone() else { return true };
+        ingame.last_mouse.set(ui.last_mouse);
         let classic = services(ui).settings.borrow().game.use_classic_mouse_style;
         let (action, cancel) = if classic {
             (MouseButton::Left, MouseButton::Right)

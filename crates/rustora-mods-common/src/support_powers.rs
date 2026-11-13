@@ -162,6 +162,7 @@ pub struct SupportPowerInfo {
     pub cursor: String,
     pub blocked_cursor: String,
     pub support_power_palette_order: i32,
+    pub display_timer_relationships: rustora_engine::player::PlayerRelationship,
     // DirectionalSupportPower
     pub use_directional_target: bool,
     pub arrows: Vec<String>,
@@ -295,6 +296,7 @@ impl Default for SupportPowerInfo {
             cursor: "ability".into(),
             blocked_cursor: "generic-blocked".into(),
             support_power_palette_order: 9999,
+            display_timer_relationships: rustora_engine::player::PlayerRelationship::NONE,
             allow_multiple: false,
             one_shot: false,
             start_fully_charged: false,

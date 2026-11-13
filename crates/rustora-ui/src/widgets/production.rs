@@ -613,12 +613,19 @@ impl ProductionPaletteWidget {
 
 /// `WidgetUtils.FormatTime`.
 pub fn format_time(ticks: i32, timestep: i32) -> String {
+    format_time_with(ticks, true, timestep)
+}
+
+/// `WidgetUtils.FormatTime` with `leadingMinuteZero`.
+pub fn format_time_with(ticks: i32, leading_minute_zero: bool, timestep: i32) -> String {
     let seconds = (ticks as f32 * timestep as f32 / 1000.0).ceil() as i32;
     let minutes = seconds / 60;
     if minutes >= 60 {
         format!("{}:{:02}:{:02}", minutes / 60, minutes % 60, seconds % 60)
-    } else {
+    } else if leading_minute_zero {
         format!("{:02}:{:02}", minutes, seconds % 60)
+    } else {
+        format!("{}:{:02}", minutes, seconds % 60)
     }
 }
 

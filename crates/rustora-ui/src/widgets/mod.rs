@@ -33,6 +33,7 @@ pub mod resource_bar;
 mod scroll_item;
 mod scroll_panel;
 mod slider;
+pub mod support_power_timer;
 pub mod support_powers;
 mod text_field;
 pub mod text_notifications;
@@ -73,6 +74,7 @@ pub fn create(type_name: &str, assets: &Assets) -> Option<Rc<RefCell<dyn WidgetK
         "LogicTicker" => cell(production::LogicTickerWidget::default()),
         "ProductionTypeButton" => cell(production::ProductionTypeButtonWidget::new(assets)),
         "SupportPowers" => cell(support_powers::SupportPowersWidget::default()),
+        "SupportPowerTimer" => cell(support_power_timer::SupportPowerTimerWidget::default()),
         "ControlGroups" => cell(control_groups::ControlGroupsWidget::default()),
         "MenuButton" => cell(menu_button::MenuButtonWidget::new(assets)),
         "Radar" => cell(radar::RadarWidget::default()),

@@ -78,7 +78,7 @@ impl PlacePreview {
         let footprint_info = actor.trait_info::<FootprintPlaceBuildingPreviewInfo>();
         let (info, body) = if let Some(i) = actor_info {
             let body = PreviewBody::Actor {
-                previews: render_previews(&world, actor, &owner, &faction),
+                previews: render_previews(&world, actor, &owner, &faction, true),
                 animated: i.animated,
                 alpha: i.preview_alpha,
                 z_offset: i.z_offset,
@@ -112,10 +112,7 @@ impl PlacePreview {
             info,
             body,
             center_offset,
-            top_left_screen_offset: (
-                -(center_offset.x * TILE_SIZE / 1024),
-                -((center_offset.y - center_offset.z) * TILE_SIZE / 1024),
-            ),
+            top_left_screen_offset: (-screen_px(center_offset.x), -screen_px(center_offset.y - center_offset.z)),
             valid_tile: sequences.get_sequence("overlay", valid_name),
             blocked_tile,
         })
@@ -191,11 +188,19 @@ impl PlacePreview {
                     p.render(center, &mut body);
                 }
                 body.sort_by_key(Renderable::sort_key);
-                out.extend(body.into_iter().map(|r| with_z_offset(with_alpha(r, *alpha), *z_offset)));
+                out.extend(body.into_iter().map(|r| {
+                    let r = if *alpha < 1.0 { with_alpha(r, *alpha) } else { r };
+                    if *z_offset != 0 { with_z_offset(r, *z_offset) } else { r }
+                }));
                 self.render_footprint(ctx, top_left, cells, |c| !c.valid, out);
             }
         }
     }
+}
+
+/// One component of `WorldRenderer.ScreenPxOffset`: rounded to the nearest pixel, ties to even like `Math.Round`.
+fn screen_px(w: i32) -> i32 {
+    (TILE_SIZE as f32 * w as f32 / 1024.0).round_ties_even() as i32
 }
 
 fn with_alpha(r: Renderable, alpha: f32) -> Renderable {
@@ -222,7 +227,6 @@ pub struct PlaceBuildingOrderGenerator {
     queue: Rc<ProductionQueue>,
     actor: Rc<ActorInfo>,
     building: Rc<BuildingInfo>,
-    world_px: Cell<(i32, i32)>,
     shift: Cell<bool>,
     preview: Option<PlacePreview>,
 }
@@ -237,17 +241,17 @@ impl PlaceBuildingOrderGenerator {
             queue,
             actor,
             building,
-            world_px: Cell::new((0, 0)),
             shift: Cell::new(false),
             preview,
         }
     }
 
-    /// `TopLeft`: the cell under the mouse moved by `TopLeftScreenOffset`.
-    fn top_left(&self) -> CPos {
-        let (x, y) = self.world_px.get();
+    /// `TopLeft`: the cell under `Viewport.LastMousePos` moved by `TopLeftScreenOffset`.
+    fn top_left(&self, ctx: &OrderContext) -> CPos {
+        let (mx, my) = ctx.view.last_mouse;
         let (dx, dy) = self.preview.as_ref().map_or((0, 0), |p| p.top_left_screen_offset);
-        CPos::new((x + dx).div_euclid(TILE_SIZE), (y + dy).div_euclid(TILE_SIZE))
+        let (x, y) = ctx.view.view_to_world_px((mx + dx, my + dy));
+        CPos::new(x.div_euclid(TILE_SIZE), y.div_euclid(TILE_SIZE))
     }
 
     /// `InnerOrder`.
@@ -257,7 +261,7 @@ impl PlaceBuildingOrderGenerator {
             return Vec::new();
         }
         let owner = self.queue.actor.owner();
-        let top_left = self.top_left();
+        let top_left = self.top_left(ctx);
         if !can_place_building(world, top_left, &self.building, None)
             || !is_close_enough_to_base(&self.building, world, &owner, &self.actor, top_left)
         {
@@ -287,13 +291,12 @@ impl PlaceBuildingOrderGenerator {
 }
 
 impl OrderGenerator for PlaceBuildingOrderGenerator {
-    fn order(&self, ctx: &OrderContext, _cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
+    fn order(&self, ctx: &OrderContext, _cell: CPos, _world_px: (i32, i32), mi: &MouseInput) -> Vec<Order> {
         let left_down = mi.button == MouseButton::Left && mi.event == MouseEvent::Down;
         let right_up = mi.button == MouseButton::Right && mi.event == MouseEvent::Up;
         if !left_down && !right_up {
             return Vec::new();
         }
-        self.world_px.set(world_px);
         if right_up {
             ctx.cancel_input_mode();
         }
@@ -316,8 +319,7 @@ impl OrderGenerator for PlaceBuildingOrderGenerator {
         }
     }
 
-    fn get_cursor(&self, ctx: &OrderContext, _cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Option<String> {
-        self.world_px.set(world_px);
+    fn get_cursor(&self, ctx: &OrderContext, _cell: CPos, _world_px: (i32, i32), mi: &MouseInput) -> Option<String> {
         self.shift.set(mi.modifiers.shift);
         Some(ctx.world_default_cursor.clone())
     }
@@ -327,7 +329,7 @@ impl OrderGenerator for PlaceBuildingOrderGenerator {
         if self.preview.is_none() {
             return;
         }
-        let center = ctx.world.map().center_of_cell(self.top_left()) + self.building.center_offset(ctx.world);
+        let center = ctx.world.map().center_of_cell(self.top_left(ctx)) + self.building.center_offset(ctx.world);
         let mut circles = Vec::new();
         rustora_mods_common::decorations::place_building_circles(ctx.world, &self.actor, center, ctx.render_player, &mut circles);
         for c in &circles {
@@ -340,7 +342,7 @@ impl OrderGenerator for PlaceBuildingOrderGenerator {
             return;
         };
         let world = ctx.world;
-        let top_left = self.top_left();
+        let top_left = self.top_left(ctx);
         let owner = self.queue.actor.owner();
         let local = ctx.local_player.cloned().unwrap_or_else(|| owner.clone());
         let mut cells: Vec<FootprintCell> = Vec::new();

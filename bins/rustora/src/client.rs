@@ -1381,6 +1381,9 @@ impl Client {
         }
         let loading = self.shell.as_ref().is_some_and(|s| s.world.is_loading_game_save());
         if let Some(shell) = self.shell.as_mut().filter(|_| !loading) {
+            if let Some(ingame) = &shell.ingame {
+                ingame.last_mouse.set(self.ui.last_mouse);
+            }
             let _sample = rustora_ui::perf::PerfSample::new("render_world");
             shell.prepare(renderer, size);
         }
