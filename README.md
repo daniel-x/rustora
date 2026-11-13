@@ -63,8 +63,10 @@ Take-aways:
 
 Unpack the archive and start `rustora` (`rustora.exe` on Windows, `Rustora.app` on macOS). On the first
 start the game asks for the content of the original Red Alert: **Quick Install** downloads 13 MB from a mirror
-of the 2008 freeware release, without music and videos, and opens the main menu when it is done. **Advanced
-Install** also copies the music and videos from an original game disc or installation.
+of the 2008 freeware release, without music and videos, then 36 MB of OpenRA assets (sprites, sounds and chrome
+that derive from the original games and that rustora does not ship, see `ASSETS.md`) from the OpenRA source
+archive on GitHub, and opens the main menu when it is done. **Advanced Install** also copies the music and videos
+from an original game disc or installation. `rustora Game.Mod=cnc` starts Tiberian Dawn, with its own content.
 
 The packages are not signed by a known developer, so Windows and macOS warn on the first start:
 
@@ -113,7 +115,7 @@ player games run their server inside the client.
 ## Packaging
 
 `packaging/linux/package.sh`, `packaging/windows/package.ps1` and `packaging/macos/package.sh` build
-archives with the binaries, the RA mod data of `data/` and the current GeoIP database of OpenRA, which
+archives with the binaries, the mod data of `data/` and the current GeoIP database of OpenRA, which
 they download. The release workflow runs them for tags `v*`. The Linux script builds against glibc 2.28 with
 [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild), which needs zig. The Windows binaries link the
 C runtime statically (`.cargo/config.toml`), so they need no Visual C++ Redistributable.
@@ -121,7 +123,8 @@ C runtime statically (`.cargo/config.toml`), so they need no Visual C++ Redistri
 ## License
 
 GPL-3.0-or-later, the same terms as OpenRA, of which this is a derived work. See `COPYING` for the
-license text and `AUTHORS` for the rustora authors and the OpenRA developers and contributors.
+license text and `AUTHORS` for the rustora authors and the OpenRA developers and contributors. `ASSETS.md`
+lists the OpenRA files that rustora does not ship and downloads instead, and why.
 
 ## Authorship
 

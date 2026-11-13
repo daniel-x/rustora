@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Usage: packaging/macos/package.sh [out-dir]
 # Builds universal (x86_64 and arm64) release binaries and writes rustora-<version>-macos.zip with Rustora.app,
-# whose Contents/Resources hold the RA mod data of data/.
+# whose Contents/Resources hold the mod data of data/.
 # Needs the rustup targets x86_64-apple-darwin and aarch64-apple-darwin. The app is not signed.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -22,14 +22,14 @@ for b in rustora rustora-server; do
     "$root/target/x86_64-apple-darwin/dist/$b" "$root/target/aarch64-apple-darwin/dist/$b"
 done
 res="$app/Contents/Resources"
-cp -R "$root/data/mods" "$root/data/global mix database.dat" "$res/"
+cp -R "$root/data/mods" "$res/"
 # The GeoIP database of the server, the current monthly one like OpenRA's fetch-geoip.sh downloads it.
 geoip=IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP
 if ! curl -fsSL -o "$res/$geoip" "https://github.com/OpenRA/GeoIP-Database/releases/download/monthly/$geoip"; then
   rm -f "$res/$geoip"
   echo "Warning: no GeoIP database; the server of this package looks up no countries" >&2
 fi
-cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$out/$name/"
+cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$root/ASSETS.md" "$out/$name/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

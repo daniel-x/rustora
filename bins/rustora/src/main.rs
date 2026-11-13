@@ -45,7 +45,8 @@ the content download when the game files are missing.
 
 Arguments:
   <host>:<port>          joins the server at this address
-  Section.Field=value    overrides a setting, for example Graphics.Mode=Windowed
+  Section.Field=value    overrides a setting, for example Graphics.Mode=Windowed; Game.Mod=cnc starts
+                         Tiberian Dawn instead of Red Alert
 
 Options:
   --engine-dir <dir>     the directory with mods/ra (OpenRA release-20250330 layout)

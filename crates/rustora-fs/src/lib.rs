@@ -5,6 +5,7 @@
 //!
 //! Port of `OpenRA.Game/FileSystem` and the mix loader of `OpenRA.Mods.Cnc`.
 
+pub mod assets;
 mod filesystem;
 mod folder;
 pub mod mix;

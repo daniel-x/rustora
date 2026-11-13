@@ -17,6 +17,7 @@ FileSystem: ContentInstallerFileSystem
 		ra|scripts
 		ra|uibits
 	ContentPackages:
+		^SupportDir|Content/openra-assets/release-20250330/mods/ra/bits
 		content|allies.mix
 		content|conquer.mix
 		content|interior.mix

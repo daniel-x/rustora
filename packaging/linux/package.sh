@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Usage: packaging/linux/package.sh [out-dir]
-# Builds the release binaries and writes rustora-<version>-linux-<arch>.tar.gz with the binaries and the RA mod data
+# Builds the release binaries and writes rustora-<version>-linux-<arch>.tar.gz with the binaries and the mod data
 # of data/. The game content is installed at first start. The binaries are built with cargo-zigbuild against glibc
 # $GLIBC_VERSION (default 2.28), so they also run on older distributions; this needs zig and cargo-zigbuild.
 set -euo pipefail
@@ -21,13 +21,13 @@ for b in rustora rustora-server; do
   install -m 755 "$root/target/$target/dist/$b" "$stage/"
   strip "$stage/$b"
 done
-cp -R "$root/data/mods" "$root/data/global mix database.dat" "$stage/"
+cp -R "$root/data/mods" "$stage/"
 # The GeoIP database of the server, the current monthly one like OpenRA's fetch-geoip.sh downloads it.
 geoip=IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP
 if ! curl -fsSL -o "$stage/$geoip" "https://github.com/OpenRA/GeoIP-Database/releases/download/monthly/$geoip"; then
   rm -f "$stage/$geoip"
   echo "Warning: no GeoIP database; the server of this package looks up no countries" >&2
 fi
-cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$stage/"
+cp "$root/COPYING" "$root/AUTHORS" "$root/README.md" "$root/ASSETS.md" "$stage/"
 tar -C "$out" -czf "$out/$name.tar.gz" "$name"
 echo "$out/$name.tar.gz"

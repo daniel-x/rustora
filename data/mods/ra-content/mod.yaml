@@ -73,6 +73,12 @@ ModContent:
 	Mod: ra
 	QuickDownload: quickinstall
 	Packages:
+		ContentPackage@openra-assets:
+			Title: modcontent-package-openra-assets
+			Identifier: openra-assets
+			TestFiles: ^SupportDir|Content/openra-assets/release-20250330/mods/ra/bits/afldidle.shp, ^SupportDir|Content/openra-assets/release-20250330/mods/ra/bits/allyrepair.shp, ^SupportDir|Content/openra-assets/release-20250330/mods/ra/bits/ammobox1.shp, ^SupportDir|Content/openra-assets/release-20250330/mods/ra/uibits/dialog.png
+			Required: true
+			Download: openra-assets
 		ContentPackage@base:
 			Title: modcontent-package-basefiles
 			Identifier: base

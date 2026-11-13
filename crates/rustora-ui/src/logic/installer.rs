@@ -115,16 +115,20 @@ pub fn create_prompt(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<Ref
     let (quick_ctx, quick_continue) = (ctx.clone(), continue_loading.clone());
     ui.button(quick).on_click = Some(Rc::new(move |ui| {
         let key = quick_download.as_deref().unwrap_or_default();
-        let download = quick_ctx
-            .content
-            .download(key)
-            .unwrap_or_else(|| panic!("Mod QuickDownload `{key}` definition not found."))
-            .clone();
-        let panel_args = WidgetArgs::default()
-            .with_value("content", quick_ctx.clone())
-            .with_value("download", download)
-            .with_action("onSuccess", quick_continue.clone());
-        ui.open_window("PACKAGE_DOWNLOAD_PANEL", panel_args);
+        if quick_ctx.content.download(key).is_none() {
+            panic!("Mod QuickDownload `{key}` definition not found.");
+        }
+        let mut keys = vec![key.to_string()];
+        for package in &quick_ctx.content.packages {
+            if let Some(d) = &package.download
+                && package.required
+                && !package.is_installed(&quick_ctx.platform)
+                && !keys.contains(d)
+            {
+                keys.push(d.clone());
+            }
+        }
+        download_chain(ui, quick_ctx.clone(), keys, quick_continue.clone());
     }));
 
     let quit = ui.child(widget, "QUIT_BUTTON");
@@ -148,6 +152,29 @@ pub fn create_prompt(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<Ref
     }));
     ui.run_after_tick(|ui| ui.reset_tooltips());
     cell(crate::logic::NoLogic)
+}
+
+/// Opens the download panel for the first of `keys` and, once it succeeded, for the next one; `on_done` runs after
+/// the last. C# Quick Install downloads only `QuickDownload`; rustora also fetches the other missing required
+/// packages with a download, such as the OpenRA assets that it does not ship.
+fn download_chain(ui: &mut Ui, ctx: Rc<InstallerContext>, mut keys: Vec<String>, on_done: Action) {
+    if keys.is_empty() {
+        on_done(ui);
+        return;
+    }
+    let key = keys.remove(0);
+    let download = ctx
+        .content
+        .download(&key)
+        .unwrap_or_else(|| panic!("Mod download `{key}` definition not found."))
+        .clone();
+    let next_ctx = ctx.clone();
+    let next: Action = Rc::new(move |ui| download_chain(ui, next_ctx.clone(), keys.clone(), on_done.clone()));
+    let panel_args = WidgetArgs::default()
+        .with_value("content", ctx)
+        .with_value("download", download)
+        .with_action("onSuccess", next);
+    ui.open_window("PACKAGE_DOWNLOAD_PANEL", panel_args);
 }
 
 /// Port of `ModContentInstallerLogic`.

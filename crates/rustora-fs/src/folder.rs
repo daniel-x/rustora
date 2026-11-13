@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 use crate::{FileSystem, Package, ZipPackage};
 
-/// A directory on disk.
+/// A directory on disk. Inside an engine directory, the downloaded assets (see [`crate::assets`]) overlay it.
 pub struct Folder {
     name: String,
     path: PathBuf,
+    overlay: Option<PathBuf>,
 }
 
 impl Folder {
@@ -17,11 +18,19 @@ impl Folder {
         let path = path.into();
         Folder {
             name: path.to_string_lossy().into_owned(),
+            overlay: crate::assets::overlay_of(&path),
             path,
         }
     }
 
+    /// The file `filename` of the overlay if it exists there, else of the folder itself.
     fn join(&self, filename: &str) -> PathBuf {
+        if let Some(o) = &self.overlay {
+            let p = o.join(filename);
+            if p.exists() {
+                return p;
+            }
+        }
         self.path.join(filename)
     }
 }
@@ -52,10 +61,15 @@ impl Package for Folder {
     fn contents(&self) -> Vec<String> {
         let mut files = Vec::new();
         let mut dirs = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&self.path) {
-            for e in rd.flatten() {
-                let n = e.file_name().to_string_lossy().into_owned();
-                if e.path().is_dir() { dirs.push(n) } else { files.push(n) }
+        for dir in std::iter::once(&self.path).chain(self.overlay.as_ref()) {
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    let list = if e.path().is_dir() { &mut dirs } else { &mut files };
+                    if !list.contains(&n) {
+                        list.push(n);
+                    }
+                }
             }
         }
         files.extend(dirs);

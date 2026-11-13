@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Files of the OpenRA source tree that rustora does not ship. The content installer downloads them from the OpenRA
+# source archive (see scripts/update-mod-data.sh and ASSETS.md). One glob per line, relative to the OpenRA tree;
+# `**` matches any depth. The reason follows after `#`.
+
+# Unit, structure, effect and terrain sprites, palettes and sounds: Westwood originals, fixes of originals (C&C 1.06c,
+# Nyerguds), files from the C&C demo, Sole Survivor and Counterstrike, conversions of original terrain, and community
+# art that is mostly edited from originals. Origin per file is unclear in many cases.
+mods/ra/bits/**
+mods/cnc/bits/**
+
+# Sidebar, load screen and glyph atlases with the Allied, Soviet, GDI, Nod and EVA logos; EVA database stills.
+mods/ra/uibits/**
+mods/cnc/uibits/**
+
+# Mod icons: the game logos.
+mods/ra/icon*.png
+mods/cnc/icon*.png
+
+# Font with "All rights reserved" and no license.
+mods/ra/ZoodRangmah.ttf
+
+# Sprites and palettes inside map folders, of unclear origin. The ambient sounds of fort-lonestar and gdi06 are CC0
+# (OpenRA commit befdac8237) and stay.
+mods/ra/maps/fort-lonestar/sniper.shp
+mods/ra/maps/fort-lonestar/snipericon.shp
+mods/ra/maps/bomber-john/brick.shp
+mods/ra/maps/bomber-john/miner.shp
+mods/ra/maps/chernobyl/*.pal
+
+# The background of the installer chrome shows the faction logos. rustora ships a copy with a plain black background
+# (scripts/assets/common-content) and the download restores the original.
+mods/common-content/chrome*.png
+
+# MIX filename database compiled with XCC, no license statement. Only needed to list MIX contents.
+global mix database.dat

@@ -14,10 +14,12 @@ pub struct Platform {
 impl Platform {
     pub fn new(engine_dir: impl Into<PathBuf>, support_dir: impl Into<PathBuf>) -> Self {
         let engine_dir = engine_dir.into();
+        let support_dir = support_dir.into();
+        crate::assets::register_overlay(&engine_dir, &support_dir);
         Platform {
             bin_dir: engine_dir.clone(),
             engine_dir,
-            support_dir: support_dir.into(),
+            support_dir,
         }
     }
 

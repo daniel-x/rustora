@@ -14,3 +14,4 @@ modcontent-package-allied = Allied Campaign Briefings
 modcontent-package-soviet = Soviet Campaign Briefings
 modcontent-package-counterstrikemusic = Counterstrike Music
 modcontent-package-aftermathmusic = Aftermath Music
+modcontent-package-openra-assets = OpenRA Assets
