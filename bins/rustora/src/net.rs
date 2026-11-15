@@ -649,9 +649,8 @@ fn chat_notification(net: &NetState, world: Option<&ChatWorld>, client_id: i32, 
         format!("{name}{suffix}")
     } else if let Some(world) = world {
         let player_state = world.player_states.get(&client.index).copied();
-        let watching = world.is_replay
-            || local.is_some_and(|l| l.is_observer())
-            || world.local_player_state.is_some_and(|s| s != WinState::Undefined);
+        let watching =
+            world.is_replay || local.is_some_and(|l| l.is_observer()) || world.local_player_state.is_some_and(|s| s != WinState::Undefined);
         if order.extra_data == u32::MAX {
             if !watching || !(client.is_observer() || player_state.is_some_and(|s| s != WinState::Undefined)) {
                 return None;
@@ -659,8 +658,8 @@ fn chat_notification(net: &NetState, world: Option<&ChatWorld>, client_id: i32, 
             format!("[Spectators] {name}")
         } else {
             let valid = client.team as u32 == order.extra_data && player_state == Some(WinState::Undefined);
-            let same_team = local.is_some_and(|l| l.team as u32 == order.extra_data)
-                && world.local_player_state == Some(WinState::Undefined);
+            let same_team =
+                local.is_some_and(|l| l.team as u32 == order.extra_data) && world.local_player_state == Some(WinState::Undefined);
             if !valid {
                 return None;
             }
@@ -865,10 +864,16 @@ mod tests {
     fn team_chat_shows_the_team_number_to_watchers_only() {
         assert_eq!(team_chat_prefix(&net_with(-1), &world(true, None)).as_deref(), Some("[Team 2] p3"));
         assert_eq!(team_chat_prefix(&net_with(4), &world(false, None)).as_deref(), Some("[Team 2] p3"));
-        assert_eq!(team_chat_prefix(&net_with(1), &world(false, Some(WinState::Lost))).as_deref(), Some("[Team 2] p3"));
+        assert_eq!(
+            team_chat_prefix(&net_with(1), &world(false, Some(WinState::Lost))).as_deref(),
+            Some("[Team 2] p3")
+        );
         assert_eq!(team_chat_prefix(&net_with(1), &world(false, Some(WinState::Undefined))), None);
         let mut ally = net_with(1);
         ally.session.clients[0].team = 2;
-        assert_eq!(team_chat_prefix(&ally, &world(false, Some(WinState::Undefined))).as_deref(), Some("[Team] p3"));
+        assert_eq!(
+            team_chat_prefix(&ally, &world(false, Some(WinState::Undefined))).as_deref(),
+            Some("[Team] p3")
+        );
     }
 }

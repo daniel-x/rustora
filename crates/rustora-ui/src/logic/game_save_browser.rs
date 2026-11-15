@@ -485,7 +485,11 @@ fn no_selection_getter(browser: &Rc<Browser>) -> Getter<bool> {
 /// button does.
 pub fn start_game_save(ui: &mut Ui, path: &Path) -> Result<(), String> {
     let save = GameSave::read(path).map_err(|e| format!("cannot read the game save {}: {e}", path.display()))?;
-    let map = save.global_settings.map.clone().ok_or_else(|| format!("the game save {} names no map", path.display()))?;
+    let map = save
+        .global_settings
+        .map
+        .clone()
+        .ok_or_else(|| format!("the game save {} names no map", path.display()))?;
     let maps = services(ui).maps.clone();
     if maps.borrow_mut().entry(&map).status != rustora_client::map_cache::MapStatus::Available {
         return Err(format!("the map {map} of the game save {} is not available", path.display()));
