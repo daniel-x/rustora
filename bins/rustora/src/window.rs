@@ -637,13 +637,23 @@ impl ApplicationHandler for App {
                 self.client.ui.modifiers = self.modifiers;
             }
             WindowEvent::CursorMoved { position, .. } => {
+                self.client.user_acted();
                 let scale = f64::from(self.client.ui_scale());
                 self.mouse = ((position.x / scale) as i32, (position.y / scale) as i32);
                 self.pending_motion = true;
             }
-            WindowEvent::MouseInput { state, button, .. } => self.mouse_button(state, button),
-            WindowEvent::MouseWheel { delta, .. } => self.scroll(delta),
-            WindowEvent::KeyboardInput { event, .. } => self.keyboard(&event),
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.client.user_acted();
+                self.mouse_button(state, button)
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.client.user_acted();
+                self.scroll(delta)
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.client.user_acted();
+                self.keyboard(&event)
+            }
             WindowEvent::Focused(focused) => self.client.ui.window_has_focus = focused,
             WindowEvent::RedrawRequested => self.render(el),
             WindowEvent::ActivationTokenDone { serial, token } => {

@@ -1000,6 +1000,12 @@ impl Client {
     }
 
     /// Carries out the network requests of the user interface, then receives and sends.
+    /// Notes an input of the user, for the idle timeout of the lobby.
+    pub fn user_acted(&self) {
+        let now = self.ui.run_time();
+        self.services.net.borrow_mut().user_acted(now);
+    }
+
     fn pump_network(&mut self) {
         if self.pending_load.is_some() {
             return;

@@ -13,6 +13,9 @@ use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 pub const CLIENT_SOFTWARE: &str = "ClientSoftware";
 /// Server to clients: the software of each client that announced it.
 pub const SYNC_CLIENT_SOFTWARE: &str = "SyncClientSoftware";
+/// Client to server, at most once a minute while the user acts in the lobby: the user is present, so a rustora server
+/// does not drop the client for being idle.
+pub const CLIENT_ACTIVE: &str = "ClientActive";
 /// Server to clients, once per second while a game runs: what the server sees of the lag.
 pub const LAG_REPORT: &str = "LagReport";
 

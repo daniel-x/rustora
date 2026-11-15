@@ -158,7 +158,30 @@ pub struct NetState {
     pub banned_names: std::collections::HashSet<String>,
     /// The client indexes that [`NetState::enforce_name_bans`] kicked already.
     pub name_ban_kicks: std::collections::HashSet<i32>,
+    /// `Game.RunTime` of the last input of the user, for the idle timeout of the lobby.
+    pub last_user_action: i64,
+    /// Whether the user got the idle warning since the last input.
+    pub idle_warned: bool,
+    /// `Game.RunTime` when the client last told the server that the user is active.
+    pub last_activity_report: Option<i64>,
 }
+
+/// What [`NetState::idle_step`] asks the client to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdleStep {
+    Nothing,
+    /// Tell the user to react within [`IDLE_TIMEOUT`] - [`IDLE_WARNING`].
+    Warn,
+    /// Leave the server.
+    Disconnect,
+}
+
+/// The time without input after which a client in a multiplayer lobby warns the user, in milliseconds.
+pub const IDLE_WARNING: i64 = 29 * 60 * 1000;
+/// The time without input after which a client leaves a multiplayer lobby, in milliseconds.
+pub const IDLE_TIMEOUT: i64 = 30 * 60 * 1000;
+/// The shortest time between two reports of user activity to the server, in milliseconds.
+const ACTIVITY_REPORT_INTERVAL: i64 = 60 * 1000;
 
 impl NetState {
     /// `OrderManager.LocalClient`.
@@ -219,6 +242,39 @@ impl NetState {
         }
     }
 
+    /// Notes an input of the user at `now`.
+    pub fn user_acted(&mut self, now: i64) {
+        self.last_user_action = now;
+        self.idle_warned = false;
+    }
+
+    /// Whether the client should tell the server now that the user is active: the user acted since the last report,
+    /// and the last report is at least a minute old.
+    pub fn take_activity_report(&mut self, now: i64) -> bool {
+        let due = match self.last_activity_report {
+            None => true,
+            Some(t) => self.last_user_action > t && now - t >= ACTIVITY_REPORT_INTERVAL,
+        };
+        if due {
+            self.last_activity_report = Some(now);
+        }
+        due
+    }
+
+    /// The idle timeout of the lobby at `now`: one warning after [`IDLE_WARNING`] without input, then the
+    /// disconnect after [`IDLE_TIMEOUT`].
+    pub fn idle_step(&mut self, now: i64) -> IdleStep {
+        let idle = now - self.last_user_action;
+        if idle >= IDLE_TIMEOUT {
+            IdleStep::Disconnect
+        } else if idle >= IDLE_WARNING && !self.idle_warned {
+            self.idle_warned = true;
+            IdleStep::Warn
+        } else {
+            IdleStep::Nothing
+        }
+    }
+
     /// `IssueOrder(Order.Chat(text, team))`.
     pub fn chat(&mut self, text: &str, team: u32) {
         let mut order = RawOrder::from_target_string("Chat", text, true);
@@ -250,7 +306,7 @@ pub type Net = Rc<std::cell::RefCell<NetState>>;
 mod tests {
     use rustora_net::session::{Client, Session};
 
-    use super::{NetState, kick_command};
+    use super::{IDLE_TIMEOUT, IDLE_WARNING, IdleStep, NetState, kick_command};
 
     fn client(index: i32, name: &str, is_admin: bool) -> Client {
         Client {
@@ -299,5 +355,29 @@ mod tests {
         net.ban_name("Troll");
         net.enforce_name_bans();
         assert!(net.outgoing.is_empty());
+    }
+
+    #[test]
+    fn the_idle_timeout_warns_once_and_then_disconnects() {
+        let mut net = NetState::default();
+        net.user_acted(1000);
+        assert_eq!(net.idle_step(1000 + IDLE_WARNING - 1), IdleStep::Nothing);
+        assert_eq!(net.idle_step(1000 + IDLE_WARNING), IdleStep::Warn);
+        assert_eq!(net.idle_step(1000 + IDLE_WARNING + 1), IdleStep::Nothing);
+        net.user_acted(1000 + IDLE_WARNING + 2);
+        assert_eq!(net.idle_step(1000 + IDLE_TIMEOUT), IdleStep::Nothing);
+        assert_eq!(net.idle_step(1000 + IDLE_WARNING + 2 + IDLE_TIMEOUT), IdleStep::Disconnect);
+    }
+
+    #[test]
+    fn activity_reports_come_at_most_once_a_minute() {
+        let mut net = NetState::default();
+        assert!(net.take_activity_report(0));
+        net.user_acted(10_000);
+        assert!(!net.take_activity_report(10_000));
+        assert!(net.take_activity_report(60_000));
+        assert!(!net.take_activity_report(200_000));
+        net.user_acted(200_000);
+        assert!(net.take_activity_report(200_000));
     }
 }

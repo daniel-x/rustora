@@ -35,7 +35,8 @@ use rustora_ui::fluent::{MessageArg, Messages};
 use rustora_ui::logic::color_picker::ColorRules;
 use rustora_ui::logic::{ColorRulesLookup, LobbyRulesLookup};
 use rustora_ui::net::{
-    ConnectionState, JoinTarget, LobbyFaction, LobbyOption, LobbyRules, Net, NetState, TextNotification, TextNotificationPool,
+    ConnectionState, IDLE_TIMEOUT, IDLE_WARNING, IdleStep, JoinTarget, LobbyFaction, LobbyOption, LobbyRules, Net, NetState,
+    TextNotification, TextNotificationPool,
 };
 
 /// How long a join of a server this client started waits for the server to accept players.
@@ -406,6 +407,38 @@ impl NetClient {
         net.kick_vote_target = None;
     }
 
+    /// The idle timeout of a multiplayer lobby: reports user activity to the server, warns the user after
+    /// [`IDLE_WARNING`] without input and leaves the server after [`IDLE_TIMEOUT`]. A rustora server sends its own
+    /// warning. Returns true when it left.
+    fn idle_check(&mut self, messages: &Messages, run_time: i64) -> bool {
+        let mut net = self.net.borrow_mut();
+        if net.target == JoinTarget::SinglePlayer || net.local_client().is_none() {
+            return false;
+        }
+        if net.take_activity_report(run_time) {
+            net.outgoing.push(RawOrder::from_target_string(extensions::CLIENT_ACTIVE, "", true));
+        }
+        match net.idle_step(run_time) {
+            IdleStep::Nothing => false,
+            IdleStep::Warn if net.server_is_rustora() => false,
+            IdleStep::Warn => {
+                let seconds = MessageArg::Number((IDLE_TIMEOUT - IDLE_WARNING) / 1000);
+                let text = messages.get_with("notification-idle-warning", &[("seconds", seconds)]);
+                let prefix = Some("Battlefield Control".to_string());
+                net.notifications
+                    .push(notification(TextNotificationPool::System, prefix, text, None));
+                false
+            }
+            IdleStep::Disconnect => {
+                log::info!("Leaving the server after {} minutes without input.", IDLE_TIMEOUT / 60_000);
+                net.server_error = Some("notification-you-were-dropped-idle".to_string());
+                drop(net);
+                self.disconnect();
+                true
+            }
+        }
+    }
+
     /// Takes the connection and the final session when `StartGame` arrived.
     pub fn take_connection(&mut self) -> Option<NetworkConnection> {
         self.connection.take()
@@ -423,6 +456,7 @@ impl NetClient {
                     let mut net = self.net.borrow_mut();
                     net.local_client_id = connection.local_client_id();
                     net.connection_state = ConnectionState::Connected;
+                    net.user_acted(run_time);
                     self.connection = Some(connection);
                     self.connecting = None;
                 }
@@ -435,6 +469,9 @@ impl NetClient {
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => self.connecting = None,
             }
+        }
+        if self.connection.is_some() && self.idle_check(messages, run_time) {
+            return false;
         }
         let Some(connection) = &mut self.connection else {
             return false;
