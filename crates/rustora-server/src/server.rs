@@ -353,7 +353,7 @@ pub struct Server {
     pub random: MersenneTwister,
     pub order_latency: i32,
     pub temp_bans: Vec<String>,
-    /// The lowercase player names that an admin banned with `kick <index> True True`, a rustora extension.
+    /// The lowercase player names that an admin banned with `kick <index> <temp ban> True`, a rustora extension.
     pub temp_name_bans: Vec<String>,
     /// `MapPool`: the maps an independent server offers. Other servers offer every map.
     pub map_pool: Option<IndexSet<String>>,

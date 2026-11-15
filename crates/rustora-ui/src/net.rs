@@ -220,7 +220,8 @@ impl NetState {
     }
 }
 
-/// The `kick` command. rustora adds the name ban as third argument, which OpenRA servers ignore.
+/// The `kick` command with the temporary address ban. rustora adds the name ban as third argument, which OpenRA
+/// servers ignore.
 pub fn kick_command(index: i32, temp_ban: bool, ban_name: bool) -> String {
     let flag = |b: bool| if b { "True" } else { "False" };
     if ban_name {
@@ -258,6 +259,7 @@ mod tests {
         assert_eq!(kick_command(3, false, false), "kick 3 False");
         assert_eq!(kick_command(3, true, false), "kick 3 True");
         assert_eq!(kick_command(3, true, true), "kick 3 True True");
+        assert_eq!(kick_command(3, false, true), "kick 3 False True");
     }
 
     #[test]

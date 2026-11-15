@@ -517,7 +517,7 @@ fn kick_with_name_ban_rejects_the_name() {
     let (mut troll, joined) = connect_single_player_as(&server, "Troll", TestClient::joined);
     assert!(joined);
     let troll_index = troll.index;
-    admin.command(&format!("kick {troll_index} True True"));
+    admin.command(&format!("kick {troll_index} False True"));
     assert!(!troll.pump(VERSION, |_| false));
     assert!(troll.got("notification-you-were-kicked"), "{:?}", troll.messages);
 

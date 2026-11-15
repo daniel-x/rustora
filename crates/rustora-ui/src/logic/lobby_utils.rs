@@ -1011,8 +1011,8 @@ pub fn spawn_tooltip(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<Ref
     cell(logic)
 }
 
-/// Port of `KickClientLogic`. rustora adds the `BAN_NAME_CHECKBOX`, which also bans the name of the client. It is
-/// enabled while the temporary ban is checked. `okPressed` gets the temporary ban and the name ban.
+/// Port of `KickClientLogic`. rustora adds the `BAN_NAME_CHECKBOX`, which bans the name of the client independently
+/// of the address ban of `PREVENT_REJOINING_CHECKBOX`. `okPressed` gets the address ban and the name ban.
 pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let name: String = args.value("clientName").unwrap_or_default();
     let text = message_with(ui, "dialog-kick-client.prompt", &[("player", MessageArg::Text(&name))]);
@@ -1026,10 +1026,8 @@ pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCe
     ui.button(checkbox).on_click = Some(Rc::new(move |_| t.set(!t.get())));
     let ban_name = Rc::new(Cell::new(false));
     if let Some(checkbox) = ui.find(widget, "BAN_NAME_CHECKBOX") {
-        let (t, b) = (temp_ban.clone(), ban_name.clone());
-        ui.get::<CheckboxWidget>(checkbox).is_checked = Some(Rc::new(move || t.get() && b.get()));
-        let t = temp_ban.clone();
-        ui.button(checkbox).is_disabled = Some(Rc::new(move || !t.get()));
+        let b = ban_name.clone();
+        ui.get::<CheckboxWidget>(checkbox).is_checked = Some(Rc::new(move || b.get()));
         let b = ban_name.clone();
         ui.button(checkbox).on_click = Some(Rc::new(move |_| b.set(!b.get())));
     }
@@ -1039,7 +1037,7 @@ pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCe
         let parent = ui.node(widget).parent.expect("dialog parent");
         ui.remove_child(parent, widget);
         if let Some(ok_pressed) = &ok_pressed {
-            ok_pressed(ui, temp_ban.get(), temp_ban.get() && ban_name.get());
+            ok_pressed(ui, temp_ban.get(), ban_name.get());
         }
     }));
     close_with_action(ui, widget, "CANCEL_BUTTON", args.action("cancelPressed"));

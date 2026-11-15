@@ -564,8 +564,8 @@ impl Server {
         self.lobby.client_with_index(index).cloned()
     }
 
-    /// `kick <index> <temp ban>`. rustora adds an optional third argument, which also bans the name of the client
-    /// along with the temporary ban.
+    /// `kick <index> <temp ban>`. rustora adds an optional third argument, which bans the name of the client
+    /// independently of the address ban.
     fn cmd_kick(&mut self, conn: i32, client: &Client, s: &str) -> bool {
         if !client.is_admin {
             self.send_fluent_message_to(conn, "notification-admin-kick", &[]);
@@ -596,15 +596,17 @@ impl Server {
         );
         self.send_order_to(target.index, "ServerError", "notification-you-were-kicked");
         self.drop_client(target.index);
-        if parse_bool(split[1]) == Some(true) {
+        let ban_address = parse_bool(split[1]) == Some(true);
+        let ban_name = split.get(2).and_then(|b| parse_bool(b)) == Some(true);
+        if ban_address || ban_name {
             self.send_fluent_message("notification-temp-ban", &[("admin", (&admin).into()), ("player", (&player).into())]);
+        }
+        if ban_address {
             self.temp_bans.extend(address);
-            if split.get(2).and_then(|b| parse_bool(b)) == Some(true) {
-                let name = player.trim().to_lowercase();
-                if !name.is_empty() && !self.temp_name_bans.contains(&name) {
-                    self.temp_name_bans.push(name);
-                }
-            }
+        }
+        let name = player.trim().to_lowercase();
+        if ban_name && !name.is_empty() && !self.temp_name_bans.contains(&name) {
+            self.temp_name_bans.push(name);
         }
         self.sync_lobby_clients();
         self.sync_lobby_slots();
