@@ -782,6 +782,12 @@ impl Client {
             }
             None => {
                 ui.load_widget(&widget_roots.shellmap, Some(ui.root), &menu_args);
+                if let Some(name) = args.iter().find_map(|a| a.strip_prefix("Launch.LoadSave=")) {
+                    let path = services.save_dir.join(name);
+                    if let Err(e) = rustora_ui::logic::game_save_browser::start_game_save(&mut ui, &path) {
+                        log::error!("{e}");
+                    }
+                }
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("Launch.Replay=")) {
                     let meta = ReplayMetadata::read(Path::new(path));
                     if prompt_confirm_replay_compatibility(&mut ui, meta.as_ref(), Rc::new(|_| {})) {

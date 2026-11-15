@@ -225,27 +225,10 @@ impl Browser {
     /// `Load`: a new single player server loads the save, and the client reports ready.
     fn load(&self, ui: &mut Ui) {
         let Some(path) = self.selected_path() else { return };
-        let save = match GameSave::read(&path) {
-            Ok(save) => save,
-            Err(e) => {
-                log::warn!("cannot read the game save {}: {e}", path.display());
-                return;
-            }
-        };
-        let Some(map) = save.global_settings.map.clone() else { return };
-        let maps = services(ui).maps.clone();
-        if maps.borrow_mut().entry(&map).status != rustora_client::map_cache::MapStatus::Available {
-            return;
+        match start_game_save(ui, &path) {
+            Ok(()) => ui.close_window(),
+            Err(e) => log::warn!("{e}"),
         }
-        ui.close_window();
-        let file_name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        ui.requests.push(AppRequest::StartSinglePlayerGame {
-            map,
-            orders: vec![
-                RawOrder::from_target_string("LoadGameSave", &file_name, true),
-                RawOrder::command("state Ready"),
-            ],
-        });
     }
 
     /// `Save`: asks before an existing save is overwritten.
@@ -498,6 +481,26 @@ fn no_selection_getter(browser: &Rc<Browser>) -> Getter<bool> {
 }
 
 /// Whether any playable player has not finished: the `SAVE_GAME` button of the ingame menu needs one.
+/// Requests a single player game that loads the save at `path`, a file in the saves directory, as the load
+/// button does.
+pub fn start_game_save(ui: &mut Ui, path: &Path) -> Result<(), String> {
+    let save = GameSave::read(path).map_err(|e| format!("cannot read the game save {}: {e}", path.display()))?;
+    let map = save.global_settings.map.clone().ok_or_else(|| format!("the game save {} names no map", path.display()))?;
+    let maps = services(ui).maps.clone();
+    if maps.borrow_mut().entry(&map).status != rustora_client::map_cache::MapStatus::Available {
+        return Err(format!("the map {map} of the game save {} is not available", path.display()));
+    }
+    let file_name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    ui.requests.push(AppRequest::StartSinglePlayerGame {
+        map,
+        orders: vec![
+            RawOrder::from_target_string("LoadGameSave", &file_name, true),
+            RawOrder::command("state Ready"),
+        ],
+    });
+    Ok(())
+}
+
 pub fn can_save(world: &World) -> bool {
     world
         .players()
