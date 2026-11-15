@@ -10,6 +10,7 @@ use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::conditional::*;
+use rustora_engine::frozen::ITooltip;
 use rustora_engine::player::{PlayerRef, PlayerRelationship};
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::*;
@@ -62,7 +63,17 @@ pub struct Tooltip {
     state: ConditionalState,
 }
 
-register_traits!(Tooltip: INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+register_traits!(Tooltip: INotifyCreated, IObservesVariables, IDisabledTrait, ISync, ITooltip);
+
+impl ITooltip for Tooltip {
+    fn is_tooltip_enabled(&self) -> bool {
+        !self.state.is_trait_disabled()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 info_impl!(TooltipInfo => |info, _init| {
     let state = ConditionalState::new(&info.base);
     Some(Rc::new(Tooltip { info, state }))

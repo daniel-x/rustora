@@ -143,7 +143,9 @@ pub fn target_modifiers(m: Modifiers) -> TargetModifiers {
 }
 
 impl UnitOrderGenerator {
-    /// `TargetForInput`.
+    /// `TargetForInput`, except that a visible actor without `Selectable`, like a tree, does not hide a selectable
+    /// frozen actor under the mouse. C# returns any visible actor first, so a tree next to a building in the fog
+    /// takes every order meant for the building (see openra-quirks.md).
     fn target_for_input(ctx: &OrderContext, cell: CPos, world_px: (i32, i32), mi: &MouseInput) -> Target {
         let sel = ctx.selection_context();
         let candidates: Vec<_> = ctx
@@ -152,8 +154,9 @@ impl UnitOrderGenerator {
             .into_iter()
             .filter(|e| !e.actor.is_dead() && e.actor.info.has_trait_info::<TargetableInfo>() && !sel.fog_obscures(&e.actor))
             .collect();
-        if let Some(a) = with_highest_selection_priority(&candidates, world_px, mi.modifiers) {
-            return Target::from_actor(Some(&a));
+        let actor = with_highest_selection_priority(&candidates, world_px, mi.modifiers);
+        if let Some(a) = actor.as_ref().filter(|a| a.info.has_trait_info::<SelectableInfo>()) {
+            return Target::from_actor(Some(a));
         }
         let frozen: Vec<_> = ctx
             .screen_map
@@ -161,9 +164,12 @@ impl UnitOrderGenerator {
             .into_iter()
             .filter(|e| e.frozen.info().has_trait_info::<TargetableInfo>() && e.frozen.visible() && e.frozen.has_renderables())
             .collect();
-        match frozen_with_highest_selection_priority(&frozen, world_px, mi.modifiers) {
-            Some(f) => Target::from_frozen_actor(f),
-            None => Target::from_cell(ctx.world, cell, FULL_CELL),
+        let frozen = frozen_with_highest_selection_priority(&frozen, world_px, mi.modifiers);
+        let frozen_selectable = frozen.as_ref().is_some_and(|f| f.info().has_trait_info::<SelectableInfo>());
+        match (actor, frozen) {
+            (Some(a), _) if !frozen_selectable => Target::from_actor(Some(&a)),
+            (_, Some(f)) => Target::from_frozen_actor(f),
+            (_, None) => Target::from_cell(ctx.world, cell, FULL_CELL),
         }
     }
 

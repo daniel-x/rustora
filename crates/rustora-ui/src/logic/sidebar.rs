@@ -951,7 +951,7 @@ pub fn resolve_player_name(messages: &crate::fluent::Messages, world: &rustora_e
     )
 }
 
-/// `WorldTooltipLogic`. The frozen actor tooltip is not ported.
+/// `WorldTooltipLogic`.
 pub fn world_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     use crate::widgets::tooltip::BeforeRender;
     use crate::widgets::viewport_controller::{SharedWorldTooltip, WorldTooltip};
@@ -1023,6 +1023,28 @@ pub fn world_tooltip(ui: &mut Ui, id: WidgetId, args: &crate::widget::WidgetArgs
                     .map(|i| i.tooltip_text(actor, &resolve))
                     .collect();
                 extra = lines.join("\n");
+            }
+            WorldTooltip::FrozenActor(frozen, info, owner) => {
+                if owner.as_ref().is_some_and(|o| !o.non_combatant) && info.show_owner_row {
+                    owner_player = owner.clone();
+                }
+                let render_player = ingame.render_player();
+                let stance = match (owner, &render_player) {
+                    (Some(o), Some(_)) => o.relationship_with(render_player.as_deref()),
+                    _ => rustora_engine::player::PlayerRelationship::NONE,
+                };
+                let resolve = |key: &str| message(ui, key);
+                label_string = info.tooltip_for_player_stance(stance, &resolve);
+                if let Some(actor) = frozen.actor() {
+                    let sell_mode = ingame.order_generator().button_order() == Some(crate::button_orders::ButtonOrder::Sell);
+                    let lines: Vec<String> = actor
+                        .traits_implementing::<dyn IProvideTooltipInfo>()
+                        .into_iter()
+                        .filter(|i| i.is_tooltip_visible(&actor, render_player.as_ref(), sell_mode))
+                        .map(|i| i.tooltip_text(&actor, &resolve))
+                        .collect();
+                    extra = lines.join("\n");
+                }
             }
         }
         let text_width = ui.measure(&font, &label_string).0.max(ui.measure(&font, &extra).0);

@@ -9,9 +9,12 @@ use std::rc::Rc;
 use rustora_client::settings::MouseScrollType;
 use rustora_core::world_types::WPos;
 use rustora_engine::actor::ActorRef;
+use rustora_engine::frozen::FrozenActorRef;
+use rustora_engine::player::PlayerRef;
 use rustora_engine::traits::IDisabledTrait;
 use rustora_mods_common::cosmetic::ScreenShaker;
 use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
+use rustora_mods_common::selection::SelectableInfo;
 use rustora_mods_common::tooltip::{Tooltip, TooltipInfo};
 
 use super::{TooltipContainerWidget, impl_as_any};
@@ -19,7 +22,7 @@ use crate::draw::DrawContext;
 use crate::input::{KeyEvent, KeyInput, MouseButton, MouseEvent, MouseInput};
 use crate::logic::ingame::Ingame;
 use crate::logic::{message, services};
-use crate::screen_map::with_highest_selection_priority;
+use crate::screen_map::{frozen_with_highest_selection_priority, with_highest_selection_priority};
 use crate::viewport::{ScrollDirection, Viewport};
 use crate::widget::{Ui, WidgetArgs, WidgetId, WidgetKind};
 use crate::widgets::world_interaction::view_to_world;
@@ -60,6 +63,8 @@ pub enum WorldTooltip {
     None,
     Unexplored,
     Actor(ActorRef, Rc<Tooltip>),
+    /// The frozen actor with the tooltip and owner it had when last seen.
+    FrozenActor(FrozenActorRef, Rc<TooltipInfo>, Option<PlayerRef>),
     Resource(String),
 }
 
@@ -170,7 +175,7 @@ impl ViewportControllerWidget {
         }
         let settings = services(ui).settings.clone();
         let settings = settings.borrow();
-        let under_cursor = ingame.with_order_context(&settings, |ctx| {
+        let (under_cursor, frozen) = ingame.with_order_context(&settings, |ctx| {
             let sel = ctx.selection_context();
             let candidates: Vec<_> = ctx
                 .screen_map
@@ -178,11 +183,27 @@ impl ViewportControllerWidget {
                 .into_iter()
                 .filter(|e| e.actor.info.has_trait_info::<TooltipInfo>() && !sel.fog_obscures(&e.actor))
                 .collect();
-            with_highest_selection_priority(&candidates, world_px, ui.modifiers)
+            let frozen: Vec<_> = ctx
+                .screen_map
+                .frozen_actors_at_mouse(world_px)
+                .into_iter()
+                .filter(|e| e.frozen.tooltip().is_some() && e.frozen.is_valid() && e.frozen.visible() && !e.frozen.hidden())
+                .collect();
+            (
+                with_highest_selection_priority(&candidates, world_px, ui.modifiers),
+                frozen_with_highest_selection_priority(&frozen, world_px, ui.modifiers),
+            )
         });
-        if let Some(actor) = under_cursor {
+        let frozen_selectable = frozen.as_ref().is_some_and(|f| f.info().has_trait_info::<SelectableInfo>());
+        if let Some(actor) = under_cursor.filter(|a| !frozen_selectable || a.info.has_trait_info::<SelectableInfo>()) {
             let tooltip = actor.traits_implementing::<Tooltip>().into_iter().find(|t| !t.is_trait_disabled());
             return tooltip.map_or(WorldTooltip::None, |t| WorldTooltip::Actor(actor, t));
+        }
+        if let Some(f) = frozen
+            && let Some((t, owner)) = f.tooltip()
+            && let Some(info) = t.as_any().downcast_ref::<Tooltip>().map(|t| t.info.clone())
+        {
+            return WorldTooltip::FrozenActor(f, info, owner);
         }
         let world_actor = ingame.world.world_actor();
         let (Some(layer), Some(renderer)) = (

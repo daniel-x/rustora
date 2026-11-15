@@ -32,6 +32,14 @@ pub trait ICreatesFrozenActors {
     fn on_visibility_changed(&self, frozen: &FrozenActor);
 }
 
+crate::persist_trait_refs!(dyn ITooltip);
+
+/// `ITooltip`: a tooltip trait, of which a frozen actor keeps the first enabled one.
+pub trait ITooltip {
+    fn is_tooltip_enabled(&self) -> bool;
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
 #[derive(crate::persist::Persist)]
 #[persist(shared)]
 pub struct FrozenActor {
@@ -58,6 +66,9 @@ pub struct FrozenActor {
     #[persist(skip)]
     pub renderables: RefCell<Rc<Vec<crate::render::Renderable>>>,
     pub update_visibility_next_tick: Cell<bool>,
+    /// `TooltipInfo` and `TooltipOwner`: the first enabled tooltip and its owner when the actor was last seen.
+    tooltip: RefCell<Option<Rc<dyn ITooltip>>>,
+    tooltip_owner: RefCell<Option<PlayerRef>>,
 }
 
 impl FrozenActor {
@@ -91,6 +102,8 @@ impl FrozenActor {
             render_pending: Cell::new(starts_revealed),
             rendered: Cell::new(false),
             update_visibility_next_tick: Cell::new(false),
+            tooltip: RefCell::new(None),
+            tooltip_owner: RefCell::new(None),
         });
         fa.update_visibility();
         fa
@@ -157,6 +170,24 @@ impl FrozenActor {
             self.hp.set(h.hp());
             self.damage_state.set(h.damage_state());
         }
+        let tooltip = self
+            .actor
+            .traits_implementing::<dyn ITooltip>()
+            .into_iter()
+            .find(|t| t.is_tooltip_enabled());
+        if let Some(t) = tooltip {
+            *self.tooltip_owner.borrow_mut() = match &self.actor.cache().effective_owner {
+                Some(eo) => eo.owner(),
+                None => self.actor.owner_opt(),
+            };
+            *self.tooltip.borrow_mut() = Some(t);
+        }
+    }
+
+    /// `TooltipInfo` as the tooltip trait it came from, and `TooltipOwner`.
+    pub fn tooltip(&self) -> Option<(Rc<dyn ITooltip>, Option<PlayerRef>)> {
+        let t = self.tooltip.borrow().clone()?;
+        Some((t, self.tooltip_owner.borrow().clone()))
     }
 
     pub fn refresh_hidden(&self) {
