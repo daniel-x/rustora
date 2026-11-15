@@ -506,6 +506,7 @@ impl ShellWorld {
         self.driver.orders.collect_client_orders = true;
         let client_orders = std::mem::take(&mut self.driver.orders.client_orders);
         let mut state = net.borrow_mut();
+        let chat_world = (!client_orders.is_empty()).then(|| crate::net::ChatWorld::of(&self.world));
         for (client_id, order) in client_orders {
             if order.order_string == "GameSaved" {
                 if let Some(name) = order.target_string.as_deref().filter(|_| !self.world.is_replay()) {
@@ -514,7 +515,7 @@ impl ShellWorld {
                 self.game_saved(messages, &mut state);
                 continue;
             }
-            if let Err(e) = crate::net::process_client_order(messages, &mut state, client_id, &order, run_time) {
+            if let Err(e) = crate::net::process_client_order(messages, &mut state, chat_world.as_ref(), client_id, &order, run_time) {
                 log::warn!("{e}");
             }
         }

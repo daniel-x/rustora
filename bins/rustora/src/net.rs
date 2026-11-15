@@ -22,6 +22,8 @@ use rustora_client::skirmish_file;
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_engine::order_manager::{Connection, Incoming};
+use rustora_engine::player::WinState;
+use rustora_engine::world::World;
 use rustora_game::lobby_rules::{MapInfo, ModLobbyRules};
 use rustora_game::map::MapPackage;
 use rustora_game::moddata::ModData;
@@ -594,8 +596,34 @@ fn fluent_notifications(messages: &Messages, text: &str, order_name: &str) -> Ve
         .collect()
 }
 
-/// The chat part of `UnitOrders.ProcessOrder` while no world exists.
-fn chat_notification(net: &NetState, client_id: i32, order: &RawOrder) -> Option<TextNotification> {
+/// What the chat of a running game needs to know about the world.
+pub struct ChatWorld {
+    pub is_replay: bool,
+    /// The win state of the playable player of each client.
+    pub player_states: HashMap<i32, WinState>,
+    /// The win state of `World.LocalPlayer`, if the local client plays.
+    pub local_player_state: Option<WinState>,
+}
+
+impl ChatWorld {
+    pub fn of(world: &World) -> ChatWorld {
+        ChatWorld {
+            is_replay: world.is_replay(),
+            player_states: world
+                .players()
+                .iter()
+                .filter(|p| p.playable)
+                .map(|p| (p.client_index, p.win_state.get()))
+                .collect(),
+            local_player_state: world.sound.local_player().map(|p| p.win_state.get()),
+        }
+    }
+}
+
+/// The chat part of `UnitOrders.ProcessOrder`. A team message shows as "[Team]" to the own team and as "[Team <n>]"
+/// to everyone who watches: in a replay, like C#, and also to spectators and defeated players, who see no team
+/// messages in C#.
+fn chat_notification(net: &NetState, world: Option<&ChatWorld>, client_id: i32, order: &RawOrder) -> Option<TextNotification> {
     let client = net.session.client_with_index(client_id)?;
     let local = net.local_client();
     let message: String = order
@@ -607,8 +635,11 @@ fn chat_notification(net: &NetState, client_id: i32, order: &RawOrder) -> Option
         .collect();
     let name = client.name.clone().unwrap_or_default();
     let prefix = if order.extra_data == 0 {
+        let dead = world.is_some_and(|w| w.player_states.get(&client.index) == Some(&WinState::Lost));
         let mut suffix = if client.is_observer() {
             " (Spectator)".to_string()
+        } else if dead {
+            " (Dead)".to_string()
         } else {
             String::new()
         };
@@ -616,6 +647,31 @@ fn chat_notification(net: &NetState, client_id: i32, order: &RawOrder) -> Option
             suffix += " (Ally)";
         }
         format!("{name}{suffix}")
+    } else if let Some(world) = world {
+        let player_state = world.player_states.get(&client.index).copied();
+        let watching = world.is_replay
+            || local.is_some_and(|l| l.is_observer())
+            || world.local_player_state.is_some_and(|s| s != WinState::Undefined);
+        if order.extra_data == u32::MAX {
+            if !watching || !(client.is_observer() || player_state.is_some_and(|s| s != WinState::Undefined)) {
+                return None;
+            }
+            format!("[Spectators] {name}")
+        } else {
+            let valid = client.team as u32 == order.extra_data && player_state == Some(WinState::Undefined);
+            let same_team = local.is_some_and(|l| l.team as u32 == order.extra_data)
+                && world.local_player_state == Some(WinState::Undefined);
+            if !valid {
+                return None;
+            }
+            if same_team {
+                format!("[Team] {name}")
+            } else if watching {
+                format!("[Team {}] {name}", order.extra_data)
+            } else {
+                return None;
+            }
+        }
     } else {
         if local.is_none_or(|l| l.team != client.team) {
             return None;
@@ -658,7 +714,7 @@ fn process_order(
             _ => {}
         }
     }
-    process_client_order(messages, net, client_id, order, run_time)?;
+    process_client_order(messages, net, None, client_id, order, run_time)?;
     Ok(false)
 }
 
@@ -666,6 +722,7 @@ fn process_order(
 pub fn process_client_order(
     messages: &Messages,
     net: &mut NetState,
+    world: Option<&ChatWorld>,
     client_id: i32,
     order: &RawOrder,
     run_time: i64,
@@ -675,7 +732,7 @@ pub fn process_client_order(
     match order.order_string.as_str() {
         "Chat" => {
             if !net.muted_players.contains(&client_id)
-                && let Some(line) = chat_notification(net, client_id, order)
+                && let Some(line) = chat_notification(net, world, client_id, order)
             {
                 net.notifications.push(line);
             }
@@ -758,4 +815,60 @@ pub fn process_client_order(
         _ => {}
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustora_net::session::Client;
+
+    fn net_with(local: i32) -> NetState {
+        let player = |index, team| Client {
+            index,
+            team,
+            slot: Some(format!("Multi{index}")),
+            name: Some(format!("p{index}")),
+            ..Default::default()
+        };
+        let mut net = NetState::default();
+        net.session.clients = vec![
+            player(1, 1),
+            player(2, 1),
+            player(3, 2),
+            Client {
+                index: 4,
+                name: Some("spec".to_string()),
+                ..Default::default()
+            },
+        ];
+        net.local_client_id = local;
+        net
+    }
+
+    fn world(is_replay: bool, local_player_state: Option<WinState>) -> ChatWorld {
+        ChatWorld {
+            is_replay,
+            player_states: [1, 2, 3].into_iter().map(|c| (c, WinState::Undefined)).collect(),
+            local_player_state,
+        }
+    }
+
+    fn team_chat_prefix(net: &NetState, world: &ChatWorld) -> Option<String> {
+        let order = RawOrder {
+            extra_data: 2,
+            ..RawOrder::from_target_string("Chat", "hi", true)
+        };
+        chat_notification(net, Some(world), 3, &order).and_then(|n| n.prefix)
+    }
+
+    #[test]
+    fn team_chat_shows_the_team_number_to_watchers_only() {
+        assert_eq!(team_chat_prefix(&net_with(-1), &world(true, None)).as_deref(), Some("[Team 2] p3"));
+        assert_eq!(team_chat_prefix(&net_with(4), &world(false, None)).as_deref(), Some("[Team 2] p3"));
+        assert_eq!(team_chat_prefix(&net_with(1), &world(false, Some(WinState::Lost))).as_deref(), Some("[Team 2] p3"));
+        assert_eq!(team_chat_prefix(&net_with(1), &world(false, Some(WinState::Undefined))), None);
+        let mut ally = net_with(1);
+        ally.session.clients[0].team = 2;
+        assert_eq!(team_chat_prefix(&ally, &world(false, Some(WinState::Undefined))).as_deref(), Some("[Team] p3"));
+    }
 }
