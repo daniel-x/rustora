@@ -1038,7 +1038,18 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
         });
         field.on_enter_key = Some(on_enter);
         let names = lobby.tab_names.clone();
-        field.on_tab_key = Some(Rc::new(move |ui, _| {
+        field.on_tab_key = Some(Rc::new(move |ui, e| {
+            let activated = {
+                let key = ui.button(chat_mode).key.clone();
+                key.is_some_and(|k| ui.assets.borrow().hotkeys.is_activated(&k, e))
+            };
+            if activated && !ui.button(chat_mode).disabled_now() {
+                let action = ui.button(chat_mode).on_click.clone();
+                if let Some(action) = action {
+                    action(ui);
+                }
+                return true;
+            }
             let mut field = ui.get::<TextFieldWidget>(chat_text_field);
             let completed = complete_name(&field.text(), &names.borrow());
             field.cursor_position = completed.chars().count();
