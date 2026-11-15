@@ -2709,6 +2709,7 @@ name = "rustora-launch"
 version = "0.1.16"
 dependencies = [
  "indexmap",
+ "log",
  "rustora-client",
  "rustora-core",
  "rustora-engine",
