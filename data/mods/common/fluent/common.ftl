@@ -1134,3 +1134,8 @@ notification-ban-list-nicknames = Banned nicknames: { $list }
 notification-ban-address-unsupported = This server cannot ban or unban addresses by command. The kick dialog bans the address of a player.
 notification-ban-client-enforced = { $target } is temporarily banned. This client kicks the nickname while it is the admin.
 notification-ban-list-addresses-unknown = This server does not report its banned addresses.
+
+## rustora idle timeout
+notification-idle-warning = You have been idle for a long time. Do something within { $seconds } seconds to stay connected.
+notification-idle-dropped = { $player } was dropped for being idle.
+notification-you-were-dropped-idle = You were disconnected for being idle.

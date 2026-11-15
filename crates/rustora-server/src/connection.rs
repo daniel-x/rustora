@@ -87,6 +87,10 @@ pub struct Connection {
     pub validated: bool,
     pub last_orders_frame: i32,
     pub timeout_message_shown: bool,
+    /// The server run time of the last order of the client, for the idle timeout.
+    pub last_action: u64,
+    /// Whether the client got the idle warning since its last order.
+    pub idle_warned: bool,
     connected_at: Instant,
     send: Option<Sender<Vec<u8>>>,
     last_received: Arc<AtomicU64>,
@@ -136,6 +140,8 @@ impl Connection {
             validated: false,
             last_orders_frame: 0,
             timeout_message_shown: false,
+            last_action: run_time(start),
+            idle_warned: false,
             connected_at: Instant::now(),
             send: Some(send),
             last_received,

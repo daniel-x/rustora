@@ -599,6 +599,27 @@ fn ban_unban_and_banlist_commands() {
 }
 
 #[test]
+fn idle_lobby_clients_are_warned_and_dropped() {
+    let Some(engine) = engine_dir() else { return };
+    let server = start_server(&engine, &["--idle-timeout", "4"]);
+    let port = server.port;
+    let mut idle = join(port);
+    let mut active = join(port);
+    let start = Instant::now();
+    assert!(idle.pump(VERSION, |c| c.got("notification-idle-warning")), "{:?}", idle.messages);
+    assert!(start.elapsed() < Duration::from_secs(4));
+    while start.elapsed() < Duration::from_secs(6) {
+        active.command("state NotReady");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(!idle.pump(VERSION, |_| false));
+    assert!(idle.got("notification-you-were-dropped-idle"), "{:?}", idle.messages);
+    let idle_index = idle.index;
+    assert!(active.pump(VERSION, |c| c.lobby.client_with_index(idle_index).is_none()));
+    assert!(active.joined());
+}
+
+#[test]
 fn single_player_server_saves_a_game_and_loads_it_again() {
     let Some(engine) = engine_dir() else { return };
     let support = std::env::temp_dir().join(format!("rustora-save-test-{}", std::process::id()));

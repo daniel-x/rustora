@@ -99,6 +99,9 @@ pub struct ServerSettings {
     pub nat_port_mapping_lifetime: u32,
     /// What the server does to the lobby when the host joins.
     pub initial_lobby: InitialLobby,
+    /// rustora: the milliseconds after which a multiplayer server drops a client that sent no order in the lobby.
+    /// The client gets a warning a minute before, or halfway for timeouts below two minutes. 0 disables it.
+    pub idle_timeout: u64,
 }
 
 impl Default for ServerSettings {
@@ -133,6 +136,7 @@ impl Default for ServerSettings {
             discover_nat_devices: false,
             nat_port_mapping_lifetime: 36000,
             initial_lobby: InitialLobby::Plain,
+            idle_timeout: 30 * 60 * 1000,
         }
     }
 }
@@ -530,6 +534,7 @@ impl Server {
                 self.handle_event(e);
             }
             self.pinger_tick();
+            self.idle_tick();
             self.vote_kick_tick();
             self.master_server_tick();
             self.lag_report_tick();
@@ -1187,6 +1192,11 @@ impl Server {
 
     fn interpret_server_order(&mut self, player_index: i32, o: &RawOrder) {
         let target = o.target_string.as_deref().unwrap_or("");
+        let now = run_time(self.start);
+        if let Some(c) = self.conn_mut(player_index) {
+            c.last_action = now;
+            c.idle_warned = false;
+        }
         if !self.is_validated(player_index) {
             if o.order_string == "HandshakeResponse" {
                 self.validate_client(player_index, target, &o.order_string);
@@ -1524,6 +1534,37 @@ impl Server {
         if now.saturating_sub(self.last_conn_report) > CONN_REPORT_INTERVAL {
             self.last_conn_report = now;
             self.report_timeouts();
+        }
+    }
+
+    /// rustora: warns and then drops the lobby clients that sent no order for [`ServerSettings::idle_timeout`].
+    fn idle_tick(&mut self) {
+        let timeout = self.settings.idle_timeout;
+        if timeout == 0 || !self.is_multiplayer() || self.state != ServerState::WaitingPlayers {
+            return;
+        }
+        let warning = timeout - (timeout / 2).min(60_000);
+        let now = run_time(self.start);
+        for player_index in self.validated_conn_indices() {
+            let Some(c) = self.conn_mut(player_index) else {
+                continue;
+            };
+            let idle = now.saturating_sub(c.last_action);
+            if idle >= timeout {
+                let name = self
+                    .lobby
+                    .client_with_index(player_index)
+                    .and_then(|c| c.name.clone())
+                    .unwrap_or_default();
+                log::info!(target: "server", "Dropping {name} after {} seconds without an order.", idle / 1000);
+                self.send_order_to(player_index, "ServerError", "notification-you-were-dropped-idle");
+                self.drop_client(player_index);
+                self.send_fluent_message("notification-idle-dropped", &[("player", (&name).into())]);
+            } else if idle >= warning && !c.idle_warned {
+                c.idle_warned = true;
+                let seconds = ((timeout - idle) / 1000) as i64;
+                self.send_fluent_message_to(player_index, "notification-idle-warning", &[("seconds", seconds.into())]);
+            }
         }
     }
 

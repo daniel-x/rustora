@@ -15,7 +15,8 @@
 //! [--name <text>] [--password <text>] [--seed <int>] [--dependent]
 //! [--enable-singleplayer] [--enable-sync-reports] [--disable-geoip] [--advertise-online] [--discover-nat-devices]
 //! [--require-authentication] [--profile-whitelist <id,id>] [--profile-blacklist <id,id>]
-//! [--player-profile-url <url>] [--server-advertise-url <url>]`.
+//! [--player-profile-url <url>] [--server-advertise-url <url>] [--idle-timeout <seconds>]`.
+//! `--idle-timeout` drops lobby clients that sent no order for this long, 1800 seconds by default, 0 disables it.
 
 use std::path::PathBuf;
 
@@ -32,7 +33,8 @@ fn usage(problem: &str) -> ! {
         "usage: rustora-server [--engine-dir <dir>] [--support-dir <dir>] [--mod ra] [--map <uid or file>] [--map-package <path>] [--port 1234] \
          [--name <text>] [--password <text>] [--seed <int>] [--dependent] \
          [--enable-singleplayer] [--enable-sync-reports] [--disable-geoip] [--advertise-online] [--discover-nat-devices] [--require-authentication] [--profile-whitelist <id,id>] \
-         [--profile-blacklist <id,id>] [--player-profile-url <url>] [--server-advertise-url <url>]"
+         [--profile-blacklist <id,id>] [--player-profile-url <url>] [--server-advertise-url <url>] \
+         [--idle-timeout <seconds>]"
     );
     std::process::exit(2);
 }
@@ -94,6 +96,10 @@ fn main() {
             "--profile-blacklist" => settings.profile_id_blacklist = parse_ids(&value()),
             "--player-profile-url" => settings.player_profile_url = value(),
             "--server-advertise-url" => settings.server_advertise_url = value(),
+            "--idle-timeout" => {
+                let seconds: u64 = value().parse().unwrap_or_else(|_| usage("invalid idle timeout"));
+                settings.idle_timeout = seconds * 1000;
+            }
             _ => usage(&format!("unknown argument {a}")),
         }
     }
