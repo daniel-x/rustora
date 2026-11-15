@@ -178,6 +178,13 @@ pub enum ScreenBounds {
     Tile { pos: WPos, tile: crate::map::TerrainTile },
     /// A rectangle moved by `ScreenPxOffset(offset)`, like the shadow of `WithShadow.ModifyScreenBounds`.
     Shifted { inner: Box<ScreenBounds>, offset: WVec },
+    /// `ScreenMap.Add(effect, pos, sprite)`: the size of the sprite of `frame` and `facing`, centered on `pos`.
+    Image {
+        pos: WPos,
+        sequence: Rc<Sequence>,
+        frame: i32,
+        facing: WAngle,
+    },
 }
 
 /// A shape in world pixel coordinates, drawn by `IRenderAboveWorld` traits with the world RGBA color renderer.

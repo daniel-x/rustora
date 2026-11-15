@@ -119,6 +119,19 @@ impl Effect for SpriteEffect {
         render_animation(&self.anim, self.pos.get(), Default::default(), 0, &self.palette, out);
     }
 
+    /// `ScreenMap.Add` and `Update` with `anim.Image`, from the first tick that plays the animation.
+    fn screen_bounds(&self) -> Option<rustora_engine::render::ScreenBounds> {
+        if !self.initialized.get() {
+            return None;
+        }
+        Some(rustora_engine::render::ScreenBounds::Image {
+            pos: self.pos.get(),
+            sequence: self.anim.current_sequence()?,
+            frame: self.anim.current_frame(),
+            facing: (self.anim.facing_func)(),
+        })
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

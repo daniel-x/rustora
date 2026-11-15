@@ -386,7 +386,16 @@ impl Scene {
                 }
             }
         }
+        let view = view_rect(cam);
         for e in world.effects() {
+            if let Some(bounds) = e.screen_bounds() {
+                let on_screen = self
+                    .screen_bounds_rect(renderer, world, &bounds)
+                    .is_some_and(|[l, t, r, b]| r > l && b > t && l < view.right() && view.x < r && t < view.bottom() && view.y < b);
+                if !on_screen {
+                    continue;
+                }
+            }
             e.render(viewer, &mut renderables);
         }
         self.add_renderables(renderer, world, &renderables, cam, &mut quads);
@@ -527,6 +536,19 @@ impl Scene {
                 let (x, y) = screen_px_position(*pos);
                 let (hw, hh) = (sprite.rect.w as i32 / 2 + 1, sprite.rect.h as i32 / 2 + 1);
                 Some([x - hw, y - hh, x + hw, y + hh])
+            }
+            ScreenBounds::Image {
+                pos,
+                sequence,
+                frame,
+                facing,
+            } => {
+                let resolved = self.sprites.sequence(renderer, sequence)?;
+                let sprite = resolved.sprite(*frame, *facing)?;
+                let w = (sprite.rect.w as f32 * resolved.scale) as i32;
+                let h = (sprite.rect.h as f32 * resolved.scale) as i32;
+                let (x, y) = screen_px_position(*pos);
+                Some([x - w / 2, y - h / 2, x - w / 2 + w, y - h / 2 + h])
             }
             ScreenBounds::Shifted { inner, offset } => {
                 let [l, t, r, b] = self.screen_bounds_rect(renderer, world, inner)?;

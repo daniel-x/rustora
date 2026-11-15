@@ -30,6 +30,11 @@ pub trait Effect: Any + crate::persist::PersistDyn {
         let full = std::any::type_name::<Self>();
         full.rsplit("::").next().unwrap_or(full)
     }
+    /// `ISpatiallyPartitionable`: the bounds that the effect last gave the screen map, which skips its rendering
+    /// while they are off the screen. `None` for effects that the screen map does not track.
+    fn screen_bounds(&self) -> Option<crate::render::ScreenBounds> {
+        None
+    }
     /// `IEffect.Render`.
     fn render(&self, _viewer: Option<&PlayerRef>, _out: &mut Vec<Renderable>) {}
     /// `IEffectAboveShroud.RenderAboveShroud`.
