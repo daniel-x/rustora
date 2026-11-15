@@ -248,7 +248,7 @@ fn join(args: &[String]) {
     use rustora_launch::skirmish::{SkirmishDriver, parse_bots};
     let [engine, support, address, ticks] = &args[2..6] else {
         panic!(
-            "usage: rustora --headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>] [--save-at <tick>:<name>] [--load-save <name>]"
+            "usage: rustora --headless join <engine-dir> <support-dir> <host:port> <ticks> [--bots <spec>] [--wait-clients <n>] [--sync-out <path>] [--name <text>] [--save-at <tick>:<name>] [--load-game <name>]"
         )
     };
     let engine = PathBuf::from(engine);
@@ -263,7 +263,7 @@ fn join(args: &[String]) {
             "--wait-clients" => options.wait_clients = value.parse().expect("wait clients"),
             "--sync-out" => sync_out = Some(std::io::BufWriter::new(std::fs::File::create(value).expect("create sync dump"))),
             "--name" => options.name = value.clone(),
-            "--load-save" => options.load_save = Some(value.clone()),
+            "--load-game" => options.load_game = Some(value.clone()),
             "--save-at" => {
                 let (tick, name) = value.split_once(':').expect("--save-at <tick>:<name>");
                 save_at = Some((tick.parse().expect("save tick"), name.to_string()));
@@ -397,7 +397,7 @@ Join options:
   --sync-out <path>     write \"tick hash\" per tick
   --name <text>         the player name
   --save-at <tick>:<name>  request a game save after that world tick
-  --load-save <name>    load a game save
+  --load-game <name>    load a saved game
 
 Environment:
   PROGRESS=<n>          replay commands: print the seconds per <n> ticks and the actor count

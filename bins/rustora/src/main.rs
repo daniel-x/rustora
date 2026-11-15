@@ -57,7 +57,7 @@ Options:
                          after the --click positions and writes a lossless WebP file
   --click <x>,<y>        a click for --menu-screenshot, repeatable
   --replay <file>        plays back an .orarep replay file
-  --load-save <name>     loads the game save of this file name in the saves directory of the support
+  --load-game <name>     loads the game save of this file name in the saves directory of the support
                          directory, as the load game panel does
   --viewer               plays the --replay in the debug viewer: arrow keys or WASD scroll, the
                          mouse wheel zooms, space pauses, + and - change the speed, Tab cycles
@@ -84,7 +84,7 @@ struct Args {
     support: Option<PathBuf>,
     window: Option<(u32, u32)>,
     replay: Option<String>,
-    load_save: Option<String>,
+    load_game: Option<String>,
     connect: Option<String>,
     settings: Vec<String>,
     menu_screenshot: Option<String>,
@@ -119,7 +119,7 @@ fn parse_args(raw: &[String]) -> Args {
         support: None,
         window: None,
         replay: None,
-        load_save: None,
+        load_game: None,
         connect: None,
         settings: Vec::new(),
         menu_screenshot: None,
@@ -142,7 +142,7 @@ fn parse_args(raw: &[String]) -> Args {
             "--menu-screenshot" => args.menu_screenshot = Some(value()),
             "--click" => args.clicks.push(parse_pair(&value(), ',', "click position")),
             "--replay" => args.replay = Some(value()),
-            "--load-save" => args.load_save = Some(value()),
+            "--load-game" => args.load_game = Some(value()),
             "--viewer" => args.viewer = true,
             "--screenshot" => args.screenshot = Some(value()),
             "--tick" => args.tick = parse_value(&value(), "tick"),
@@ -269,7 +269,7 @@ fn main() {
     }
     let mut settings = args.settings.clone();
     settings.extend(args.replay.iter().map(|r| format!("Launch.Replay={r}")));
-    settings.extend(args.load_save.iter().map(|s| format!("Launch.LoadSave={s}")));
+    settings.extend(args.load_game.iter().map(|s| format!("Launch.LoadGame={s}")));
     settings.extend(args.connect.iter().map(|c| format!("Launch.Connect={c}")));
     window::run(&engine, &support, args.window, &settings);
 }

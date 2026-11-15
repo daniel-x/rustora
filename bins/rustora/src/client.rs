@@ -782,7 +782,7 @@ impl Client {
             }
             None => {
                 ui.load_widget(&widget_roots.shellmap, Some(ui.root), &menu_args);
-                if let Some(name) = args.iter().find_map(|a| a.strip_prefix("Launch.LoadSave=")) {
+                if let Some(name) = args.iter().find_map(|a| a.strip_prefix("Launch.LoadGame=")) {
                     let path = services.save_dir.join(name);
                     if let Err(e) = rustora_ui::logic::game_save_browser::start_game_save(&mut ui, &path) {
                         log::error!("{e}");

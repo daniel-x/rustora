@@ -288,7 +288,7 @@ pub struct JoinOptions {
     /// With bots: the number of human clients to wait for before setting up the game.
     pub wait_clients: usize,
     /// The name of a save the server should load instead of following the lobby script.
-    pub load_save: Option<String>,
+    pub load_game: Option<String>,
     /// The mod of the game, `ra` by default.
     pub mod_id: String,
 }
@@ -301,7 +301,7 @@ impl Default for JoinOptions {
             password: String::new(),
             bots: Vec::new(),
             wait_clients: 1,
-            load_save: None,
+            load_game: None,
             mod_id: "ra".to_string(),
         }
     }
@@ -475,7 +475,7 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
                 true,
             )]);
         }
-        if let Some(save) = &options.load_save {
+        if let Some(save) = &options.load_game {
             if !load_requested && lobby.client_with_index(connection.local_client_id()).is_some() {
                 load_requested = true;
                 connection.send_immediate(vec![
