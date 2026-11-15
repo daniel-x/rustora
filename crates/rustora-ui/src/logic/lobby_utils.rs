@@ -12,13 +12,14 @@ use indexmap::IndexMap;
 use rustora_client::map_cache::{MapPreview, MapStatus};
 use rustora_client::settings::{Settings, sanitized_player_name};
 use rustora_core::fieldloader::Color;
+use rustora_net::extensions::{self, BanTarget};
 use rustora_net::session::{Client, ConnectionQuality, Session, Slot};
 
 use crate::fluent::MessageArg;
 use crate::input::{MouseButton, MouseInput};
 use crate::loader::cell;
 use crate::logic::{NoLogic, message, message_with, services};
-use crate::net::{LobbyFaction, LobbyRules, Net, is_ready};
+use crate::net::{LobbyFaction, LobbyRules, Net, SYSTEM_CLIENT_ID, TextNotification, TextNotificationPool, is_ready};
 use crate::widget::{Action, ChromeLogic, Ui, WidgetArgs, WidgetId};
 use crate::widgets::{
     CheckboxWidget, ClientTooltipRegionWidget, ColorBlockWidget, DropDownButtonWidget, ImageWidget, LabelWidget, MapPreviewWidget,
@@ -1011,6 +1012,108 @@ pub fn spawn_tooltip(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<Ref
     cell(logic)
 }
 
+/// A ban command of the lobby chat, rustora's addition.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BanCommand {
+    /// `/ban <address or nickname>`.
+    Ban(BanTarget),
+    /// `/unban <address or nickname>`.
+    Unban(BanTarget),
+    /// `/banlist`.
+    List,
+}
+
+impl BanCommand {
+    /// The ban command of a chat line, or `None` for other lines and commands without a target.
+    pub fn parse(text: &str) -> Option<BanCommand> {
+        let rest = text.strip_prefix('/')?;
+        let (name, argument) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        match name {
+            extensions::BAN => BanTarget::parse(argument).map(BanCommand::Ban),
+            extensions::UNBAN => BanTarget::parse(argument).map(BanCommand::Unban),
+            extensions::BAN_LIST if argument.trim().is_empty() => Some(BanCommand::List),
+            _ => None,
+        }
+    }
+}
+
+/// Runs a ban command of the admin. A rustora server runs it; the client remembers the name bans too, so it keeps
+/// enforcing them. On other servers the client enforces name bans itself and cannot ban addresses.
+pub fn run_ban_command(ui: &Ui, net: &Net, command: BanCommand) {
+    let mut n = net.borrow_mut();
+    if !n.is_host() {
+        drop(n);
+        local_notification(net, message(ui, "notification-admin-ban"));
+        return;
+    }
+    if n.server_is_rustora() {
+        let text = match &command {
+            BanCommand::Ban(target) => format!("{} {}", extensions::BAN, target.text()),
+            BanCommand::Unban(target) => format!("{} {}", extensions::UNBAN, target.text()),
+            BanCommand::List => extensions::BAN_LIST.to_string(),
+        };
+        match &command {
+            BanCommand::Ban(BanTarget::Name(name)) => n.ban_name(name),
+            BanCommand::Unban(BanTarget::Name(name)) => {
+                n.unban_name(name);
+            }
+            _ => {}
+        }
+        n.command(&text);
+        return;
+    }
+    let lines: Vec<String> = match command {
+        BanCommand::Ban(BanTarget::Address(_)) | BanCommand::Unban(BanTarget::Address(_)) => {
+            vec![message(ui, "notification-ban-address-unsupported")]
+        }
+        BanCommand::Ban(BanTarget::Name(name)) => {
+            n.ban_name(&name);
+            n.enforce_name_bans();
+            vec![message_with(
+                ui,
+                "notification-ban-client-enforced",
+                &[("target", MessageArg::Text(&name))],
+            )]
+        }
+        BanCommand::Unban(BanTarget::Name(name)) => {
+            let key = if n.unban_name(&name) {
+                "notification-ban-removed"
+            } else {
+                "notification-ban-unknown"
+            };
+            vec![message_with(ui, key, &[("target", MessageArg::Text(&name))])]
+        }
+        BanCommand::List => {
+            let mut names: Vec<&String> = n.banned_names.iter().collect();
+            names.sort();
+            let list = names.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            let names = if list.is_empty() {
+                message(ui, "notification-ban-list-empty")
+            } else {
+                message_with(ui, "notification-ban-list-nicknames", &[("list", MessageArg::Text(&list))])
+            };
+            vec![names, message(ui, "notification-ban-list-addresses-unknown")]
+        }
+    };
+    drop(n);
+    for line in lines {
+        local_notification(net, line);
+    }
+}
+
+/// Shows a system line in the lobby chat that only this client sees.
+fn local_notification(net: &Net, text: String) {
+    net.borrow_mut().notifications.push(TextNotification {
+        pool: TextNotificationPool::System,
+        client_id: SYSTEM_CLIENT_ID,
+        prefix: Some("Battlefield Control".to_string()),
+        text,
+        prefix_color: None,
+        text_color: None,
+        time: crate::net::local_time(),
+    });
+}
+
 /// Port of `KickClientLogic`. rustora adds the `BAN_NAME_CHECKBOX`, which bans the name of the client independently
 /// of the address ban of `PREVENT_REJOINING_CHECKBOX`. `okPressed` gets the address ban and the name ban.
 pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
@@ -1152,4 +1255,27 @@ pub fn bot_tooltip(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCe
     }
     fit_width_to_label(ui, widget, name);
     cell(NoLogic)
+}
+
+#[cfg(test)]
+mod tests {
+    use rustora_net::extensions::BanTarget;
+
+    use super::BanCommand;
+
+    #[test]
+    fn ban_commands() {
+        let name = |n: &str| BanTarget::Name(n.to_string());
+        assert_eq!(BanCommand::parse("/ban Troll"), Some(BanCommand::Ban(name("Troll"))));
+        assert_eq!(BanCommand::parse("/unban  Two Words "), Some(BanCommand::Unban(name("Two Words"))));
+        assert_eq!(
+            BanCommand::parse("/ban 192.168.1.5"),
+            Some(BanCommand::Ban(BanTarget::Address("192.168.1.5".parse().unwrap())))
+        );
+        assert_eq!(BanCommand::parse("/banlist"), Some(BanCommand::List));
+        assert_eq!(BanCommand::parse("/banlist x"), None);
+        assert_eq!(BanCommand::parse("/ban"), None);
+        assert_eq!(BanCommand::parse("/banana x"), None);
+        assert_eq!(BanCommand::parse("ban x"), None);
+    }
 }

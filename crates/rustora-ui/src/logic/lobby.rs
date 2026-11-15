@@ -1013,6 +1013,11 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
                 return true;
             }
             ui.scroll_to_bottom(chat_panel, false);
+            if let Some(command) = utils::BanCommand::parse(&text) {
+                utils::run_ban_command(ui, &l.net, command);
+                ui.get::<TextFieldWidget>(chat_text_field).set_text("");
+                return true;
+            }
             if let Some(name) = nick_command(&text) {
                 let settings = services(ui).settings.clone();
                 utils::change_player_name(&l.net, &settings, name);

@@ -101,6 +101,41 @@ impl LagReport {
     }
 }
 
+/// The lobby commands `ban <target>`, `unban <target>` and `banlist` of a rustora server, for the admin. They are
+/// server commands like `kick`, which an OpenRA server answers with "unknown server command".
+pub const BAN: &str = "ban";
+pub const UNBAN: &str = "unban";
+pub const BAN_LIST: &str = "banlist";
+
+/// What a `ban` or `unban` command names: an IP address, or else a nickname.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BanTarget {
+    Address(std::net::IpAddr),
+    Name(String),
+}
+
+impl BanTarget {
+    /// The target of a trimmed command argument, or `None` if it is empty.
+    pub fn parse(text: &str) -> Option<BanTarget> {
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        Some(match text.parse() {
+            Ok(address) => BanTarget::Address(address),
+            Err(_) => BanTarget::Name(text.to_string()),
+        })
+    }
+
+    /// The text of the target in commands and messages.
+    pub fn text(&self) -> String {
+        match self {
+            BanTarget::Address(address) => address.to_string(),
+            BanTarget::Name(name) => name.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +160,16 @@ mod tests {
             ],
         };
         assert_eq!(LagReport::parse(&report.serialize()), Some(report));
+    }
+
+    #[test]
+    fn ban_targets() {
+        assert_eq!(
+            BanTarget::parse(" 10.0.0.7 "),
+            Some(BanTarget::Address("10.0.0.7".parse().unwrap()))
+        );
+        assert_eq!(BanTarget::parse("::1"), Some(BanTarget::Address("::1".parse().unwrap())));
+        assert_eq!(BanTarget::parse(" Two Words "), Some(BanTarget::Name("Two Words".to_string())));
+        assert_eq!(BanTarget::parse("  "), None);
     }
 }

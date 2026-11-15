@@ -295,6 +295,13 @@ impl TestClient {
     fn got(&self, message: &str) -> bool {
         self.messages.iter().any(|m| m.contains(message))
     }
+
+    /// Whether a fluent message with `key` and an argument value `value` arrived.
+    fn got_with(&self, key: &str, value: &str) -> bool {
+        self.messages
+            .iter()
+            .any(|m| m.contains(key) && m.lines().any(|l| l.trim() == format!("Value: {value}")))
+    }
 }
 
 const VERSION: &str = "release-20250330";
@@ -521,11 +528,13 @@ fn kick_with_name_ban_rejects_the_name() {
     assert!(!troll.pump(VERSION, |_| false));
     assert!(troll.got("notification-you-were-kicked"), "{:?}", troll.messages);
 
-    let (again, joined) = connect_single_player_as(&server, " troll", TestClient::joined);
+    let (again, joined) = connect_single_player_as(&server, "Troll", TestClient::joined);
     assert!(!joined);
     assert!(again.got("notification-you-were-temp-banned"), "{:?}", again.messages);
     let (_other, joined) = connect_single_player_as(&server, "Other", TestClient::joined);
     assert!(joined);
+    let (_other_case, joined) = connect_single_player_as(&server, "troll", TestClient::joined);
+    assert!(joined, "name bans compare the exact name");
 
     let (mut kicked, joined) = connect_single_player_as(&server, "Kicked", TestClient::joined);
     assert!(joined);
@@ -533,6 +542,60 @@ fn kick_with_name_ban_rejects_the_name() {
     assert!(!kicked.pump(VERSION, |_| false));
     let (_kicked, joined) = connect_single_player_as(&server, "Kicked", TestClient::joined);
     assert!(joined, "a temporary ban without the name ban bans only the address");
+}
+
+#[test]
+fn ban_unban_and_banlist_commands() {
+    let Some(engine) = engine_dir() else { return };
+    let support = std::env::temp_dir().join(format!("rustora-ban-command-test-{}", std::process::id()));
+    let server = single_player_server(&engine, &support, InitialLobby::Plain);
+    let mut admin = join_single_player(&server);
+    let (mut troll, joined) = connect_single_player_as(&server, "Troll", TestClient::joined);
+    assert!(joined);
+
+    troll.command("ban Admin");
+    assert!(troll.pump(VERSION, |c| c.got("notification-admin-ban")));
+    admin.command("ban Troll");
+    assert!(!troll.pump(VERSION, |_| false));
+    assert!(troll.got("notification-you-were-temp-banned"), "{:?}", troll.messages);
+    assert!(
+        admin.pump(VERSION, |c| c.got_with("notification-ban-added", "Troll")),
+        "{:?}",
+        admin.messages
+    );
+    let (_, joined) = connect_single_player_as(&server, "Troll", TestClient::joined);
+    assert!(!joined);
+
+    admin.command("ban 10.1.2.3");
+    admin.command("banlist");
+    assert!(
+        admin.pump(VERSION, |c| c.got_with("notification-ban-list-nicknames", "Troll")),
+        "{:?}",
+        admin.messages
+    );
+    assert!(
+        admin.got_with("notification-ban-list-addresses", "10.1.2.3"),
+        "{:?}",
+        admin.messages
+    );
+
+    admin.command("unban Troll");
+    admin.command("unban 10.1.2.3");
+    admin.command("unban nobody");
+    assert!(
+        admin.pump(VERSION, |c| c.got_with("notification-ban-unknown", "nobody")),
+        "{:?}",
+        admin.messages
+    );
+    assert!(admin.got_with("notification-ban-removed", "Troll") && admin.got_with("notification-ban-removed", "10.1.2.3"));
+    let (_troll, joined) = connect_single_player_as(&server, "Troll", TestClient::joined);
+    assert!(joined);
+    admin.command("banlist");
+    assert!(
+        admin.pump(VERSION, |c| c.got("notification-ban-list-empty")),
+        "{:?}",
+        admin.messages
+    );
 }
 
 #[test]

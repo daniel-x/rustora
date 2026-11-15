@@ -1122,3 +1122,15 @@ keycode =
     .sleep = Sleep
     .mouse4 = Mouse 4
     .mouse5 = Mouse 5
+
+## rustora ban commands
+notification-admin-ban = Only the host can ban players.
+notification-ban-added = { $target } is temporarily banned.
+notification-ban-removed = { $target } is no longer banned.
+notification-ban-unknown = { $target } is not banned.
+notification-ban-list-empty = No addresses or nicknames are banned.
+notification-ban-list-addresses = Banned addresses: { $list }
+notification-ban-list-nicknames = Banned nicknames: { $list }
+notification-ban-address-unsupported = This server cannot ban or unban addresses by command. The kick dialog bans the address of a player.
+notification-ban-client-enforced = { $target } is temporarily banned. This client kicks the nickname while it is the admin.
+notification-ban-list-addresses-unknown = This server does not report its banned addresses.

@@ -6,6 +6,7 @@
 
 use rustora_core::fieldloader::Color;
 use rustora_game::players::{make_slot, sync_client_to_player_reference};
+use rustora_net::extensions::{self, BanTarget};
 use rustora_net::session::{Client, ClientState, LobbyOptionState, Session};
 
 use crate::server::{Server, ServerState, WHITE, sanitized_player_name};
@@ -58,6 +59,9 @@ impl Server {
             "assignteams" => self.cmd_assign_teams(conn, &client, value),
             "kick" => self.cmd_kick(conn, &client, value),
             "vote_kick" => self.cmd_vote_kick(conn, &client, value),
+            extensions::BAN => self.cmd_ban(conn, &client, value),
+            extensions::UNBAN => self.cmd_unban(conn, &client, value),
+            extensions::BAN_LIST => self.cmd_ban_list(conn, &client),
             "make_admin" => self.cmd_make_admin(conn, &client, value),
             "make_spectator" => self.cmd_make_spectator(conn, &client, value),
             "name" => self.cmd_name(&client, value),
@@ -73,7 +77,11 @@ impl Server {
     }
 
     fn validate_command(&mut self, conn: i32, client: &Client, command: &str) -> bool {
-        if command.starts_with("kick ") || command.starts_with("vote_kick ") {
+        let name = command.split(' ').next().unwrap_or_default();
+        if matches!(
+            name,
+            "kick" | "vote_kick" | extensions::BAN | extensions::UNBAN | extensions::BAN_LIST
+        ) {
             return true;
         }
         if self.state == ServerState::GameStarted {
@@ -604,12 +612,105 @@ impl Server {
         if ban_address {
             self.temp_bans.extend(address);
         }
-        let name = player.trim().to_lowercase();
-        if ban_name && !name.is_empty() && !self.temp_name_bans.contains(&name) {
-            self.temp_name_bans.push(name);
+        if ban_name {
+            self.add_name_ban(&player);
         }
         self.sync_lobby_clients();
         self.sync_lobby_slots();
+        true
+    }
+
+    fn add_name_ban(&mut self, name: &str) {
+        if !name.is_empty() && !self.temp_name_bans.iter().any(|n| n == name) {
+            self.temp_name_bans.push(name.to_string());
+        }
+    }
+
+    /// The rustora extension `ban <address or nickname>`: bans temporarily and kicks the matching clients, except
+    /// the admin and the players of a running game.
+    fn cmd_ban(&mut self, conn: i32, client: &Client, s: &str) -> bool {
+        if !client.is_admin {
+            self.send_fluent_message_to(conn, "notification-admin-ban", &[]);
+            return true;
+        }
+        let Some(target) = BanTarget::parse(s) else {
+            return self.malformed(conn, extensions::BAN);
+        };
+        match &target {
+            BanTarget::Address(address) if !self.temp_bans.contains(&address.to_string()) => self.temp_bans.push(address.to_string()),
+            BanTarget::Address(_) => {}
+            BanTarget::Name(name) => self.add_name_ban(name),
+        }
+        let matches: Vec<Client> = self
+            .lobby
+            .clients
+            .iter()
+            .filter(|c| c.index != client.index && !c.is_bot())
+            .filter(|c| self.state != ServerState::GameStarted || c.is_observer() || self.has_client_won_or_lost(c.index))
+            .filter(|c| match &target {
+                BanTarget::Address(address) => self.conn(c.index).and_then(|x| x.origin.ip()) == Some(*address),
+                BanTarget::Name(name) => c.name.as_deref() == Some(name.as_str()),
+            })
+            .cloned()
+            .collect();
+        let admin = client.name.clone().unwrap_or_default();
+        for kicked in &matches {
+            let player = kicked.name.clone().unwrap_or_default();
+            self.send_fluent_message("notification-temp-ban", &[("admin", (&admin).into()), ("player", (&player).into())]);
+            self.send_order_to(kicked.index, "ServerError", "notification-you-were-temp-banned");
+            self.drop_client(kicked.index);
+        }
+        self.send_fluent_message_to(conn, "notification-ban-added", &[("target", (&target.text()).into())]);
+        if !matches.is_empty() {
+            self.sync_lobby_clients();
+            self.sync_lobby_slots();
+        }
+        true
+    }
+
+    /// The rustora extension `unban <address or nickname>`: lifts a temporary ban.
+    fn cmd_unban(&mut self, conn: i32, client: &Client, s: &str) -> bool {
+        if !client.is_admin {
+            self.send_fluent_message_to(conn, "notification-admin-ban", &[]);
+            return true;
+        }
+        let Some(target) = BanTarget::parse(s) else {
+            return self.malformed(conn, extensions::UNBAN);
+        };
+        let text = target.text();
+        let list = match target {
+            BanTarget::Address(_) => &mut self.temp_bans,
+            BanTarget::Name(_) => &mut self.temp_name_bans,
+        };
+        let before = list.len();
+        list.retain(|t| *t != text);
+        let key = if list.len() < before {
+            "notification-ban-removed"
+        } else {
+            "notification-ban-unknown"
+        };
+        self.send_fluent_message_to(conn, key, &[("target", (&text).into())]);
+        true
+    }
+
+    /// The rustora extension `banlist`: tells the admin the temporarily banned addresses and nicknames.
+    fn cmd_ban_list(&mut self, conn: i32, client: &Client) -> bool {
+        if !client.is_admin {
+            self.send_fluent_message_to(conn, "notification-admin-ban", &[]);
+            return true;
+        }
+        if self.temp_bans.is_empty() && self.temp_name_bans.is_empty() {
+            self.send_fluent_message_to(conn, "notification-ban-list-empty", &[]);
+            return true;
+        }
+        for (list, key) in [
+            (self.temp_bans.join(", "), "notification-ban-list-addresses"),
+            (self.temp_name_bans.join(", "), "notification-ban-list-nicknames"),
+        ] {
+            if !list.is_empty() {
+                self.send_fluent_message_to(conn, key, &[("list", (&list).into())]);
+            }
+        }
         true
     }
 

@@ -154,7 +154,7 @@ pub struct NetState {
     pub outgoing: Vec<RawOrder>,
     /// The `Game.BeforeGameStart` handler.
     pub before_game_start: Option<crate::widget::Action>,
-    /// The names this client banned as admin, lowercase. rustora enforces them on servers without name bans.
+    /// The names this client banned as admin. rustora enforces them on servers without name bans.
     pub banned_names: std::collections::HashSet<String>,
     /// The client indexes that [`NetState::enforce_name_bans`] kicked already.
     pub name_ban_kicks: std::collections::HashSet<i32>,
@@ -180,16 +180,27 @@ impl NetState {
         self.outgoing.push(RawOrder::command(text));
     }
 
+    /// Whether the server is a rustora server, which relays the software of the clients. It knows `ban`, `unban`
+    /// and `banlist` and enforces name bans itself.
+    pub fn server_is_rustora(&self) -> bool {
+        !self.client_software.is_empty()
+    }
+
     /// Remembers a banned client name for [`NetState::enforce_name_bans`].
     pub fn ban_name(&mut self, name: &str) {
-        let name = name.trim().to_lowercase();
         if !name.is_empty() {
-            self.banned_names.insert(name);
+            self.banned_names.insert(name.to_string());
         }
     }
 
-    /// Kicks and bans each human client with a banned name while the local client is admin, once per client index.
-    /// A rustora server rejects these clients itself; an OpenRA server ignores the name ban.
+    /// Forgets a banned client name. Returns whether it was banned.
+    pub fn unban_name(&mut self, name: &str) -> bool {
+        self.name_ban_kicks.clear();
+        self.banned_names.remove(name)
+    }
+
+    /// Kicks each human client with a banned name while the local client is admin, once per client index, without
+    /// banning its address. A rustora server rejects these clients itself; an OpenRA server ignores name bans.
     pub fn enforce_name_bans(&mut self) {
         if !self.is_host() {
             return;
@@ -199,16 +210,12 @@ impl NetState {
             .clients
             .iter()
             .filter(|c| c.index != self.local_client_id && !c.is_bot() && !self.name_ban_kicks.contains(&c.index))
-            .filter(|c| {
-                c.name
-                    .as_deref()
-                    .is_some_and(|n| self.banned_names.contains(&n.trim().to_lowercase()))
-            })
+            .filter(|c| c.name.as_deref().is_some_and(|n| self.banned_names.contains(n)))
             .map(|c| c.index)
             .collect();
         for index in targets {
             self.name_ban_kicks.insert(index);
-            self.command(&kick_command(index, true, true));
+            self.command(&kick_command(index, false, true));
         }
     }
 
@@ -272,11 +279,11 @@ mod tests {
             },
             ..NetState::default()
         };
-        net.ban_name(" troll ");
+        net.ban_name("Troll");
         net.enforce_name_bans();
         net.enforce_name_bans();
         let sent: Vec<String> = net.outgoing.iter().map(|o| o.target_string.clone().unwrap_or_default()).collect();
-        assert_eq!(sent, vec!["kick 2 True True".to_string()]);
+        assert_eq!(sent, vec!["kick 2 False True".to_string()]);
     }
 
     #[test]
