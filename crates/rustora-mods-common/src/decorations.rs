@@ -877,34 +877,29 @@ pub fn place_building_circles(
     viewer: Option<&PlayerRef>,
     out: &mut Vec<AnnotationCircle>,
 ) {
-    let actors = world.actors();
-    let existing = |out: &mut Vec<AnnotationCircle>, f: &dyn Fn(&ActorRef, &mut Vec<AnnotationCircle>)| {
-        for a in actors.iter().filter(|a| a.is_in_world() && !a.is_dead()) {
-            f(a, out);
-        }
-    };
+    let live = |a: &ActorRef| a.is_in_world() && !a.is_dead();
     if actor
         .trait_info::<crate::building::BuildingInfo>()
         .is_some_and(|b| b.requires_base_provider)
     {
-        existing(out, &|a, out| {
-            if let Some(p) = a.trait_or_default::<crate::base::BaseProvider>() {
-                out.extend(p.range_circle(a, viewer));
+        let mut last = None;
+        for (a, p) in world.actors_with_trait::<crate::base::BaseProvider>() {
+            if live(&a) && last != Some(a.id) {
+                out.extend(p.range_circle(&a, viewer));
             }
-        });
+            last = Some(a.id);
+        }
     }
     for info in actor.trait_infos::<RenderRangeCircleInfo>() {
         let range = info.placement_range(world, actor);
         if range == WDist::ZERO {
             continue;
         }
-        existing(out, &|a, out| {
-            for r in a.traits_implementing::<RenderRangeCircle>() {
-                if r.info.range_circle_type == info.range_circle_type {
-                    out.extend(r.range_circle(a, viewer));
-                }
+        for (a, r) in world.actors_with_trait::<RenderRangeCircle>() {
+            if live(&a) && r.info.range_circle_type == info.range_circle_type {
+                out.extend(r.range_circle(&a, viewer));
             }
-        });
+        }
         out.push(info.circle(center, range, info.color));
     }
     for info in actor.trait_infos::<WithRangeCircleInfo>() {
@@ -920,23 +915,21 @@ pub fn place_building_circles(
             border_width: info.border_width,
             trail: None,
         });
-        existing(out, &|a, out| {
-            for r in a.traits_implementing::<WithRangeCircle>() {
-                if r.info.circle_type == info.circle_type {
-                    r.circles(a, viewer, true, out);
-                }
+        for (a, r) in world.actors_with_trait::<WithRangeCircle>() {
+            if live(&a) && r.info.circle_type == info.circle_type {
+                r.circles(&a, viewer, true, out);
             }
-        });
+        }
     }
     for info in actor.trait_infos::<RenderShroudCircleInfo>() {
         if !info.base.enabled_by_default() {
             continue;
         }
-        existing(out, &|a, out| {
-            for r in a.traits_implementing::<RenderShroudCircle>() {
-                r.circles(a, viewer, true, out);
+        for (a, r) in world.actors_with_trait::<RenderShroudCircle>() {
+            if live(&a) {
+                r.circles(&a, viewer, true, out);
             }
-        });
+        }
         let range = actor
             .trait_infos::<crate::visibility::CreatesShroudInfo>()
             .iter()

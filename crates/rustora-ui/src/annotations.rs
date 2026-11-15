@@ -337,20 +337,14 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
         draw_decorations(dc, ingame, &viewport, a, b, selected);
     }
     let mut circles = Vec::new();
-    for a in ingame.world.actors() {
+    let render_player = ingame.render_player();
+    for (a, r) in ingame.world.actors_with_trait::<dyn IRenderCircles>() {
         if !a.is_in_world() || a.is_dead() {
             continue;
         }
-        let renderers = a.traits_implementing::<dyn IRenderCircles>();
-        if renderers.is_empty() {
-            continue;
-        }
-        let selected = ingame.selection.contains(&a);
-        for r in renderers {
-            r.circles(&a, ingame.render_player().as_ref(), false, &mut circles);
-            if selected {
-                r.circles(&a, ingame.render_player().as_ref(), true, &mut circles);
-            }
+        r.circles(&a, render_player.as_ref(), false, &mut circles);
+        if ingame.selection.contains(&a) {
+            r.circles(&a, render_player.as_ref(), true, &mut circles);
         }
     }
     for c in &circles {
