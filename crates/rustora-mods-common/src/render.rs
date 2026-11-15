@@ -105,6 +105,40 @@ struct AnimationWrapper {
     animation: AnimationWithOffset,
     palette: Option<String>,
     is_player_palette: bool,
+    /// `cachedVisible`, `cachedOffset` and `cachedSequence`: the state of the last tick, to tell the screen map when
+    /// the position or size of the animation changed. Only tracked while a client collects screen map updates.
+    #[persist(skip)]
+    cached: RefCell<Option<(bool, WVec, Option<Rc<rustora_engine::sequence::Sequence>>)>>,
+}
+
+impl AnimationWrapper {
+    fn is_visible(&self) -> bool {
+        self.animation.disable_func.as_ref().is_none_or(|f| !f())
+    }
+
+    /// `AnimationWrapper.Tick`: whether the renderable position or size has changed.
+    fn tick(&self, track: bool) -> bool {
+        self.animation.animation.tick();
+        if !track {
+            return false;
+        }
+        let state = (
+            self.is_visible(),
+            self.animation.offset_func.as_ref().map_or(WVec::ZERO, |f| f()),
+            self.animation.animation.current_sequence(),
+        );
+        let mut cached = self.cached.borrow_mut();
+        let updated = cached.as_ref().is_none_or(|(v, o, s)| {
+            *v != state.0
+                || *o != state.1
+                || match (s, &state.2) {
+                    (Some(a), Some(b)) => !Rc::ptr_eq(a, b),
+                    (a, b) => a.is_some() != b.is_some(),
+                }
+        });
+        *cached = Some(state);
+        updated
+    }
 }
 
 /// `RenderSprites`: owns and ticks the animations of an actor.
@@ -123,10 +157,15 @@ info_impl!(RenderSpritesInfo => |info, init| {
 });
 
 impl ITick for RenderSprites {
-    fn tick(&self, _self_: &ActorRef) {
+    fn tick(&self, self_: &ActorRef) {
         let anims = self.anims.borrow().clone();
+        let screen_map = &self_.world().screen_map;
+        let mut updated = false;
         for a in anims {
-            a.animation.animation.tick();
+            updated |= a.tick(screen_map.enabled());
+        }
+        if updated {
+            screen_map.add_or_update(self_);
         }
     }
 }
@@ -144,11 +183,21 @@ impl rustora_engine::render::IRender for RenderSprites {
             .and_then(|e| e.owner())
             .unwrap_or_else(|| self_.owner());
         for a in self.anims.borrow().iter() {
-            if a.animation.disable_func.as_ref().is_some_and(|f| f()) {
+            if !a.is_visible() {
                 continue;
             }
             let palette = rustora_engine::render::PaletteRef::resolve(a.palette.as_deref(), a.is_player_palette, &owner);
             rustora_engine::render::render_animation_with_offset(&a.animation, self_, &palette, out);
+        }
+    }
+
+    fn screen_bounds(&self, self_: &ActorRef, out: &mut Vec<rustora_engine::render::ScreenBounds>) {
+        let pos = self_.center_position();
+        for a in self.anims.borrow().iter().filter(|a| a.is_visible()) {
+            if let Some(sequence) = a.animation.animation.current_sequence() {
+                let offset = a.animation.offset_func.as_ref().map_or(WVec::ZERO, |f| f());
+                out.push(rustora_engine::render::ScreenBounds::Animation { pos, offset, sequence });
+            }
         }
     }
 }
@@ -170,6 +219,7 @@ impl RenderSprites {
             animation: anim,
             palette,
             is_player_palette,
+            cached: RefCell::new(None),
         }));
     }
 

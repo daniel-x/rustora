@@ -25,6 +25,7 @@ pub mod player;
 pub mod render;
 pub mod rules;
 pub mod savegame;
+pub mod screen_map;
 pub mod sequence;
 pub mod shroud;
 pub mod sound;

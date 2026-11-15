@@ -554,6 +554,17 @@ impl IRender for Bridge {
             });
         }
     }
+
+    fn screen_bounds(&self, self_: &ActorRef, out: &mut Vec<rustora_engine::render::ScreenBounds>) {
+        let world = self_.world();
+        let template = self.template.get();
+        for &(c, index) in self.footprint.borrow().iter() {
+            out.push(rustora_engine::render::ScreenBounds::Tile {
+                pos: world.map().center_of_cell(c),
+                tile: TerrainTile { ty: template, index },
+            });
+        }
+    }
 }
 
 impl INotifyDamageStateChanged for Bridge {

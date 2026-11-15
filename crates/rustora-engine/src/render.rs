@@ -165,6 +165,19 @@ pub fn render_animation_with_offset(anim: &AnimationWithOffset, self_: &ActorRef
 /// `IRender`.
 pub trait IRender {
     fn render(&self, self_: &ActorRef, out: &mut Vec<Renderable>);
+    /// `IRender.ScreenBounds`: what the actor covers on the screen, for the screen map.
+    fn screen_bounds(&self, self_: &ActorRef, out: &mut Vec<ScreenBounds>);
+}
+
+/// A rectangle of `IRender.ScreenBounds`, measured by the client, which knows the sprite sizes.
+#[derive(Clone)]
+pub enum ScreenBounds {
+    /// `Animation.ScreenBounds`: the bounds of `sequence` at `pos` plus `offset`.
+    Animation { pos: WPos, offset: WVec, sequence: Rc<Sequence> },
+    /// `Bridge.ScreenBounds`: a terrain tile at `pos` with one pixel of padding on each side.
+    Tile { pos: WPos, tile: crate::map::TerrainTile },
+    /// A rectangle moved by `ScreenPxOffset(offset)`, like the shadow of `WithShadow.ModifyScreenBounds`.
+    Shifted { inner: Box<ScreenBounds>, offset: WVec },
 }
 
 /// A shape in world pixel coordinates, drawn by `IRenderAboveWorld` traits with the world RGBA color renderer.
@@ -206,6 +219,8 @@ pub trait IRenderAboveWorld {
 /// `IRenderModifier`.
 pub trait IRenderModifier {
     fn modify_render(&self, self_: &ActorRef, renderables: &mut Vec<Renderable>);
+    /// `IRenderModifier.ModifyScreenBounds`; most modifiers keep the bounds.
+    fn modify_screen_bounds(&self, _self_: &ActorRef, _bounds: &mut Vec<ScreenBounds>) {}
 }
 
 /// `Actor.Render`.
@@ -216,6 +231,18 @@ pub fn render_actor(self_: &ActorRef, out: &mut Vec<Renderable>) {
     }
     for m in self_.traits_implementing::<dyn IRenderModifier>() {
         m.modify_render(self_, &mut own);
+    }
+    out.append(&mut own);
+}
+
+/// `Actor.ScreenBounds`.
+pub fn actor_screen_bounds(self_: &ActorRef, out: &mut Vec<ScreenBounds>) {
+    let mut own = Vec::new();
+    for r in self_.traits_implementing::<dyn IRender>() {
+        r.screen_bounds(self_, &mut own);
+    }
+    for m in self_.traits_implementing::<dyn IRenderModifier>() {
+        m.modify_screen_bounds(self_, &mut own);
     }
     out.append(&mut own);
 }

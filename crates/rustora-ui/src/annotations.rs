@@ -88,7 +88,7 @@ fn draw_target_line(dc: &mut DrawContext, l: &TargetLine, view: &impl Fn(WPos) -
 }
 
 /// `ISelectionDecorations.RenderSelectionAnnotations` with a given color: the selection box of `actor` around its
-/// decoration bounds in the screen map.
+/// decoration bounds, if it is on the screen.
 pub(crate) fn draw_selection_box_of(
     dc: &mut DrawContext,
     viewport: &Viewport,
@@ -96,7 +96,7 @@ pub(crate) fn draw_selection_box_of(
     actor: &ActorRef,
     c: Color,
 ) {
-    let Some(e) = screen_map.entries().iter().find(|e| e.actor.id == actor.id) else {
+    let Some(e) = screen_map.on_screen().iter().find(|e| e.actor.id == actor.id) else {
         return;
     };
     let b = e.decoration;
@@ -304,7 +304,7 @@ pub fn draw_selection_annotations(dc: &mut DrawContext, ingame: &Ingame, setting
         let (vx, vy) = viewport.world_to_view_px((x, y));
         (vx as f32, vy as f32)
     };
-    for e in screen_map.entries() {
+    for e in screen_map.on_screen() {
         let a = &e.actor;
         if !a.is_in_world() || a.is_dead() || sel.fog_obscures(a) {
             continue;

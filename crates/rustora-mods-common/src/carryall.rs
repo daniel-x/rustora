@@ -187,6 +187,7 @@ impl Carryall {
         }
         *self.carryable.borrow_mut() = Some(carryable.clone());
         self.carry_state.set(CarryallState::Carrying);
+        self_.world().screen_map.add_or_update(self_);
         if self.carry_condition_token.get() == INVALID_CONDITION_TOKEN {
             self.carry_condition_token
                 .set(self_.grant_condition(self.info.carry_condition.as_deref().unwrap_or("")));
@@ -208,6 +209,7 @@ impl Carryall {
 
     pub fn detach_carryable(&self, self_: &ActorRef) {
         self.unreserve_carryable(self_);
+        self_.world().screen_map.add_or_update(self_);
         if self.carry_condition_token.get() != INVALID_CONDITION_TOKEN {
             self.carry_condition_token
                 .set(self_.revoke_condition(self.carry_condition_token.get()));

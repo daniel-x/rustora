@@ -7,10 +7,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rustora_core::world_types::{CPos, WAngle, WDist, WPos};
+use rustora_core::world_types::{CPos, WAngle, WDist, WPos, WVec};
+use rustora_engine::actor::ActorRef;
 use rustora_engine::frozen::FrozenActorLayer;
 use rustora_engine::player::PlayerRef;
-use rustora_engine::render::{Renderable, render_actor};
+use rustora_engine::render::{Renderable, ScreenBounds, actor_screen_bounds, render_actor};
 use rustora_engine::world::World;
 use rustora_mods_common::palettes::ShroudRendererInfo;
 use rustora_mods_common::render::WithSpriteBody;
@@ -20,7 +21,7 @@ use rustora_mods_common::smudge::SmudgeLayer;
 use rustora_mods_common::visibility::FrozenUnderFog;
 use rustora_render::{Camera, Quad, Renderer};
 use rustora_ui::draw::Rect;
-use rustora_ui::screen_map::ActorBounds;
+use rustora_ui::screen_map::{DecoratedActor, ScreenMap};
 
 use crate::palettes::Palettes;
 use crate::sprites::{Sprite, SpriteCache};
@@ -35,6 +36,20 @@ pub fn world_to_px(p: WPos) -> (f32, f32) {
 pub fn screen_px_position(p: WPos) -> (i32, i32) {
     let (x, y) = world_to_px(p);
     (x.round_ties_even() as i32, y.round_ties_even() as i32)
+}
+
+/// `WorldRenderer.ScreenPxOffset`: each component rounded to the nearest pixel, ties to even like `Math.Round`.
+pub fn screen_px_offset(v: WVec) -> (i32, i32) {
+    let px = |w: i32| (TILE_SIZE * w as f32 / 1024.0).round_ties_even() as i32;
+    (px(v.x), px(v.y - v.z))
+}
+
+/// The world pixels that `cam` shows, from `Viewport.TopLeft` to `Viewport.BottomRight`.
+pub fn view_rect(cam: &Camera) -> Rect {
+    let (x, y) = (cam.x.floor() as i32, cam.y.floor() as i32);
+    let r = (cam.x + cam.width as f32 / cam.zoom).ceil() as i32;
+    let b = (cam.y + cam.height as f32 / cam.zoom).ceil() as i32;
+    Rect::new(x, y, r - x, b - y)
 }
 
 /// The world pixel rectangle of `Interactable.Bounds` style bounds around `center`.
@@ -307,14 +322,16 @@ impl Scene {
         }
     }
 
-    /// Builds the quads of one frame as seen by `viewer` (everything if `None`).
+    /// Builds the quads of one frame as seen by `viewer` (everything if `None`), with the actors of `on_screen`.
     /// `overlay` holds the unsorted renderables of the order generator, drawn last.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         &mut self,
         renderer: &mut Renderer,
         world: &World,
         viewer: Option<&PlayerRef>,
         cam: &Camera,
+        on_screen: &[ActorRef],
         overlay: &[Renderable],
     ) -> Vec<Quad> {
         self.palettes.update(renderer, world);
@@ -346,16 +363,17 @@ impl Scene {
         }
         self.lighting = lighting;
 
-        let mut renderables = Vec::new();
-        for a in world.actors() {
-            if !a.is_in_world() {
-                continue;
-            }
-            if let Some(f) = a.trait_or_default::<FrozenUnderFog>() {
+        let mut last = None;
+        for (a, f) in world.actors_with_trait::<FrozenUnderFog>() {
+            if a.is_in_world() && last != Some(a.id) {
                 f.tick_render(&a);
             }
+            last = Some(a.id);
+        }
+        let mut renderables = Vec::new();
+        for a in on_screen {
             if viewer.is_none_or(|v| a.can_be_viewed_by_player(Some(v))) {
-                render_actor(&a, &mut renderables);
+                render_actor(a, &mut renderables);
             }
         }
         if let Some(v) = viewer
@@ -412,34 +430,110 @@ impl Scene {
         }));
     }
 
-    /// `Actor.MouseBounds` of all actors in the world with `Interactable` or `Selectable`, the input of `ScreenMap`.
+    /// `Actor.MouseBounds` and `Interactable.DecorationBounds` of an actor with `Interactable` or `Selectable`.
     /// Polygons are not supported, and auto bounds come from the default animation of `WithSpriteBody`.
-    pub fn mouse_bounds(&mut self, renderer: &mut Renderer, world: &World) -> Vec<ActorBounds> {
-        let mut out = Vec::new();
-        for a in world.actors() {
-            if !a.is_in_world() {
-                continue;
+    fn actor_bounds(&mut self, renderer: &mut Renderer, a: &ActorRef) -> Option<(Rect, Rect)> {
+        let info = mouse_bounds_info(&a.info)?;
+        let center = screen_px_position(a.center_position());
+        let auto = self.auto_bounds(renderer, a, center);
+        let rect = |b: Option<&Vec<WDist>>| match b {
+            Some(b) if b.len() >= 2 => Some(bounds_rect(center, b)),
+            _ => auto,
+        };
+        let bounds = rect(info.bounds.as_ref()).filter(|b| b.w > 0 || b.h > 0)?;
+        let decoration = rect(info.decoration_bounds.as_ref().or(info.bounds.as_ref())).unwrap_or_default();
+        Some((bounds, decoration))
+    }
+
+    /// `ScreenMap.TickRender` for actors: updates the mouse and render bounds of the actors that the world reported.
+    /// Actors that left the world meanwhile are skipped, as their removal follows. The first call fills the screen map with the actors already in the world. Returns the actors in view in actor
+    /// id order, like `RenderableActorsInBox`, and stores them with their current decoration bounds for the
+    /// annotations.
+    pub fn update_screen_map(&mut self, renderer: &mut Renderer, world: &World, cam: &Camera, screen_map: &mut ScreenMap) -> Vec<ActorRef> {
+        if !screen_map.is_initialized() {
+            let (w, h) = world.map().map_size;
+            let ts = TILE_SIZE as i32;
+            screen_map.init(w * ts, h * ts);
+            world.screen_map.enable();
+            for a in world.actors() {
+                if a.is_in_world() && a.cache().occupies_space.is_some() {
+                    world.screen_map.add_or_update(&a);
+                }
             }
-            let Some(info) = mouse_bounds_info(&a.info) else {
-                continue;
-            };
-            let center = screen_px_position(a.center_position());
-            let auto = self.auto_bounds(renderer, &a, center);
-            let rect = |b: Option<&Vec<WDist>>| match b {
-                Some(b) if b.len() >= 2 => Some(bounds_rect(center, b)),
-                _ => auto,
-            };
-            let Some(bounds) = rect(info.bounds.as_ref()).filter(|b| b.w > 0 || b.h > 0) else {
-                continue;
-            };
-            let decoration = rect(info.decoration_bounds.as_ref().or(info.bounds.as_ref())).unwrap_or_default();
-            out.push(ActorBounds {
-                actor: a,
-                bounds,
-                decoration,
-            });
         }
-        out
+        let (add, remove) = world.screen_map.take();
+        for a in add.iter().filter(|a| !a.disposed() && a.is_in_world()) {
+            let bounds = self.actor_bounds(renderer, a).map(|(b, _)| b);
+            screen_map.update_mouse_bounds(a, bounds);
+            let render = self.render_bounds(renderer, world, a);
+            screen_map.update_render_bounds(a, render);
+        }
+        for a in &remove {
+            screen_map.remove(a);
+        }
+        let view = view_rect(cam);
+        let mut on_screen = screen_map.renderable_actors_in_box((view.x, view.y), (view.right(), view.bottom()));
+        on_screen.sort_by_key(|a| a.id);
+        let decorated = on_screen
+            .iter()
+            .filter_map(|actor| {
+                let (_, decoration) = self.actor_bounds(renderer, actor)?;
+                Some(DecoratedActor {
+                    actor: actor.clone(),
+                    decoration,
+                })
+            })
+            .collect();
+        screen_map.set_on_screen(decorated);
+        on_screen
+    }
+
+    /// The union of `Actor.ScreenBounds`, `None` when empty.
+    fn render_bounds(&mut self, renderer: &mut Renderer, world: &World, a: &ActorRef) -> Option<Rect> {
+        let mut sources = Vec::new();
+        actor_screen_bounds(a, &mut sources);
+        let mut union: Option<[i32; 4]> = None;
+        for source in &sources {
+            let Some(r) = self
+                .screen_bounds_rect(renderer, world, source)
+                .filter(|r| r[2] > r[0] && r[3] > r[1])
+            else {
+                continue;
+            };
+            union = Some(union.map_or(r, |u| [u[0].min(r[0]), u[1].min(r[1]), u[2].max(r[2]), u[3].max(r[3])]));
+        }
+        union.map(|[l, t, r, b]| Rect::new(l, t, r - l, b - t))
+    }
+
+    /// One rectangle of `IRender.ScreenBounds` as left, top, right and bottom world pixels.
+    fn screen_bounds_rect(&mut self, renderer: &mut Renderer, world: &World, source: &ScreenBounds) -> Option<[i32; 4]> {
+        match source {
+            ScreenBounds::Animation { pos, offset, sequence } => {
+                let resolved = self.sprites.sequence(renderer, sequence)?;
+                let (scale, [l, t, r, b]) = (resolved.scale, resolved.bounds);
+                let xy = screen_px_position(*pos);
+                let o = screen_px_offset(*offset);
+                let (x, y) = (xy.0 + o.0, xy.1 + o.1);
+                Some([
+                    x + (l as f32 * scale) as i32,
+                    y + (t as f32 * scale) as i32,
+                    x + (r as f32 * scale) as i32,
+                    y + (b as f32 * scale) as i32,
+                ])
+            }
+            ScreenBounds::Tile { pos, tile } => {
+                let frames = self.template_frames(renderer, world, tile.ty);
+                let sprite = frames.get(tile.index as usize).copied().flatten()?;
+                let (x, y) = screen_px_position(*pos);
+                let (hw, hh) = (sprite.rect.w as i32 / 2 + 1, sprite.rect.h as i32 / 2 + 1);
+                Some([x - hw, y - hh, x + hw, y + hh])
+            }
+            ScreenBounds::Shifted { inner, offset } => {
+                let [l, t, r, b] = self.screen_bounds_rect(renderer, world, inner)?;
+                let (dx, dy) = screen_px_offset(*offset);
+                Some([l + dx, t + dy, r + dx, b + dy])
+            }
+        }
     }
 
     /// The `MouseBounds` of the visible frozen actors of `viewer`, from their interactable bounds at the frozen

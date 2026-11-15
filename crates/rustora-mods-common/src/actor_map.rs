@@ -666,12 +666,14 @@ impl WorldExt for World {
         let m = self.actor_map();
         m.add_influence(a, ios);
         m.add_position(a);
+        self.screen_map.add_or_update(a);
     }
 
     fn update_maps(&self, a: &ActorRef) {
         if !a.is_in_world() {
             return;
         }
+        self.screen_map.add_or_update(a);
         self.actor_map().update_position(a);
     }
 
@@ -679,6 +681,7 @@ impl WorldExt for World {
         let m = self.actor_map();
         m.remove_influence(a, ios);
         m.remove_position(a);
+        self.screen_map.remove(a);
     }
 
     fn find_actors_in_circle(&self, origin: WPos, r: WDist) -> Vec<ActorRef> {

@@ -43,6 +43,7 @@ use rustora_ui::logic::ingame::Ingame;
 use rustora_ui::logic::installer::InstallerContext;
 use rustora_ui::logic::replay_browser::prompt_confirm_replay_compatibility;
 use rustora_ui::music::MusicPlaylist;
+use rustora_ui::screen_map::ScreenMap;
 use rustora_ui::viewport::Viewport;
 use rustora_ui::widget::{AppRequest, Ui, WidgetArgs};
 
@@ -72,6 +73,8 @@ struct ShellWorld {
     viewport: Rc<RefCell<Viewport>>,
     viewer: Option<PlayerRef>,
     ingame: Option<Rc<Ingame>>,
+    /// The screen map of a world without a game user interface, like the shellmap.
+    screen_map: ScreenMap,
     ended: bool,
     game_over_seen: bool,
     /// The slowdown of a running game that is not a replay, from its first tick attempt on.
@@ -353,6 +356,7 @@ impl ShellWorld {
             viewport,
             viewer,
             ingame: None,
+            screen_map: ScreenMap::default(),
             ended: false,
             game_over_seen: false,
             lag: None,
@@ -384,6 +388,7 @@ impl ShellWorld {
             viewport,
             viewer: None,
             ingame: None,
+            screen_map: ScreenMap::default(),
             ended: false,
             game_over_seen: false,
             lag: None,
@@ -414,6 +419,7 @@ impl ShellWorld {
             viewport,
             viewer: None,
             ingame: None,
+            screen_map: ScreenMap::default(),
             ended: false,
             game_over_seen: false,
             lag: None,
@@ -612,13 +618,16 @@ impl ShellWorld {
         scene.min_zoom = self.viewport.borrow().min_zoom;
         let overlay = self.ingame.as_ref().map_or_else(Vec::new, |i| i.order_generator_renderables());
         let viewer = self.ingame.as_ref().map_or_else(|| self.viewer.clone(), |i| i.render_player());
-        self.quads = scene.build(renderer, world, viewer.as_ref(), &cam, &overlay);
+        let mut ingame_screen_map = self.ingame.as_ref().map(|i| i.screen_map.borrow_mut());
+        let screen_map = match ingame_screen_map.as_deref_mut() {
+            Some(m) => m,
+            None => &mut self.screen_map,
+        };
+        let on_screen = scene.update_screen_map(renderer, world, &cam, screen_map);
+        self.quads = scene.build(renderer, world, viewer.as_ref(), &cam, &on_screen, &overlay);
         self.passes = crate::scene::post_passes(world, scene.after_actors, scene.after_world, self.quads.len());
-        if let Some(ingame) = &self.ingame {
-            let frozen = scene.frozen_mouse_bounds(renderer, world, viewer.as_ref());
-            let mut screen_map = ingame.screen_map.borrow_mut();
-            screen_map.set(scene.mouse_bounds(renderer, world));
-            screen_map.set_frozen(frozen);
+        if self.ingame.is_some() {
+            screen_map.set_frozen(scene.frozen_mouse_bounds(renderer, world, viewer.as_ref()));
         }
     }
 }

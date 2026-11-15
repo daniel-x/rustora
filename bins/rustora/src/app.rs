@@ -36,6 +36,7 @@ struct Gpu {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     scene: Scene,
+    screen_map: rustora_ui::screen_map::ScreenMap,
 }
 
 struct App {
@@ -141,7 +142,12 @@ impl App {
             height: h,
         };
         let viewer = self.viewer.map(|i| self.world.players()[i].clone());
-        let quads = gpu.scene.build(&mut gpu.renderer, &self.world, viewer.as_ref(), &cam, &[]);
+        let on_screen = gpu
+            .scene
+            .update_screen_map(&mut gpu.renderer, &self.world, &cam, &mut gpu.screen_map);
+        let quads = gpu
+            .scene
+            .build(&mut gpu.renderer, &self.world, viewer.as_ref(), &cam, &on_screen, &[]);
         let view = frame.texture.create_view(&Default::default());
         gpu.renderer.render(&view, cam, &quads);
         gpu.renderer.queue.present(frame);
@@ -227,6 +233,7 @@ impl ApplicationHandler for App {
             config,
             renderer,
             scene,
+            screen_map: Default::default(),
         });
         self.last_frame = Instant::now();
     }

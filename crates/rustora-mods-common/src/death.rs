@@ -563,6 +563,7 @@ impl IPositionable for Husk {
 
     fn set_center_position(&self, self_: &ActorRef, pos: WPos) {
         self.center_position.set(pos);
+        self_.world().screen_map.add_or_update(self_);
         let list = self.notify_center_position_changed.borrow().clone();
         for n in list.iter().flatten() {
             n.center_position_changed(self_, 0, 0);

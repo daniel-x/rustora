@@ -433,6 +433,9 @@ impl IRender for WithMuzzleOverlay {
             }
         }
     }
+
+    /// Muzzle flashes don't contribute to actor bounds.
+    fn screen_bounds(&self, _self_: &ActorRef, _out: &mut Vec<rustora_engine::render::ScreenBounds>) {}
 }
 
 /// `Traits/Render/LeavesTrails.cs`.
@@ -714,6 +717,9 @@ impl IRender for ContrailTrait {
             self.trail.borrow().borrow().render(None, out);
         }
     }
+
+    /// Contrails don't contribute to actor bounds.
+    fn screen_bounds(&self, _self_: &ActorRef, _out: &mut Vec<rustora_engine::render::ScreenBounds>) {}
 }
 
 impl INotifyAddedToWorld for ContrailTrait {
@@ -938,6 +944,22 @@ impl IRenderModifier for WithShadow {
             .collect();
         shadows.append(renderables);
         *renderables = shadows;
+    }
+
+    fn modify_screen_bounds(&self, self_: &ActorRef, bounds: &mut Vec<rustora_engine::render::ScreenBounds>) {
+        if self.state.is_trait_disabled() {
+            return;
+        }
+        let height = self_.world().map().distance_above_terrain(self_.center_position()).length;
+        let offset = self.info.offset - WVec::new(0, 0, height);
+        let shadows: Vec<_> = bounds
+            .iter()
+            .map(|b| rustora_engine::render::ScreenBounds::Shifted {
+                inner: Box::new(b.clone()),
+                offset,
+            })
+            .collect();
+        bounds.extend(shadows);
     }
 }
 
@@ -1187,6 +1209,22 @@ impl IRender for WithParachute {
                 s.is_decoration = true;
             }
         }
+    }
+
+    /// Without the `FogObscures` check of C#: the scene draws only the actors that the viewer can see.
+    fn screen_bounds(&self, self_: &ActorRef, out: &mut Vec<rustora_engine::render::ScreenBounds>) {
+        let Some(shadow) = &self.shadow else { return };
+        if self.state.is_trait_disabled() || self_.is_dead() || !self_.is_in_world() {
+            return;
+        }
+        let Some(sequence) = shadow.current_sequence() else { return };
+        let center = self_.center_position();
+        let dat = self_.world().map().distance_above_terrain(center).length;
+        out.push(rustora_engine::render::ScreenBounds::Animation {
+            pos: center - WVec::new(0, 0, dat),
+            offset: self.info.shadow_offset,
+            sequence,
+        });
     }
 }
 
