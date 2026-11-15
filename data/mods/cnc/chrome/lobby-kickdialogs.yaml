@@ -25,12 +25,19 @@ Background@KICK_CLIENT_DIALOG:
 			Align: Center
 			Text: label-kick-client-dialog-text-b
 		Checkbox@PREVENT_REJOINING_CHECKBOX:
-			X: (PARENT_WIDTH - WIDTH) / 2
+			X: PARENT_WIDTH / 2 - 155
 			Y: 120
 			Width: 150
 			Height: 20
 			Font: Regular
 			Text: checkbox-kick-client-dialog-prevent-rejoining
+		Checkbox@BAN_NAME_CHECKBOX:
+			X: PARENT_WIDTH / 2 + 5
+			Y: 120
+			Width: 150
+			Height: 20
+			Font: Regular
+			Text: checkbox-kick-client-dialog-ban-name
 		Button@OK_BUTTON:
 			X: (PARENT_WIDTH - WIDTH) / 2 + 75
 			Y: 155

@@ -476,15 +476,21 @@ fn show_player_action_dropdown(
 ) {
     let index = client.index;
     let client_name = client_name(client);
+    let name = client.name.clone();
     let no_selection: Rc<dyn Fn() -> bool> = Rc::new(|| false);
     let (n, a) = (net.clone(), after.clone());
     let kick: Action = Rc::new(move |ui| {
         before(ui);
         let root = ui.child(lobby, "TOP_PANELS_ROOT");
         let (n, a2) = (n.clone(), a.clone());
-        let ok_pressed: Rc<dyn Fn(&mut Ui, bool)> = Rc::new(move |ui, temp_ban| {
-            n.borrow_mut()
-                .command(&format!("kick {index} {}", if temp_ban { "True" } else { "False" }));
+        let name = name.clone();
+        let ok_pressed: Rc<dyn Fn(&mut Ui, bool, bool)> = Rc::new(move |ui, temp_ban, ban_name| {
+            let mut net = n.borrow_mut();
+            if ban_name {
+                net.ban_name(name.as_deref().unwrap_or_default());
+            }
+            net.command(&crate::net::kick_command(index, temp_ban, ban_name));
+            drop(net);
             a2(ui);
         });
         let args = WidgetArgs::default()
@@ -1005,7 +1011,8 @@ pub fn spawn_tooltip(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<Ref
     cell(logic)
 }
 
-/// Port of `KickClientLogic`.
+/// Port of `KickClientLogic`. rustora adds the `BAN_NAME_CHECKBOX`, which also bans the name of the client. It is
+/// enabled while the temporary ban is checked. `okPressed` gets the temporary ban and the name ban.
 pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let name: String = args.value("clientName").unwrap_or_default();
     let text = message_with(ui, "dialog-kick-client.prompt", &[("player", MessageArg::Text(&name))]);
@@ -1017,13 +1024,22 @@ pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCe
     ui.get::<CheckboxWidget>(checkbox).is_checked = Some(Rc::new(move || t.get()));
     let t = temp_ban.clone();
     ui.button(checkbox).on_click = Some(Rc::new(move |_| t.set(!t.get())));
-    let ok_pressed: Option<Rc<dyn Fn(&mut Ui, bool)>> = args.value("okPressed");
+    let ban_name = Rc::new(Cell::new(false));
+    if let Some(checkbox) = ui.find(widget, "BAN_NAME_CHECKBOX") {
+        let (t, b) = (temp_ban.clone(), ban_name.clone());
+        ui.get::<CheckboxWidget>(checkbox).is_checked = Some(Rc::new(move || t.get() && b.get()));
+        let t = temp_ban.clone();
+        ui.button(checkbox).is_disabled = Some(Rc::new(move || !t.get()));
+        let b = ban_name.clone();
+        ui.button(checkbox).on_click = Some(Rc::new(move |_| b.set(!b.get())));
+    }
+    let ok_pressed: Option<Rc<dyn Fn(&mut Ui, bool, bool)>> = args.value("okPressed");
     let ok = ui.child(widget, "OK_BUTTON");
     ui.button(ok).on_click = Some(Rc::new(move |ui| {
         let parent = ui.node(widget).parent.expect("dialog parent");
         ui.remove_child(parent, widget);
         if let Some(ok_pressed) = &ok_pressed {
-            ok_pressed(ui, temp_ban.get());
+            ok_pressed(ui, temp_ban.get(), temp_ban.get() && ban_name.get());
         }
     }));
     close_with_action(ui, widget, "CANCEL_BUTTON", args.action("cancelPressed"));

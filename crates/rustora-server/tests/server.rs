@@ -145,6 +145,8 @@ const READ_PATIENCE: Duration = Duration::from_secs(10);
 
 struct TestClient {
     identity: Option<Identity>,
+    /// The name in the handshake, `Player<index>` when unset.
+    name: Option<String>,
     stream: Box<dyn ByteStream>,
     received: Receiver<Frame>,
     index: i32,
@@ -204,6 +206,7 @@ impl TestClient {
         });
         TestClient {
             identity: None,
+            name: None,
             stream,
             received,
             index: i32::from_le_bytes(hello[4..8].try_into().unwrap()),
@@ -269,7 +272,7 @@ impl TestClient {
                     version: Some(version.to_string()),
                     orders_protocol: ORDERS_PROTOCOL,
                     client: Client {
-                        name: Some(format!("Player{}", self.index)),
+                        name: Some(self.name.clone().unwrap_or_else(|| format!("Player{}", self.index))),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -495,6 +498,41 @@ fn join_single_player(server: &SinglePlayerServer) -> TestClient {
     let mut c = TestClient::from_stream(Box::new(server.connector.connect().expect("the server runs")));
     assert!(c.pump(VERSION, TestClient::joined), "client was not accepted");
     c
+}
+
+/// Connects to a single player server with `name` and applies server orders until `done` holds.
+fn connect_single_player_as(server: &SinglePlayerServer, name: &str, done: fn(&TestClient) -> bool) -> (TestClient, bool) {
+    let mut c = TestClient::from_stream(Box::new(server.connector.connect().expect("the server runs")));
+    c.name = Some(name.to_string());
+    let reached = c.pump(VERSION, done);
+    (c, reached)
+}
+
+#[test]
+fn kick_with_name_ban_rejects_the_name() {
+    let Some(engine) = engine_dir() else { return };
+    let support = std::env::temp_dir().join(format!("rustora-name-ban-test-{}", std::process::id()));
+    let server = single_player_server(&engine, &support, InitialLobby::Plain);
+    let mut admin = join_single_player(&server);
+    let (mut troll, joined) = connect_single_player_as(&server, "Troll", TestClient::joined);
+    assert!(joined);
+    let troll_index = troll.index;
+    admin.command(&format!("kick {troll_index} True True"));
+    assert!(!troll.pump(VERSION, |_| false));
+    assert!(troll.got("notification-you-were-kicked"), "{:?}", troll.messages);
+
+    let (again, joined) = connect_single_player_as(&server, " troll", TestClient::joined);
+    assert!(!joined);
+    assert!(again.got("notification-you-were-temp-banned"), "{:?}", again.messages);
+    let (_other, joined) = connect_single_player_as(&server, "Other", TestClient::joined);
+    assert!(joined);
+
+    let (mut kicked, joined) = connect_single_player_as(&server, "Kicked", TestClient::joined);
+    assert!(joined);
+    admin.command(&format!("kick {} True", kicked.index));
+    assert!(!kicked.pump(VERSION, |_| false));
+    let (_kicked, joined) = connect_single_player_as(&server, "Kicked", TestClient::joined);
+    assert!(joined, "a temporary ban without the name ban bans only the address");
 }
 
 #[test]

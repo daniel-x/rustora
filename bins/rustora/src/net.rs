@@ -336,6 +336,11 @@ impl NetClient {
             password: password.to_string(),
             connection_state: ConnectionState::Connecting,
             notifications: std::mem::take(&mut net.notifications),
+            banned_names: if net.target == *target {
+                std::mem::take(&mut net.banned_names)
+            } else {
+                Default::default()
+            },
             revision: net.revision + 1,
             ..Default::default()
         };
@@ -652,10 +657,12 @@ pub fn process_client_order(
         "SyncInfo" => {
             net.session = parse(text)?;
             net.revision += 1;
+            net.enforce_name_bans();
         }
         "SyncLobbyClients" => {
             net.session.clients = parse(text)?.clients;
             net.revision += 1;
+            net.enforce_name_bans();
         }
         "SyncLobbySlots" => {
             net.session.slots = parse(text)?.slots;

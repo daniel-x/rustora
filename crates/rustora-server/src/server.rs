@@ -353,6 +353,8 @@ pub struct Server {
     pub random: MersenneTwister,
     pub order_latency: i32,
     pub temp_bans: Vec<String>,
+    /// The lowercase player names that an admin banned with `kick <index> True True`, a rustora extension.
+    pub temp_name_bans: Vec<String>,
     /// `MapPool`: the maps an independent server offers. Other servers offer every map.
     pub map_pool: Option<IndexSet<String>>,
     pub vote_kick: VoteKickTracker,
@@ -490,6 +492,7 @@ impl Server {
             random,
             order_latency: 1,
             temp_bans: Vec::new(),
+            temp_name_bans: Vec::new(),
             map_pool,
             vote_kick: VoteKickTracker::default(),
             master_server,
@@ -721,8 +724,12 @@ impl Server {
                 return self.reject(player_index, "ServerError", "notification-you-were-temp-banned", "banned");
             }
         }
+        let name = sanitized_player_name(handshake.client.name.as_deref().unwrap_or(""));
+        if self.temp_name_bans.contains(&name.trim().to_lowercase()) {
+            return self.reject(player_index, "ServerError", "notification-you-were-temp-banned", "name banned");
+        }
         let client = Client {
-            name: Some(sanitized_player_name(handshake.client.name.as_deref().unwrap_or(""))),
+            name: Some(name),
             anonymized_ip_address: ip
                 .filter(|_| self.is_multiplayer() && self.settings.share_anonymized_ips)
                 .and_then(anonymize_ip),

@@ -154,6 +154,10 @@ pub struct NetState {
     pub outgoing: Vec<RawOrder>,
     /// The `Game.BeforeGameStart` handler.
     pub before_game_start: Option<crate::widget::Action>,
+    /// The names this client banned as admin, lowercase. rustora enforces them on servers without name bans.
+    pub banned_names: std::collections::HashSet<String>,
+    /// The client indexes that [`NetState::enforce_name_bans`] kicked already.
+    pub name_ban_kicks: std::collections::HashSet<i32>,
 }
 
 impl NetState {
@@ -176,11 +180,53 @@ impl NetState {
         self.outgoing.push(RawOrder::command(text));
     }
 
+    /// Remembers a banned client name for [`NetState::enforce_name_bans`].
+    pub fn ban_name(&mut self, name: &str) {
+        let name = name.trim().to_lowercase();
+        if !name.is_empty() {
+            self.banned_names.insert(name);
+        }
+    }
+
+    /// Kicks and bans each human client with a banned name while the local client is admin, once per client index.
+    /// A rustora server rejects these clients itself; an OpenRA server ignores the name ban.
+    pub fn enforce_name_bans(&mut self) {
+        if !self.is_host() {
+            return;
+        }
+        let targets: Vec<i32> = self
+            .session
+            .clients
+            .iter()
+            .filter(|c| c.index != self.local_client_id && !c.is_bot() && !self.name_ban_kicks.contains(&c.index))
+            .filter(|c| {
+                c.name
+                    .as_deref()
+                    .is_some_and(|n| self.banned_names.contains(&n.trim().to_lowercase()))
+            })
+            .map(|c| c.index)
+            .collect();
+        for index in targets {
+            self.name_ban_kicks.insert(index);
+            self.command(&kick_command(index, true, true));
+        }
+    }
+
     /// `IssueOrder(Order.Chat(text, team))`.
     pub fn chat(&mut self, text: &str, team: u32) {
         let mut order = RawOrder::from_target_string("Chat", text, true);
         order.extra_data = team;
         self.outgoing.push(order);
+    }
+}
+
+/// The `kick` command. rustora adds the name ban as third argument, which OpenRA servers ignore.
+pub fn kick_command(index: i32, temp_ban: bool, ban_name: bool) -> String {
+    let flag = |b: bool| if b { "True" } else { "False" };
+    if ban_name {
+        format!("kick {index} {} True", flag(temp_ban))
+    } else {
+        format!("kick {index} {}", flag(temp_ban))
     }
 }
 
@@ -191,3 +237,58 @@ pub fn is_ready(client: &Client) -> bool {
 
 /// The shared handle that logic classes capture.
 pub type Net = Rc<std::cell::RefCell<NetState>>;
+
+#[cfg(test)]
+mod tests {
+    use rustora_net::session::{Client, Session};
+
+    use super::{NetState, kick_command};
+
+    fn client(index: i32, name: &str, is_admin: bool) -> Client {
+        Client {
+            index,
+            name: Some(name.to_string()),
+            is_admin,
+            ..Client::default()
+        }
+    }
+
+    #[test]
+    fn kick_commands() {
+        assert_eq!(kick_command(3, false, false), "kick 3 False");
+        assert_eq!(kick_command(3, true, false), "kick 3 True");
+        assert_eq!(kick_command(3, true, true), "kick 3 True True");
+    }
+
+    #[test]
+    fn the_admin_kicks_a_banned_name_once() {
+        let mut net = NetState {
+            local_client_id: 0,
+            session: Session {
+                clients: vec![client(0, "Admin", true), client(1, "Other", false), client(2, "Troll", false)],
+                ..Session::default()
+            },
+            ..NetState::default()
+        };
+        net.ban_name(" troll ");
+        net.enforce_name_bans();
+        net.enforce_name_bans();
+        let sent: Vec<String> = net.outgoing.iter().map(|o| o.target_string.clone().unwrap_or_default()).collect();
+        assert_eq!(sent, vec!["kick 2 True True".to_string()]);
+    }
+
+    #[test]
+    fn a_client_without_admin_rights_kicks_nobody() {
+        let mut net = NetState {
+            local_client_id: 1,
+            session: Session {
+                clients: vec![client(0, "Admin", true), client(1, "Other", false), client(2, "Troll", false)],
+                ..Session::default()
+            },
+            ..NetState::default()
+        };
+        net.ban_name("Troll");
+        net.enforce_name_bans();
+        assert!(net.outgoing.is_empty());
+    }
+}

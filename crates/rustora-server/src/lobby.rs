@@ -564,6 +564,8 @@ impl Server {
         self.lobby.client_with_index(index).cloned()
     }
 
+    /// `kick <index> <temp ban>`. rustora adds an optional third argument, which also bans the name of the client
+    /// along with the temporary ban.
     fn cmd_kick(&mut self, conn: i32, client: &Client, s: &str) -> bool {
         if !client.is_admin {
             self.send_fluent_message_to(conn, "notification-admin-kick", &[]);
@@ -597,6 +599,12 @@ impl Server {
         if parse_bool(split[1]) == Some(true) {
             self.send_fluent_message("notification-temp-ban", &[("admin", (&admin).into()), ("player", (&player).into())]);
             self.temp_bans.extend(address);
+            if split.get(2).and_then(|b| parse_bool(b)) == Some(true) {
+                let name = player.trim().to_lowercase();
+                if !name.is_empty() && !self.temp_name_bans.contains(&name) {
+                    self.temp_name_bans.push(name);
+                }
+            }
         }
         self.sync_lobby_clients();
         self.sync_lobby_slots();
@@ -942,6 +950,7 @@ impl Server {
     /// `INotifyServerEmpty`.
     pub fn server_empty(&mut self) {
         self.temp_bans.clear();
+        self.temp_name_bans.clear();
         self.lobby.global_settings.allow_spectators = true;
         self.reset_slots();
     }
