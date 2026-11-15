@@ -29,8 +29,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin,aarch64-apple-darwin' || '' }}
+      # A plain download, because mlugg/setup-zig still runs on the deprecated Node.js 20.
       - if: runner.os == 'Linux'
-        uses: mlugg/setup-zig@v2
+        shell: bash
+        run: |
+          curl -sSfL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz | tar -xJ -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-linux-0.15.2" >> "$GITHUB_PATH"
       - if: runner.os == 'Linux'
         uses: taiki-e/install-action@v2
         with:
