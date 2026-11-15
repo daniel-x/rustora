@@ -37,6 +37,7 @@ pub fn register(r: &mut TraitRegistry) {
     r.register("RenderRangeCircle", |n| load_info!(RenderRangeCircleInfo, n));
     r.register("RenderDetectionCircle", |n| load_info!(RenderDetectionCircleInfo, n));
     r.register("RenderShroudCircle", |n| load_info!(RenderShroudCircleInfo, n));
+    r.register("RenderJammerCircle", |n| load_info!(RenderJammerCircleInfo, n));
     r.register("WithRangeCircle", |n| load_info!(WithRangeCircleInfo, n));
 }
 
@@ -791,6 +792,71 @@ impl IRenderCircles for RenderShroudCircle {
     }
 }
 
+/// `Traits/Render/RenderJammerCircle.cs`: the `JamsMissiles` range of a selected allied actor.
+#[derive(Clone, Debug, FieldLoad)]
+pub struct RenderJammerCircleInfo {
+    #[field(ignore)]
+    pub instance_name: Option<String>,
+    #[field(flatten)]
+    pub base: ConditionalTraitInfo,
+    pub color: Color,
+    pub width: f32,
+    pub border_color: Color,
+    pub border_width: f32,
+}
+
+impl Default for RenderJammerCircleInfo {
+    fn default() -> Self {
+        let (color, width, border_color, border_width) = circle_defaults!((255, 0, 0));
+        RenderJammerCircleInfo {
+            instance_name: None,
+            base: ConditionalTraitInfo::default(),
+            color,
+            width,
+            border_color,
+            border_width,
+        }
+    }
+}
+
+impl RenderJammerCircleInfo {
+    /// The circle of the first `JamsMissiles` range of `actor` at `center`.
+    fn circle(&self, actor: &rustora_engine::actor_info::ActorInfo, center: WPos) -> Option<AnnotationCircle> {
+        let jams = actor.trait_info::<crate::weapons::JamsMissilesInfo>()?;
+        Some(AnnotationCircle {
+            center,
+            radius: jams.range,
+            color: self.color,
+            width: self.width,
+            border_color: self.border_color,
+            border_width: self.border_width,
+            trail: None,
+        })
+    }
+}
+
+#[derive(rustora_engine::persist::Persist)]
+pub struct RenderJammerCircle {
+    info: Rc<RenderJammerCircleInfo>,
+    state: ConditionalState,
+}
+
+register_traits!(RenderJammerCircle: IRenderCircles, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
+info_impl!(RenderJammerCircleInfo => |info, _init| Some(Rc::new(RenderJammerCircle {
+    state: ConditionalState::new(&info.base),
+    info,
+})));
+conditional_simple!(RenderJammerCircle);
+
+impl IRenderCircles for RenderJammerCircle {
+    fn circles(&self, self_: &ActorRef, viewer: Option<&PlayerRef>, selected: bool, out: &mut Vec<AnnotationCircle>) {
+        if !selected || self.state.is_trait_disabled() || !allied_with_viewer(self_, viewer) {
+            return;
+        }
+        out.extend(self.info.circle(&self_.info, self_.center_position()));
+    }
+}
+
 /// `Traits/Render/WithRangeCircle.cs`.
 #[derive(Clone, Debug, FieldLoad)]
 pub struct WithRangeCircleInfo {
@@ -946,6 +1012,17 @@ pub fn place_building_circles(
             border_width: info.border_width,
             trail: None,
         });
+    }
+    for info in actor.trait_infos::<RenderJammerCircleInfo>() {
+        if !info.base.enabled_by_default() {
+            continue;
+        }
+        out.extend(info.circle(actor, center));
+        for (a, r) in world.actors_with_trait::<RenderJammerCircle>() {
+            if live(&a) {
+                r.circles(&a, viewer, true, out);
+            }
+        }
     }
 }
 
