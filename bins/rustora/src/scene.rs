@@ -15,7 +15,7 @@ use rustora_engine::render::{Renderable, ScreenBounds, actor_screen_bounds, rend
 use rustora_engine::world::World;
 use rustora_mods_common::palettes::ShroudRendererInfo;
 use rustora_mods_common::render::WithSpriteBody;
-use rustora_mods_common::resources::ResourceLayer;
+use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
 use rustora_mods_common::selection::mouse_bounds_info;
 use rustora_mods_common::smudge::SmudgeLayer;
 use rustora_mods_common::visibility::FrozenUnderFog;
@@ -351,7 +351,7 @@ impl Scene {
                 ));
             }
         }
-        self.add_resources(renderer, world, &cells, &mut quads);
+        self.add_resources(renderer, world, viewer, &cells, &mut quads);
         self.add_smudges(renderer, world, viewer, &cells, &mut quads);
         let lighting = world
             .world_actor()
@@ -726,16 +726,20 @@ impl Scene {
         quads.append(&mut shroud_quads);
     }
 
-    /// `ResourceRenderer` of RA: the frame follows the density, the variant is a per-cell hash instead of
-    /// `World.LocalRandom`.
-    fn add_resources(&mut self, renderer: &mut Renderer, world: &World, cells: &[CPos], quads: &mut Vec<Quad>) {
+    /// `ResourceRenderer` of RA: draws the resources as `viewer` last saw them. The frame follows the density, the
+    /// variant is a per-cell hash instead of `World.LocalRandom`.
+    fn add_resources(&mut self, renderer: &mut Renderer, world: &World, viewer: Option<&PlayerRef>, cells: &[CPos], quads: &mut Vec<Quad>) {
         let Some(layer) = world.world_actor().trait_or_default::<ResourceLayer>() else {
             return;
         };
+        let Some(seen) = world.world_actor().trait_or_default::<ResourceRenderer>() else {
+            return;
+        };
+        seen.tick_render(world, viewer);
         let seqs = world.map().sequences().clone();
         let player_row = self.palettes.named("player");
         for &c in cells {
-            let r = layer.get_resource(c);
+            let r = seen.contents(c);
             let Some(ty) = r.ty.as_deref() else { continue };
             if r.density <= 0 {
                 continue;

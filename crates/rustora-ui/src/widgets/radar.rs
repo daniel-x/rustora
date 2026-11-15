@@ -10,7 +10,7 @@ use std::rc::Rc;
 use rustora_core::fieldloader::Color;
 use rustora_core::world_types::{CPos, MersenneTwister};
 use rustora_mods_common::radar::{AppearsOnRadar, RadarPings};
-use rustora_mods_common::resources::ResourceLayer;
+use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
 use rustora_render::ui::UiTexture;
 
 use super::impl_as_any;
@@ -128,10 +128,14 @@ impl RadarWidget {
         let Some(layer) = world.world_actor().trait_or_default::<ResourceLayer>() else {
             return out;
         };
+        let Some(seen) = world.world_actor().trait_or_default::<ResourceRenderer>() else {
+            return out;
+        };
+        seen.tick_render(world, ingame.render_player().as_ref());
         let b = self.bounds;
         for y in b.y..b.bottom() {
             for x in b.x..b.right() {
-                let Some(ty) = layer.get_resource(CPos::new(x, y)).ty else {
+                let Some(ty) = seen.contents(CPos::new(x, y)).ty else {
                     continue;
                 };
                 let Some(info) = layer.info.resource_types.get(&*ty) else {

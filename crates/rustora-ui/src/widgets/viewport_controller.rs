@@ -13,7 +13,7 @@ use rustora_engine::frozen::FrozenActorRef;
 use rustora_engine::player::PlayerRef;
 use rustora_engine::traits::IDisabledTrait;
 use rustora_mods_common::cosmetic::ScreenShaker;
-use rustora_mods_common::resources::{ResourceLayer, ResourceRenderer};
+use rustora_mods_common::resources::ResourceRenderer;
 use rustora_mods_common::selection::SelectableInfo;
 use rustora_mods_common::tooltip::{Tooltip, TooltipInfo};
 
@@ -205,15 +205,11 @@ impl ViewportControllerWidget {
         {
             return WorldTooltip::FrozenActor(f, info, owner);
         }
-        let world_actor = ingame.world.world_actor();
-        let (Some(layer), Some(renderer)) = (
-            world_actor.trait_or_default::<ResourceLayer>(),
-            world_actor.trait_or_default::<ResourceRenderer>(),
-        ) else {
+        let Some(renderer) = ingame.world.world_actor().trait_or_default::<ResourceRenderer>() else {
             return WorldTooltip::None;
         };
-        let resource = layer.get_resource(cell);
-        resource
+        renderer
+            .contents(cell)
             .ty
             .as_deref()
             .and_then(|ty| renderer.info.resource_types.get(ty))

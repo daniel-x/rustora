@@ -4,7 +4,7 @@
 //! Port of `Traits/World/ResourceLayer.cs` and `Traits/SeedsResource.cs`.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use indexmap::{IndexMap, IndexSet};
@@ -15,6 +15,7 @@ use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::conditional::*;
 use rustora_engine::map::CellLayer;
+use rustora_engine::player::PlayerRef;
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::*;
 use rustora_engine::world::World;
@@ -99,13 +100,61 @@ fn load_resource_names(yaml: &MiniYaml) -> Result<IndexMap<String, String>, Load
     Ok(ret)
 }
 
+/// `ResourceRenderer`: the resources as the render player last saw them. The drawing itself lives in the client.
 #[derive(rustora_engine::persist::Persist)]
 pub struct ResourceRenderer {
     pub info: Rc<ResourceRendererInfo>,
+    /// `RenderContents`, created at the first `tick_render`.
+    #[persist(skip)]
+    contents: RefCell<Option<CellLayer<ResourceLayerContents>>>,
+    /// The cells whose resources changed since the render player last saw them.
+    #[persist(skip)]
+    dirty: Rc<RefCell<HashSet<CPos>>>,
 }
 
 register_traits!(ResourceRenderer);
-info_impl!(ResourceRendererInfo => |info, _init| Some(Rc::new(ResourceRenderer { info })));
+info_impl!(ResourceRendererInfo => |info, _init| Some(Rc::new(ResourceRenderer {
+    info,
+    contents: RefCell::default(),
+    dirty: Rc::default(),
+})));
+
+impl ResourceRenderer {
+    /// `ITickRender.TickRender`: takes over the changed cells that `viewer` sees, like `IsVisible`, which is
+    /// `!World.FogObscures`. The first call marks every cell as changed, like `WorldLoaded`.
+    pub fn tick_render(&self, world: &World, viewer: Option<&PlayerRef>) {
+        let Some(layer) = world.world_actor().trait_or_default::<ResourceLayer>() else {
+            return;
+        };
+        let mut contents = self.contents.borrow_mut();
+        let contents = contents.get_or_insert_with(|| {
+            let dirty = self.dirty.clone();
+            layer.on_cell_changed(Rc::new(move |cell, _| {
+                dirty.borrow_mut().insert(cell);
+            }));
+            self.dirty.borrow_mut().extend(world.map().all_cells());
+            let (w, h) = world.map().map_size;
+            CellLayer::new(w, h, ResourceLayerContents::default())
+        });
+        self.dirty.borrow_mut().retain(|&cell| {
+            if viewer.is_some_and(|v| !v.shroud().is_visible(cell)) {
+                return true;
+            }
+            if contents.contains_cell(cell) {
+                contents.set_at(cell, layer.get_resource(cell));
+            }
+            false
+        });
+    }
+
+    /// The resources of `cell` as the render player last saw them.
+    pub fn contents(&self, cell: CPos) -> ResourceLayerContents {
+        match &*self.contents.borrow() {
+            Some(c) if c.contains_cell(cell) => c.at(cell).clone(),
+            _ => ResourceLayerContents::default(),
+        }
+    }
+}
 
 pub type ResourceCellChanged = Rc<dyn Fn(CPos, Option<&str>)>;
 
