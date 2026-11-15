@@ -64,7 +64,7 @@ pub const CLIENT_CHANNELS: &[ChannelSpec] = &[
     ChannelSpec::new("graphics", "graphics.log", false, true),
     ChannelSpec::new("geoip", "geoip.log", false, true),
     ChannelSpec::new("nat", "nat.log", false, true),
-    ChannelSpec::new("client", "client.log", false, true),
+    ChannelSpec::new("client", "client.log", true, true),
     ChannelSpec::new("lua", "lua.log", false, false),
     ChannelSpec::new("install", "install.log", false, false),
     ChannelSpec::new("sync", "syncreport.log", false, false),

@@ -222,6 +222,8 @@ pub struct NetClient {
     setup_orders: Vec<RawOrder>,
     /// The `SaveLastOrdersFrame` and `SaveSyncFrame` of the `StartGame` order of a game save.
     game_save_frames: Option<(i32, i32)>,
+    /// When `pump` last ran with a connection, to log gaps.
+    last_pump: Option<Instant>,
 }
 
 /// Ends the servers with the client, so the single player server thread can end too.
@@ -250,6 +252,7 @@ impl NetClient {
             connection: None,
             setup_orders: Vec::new(),
             game_save_frames: None,
+            last_pump: None,
         }
     }
 
@@ -441,6 +444,7 @@ impl NetClient {
 
     /// Takes the connection and the final session when `StartGame` arrived.
     pub fn take_connection(&mut self) -> Option<NetworkConnection> {
+        self.last_pump = None;
         self.connection.take()
     }
 
@@ -474,8 +478,16 @@ impl NetClient {
             return false;
         }
         let Some(connection) = &mut self.connection else {
+            self.last_pump = None;
             return false;
         };
+        let now = Instant::now();
+        if let Some(gap) = self.last_pump.map(|t| now.duration_since(t))
+            && gap > rustora_launch::net_client::DIAGNOSTIC_GAP
+        {
+            log::warn!(target: "client", "The client processed no network packets for {:.1} s.", gap.as_secs_f64());
+        }
+        self.last_pump = Some(now);
         let mut started = false;
         let mut lobby_changed = false;
         while let Some(incoming) = connection.next_incoming() {

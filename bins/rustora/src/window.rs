@@ -106,6 +106,8 @@ struct App {
     next_render: Instant,
     forced_next_render: Instant,
     render_before_next_tick: bool,
+    /// When the last logic tick ran, to log gaps.
+    last_logic_tick: Instant,
 }
 
 /// The system clipboard. It is empty and ignores writes where the system offers none.
@@ -235,6 +237,7 @@ impl App {
             next_render: now,
             forced_next_render: now,
             render_before_next_tick: false,
+            last_logic_tick: Instant::now(),
         }
     }
 }
@@ -682,6 +685,11 @@ impl ApplicationHandler for App {
         let force_render = self.render_before_next_tick || now >= self.forced_next_render;
         if now >= self.next_logic && !self.render_before_next_tick {
             self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
+            let gap = now.saturating_duration_since(self.last_logic_tick);
+            if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
+                log::warn!(target: "client", "No logic tick ran for {:.1} s.", gap.as_secs_f64());
+            }
+            self.last_logic_tick = now;
             self.client.logic_tick();
             if self.client.renders_every_tick() {
                 self.render_before_next_tick = true;

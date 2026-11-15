@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustora_client::game_information::GameInformation;
 use rustora_client::replay::ReplayRecorder;
@@ -31,6 +31,10 @@ use rustora_net::session::{Client, ClientState, Session};
 use crate::skirmish::BotSpec;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The longest silence of the server before the client treats the connection as lost. OpenRA and rustora
+/// servers ping every client once a second, so only a dead connection stays silent this long. Without it, a
+/// connection whose end the client never learns of, for example after a network change, would look alive.
+const RECEIVE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn read_i32(stream: &mut dyn ByteStream) -> std::io::Result<i32> {
     let mut b = [0u8; 4];
@@ -38,9 +42,18 @@ fn read_i32(stream: &mut dyn ByteStream) -> std::io::Result<i32> {
     Ok(i32::from_le_bytes(b))
 }
 
+/// The silence after which the client logs a gap, to find where a connection stalls.
+pub const DIAGNOSTIC_GAP: Duration = Duration::from_secs(5);
+
 fn receive_loop(mut stream: Box<dyn ByteStream>, packets: std::sync::mpsc::Sender<(i32, Vec<u8>)>) -> std::io::Result<()> {
+    let mut last_packet = Instant::now();
     loop {
         let length = read_i32(stream.as_mut())?;
+        let gap = last_packet.elapsed();
+        if gap > DIAGNOSTIC_GAP {
+            log::warn!(target: "client", "The server sent nothing for {:.1} s.", gap.as_secs_f64());
+        }
+        last_packet = Instant::now();
         let client = read_i32(stream.as_mut())?;
         if length <= 0 {
             return Err(std::io::ErrorKind::InvalidData.into());
@@ -77,12 +90,18 @@ impl Drop for NetworkConnection {
 impl NetworkConnection {
     /// Connects to `address` and reads the handshake version and the client index.
     pub fn connect(address: &str) -> Result<NetworkConnection, String> {
+        NetworkConnection::connect_with_timeout(address, RECEIVE_TIMEOUT)
+    }
+
+    /// Connects like [`NetworkConnection::connect`] and treats `receive_timeout` of silence as a lost connection.
+    fn connect_with_timeout(address: &str, receive_timeout: Duration) -> Result<NetworkConnection, String> {
         let addresses: Vec<_> = address.to_socket_addrs().map_err(|e| format!("{address}: {e}"))?.collect();
         let stream = addresses
             .iter()
             .find_map(|a| TcpStream::connect_timeout(a, CONNECT_TIMEOUT).ok())
             .ok_or_else(|| format!("Failed to connect to {address}"))?;
         stream.set_nodelay(true).map_err(|e| e.to_string())?;
+        stream.set_read_timeout(Some(receive_timeout)).map_err(|e| e.to_string())?;
         NetworkConnection::from_stream(Box::new(stream))
     }
 
@@ -100,7 +119,10 @@ impl NetworkConnection {
         let connected = Arc::new(AtomicBool::new(true));
         let flag = connected.clone();
         std::thread::spawn(move || {
-            let _ = receive_loop(reader, send);
+            match receive_loop(reader, send) {
+                Ok(()) => log::info!(target: "client", "The connection closed on the client side."),
+                Err(e) => log::warn!(target: "client", "The connection ended: {e}"),
+            }
             flag.store(false, Ordering::Relaxed);
         });
         Ok(NetworkConnection {
@@ -473,6 +495,23 @@ pub fn join_game(engine: &Path, support: &str, address: &str, options: &JoinOpti
 mod tests {
     use super::*;
     use rustora_net::session::Slot;
+
+    #[test]
+    fn a_silent_server_counts_as_a_lost_connection() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.write_all(&HANDSHAKE_PROTOCOL.to_le_bytes()).unwrap();
+            socket.write_all(&1i32.to_le_bytes()).unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+            socket
+        });
+        let connection = NetworkConnection::connect_with_timeout(&address, Duration::from_millis(300)).unwrap();
+        std::thread::sleep(Duration::from_secs(1));
+        assert!(!connection.is_connected());
+        drop(server.join().unwrap());
+    }
 
     fn lobby_with_host() -> Session {
         let mut lobby = Session {
