@@ -536,20 +536,26 @@ impl Scene {
         }
     }
 
-    /// The `MouseBounds` of the visible frozen actors of `viewer`, from their interactable bounds at the frozen
-    /// position, or the auto bounds of the actor while it exists.
+    /// The `MouseBounds` of the visible frozen actors of `viewer` in the cells that `cam` shows, the cells whose
+    /// frozen actors the scene draws, from their interactable bounds at the frozen position, or the auto bounds of
+    /// the actor while it exists.
     pub fn frozen_mouse_bounds(
         &mut self,
         renderer: &mut Renderer,
         world: &World,
         viewer: Option<&PlayerRef>,
+        cam: &Camera,
     ) -> Vec<rustora_ui::screen_map::FrozenActorBounds> {
         let Some(layer) = viewer.and_then(|v| v.player_actor().trait_or_default::<FrozenActorLayer>()) else {
             return Vec::new();
         };
-        let (w, h) = world.map().map_size;
+        let mut cells = Self::visible_cells(world, cam);
+        let Some(first) = cells.next() else {
+            return Vec::new();
+        };
+        let last = cells.last().unwrap_or(first);
         let mut out = Vec::new();
-        for frozen in layer.frozen_actors_in_region(CPos::new(0, 0), CPos::new(w, h), true) {
+        for frozen in layer.frozen_actors_in_region(first, last, true) {
             let Some(info) = mouse_bounds_info(frozen.info()) else {
                 continue;
             };
