@@ -11,10 +11,10 @@ use std::net::{TcpStream, ToSocketAddrs};
 use rustora_net::stream::ByteStream;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rustora_client::game_information::GameInformation;
 use rustora_client::replay::ReplayRecorder;
@@ -32,64 +32,13 @@ use crate::skirmish::BotSpec;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long the main thread may leave server pings unanswered before the receive thread answers them. An OpenRA
-/// server drops a client after 60 seconds without an answer.
-const PING_FALLBACK_AFTER: Duration = Duration::from_secs(5);
-
-/// The writing end of the connection, shared by the main thread and the receive thread.
-type Writer = Arc<Mutex<Box<dyn ByteStream>>>;
-
-/// When the main thread last answered a ping, shared with the receive thread.
-#[derive(Clone)]
-struct PingAnswers {
-    start: Instant,
-    last_ms: Arc<AtomicU64>,
-}
-
-impl PingAnswers {
-    fn new() -> PingAnswers {
-        PingAnswers {
-            start: Instant::now(),
-            last_ms: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    fn answered(&self) {
-        self.last_ms.store(self.start.elapsed().as_millis() as u64, Ordering::Relaxed);
-    }
-
-    fn overdue(&self) -> bool {
-        let last = Duration::from_millis(self.last_ms.load(Ordering::Relaxed));
-        self.start.elapsed().saturating_sub(last) > PING_FALLBACK_AFTER
-    }
-}
-
-/// The ping reply packet. The queue length is reported as 0, the server does not use it yet.
-fn ping_response(timestamp: i64) -> Vec<u8> {
-    let mut data = 0i32.to_le_bytes().to_vec();
-    data.push(order_type::PING);
-    data.extend_from_slice(&timestamp.to_le_bytes());
-    data.push(0);
-    let mut out = (data.len() as i32).to_le_bytes().to_vec();
-    out.extend_from_slice(&data);
-    out
-}
-
 fn read_i32(stream: &mut dyn ByteStream) -> std::io::Result<i32> {
     let mut b = [0u8; 4];
     stream.read_exact(&mut b)?;
     Ok(i32::from_le_bytes(b))
 }
 
-/// Reads packets for the main thread. Like C#, the main thread answers pings, so that the ping time includes a slow
-/// world tick. While the main thread stalls, this thread answers them, so the server does not drop the client.
-fn receive_loop(
-    mut stream: Box<dyn ByteStream>,
-    packets: std::sync::mpsc::Sender<(i32, Vec<u8>)>,
-    writer: Writer,
-    pings: PingAnswers,
-) -> std::io::Result<()> {
-    let mut warned = false;
+fn receive_loop(mut stream: Box<dyn ByteStream>, packets: std::sync::mpsc::Sender<(i32, Vec<u8>)>) -> std::io::Result<()> {
     loop {
         let length = read_i32(stream.as_mut())?;
         let client = read_i32(stream.as_mut())?;
@@ -98,15 +47,6 @@ fn receive_loop(
         }
         let mut data = vec![0u8; length as usize];
         stream.read_exact(&mut data)?;
-        if let Ok(Packet::Ping { timestamp }) = Packet::parse(client, &data)
-            && pings.overdue()
-        {
-            if !warned {
-                log::warn!("The main thread answers no server pings; the network thread answers them.");
-                warned = true;
-            }
-            let _ = writer.lock().unwrap().write_all(&ping_response(timestamp));
-        }
         if packets.send((client, data)).is_err() {
             return Ok(());
         }
@@ -116,8 +56,7 @@ fn receive_loop(
 /// `NetworkConnection`: a thread reads packets; orders the client sent wait in queues until the server
 /// acknowledges them, because the server does not send a client's own orders back.
 pub struct NetworkConnection {
-    stream: Writer,
-    pings: PingAnswers,
+    stream: Box<dyn ByteStream>,
     client_id: i32,
     received: Receiver<(i32, Vec<u8>)>,
     connected: Arc<AtomicBool>,
@@ -131,7 +70,7 @@ pub struct NetworkConnection {
 /// Closes the stream, so the server notices at once that the client left.
 impl Drop for NetworkConnection {
     fn drop(&mut self) {
-        self.stream.lock().unwrap().shutdown_stream();
+        self.stream.shutdown_stream();
     }
 }
 
@@ -160,16 +99,12 @@ impl NetworkConnection {
         let (send, received) = channel();
         let connected = Arc::new(AtomicBool::new(true));
         let flag = connected.clone();
-        let stream: Writer = Arc::new(Mutex::new(stream));
-        let pings = PingAnswers::new();
-        let (writer, thread_pings) = (stream.clone(), pings.clone());
         std::thread::spawn(move || {
-            let _ = receive_loop(reader, send, writer, thread_pings);
+            let _ = receive_loop(reader, send);
             flag.store(false, Ordering::Relaxed);
         });
         Ok(NetworkConnection {
             stream,
-            pings,
             client_id,
             received,
             connected,
@@ -210,14 +145,16 @@ impl NetworkConnection {
             out.extend_from_slice(&q);
             self.sent_sync.push_back(s);
         }
-        let _ = self.stream.lock().unwrap().write_all(&out);
+        let _ = self.stream.write_all(&out);
     }
 
-    /// Answers a server ping, together with the queued sync packets.
+    /// The ping reply. The queue length is reported as 0, the server does not use it yet.
     fn send_ping_response(&mut self, timestamp: i64) {
-        self.pings.answered();
-        let response = ping_response(timestamp);
-        self.send_packet(&response[4..]);
+        let mut data = 0i32.to_le_bytes().to_vec();
+        data.push(order_type::PING);
+        data.extend_from_slice(&timestamp.to_le_bytes());
+        data.push(0);
+        self.send_packet(&data);
     }
 
     /// Takes the next thing to process, in the order of `IConnection.Receive`.
