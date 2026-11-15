@@ -176,6 +176,19 @@ impl SkirmishDriver {
         }
     }
 
+    /// Plays the replay of `connection` in `world`. Like `Game.JoinReplay`, the game starts with the `StartGame`
+    /// order of the replay, so the packets before it, like the disconnects of clients that the server dropped at the
+    /// start, concern no client of the game.
+    pub fn replay(world: &Rc<World>, connection: Box<dyn Connection>) -> SkirmishDriver {
+        let mut orders = OrderManager::new(world.clone(), connection);
+        orders.start_on_order = true;
+        SkirmishDriver {
+            orders,
+            world: world.clone(),
+            end_game_frame: None,
+        }
+    }
+
     /// Continues the restored save game in `world` with the orders of `connection`. The bots keep the activation
     /// state of the save.
     pub fn resumed_with_connection(world: &Rc<World>, connection: Box<dyn Connection>) -> SkirmishDriver {

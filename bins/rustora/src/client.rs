@@ -376,7 +376,7 @@ impl ShellWorld {
     ) -> ShellWorld {
         let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, true, WorldType::Regular, true);
         let connection = ReplayConnection::new(replay.chunks, world.order_latency);
-        let driver = SkirmishDriver::with_connection(&world, Box::new(connection), false);
+        let driver = SkirmishDriver::replay(&world, Box::new(connection));
         let viewport = world_viewport(&world, view, distance);
         ShellWorld {
             world,
