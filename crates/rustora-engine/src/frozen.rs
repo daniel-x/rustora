@@ -66,6 +66,8 @@ pub struct FrozenActor {
     #[persist(skip)]
     pub renderables: RefCell<Rc<Vec<crate::render::Renderable>>>,
     pub update_visibility_next_tick: Cell<bool>,
+    /// `tooltips`: the tooltip traits of the actor, collected at creation because the actor can be destroyed later.
+    tooltips: Vec<Rc<dyn ITooltip>>,
     /// `TooltipInfo` and `TooltipOwner`: the first enabled tooltip and its owner when the actor was last seen.
     tooltip: RefCell<Option<Rc<dyn ITooltip>>>,
     tooltip_owner: RefCell<Option<PlayerRef>>,
@@ -102,6 +104,7 @@ impl FrozenActor {
             render_pending: Cell::new(starts_revealed),
             rendered: Cell::new(false),
             update_visibility_next_tick: Cell::new(false),
+            tooltips: actor.traits_implementing::<dyn ITooltip>(),
             tooltip: RefCell::new(None),
             tooltip_owner: RefCell::new(None),
         });
@@ -170,17 +173,12 @@ impl FrozenActor {
             self.hp.set(h.hp());
             self.damage_state.set(h.damage_state());
         }
-        let tooltip = self
-            .actor
-            .traits_implementing::<dyn ITooltip>()
-            .into_iter()
-            .find(|t| t.is_tooltip_enabled());
-        if let Some(t) = tooltip {
+        if let Some(t) = self.tooltips.iter().find(|t| t.is_tooltip_enabled()) {
             *self.tooltip_owner.borrow_mut() = match &self.actor.cache().effective_owner {
                 Some(eo) => eo.owner(),
                 None => self.actor.owner_opt(),
             };
-            *self.tooltip.borrow_mut() = Some(t);
+            *self.tooltip.borrow_mut() = Some(t.clone());
         }
     }
 
