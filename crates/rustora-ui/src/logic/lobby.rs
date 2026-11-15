@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use rustora_client::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
 use rustora_core::miniyaml::MiniYamlNode;
-use rustora_net::session::{Client, Slot};
+use rustora_net::session::{Client, Session, Slot};
 
 use crate::fluent::MessageArg;
 use crate::loader::cell;
@@ -40,6 +40,18 @@ enum PanelType {
     Servers,
     Kick,
     ForceStart,
+}
+
+/// Drops the clients that are no longer spectators from `order`, appends the new spectators in session order and
+/// returns the order.
+fn update_spectator_order(order: &mut Vec<i32>, session: &Session) -> Vec<i32> {
+    order.retain(|&index| session.client_with_index(index).is_some_and(|c| c.slot.is_none()));
+    for client in session.clients.iter().filter(|c| c.slot.is_none()) {
+        if !order.contains(&client.index) {
+            order.push(client.index);
+        }
+    }
+    order.clone()
 }
 
 struct Lobby {
@@ -74,6 +86,9 @@ struct Lobby {
     revision: Cell<u64>,
     notifications_seen: Cell<usize>,
     connection_lost: Cell<bool>,
+    /// The spectator client indices in the order they became spectators, so a client that moves to the spectators
+    /// is listed last. C# lists them in session order, which is the join order.
+    spectator_order: RefCell<Vec<i32>>,
 }
 
 impl Lobby {
@@ -182,7 +197,9 @@ impl Lobby {
                 self.setup_slot_row(ui, idx, key, slot, session.client_in_slot(key), local_id, is_host, map);
                 idx += 1;
             }
-            for client in session.clients.iter().filter(|c| c.slot.is_none()) {
+            let spectators = update_spectator_order(&mut self.spectator_order.borrow_mut(), &session);
+            for index in spectators {
+                let client = session.client_with_index(index).expect("a spectator client");
                 self.setup_spectator_row(ui, idx, client, local_id, is_host);
                 idx += 1;
             }
@@ -773,6 +790,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
         revision: Cell::new(u64::MAX),
         notifications_seen: Cell::new(net.borrow().notifications.len()),
         connection_lost: Cell::new(false),
+        spectator_order: RefCell::new(Vec::new()),
     });
 
     let game_starting = Rc::new(Cell::new(false));
@@ -1037,7 +1055,9 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
 
 #[cfg(test)]
 mod tests {
-    use super::nick_command;
+    use rustora_net::session::{Client, Session};
+
+    use super::{nick_command, update_spectator_order};
 
     #[test]
     fn nick_commands() {
@@ -1047,5 +1067,36 @@ mod tests {
         assert_eq!(nick_command("/nick "), None);
         assert_eq!(nick_command("/nickname x"), None);
         assert_eq!(nick_command("hello /nick x"), None);
+    }
+
+    fn session(spectators: &[i32], players: &[i32]) -> Session {
+        let mut clients: Vec<Client> = Vec::new();
+        for index in 0..6 {
+            let slot = if players.contains(&index) {
+                Some(format!("multi{index}"))
+            } else if spectators.contains(&index) {
+                None
+            } else {
+                continue;
+            };
+            clients.push(Client {
+                index,
+                slot,
+                ..Client::default()
+            });
+        }
+        Session {
+            clients,
+            ..Session::default()
+        }
+    }
+
+    #[test]
+    fn a_new_spectator_is_listed_last() {
+        let mut order = Vec::new();
+        assert_eq!(update_spectator_order(&mut order, &session(&[2, 3], &[0, 1])), vec![2, 3]);
+        assert_eq!(update_spectator_order(&mut order, &session(&[0, 2, 3], &[1])), vec![2, 3, 0]);
+        assert_eq!(update_spectator_order(&mut order, &session(&[0, 3], &[1, 2])), vec![3, 0]);
+        assert_eq!(update_spectator_order(&mut order, &session(&[0, 3, 5], &[1, 2])), vec![3, 0, 5]);
     }
 }
