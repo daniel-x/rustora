@@ -228,7 +228,9 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
     let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
     let mut scene = scene::Scene::new(&mut renderer, &world, read_file);
     let (w, h) = args.size;
-    let (cx, cy) = args.view_center.map_or_else(|| app::map_center(&world), |(x, y)| (x as f32, y as f32));
+    let (cx, cy) = args
+        .view_center
+        .map_or_else(|| app::map_center(&world), |(x, y)| (x as f32, y as f32));
     let cam = Camera {
         x: cx - w as f32 / 2.0 / args.zoom,
         y: cy - h as f32 / 2.0 / args.zoom,

@@ -88,7 +88,12 @@ mod tests {
         std::fs::write(overlay.join("mods/x/maps/scripted/art.shp"), "art").unwrap();
         register_overlay(&engine, &support);
 
-        let fs = crate::FileSystem::new(crate::Platform::new(engine.clone(), support.clone()), "x", Default::default(), Vec::new());
+        let fs = crate::FileSystem::new(
+            crate::Platform::new(engine.clone(), support.clone()),
+            "x",
+            Default::default(),
+            Vec::new(),
+        );
         let maps = Folder::new(engine.join("mods/x")).open_package("maps", &fs).expect("maps folder");
         assert_eq!(maps.contents(), vec!["art-only", "plain.oramap", "scripted"]);
         let scripted = maps.open_package("scripted", &fs).expect("scripted map");

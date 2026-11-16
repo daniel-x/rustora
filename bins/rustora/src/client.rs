@@ -383,7 +383,10 @@ impl ShellWorld {
         });
         let (world, driver, read_file) = match restored {
             Some((world, _, read_file)) => {
-                log::info!("Restored the state snapshot of the replay at net frame {}", world.net_frame_number());
+                log::info!(
+                    "Restored the state snapshot of the replay at net frame {}",
+                    world.net_frame_number()
+                );
                 let driver = SkirmishDriver::replay_resumed(&world, replay.chunks);
                 (world, driver, read_file)
             }
@@ -981,8 +984,7 @@ impl Client {
     /// The world tick once a game or replay runs in the user interface and no game save is loading.
     pub fn running_world_tick(&self) -> Option<i32> {
         let shell = self.shell.as_ref()?;
-        (shell.ingame.is_some() && self.loading_root.is_none() && !shell.world.is_loading_game_save())
-            .then(|| shell.world.world_tick())
+        (shell.ingame.is_some() && self.loading_root.is_none() && !shell.world.is_loading_game_save()).then(|| shell.world.world_tick())
     }
 
     /// True while the benchmark of `--bench-ticks` measures a running world.
@@ -1376,8 +1378,16 @@ impl Client {
                 .inspect_err(|e| log::error!("cannot read the state snapshot {p}: {e}"))
                 .ok()
         });
-        let shell =
-            ShellWorld::start_replay(&self.engine, &self.support, package, lobby, replay, self.ui.resolution, distance, snapshot);
+        let shell = ShellWorld::start_replay(
+            &self.engine,
+            &self.support,
+            package,
+            lobby,
+            replay,
+            self.ui.resolution,
+            distance,
+            snapshot,
+        );
         let status = rustora_ui::logic::ingame::ReplayStatus {
             tick_count,
             final_game_tick,

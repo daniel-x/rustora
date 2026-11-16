@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use rustora_client::replay::Replay;
-use rustora_engine::order_manager::OrderManager;
 use rustora_core::world_types::WPos;
+use rustora_engine::order_manager::OrderManager;
 use rustora_engine::world::World;
 use rustora_launch::{LoadedGame, ReplayDriver, Step, load_game};
 

@@ -99,7 +99,10 @@ impl SaveHeader {
         let minor = u16::from_le_bytes(take(data, &mut pos, 2)?.try_into().expect("2 bytes"));
         let version = SaveVersion { major, minor };
         if major != VERSION.major {
-            return Err(format!("the save game has the format version {version}, this build reads {}.x", VERSION.major));
+            return Err(format!(
+                "the save game has the format version {version}, this build reads {}.x",
+                VERSION.major
+            ));
         }
         let header = SaveHeader {
             version,
@@ -486,14 +489,20 @@ mod tests {
     #[test]
     fn any_minor_version_of_the_own_major_version_reads() {
         for minor in [0, VERSION.minor + 1, u16::MAX] {
-            let h = header(SaveVersion { major: VERSION.major, minor });
+            let h = header(SaveVersion {
+                major: VERSION.major,
+                minor,
+            });
             assert_eq!(SaveHeader::read(&bytes(&h)).unwrap().0.version.minor, minor);
         }
     }
 
     #[test]
     fn another_major_version_is_rejected() {
-        let h = header(SaveVersion { major: VERSION.major + 1, minor: 0 });
+        let h = header(SaveVersion {
+            major: VERSION.major + 1,
+            minor: 0,
+        });
         assert!(SaveHeader::read(&bytes(&h)).unwrap_err().contains("format version"));
     }
 
