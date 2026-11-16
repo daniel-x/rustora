@@ -59,6 +59,8 @@ Options:
   --replay <file>        plays back an .orarep replay file
   --from-save <file>     starts the --replay from this state snapshot of it, as written by
                          rustora --headless verify-replay --save-every-ticks
+  --view-center <x>,<y>  centers the view on this position in world pixels when the first game or
+                         replay starts
   --load-game <name>     loads the game save of this file name in the saves directory of the support
                          directory, as the load game panel does
   --viewer               plays the --replay in the debug viewer: arrow keys or WASD scroll, the
@@ -97,6 +99,7 @@ struct Args {
     tick: i32,
     player: Option<usize>,
     at: Option<(f32, f32)>,
+    view_center: Option<(i32, i32)>,
     size: (u32, u32),
     zoom: f32,
 }
@@ -133,6 +136,7 @@ fn parse_args(raw: &[String]) -> Args {
         tick: 0,
         player: None,
         at: None,
+        view_center: None,
         size: (1280, 800),
         zoom: 1.0,
     };
@@ -153,6 +157,7 @@ fn parse_args(raw: &[String]) -> Args {
             "--tick" => args.tick = parse_value(&value(), "tick"),
             "--player" => args.player = Some(parse_value(&value(), "player index")),
             "--at" => args.at = Some(parse_pair(&value(), ',', "position")),
+            "--view-center" => args.view_center = Some(parse_pair(&value(), ',', "view center")),
             "--zoom" => args.zoom = parse_value(&value(), "zoom"),
             "--size" => args.size = parse_pair(&value(), 'x', "size"),
             o if o.starts_with('-') => usage(&format!("unknown option {o}")),
@@ -280,5 +285,6 @@ fn main() {
     settings.extend(args.from_save.iter().map(|s| format!("Launch.ReplayFromSave={s}")));
     settings.extend(args.load_game.iter().map(|s| format!("Launch.LoadGame={s}")));
     settings.extend(args.connect.iter().map(|c| format!("Launch.Connect={c}")));
+    settings.extend(args.view_center.iter().map(|(x, y)| format!("Launch.ViewCenter={x},{y}")));
     window::run(&engine, &support, args.window, &settings);
 }

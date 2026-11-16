@@ -690,6 +690,8 @@ pub struct Client {
     pending_load: Option<PendingLoad>,
     /// The state snapshot that the replay of `Launch.Replay` starts from (`Launch.ReplayFromSave`).
     replay_snapshot: Option<String>,
+    /// The position in world pixels that the view of the first started world centers on (`Launch.ViewCenter`).
+    view_center: Option<(i32, i32)>,
     load_screen_drawn: bool,
     load_screen: rustora_ui::load_screen::LoadScreen,
     ui_tick_time: TickTime,
@@ -840,6 +842,11 @@ impl Client {
                 .iter()
                 .find_map(|a| a.strip_prefix("Launch.ReplayFromSave="))
                 .map(str::to_string),
+            view_center: args
+                .iter()
+                .find_map(|a| a.strip_prefix("Launch.ViewCenter="))
+                .and_then(|v| v.split_once(','))
+                .and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))),
             load_screen_drawn: false,
             load_screen,
             ui_tick_time: TickTime {
@@ -1349,6 +1356,9 @@ impl Client {
 
     /// The part of `Game.StartGame` after the world loaded: the in-game user interface.
     fn enter_game(&mut self, mut shell: ShellWorld, replay: Option<rustora_ui::logic::ingame::ReplayStatus>) {
+        if let Some(center) = self.view_center.take() {
+            shell.viewport.borrow_mut().center_on(center);
+        }
         let map = shell.world.map();
         rustora_core::log_channels::set_panic_context(vec![
             format!("{} mod version {}", self.services.mod_id, self.services.mod_version),
