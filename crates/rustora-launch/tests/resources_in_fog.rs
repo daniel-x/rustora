@@ -42,11 +42,12 @@ fn a_change_under_fog_shows_once_the_cell_is_visible() {
         .find(|&c| layer.get_resource(c).density > 1 && !player.shroud().is_visible(c))
         .expect("a resource cell under fog");
     renderer.tick_render(&world, Some(&player));
-    assert_eq!(renderer.contents(cell).density, 0, "an unseen cell starts empty");
-
-    renderer.tick_render(&world, None);
     let before = renderer.contents(cell).density;
-    assert_eq!(before, layer.get_resource(cell).density, "a visible cell shows the resources");
+    assert_eq!(
+        before,
+        layer.get_resource(cell).density,
+        "the resources at the start show through the fog"
+    );
 
     let ty = layer.get_resource(cell).ty.expect("resource type");
     layer.remove_resource(&ty, cell, 1);

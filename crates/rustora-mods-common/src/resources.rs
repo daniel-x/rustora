@@ -121,7 +121,8 @@ info_impl!(ResourceRendererInfo => |info, _init| Some(Rc::new(ResourceRenderer {
 
 impl ResourceRenderer {
     /// `ITickRender.TickRender`: takes over the changed cells that `viewer` sees, like `IsVisible`, which is
-    /// `!World.FogObscures`. The first call marks every cell as changed, like `WorldLoaded`.
+    /// `!World.FogObscures`. The first call takes over the resources of all cells, like `WorldLoaded`, so the
+    /// resources at the start show through the fog.
     pub fn tick_render(&self, world: &World, viewer: Option<&PlayerRef>) {
         let Some(layer) = world.world_actor().trait_or_default::<ResourceLayer>() else {
             return;
@@ -132,9 +133,14 @@ impl ResourceRenderer {
             layer.on_cell_changed(Rc::new(move |cell, _| {
                 dirty.borrow_mut().insert(cell);
             }));
-            self.dirty.borrow_mut().extend(world.map().all_cells());
             let (w, h) = world.map().map_size;
-            CellLayer::new(w, h, ResourceLayerContents::default())
+            let mut contents = CellLayer::new(w, h, ResourceLayerContents::default());
+            for cell in world.map().all_cells() {
+                if contents.contains_cell(cell) {
+                    contents.set_at(cell, layer.get_resource(cell));
+                }
+            }
+            contents
         });
         self.dirty.borrow_mut().retain(|&cell| {
             if viewer.is_some_and(|v| !v.shroud().is_visible(cell)) {
