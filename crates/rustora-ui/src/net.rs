@@ -156,6 +156,8 @@ pub struct NetState {
     pub before_game_start: Option<crate::widget::Action>,
     /// The names this client banned as admin. rustora enforces them on servers without name bans.
     pub banned_names: std::collections::HashSet<String>,
+    /// The banned names whose later joins also ban the address of the joining client.
+    pub auto_ban_ips_by_nickname: std::collections::HashSet<String>,
     /// The client indexes that [`NetState::enforce_name_bans`] kicked already.
     pub name_ban_kicks: std::collections::HashSet<i32>,
     /// `Game.RunTime` of the last input of the user, for the idle timeout of the lobby.
@@ -216,29 +218,42 @@ impl NetState {
         }
     }
 
+    /// Bans a client name like [`NetState::ban_name`] and also bans the address of each client that joins later
+    /// with this name.
+    pub fn ban_name_and_ips(&mut self, name: &str) {
+        if !name.is_empty() {
+            self.banned_names.insert(name.to_string());
+            self.auto_ban_ips_by_nickname.insert(name.to_string());
+        }
+    }
+
     /// Forgets a banned client name. Returns whether it was banned.
     pub fn unban_name(&mut self, name: &str) -> bool {
         self.name_ban_kicks.clear();
+        self.auto_ban_ips_by_nickname.remove(name);
         self.banned_names.remove(name)
     }
 
-    /// Kicks each human client with a banned name while the local client is admin, once per client index, without
-    /// banning its address. A rustora server rejects these clients itself; an OpenRA server ignores name bans.
+    /// Kicks each human client with a banned name while the local client is admin, once per client index. The kick
+    /// bans the address only for the names in `auto_ban_ips_by_nickname`. A rustora server rejects these clients
+    /// itself; an OpenRA server ignores name bans.
     pub fn enforce_name_bans(&mut self) {
         if !self.is_host() {
             return;
         }
-        let targets: Vec<i32> = self
+        let targets: Vec<(i32, bool)> = self
             .session
             .clients
             .iter()
             .filter(|c| c.index != self.local_client_id && !c.is_bot() && !self.name_ban_kicks.contains(&c.index))
-            .filter(|c| c.name.as_deref().is_some_and(|n| self.banned_names.contains(n)))
-            .map(|c| c.index)
+            .filter_map(|c| {
+                let name = c.name.as_deref().filter(|n| self.banned_names.contains(*n))?;
+                Some((c.index, self.auto_ban_ips_by_nickname.contains(name)))
+            })
             .collect();
-        for index in targets {
+        for (index, ban_ip) in targets {
             self.name_ban_kicks.insert(index);
-            self.command(&kick_command(index, false, true));
+            self.command(&kick_command(index, ban_ip, true, ban_ip));
         }
     }
 
@@ -283,11 +298,14 @@ impl NetState {
     }
 }
 
-/// The `kick` command with the temporary address ban. rustora adds the name ban as third argument, which OpenRA
-/// servers ignore.
-pub fn kick_command(index: i32, temp_ban: bool, ban_name: bool) -> String {
+/// The `kick` command with the temporary address ban. rustora adds the name ban as third argument and
+/// `auto_ban_ips_by_nickname` as fourth argument, which OpenRA servers ignore. `auto_ban_ips_by_nickname` needs the
+/// name ban.
+pub fn kick_command(index: i32, temp_ban: bool, ban_name: bool, auto_ban_ips_by_nickname: bool) -> String {
     let flag = |b: bool| if b { "True" } else { "False" };
-    if ban_name {
+    if ban_name && auto_ban_ips_by_nickname {
+        format!("kick {index} {} True True", flag(temp_ban))
+    } else if ban_name {
         format!("kick {index} {} True", flag(temp_ban))
     } else {
         format!("kick {index} {}", flag(temp_ban))
@@ -319,10 +337,16 @@ mod tests {
 
     #[test]
     fn kick_commands() {
-        assert_eq!(kick_command(3, false, false), "kick 3 False");
-        assert_eq!(kick_command(3, true, false), "kick 3 True");
-        assert_eq!(kick_command(3, true, true), "kick 3 True True");
-        assert_eq!(kick_command(3, false, true), "kick 3 False True");
+        assert_eq!(kick_command(3, false, false, false), "kick 3 False");
+        assert_eq!(kick_command(3, true, false, false), "kick 3 True");
+        assert_eq!(kick_command(3, true, true, false), "kick 3 True True");
+        assert_eq!(kick_command(3, false, true, false), "kick 3 False True");
+        assert_eq!(kick_command(3, false, true, true), "kick 3 False True True");
+        assert_eq!(
+            kick_command(3, false, false, true),
+            "kick 3 False",
+            "the auto ban needs the name ban"
+        );
     }
 
     #[test]
@@ -340,6 +364,22 @@ mod tests {
         net.enforce_name_bans();
         let sent: Vec<String> = net.outgoing.iter().map(|o| o.target_string.clone().unwrap_or_default()).collect();
         assert_eq!(sent, vec!["kick 2 False True".to_string()]);
+    }
+
+    #[test]
+    fn the_admin_kicks_an_auto_banned_name_with_an_address_ban() {
+        let mut net = NetState {
+            local_client_id: 0,
+            session: Session {
+                clients: vec![client(0, "Admin", true), client(1, "Other", false), client(2, "Troll", false)],
+                ..Session::default()
+            },
+            ..NetState::default()
+        };
+        net.ban_name_and_ips("Troll");
+        net.enforce_name_bans();
+        let sent: Vec<String> = net.outgoing.iter().map(|o| o.target_string.clone().unwrap_or_default()).collect();
+        assert_eq!(sent, vec!["kick 2 True True True".to_string()]);
     }
 
     #[test]

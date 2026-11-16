@@ -573,7 +573,8 @@ impl Server {
     }
 
     /// `kick <index> <temp ban>`. rustora adds an optional third argument, which bans the name of the client
-    /// independently of the address ban.
+    /// independently of the address ban, and an optional fourth argument, which together with the name ban also
+    /// bans the address of each client that joins later with that name.
     fn cmd_kick(&mut self, conn: i32, client: &Client, s: &str) -> bool {
         if !client.is_admin {
             self.send_fluent_message_to(conn, "notification-admin-kick", &[]);
@@ -606,6 +607,7 @@ impl Server {
         self.drop_client(target.index);
         let ban_address = parse_bool(split[1]) == Some(true);
         let ban_name = split.get(2).and_then(|b| parse_bool(b)) == Some(true);
+        let auto_ban_ips = ban_name && split.get(3).and_then(|b| parse_bool(b)) == Some(true);
         if ban_address || ban_name {
             self.send_fluent_message("notification-temp-ban", &[("admin", (&admin).into()), ("player", (&player).into())]);
         }
@@ -614,6 +616,9 @@ impl Server {
         }
         if ban_name {
             self.add_name_ban(&player);
+        }
+        if auto_ban_ips && !player.is_empty() && !self.auto_ban_ips_by_nickname.contains(&player) {
+            self.auto_ban_ips_by_nickname.push(player.clone());
         }
         self.sync_lobby_clients();
         self.sync_lobby_slots();
@@ -689,6 +694,7 @@ impl Server {
         } else {
             "notification-ban-unknown"
         };
+        self.auto_ban_ips_by_nickname.retain(|t| *t != text);
         self.send_fluent_message_to(conn, key, &[("target", (&text).into())]);
         true
     }
@@ -1054,6 +1060,7 @@ impl Server {
     pub fn server_empty(&mut self) {
         self.temp_bans.clear();
         self.temp_name_bans.clear();
+        self.auto_ban_ips_by_nickname.clear();
         self.lobby.global_settings.allow_spectators = true;
         self.reset_slots();
     }

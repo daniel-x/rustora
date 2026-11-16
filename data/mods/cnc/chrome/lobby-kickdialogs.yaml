@@ -27,27 +27,34 @@ Background@KICK_CLIENT_DIALOG:
 		Checkbox@PREVENT_REJOINING_CHECKBOX:
 			X: (PARENT_WIDTH - WIDTH) / 2
 			Y: 112
-			Width: 230
+			Width: 340
 			Height: 20
 			Font: Regular
 			Text: checkbox-kick-client-dialog-prevent-rejoining
 		Checkbox@BAN_NAME_CHECKBOX:
 			X: (PARENT_WIDTH - WIDTH) / 2
-			Y: 137
-			Width: 230
+			Y: 135
+			Width: 340
 			Height: 20
 			Font: Regular
 			Text: checkbox-kick-client-dialog-ban-name
+		Checkbox@AUTO_BAN_IPS_BY_NICKNAME_CHECKBOX:
+			X: (PARENT_WIDTH - WIDTH) / 2
+			Y: 158
+			Width: 340
+			Height: 20
+			Font: Regular
+			Text: checkbox-kick-client-dialog-auto-ban-ips-by-nickname
 		Button@OK_BUTTON:
 			X: (PARENT_WIDTH - WIDTH) / 2 + 75
-			Y: 172
+			Y: 187
 			Width: 120
 			Height: 25
 			Text: button-kick-client-dialog
 			Font: Bold
 		Button@CANCEL_BUTTON:
 			X: (PARENT_WIDTH - WIDTH) / 2 - 75
-			Y: 172
+			Y: 187
 			Width: 120
 			Height: 25
 			Text: button-cancel

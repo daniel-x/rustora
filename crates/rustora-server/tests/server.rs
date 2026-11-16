@@ -544,6 +544,41 @@ fn kick_with_name_ban_rejects_the_name() {
     assert!(joined, "a temporary ban without the name ban bans only the address");
 }
 
+/// Connects to the server at `port` with `name` and applies server orders until the client joined or was dropped.
+fn join_as(port: u16, name: &str) -> (TestClient, bool) {
+    let mut c = TestClient::connect(port);
+    c.name = Some(name.to_string());
+    let joined = c.pump(VERSION, TestClient::joined);
+    (c, joined)
+}
+
+#[test]
+fn auto_ban_ips_by_nickname_bans_the_address_of_a_later_join_with_the_name() {
+    let Some(engine) = engine_dir() else { return };
+    let server = start_server(&engine, &[]);
+    let port = server.port;
+    let mut admin = join(port);
+    let (mut troll, joined) = join_as(port, "Troll");
+    assert!(joined);
+    admin.command(&format!("kick {} False True", troll.index));
+    assert!(!troll.pump(VERSION, |_| false));
+    let (_, joined) = join_as(port, "Other");
+    assert!(joined, "without auto_ban_ips_by_nickname the name ban leaves the address alone");
+
+    let (mut pest, joined) = join_as(port, "Pest");
+    assert!(joined);
+    admin.command(&format!("kick {} False True True", pest.index));
+    assert!(!pest.pump(VERSION, |_| false));
+    let (_, joined) = join_as(port, "Another");
+    assert!(joined, "the kick itself does not ban the address");
+    let (again, joined) = join_as(port, "Pest");
+    assert!(!joined);
+    assert!(again.got("notification-you-were-temp-banned"), "{:?}", again.messages);
+    let (renamed, joined) = join_as(port, "Renamed");
+    assert!(!joined, "the join with the banned name banned the address");
+    assert!(renamed.got("notification-you-were-temp-banned"), "{:?}", renamed.messages);
+}
+
 #[test]
 fn ban_unban_and_banlist_commands() {
     let Some(engine) = engine_dir() else { return };

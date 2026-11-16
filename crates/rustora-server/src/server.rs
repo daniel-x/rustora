@@ -359,6 +359,9 @@ pub struct Server {
     pub temp_bans: Vec<String>,
     /// The player names that an admin banned with `kick <index> <temp ban> True`, a rustora extension.
     pub temp_name_bans: Vec<String>,
+    /// The banned player names whose later joins also ban the address of the joining client, set with
+    /// `kick <index> <temp ban> True True`, a rustora extension.
+    pub auto_ban_ips_by_nickname: Vec<String>,
     /// `MapPool`: the maps an independent server offers. Other servers offer every map.
     pub map_pool: Option<IndexSet<String>>,
     pub vote_kick: VoteKickTracker,
@@ -497,6 +500,7 @@ impl Server {
             order_latency: 1,
             temp_bans: Vec::new(),
             temp_name_bans: Vec::new(),
+            auto_ban_ips_by_nickname: Vec::new(),
             map_pool,
             vote_kick: VoteKickTracker::default(),
             master_server,
@@ -731,6 +735,11 @@ impl Server {
         }
         let name = sanitized_player_name(handshake.client.name.as_deref().unwrap_or(""));
         if self.temp_name_bans.contains(&name) {
+            if self.auto_ban_ips_by_nickname.contains(&name) {
+                if let Some(ip_text) = ip.map(|ip| ip.to_string()).filter(|t| !self.temp_bans.contains(t)) {
+                    self.temp_bans.push(ip_text);
+                }
+            }
             return self.reject(player_index, "ServerError", "notification-you-were-temp-banned", "name banned");
         }
         let client = Client {

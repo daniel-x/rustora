@@ -178,6 +178,7 @@ label-kick-client-dialog-text-a = You may also apply a temporary ban, preventing
 label-kick-client-dialog-text-b = them from joining for the remainder of this game.
 checkbox-kick-client-dialog-prevent-rejoining = Temporarily Ban by IP
 checkbox-kick-client-dialog-ban-name = Temporarily Ban by Nickname
+checkbox-kick-client-dialog-auto-ban-ips-by-nickname = Auto-ban new users with this name based on IP
 button-kick-client-dialog = Kick
 label-kick-spectators-dialog-title = Kick Spectators
 button-kick-spectators-dialog-ok = Ok

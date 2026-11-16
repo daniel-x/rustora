@@ -485,12 +485,15 @@ fn show_player_action_dropdown(
         let root = ui.child(lobby, "TOP_PANELS_ROOT");
         let (n, a2) = (n.clone(), a.clone());
         let name = name.clone();
-        let ok_pressed: Rc<dyn Fn(&mut Ui, bool, bool)> = Rc::new(move |ui, temp_ban, ban_name| {
+        let ok_pressed: Rc<dyn Fn(&mut Ui, bool, bool, bool)> = Rc::new(move |ui, temp_ban, ban_name, auto_ban_ips| {
             let mut net = n.borrow_mut();
-            if ban_name {
-                net.ban_name(name.as_deref().unwrap_or_default());
+            let name = name.as_deref().unwrap_or_default();
+            if ban_name && auto_ban_ips {
+                net.ban_name_and_ips(name);
+            } else if ban_name {
+                net.ban_name(name);
             }
-            net.command(&crate::net::kick_command(index, temp_ban, ban_name));
+            net.command(&crate::net::kick_command(index, temp_ban, ban_name, auto_ban_ips));
             drop(net);
             a2(ui);
         });
@@ -1115,7 +1118,9 @@ fn local_notification(net: &Net, text: String) {
 }
 
 /// Port of `KickClientLogic`. rustora adds the `BAN_NAME_CHECKBOX`, which bans the name of the client independently
-/// of the address ban of `PREVENT_REJOINING_CHECKBOX`. `okPressed` gets the address ban and the name ban.
+/// of the address ban of `PREVENT_REJOINING_CHECKBOX`, and the `AUTO_BAN_IPS_BY_NICKNAME_CHECKBOX`, which also bans
+/// the address of each client that joins later with the banned name. It is enabled only while the name ban is
+/// ticked. `okPressed` gets the address ban, the name ban and `auto_ban_ips_by_nickname`.
 pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dyn ChromeLogic>> {
     let name: String = args.value("clientName").unwrap_or_default();
     let text = message_with(ui, "dialog-kick-client.prompt", &[("player", MessageArg::Text(&name))]);
@@ -1128,19 +1133,33 @@ pub fn kick_client(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCe
     let t = temp_ban.clone();
     ui.button(checkbox).on_click = Some(Rc::new(move |_| t.set(!t.get())));
     let ban_name = Rc::new(Cell::new(false));
+    let auto_ban_ips = Rc::new(Cell::new(false));
     if let Some(checkbox) = ui.find(widget, "BAN_NAME_CHECKBOX") {
         let b = ban_name.clone();
         ui.get::<CheckboxWidget>(checkbox).is_checked = Some(Rc::new(move || b.get()));
-        let b = ban_name.clone();
-        ui.button(checkbox).on_click = Some(Rc::new(move |_| b.set(!b.get())));
+        let (b, a) = (ban_name.clone(), auto_ban_ips.clone());
+        ui.button(checkbox).on_click = Some(Rc::new(move |_| {
+            b.set(!b.get());
+            if !b.get() {
+                a.set(false);
+            }
+        }));
     }
-    let ok_pressed: Option<Rc<dyn Fn(&mut Ui, bool, bool)>> = args.value("okPressed");
+    if let Some(checkbox) = ui.find(widget, "AUTO_BAN_IPS_BY_NICKNAME_CHECKBOX") {
+        let a = auto_ban_ips.clone();
+        ui.get::<CheckboxWidget>(checkbox).is_checked = Some(Rc::new(move || a.get()));
+        let b = ban_name.clone();
+        ui.button(checkbox).is_disabled = Some(Rc::new(move || !b.get()));
+        let a = auto_ban_ips.clone();
+        ui.button(checkbox).on_click = Some(Rc::new(move |_| a.set(!a.get())));
+    }
+    let ok_pressed: Option<Rc<dyn Fn(&mut Ui, bool, bool, bool)>> = args.value("okPressed");
     let ok = ui.child(widget, "OK_BUTTON");
     ui.button(ok).on_click = Some(Rc::new(move |ui| {
         let parent = ui.node(widget).parent.expect("dialog parent");
         ui.remove_child(parent, widget);
         if let Some(ok_pressed) = &ok_pressed {
-            ok_pressed(ui, temp_ban.get(), ban_name.get());
+            ok_pressed(ui, temp_ban.get(), ban_name.get(), auto_ban_ips.get());
         }
     }));
     close_with_action(ui, widget, "CANCEL_BUTTON", args.action("cancelPressed"));
