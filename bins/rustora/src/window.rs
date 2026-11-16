@@ -106,6 +106,7 @@ struct App {
     next_render: Instant,
     forced_next_render: Instant,
     render_before_next_tick: bool,
+    bench: Option<crate::bench::Bench>,
     /// When the last logic tick ran, to log gaps.
     last_logic_tick: Instant,
 }
@@ -214,6 +215,7 @@ impl App {
         client.logic_tick();
         let now = Instant::now();
         let client_mod = client.mod_id().to_string();
+        let bench = client.bench_ticks().map(crate::bench::Bench::new);
         App {
             client,
             size,
@@ -237,6 +239,7 @@ impl App {
             next_render: now,
             forced_next_render: now,
             render_before_next_tick: false,
+            bench,
             last_logic_tick: Instant::now(),
         }
     }
@@ -538,6 +541,7 @@ impl App {
     }
 
     fn render(&mut self, el: &ActiveEventLoop) {
+        let start = Instant::now();
         let render = rustora_ui::perf::PerfSample::new("render");
         self.render_before_next_tick = false;
         self.redraw_requested = None;
@@ -568,6 +572,7 @@ impl App {
         }
         let view = frame.texture.create_view(&Default::default());
         self.client.render(&mut gpu.renderer, &view, size);
+        let scene = start.elapsed();
         {
             let _flip = rustora_ui::perf::PerfSample::new("render_flip");
             gpu.window.pre_present_notify();
@@ -576,6 +581,9 @@ impl App {
         rustora_ui::perf::increment("batches", gpu.renderer.take_draw_calls() as f64);
         drop(render);
         rustora_ui::perf::frame_tick();
+        if let Some(bench) = &mut self.bench {
+            bench.frame(scene, start.elapsed());
+        }
     }
 
     fn create_gpu(&self, el: &ActiveEventLoop) -> Gpu {
@@ -606,6 +614,9 @@ impl App {
             .expect("surface config");
         let caps = surface.get_capabilities(&adapter);
         config.format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(config.format);
+        if self.bench.is_some() {
+            config.present_mode = wgpu::PresentMode::AutoNoVsync;
+        }
         surface.configure(&device, &config);
         let renderer = Renderer::new(device, queue, config.format);
         Gpu {
@@ -691,6 +702,11 @@ impl ApplicationHandler for App {
             }
             self.last_logic_tick = now;
             self.client.logic_tick();
+            if let Some(bench) = &mut self.bench
+                && bench.after_logic_tick(self.client.running_world_tick())
+            {
+                el.exit();
+            }
             if self.client.renders_every_tick() {
                 self.render_before_next_tick = true;
             }

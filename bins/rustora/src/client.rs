@@ -692,6 +692,8 @@ pub struct Client {
     replay_snapshot: Option<String>,
     /// The position in world pixels that the view of the first started world centers on (`Launch.ViewCenter`).
     view_center: Option<(i32, i32)>,
+    /// The world ticks of the benchmark of `--bench-ticks` (`Launch.BenchTicks`).
+    bench_ticks: Option<i32>,
     load_screen_drawn: bool,
     load_screen: rustora_ui::load_screen::LoadScreen,
     ui_tick_time: TickTime,
@@ -847,6 +849,10 @@ impl Client {
                 .find_map(|a| a.strip_prefix("Launch.ViewCenter="))
                 .and_then(|v| v.split_once(','))
                 .and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))),
+            bench_ticks: args
+                .iter()
+                .find_map(|a| a.strip_prefix("Launch.BenchTicks="))
+                .and_then(|n| n.parse().ok()),
             load_screen_drawn: false,
             load_screen,
             ui_tick_time: TickTime {
@@ -961,7 +967,27 @@ impl Client {
 
     /// The timestep of the world clock: `OrderManager.SuggestedTimestep`, or `Ui.Timestep` without a world.
     fn world_timestep(&self) -> i32 {
+        if self.benchmarking() {
+            return 1;
+        }
         self.shell.as_ref().map_or(UI_TIMESTEP, ShellWorld::suggested_timestep)
+    }
+
+    /// The world ticks of the benchmark of `--bench-ticks`.
+    pub fn bench_ticks(&self) -> Option<i32> {
+        self.bench_ticks
+    }
+
+    /// The world tick once a game or replay runs in the user interface and no game save is loading.
+    pub fn running_world_tick(&self) -> Option<i32> {
+        let shell = self.shell.as_ref()?;
+        (shell.ingame.is_some() && self.loading_root.is_none() && !shell.world.is_loading_game_save())
+            .then(|| shell.world.world_tick())
+    }
+
+    /// True while the benchmark of `--bench-ticks` measures a running world.
+    fn benchmarking(&self) -> bool {
+        self.bench_ticks.is_some() && self.running_world_tick().is_some()
     }
 
     /// The interval of `Game.Loop` between two calls of [`Client::logic_tick`] in milliseconds.
@@ -972,8 +998,12 @@ impl Client {
         }
     }
 
-    /// True while a world other than a replay runs: `Game.Loop` renders at least once per logic tick then.
+    /// True while a world other than a replay runs: `Game.Loop` renders at least once per logic tick then. The
+    /// benchmark of `--bench-ticks` renders every tick of replays too.
     pub fn renders_every_tick(&self) -> bool {
+        if self.benchmarking() {
+            return true;
+        }
         self.shell
             .as_ref()
             .is_some_and(|s| !s.world.is_replay() && !s.world.is_loading_game_save())
@@ -1137,7 +1167,9 @@ impl Client {
         }
         if !world.is_replay() {
             world.set_pause_state(false);
-            if let Some(options) = self.ui.find(root, "OPTIONS_BUTTON") {
+            if self.bench_ticks.is_none()
+                && let Some(options) = self.ui.find(root, "OPTIONS_BUTTON")
+            {
                 let action = self.ui.button(options).on_click.clone();
                 if let Some(action) = action {
                     action(&mut self.ui);
