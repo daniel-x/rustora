@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
-use rustora_engine::order_manager::{Connection, Incoming, OrderManager};
+use rustora_client::replay::Chunk;
+use rustora_engine::order_manager::{Connection, Incoming, OrderManager, ReplayConnection};
 use rustora_engine::world::World;
 use rustora_game::map::MapPackage;
 use rustora_mods_common::world::{PlayerReference, make_slot, map_players, sync_client_to_player_reference};
@@ -182,6 +183,20 @@ impl SkirmishDriver {
     pub fn replay(world: &Rc<World>, connection: Box<dyn Connection>) -> SkirmishDriver {
         let mut orders = OrderManager::new(world.clone(), connection);
         orders.start_on_order = true;
+        SkirmishDriver {
+            orders,
+            world: world.clone(),
+            end_game_frame: None,
+        }
+    }
+
+    /// Continues the replay whose world was restored from a state snapshot of it with the orders of the frames after
+    /// the snapshot.
+    pub fn replay_resumed(world: &Rc<World>, chunks: Vec<Chunk>) -> SkirmishDriver {
+        let net_frame = world.net_frame_number();
+        let (connection, disconnected) = ReplayConnection::resumed(chunks, world.order_latency, net_frame);
+        let mut orders = OrderManager::new(world.clone(), Box::new(connection));
+        orders.resume(net_frame, world.local_frame_number(), &disconnected);
         SkirmishDriver {
             orders,
             world: world.clone(),

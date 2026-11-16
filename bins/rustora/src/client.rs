@@ -365,6 +365,7 @@ impl ShellWorld {
     }
 
     /// `Game.JoinReplay` and `Game.StartGame` for a replay: the world plays the recorded orders.
+    #[allow(clippy::too_many_arguments)]
     fn start_replay(
         engine: &Path,
         support: &str,
@@ -373,10 +374,26 @@ impl ShellWorld {
         replay: Replay,
         view: (i32, i32),
         distance: WorldViewport,
+        snapshot: Option<Vec<u8>>,
     ) -> ShellWorld {
-        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, true, WorldType::Regular, true);
-        let connection = ReplayConnection::new(replay.chunks, world.order_latency);
-        let driver = SkirmishDriver::replay(&world, Box::new(connection));
+        let restored = snapshot.and_then(|save| {
+            rustora_launch::restore_game_from(engine, support, package.clone(), &save, true, true)
+                .inspect_err(|e| log::warn!("The state snapshot of the replay cannot be restored: {e}"))
+                .ok()
+        });
+        let (world, driver, read_file) = match restored {
+            Some((world, _, read_file)) => {
+                log::info!("Restored the state snapshot of the replay at net frame {}", world.net_frame_number());
+                let driver = SkirmishDriver::replay_resumed(&world, replay.chunks);
+                (world, driver, read_file)
+            }
+            None => {
+                let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, true, WorldType::Regular, true);
+                let connection = ReplayConnection::new(replay.chunks, world.order_latency);
+                let driver = SkirmishDriver::replay(&world, Box::new(connection));
+                (world, driver, read_file)
+            }
+        };
         let viewport = world_viewport(&world, view, distance);
         ShellWorld {
             world,
@@ -671,6 +688,8 @@ pub struct Client {
     loading_root: Option<rustora_ui::widget::WidgetId>,
     /// A world load that waits until the load screen was drawn once, and whether it was.
     pending_load: Option<PendingLoad>,
+    /// The state snapshot that the replay of `Launch.Replay` starts from (`Launch.ReplayFromSave`).
+    replay_snapshot: Option<String>,
     load_screen_drawn: bool,
     load_screen: rustora_ui::load_screen::LoadScreen,
     ui_tick_time: TickTime,
@@ -817,6 +836,10 @@ impl Client {
             loading_save: None,
             loading_root: None,
             pending_load: None,
+            replay_snapshot: args
+                .iter()
+                .find_map(|a| a.strip_prefix("Launch.ReplayFromSave="))
+                .map(str::to_string),
             load_screen_drawn: false,
             load_screen,
             ui_tick_time: TickTime {
@@ -1309,7 +1332,13 @@ impl Client {
             .and_then(|m| rustora_client::game_information::GameInformation::deserialize(m, path).ok())
             .map_or(0, |info| info.root.final_game_tick);
         let distance = self.services.settings.borrow().graphics.viewport_distance;
-        let shell = ShellWorld::start_replay(&self.engine, &self.support, package, lobby, replay, self.ui.resolution, distance);
+        let snapshot = self.replay_snapshot.take().and_then(|p| {
+            std::fs::read(&p)
+                .inspect_err(|e| log::error!("cannot read the state snapshot {p}: {e}"))
+                .ok()
+        });
+        let shell =
+            ShellWorld::start_replay(&self.engine, &self.support, package, lobby, replay, self.ui.resolution, distance, snapshot);
         let status = rustora_ui::logic::ingame::ReplayStatus {
             tick_count,
             final_game_tick,

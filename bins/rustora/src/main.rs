@@ -57,6 +57,8 @@ Options:
                          after the --click positions and writes a lossless WebP file
   --click <x>,<y>        a click for --menu-screenshot, repeatable
   --replay <file>        plays back an .orarep replay file
+  --from-save <file>     starts the --replay from this state snapshot of it, as written by
+                         rustora --headless verify-replay --save-every-ticks
   --load-game <name>     loads the game save of this file name in the saves directory of the support
                          directory, as the load game panel does
   --viewer               plays the --replay in the debug viewer: arrow keys or WASD scroll, the
@@ -84,6 +86,7 @@ struct Args {
     support: Option<PathBuf>,
     window: Option<(u32, u32)>,
     replay: Option<String>,
+    from_save: Option<String>,
     load_game: Option<String>,
     connect: Option<String>,
     settings: Vec<String>,
@@ -119,6 +122,7 @@ fn parse_args(raw: &[String]) -> Args {
         support: None,
         window: None,
         replay: None,
+        from_save: None,
         load_game: None,
         connect: None,
         settings: Vec::new(),
@@ -142,6 +146,7 @@ fn parse_args(raw: &[String]) -> Args {
             "--menu-screenshot" => args.menu_screenshot = Some(value()),
             "--click" => args.clicks.push(parse_pair(&value(), ',', "click position")),
             "--replay" => args.replay = Some(value()),
+            "--from-save" => args.from_save = Some(value()),
             "--load-game" => args.load_game = Some(value()),
             "--viewer" => args.viewer = true,
             "--screenshot" => args.screenshot = Some(value()),
@@ -163,6 +168,9 @@ fn parse_args(raw: &[String]) -> Args {
     let needs_replay = args.viewer || args.screenshot.is_some();
     if needs_replay && args.replay.is_none() {
         usage("--viewer and --screenshot need --replay <file>");
+    }
+    if args.from_save.is_some() && (args.replay.is_none() || needs_replay) {
+        usage("--from-save needs --replay <file> without --viewer and --screenshot");
     }
     args
 }
@@ -269,6 +277,7 @@ fn main() {
     }
     let mut settings = args.settings.clone();
     settings.extend(args.replay.iter().map(|r| format!("Launch.Replay={r}")));
+    settings.extend(args.from_save.iter().map(|s| format!("Launch.ReplayFromSave={s}")));
     settings.extend(args.load_game.iter().map(|s| format!("Launch.LoadGame={s}")));
     settings.extend(args.connect.iter().map(|c| format!("Launch.Connect={c}")));
     window::run(&engine, &support, args.window, &settings);
