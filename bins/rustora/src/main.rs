@@ -60,7 +60,7 @@ Options:
   --from-save <file>     starts the --replay from this state snapshot of it, as written by
                          rustora --headless verify-replay --save-every-ticks
   --view-center <x>,<y>  centers the view on this position in world pixels when the first game or
-                         replay starts
+                         replay starts, and the --screenshot (default map center)
   --load-game <name>     loads the game save of this file name in the saves directory of the support
                          directory, as the load game panel does
   --viewer               plays the --replay in the debug viewer: arrow keys or WASD scroll, the
@@ -74,7 +74,6 @@ Replay screenshot options:
   --screenshot <out.webp>  renders one frame of the --replay offscreen to a lossless WebP file
   --tick <n>               the tick of the screenshot (default 0)
   --player <index>         renders with the shroud of this player
-  --at <x>,<y>             the center of the screenshot in world pixels (default map center)
   --size <w>x<h>           the screenshot size (default 1280x800)
   --zoom <z>               the screenshot zoom (default 1)
 
@@ -98,7 +97,6 @@ struct Args {
     screenshot: Option<String>,
     tick: i32,
     player: Option<usize>,
-    at: Option<(f32, f32)>,
     view_center: Option<(i32, i32)>,
     size: (u32, u32),
     zoom: f32,
@@ -135,7 +133,6 @@ fn parse_args(raw: &[String]) -> Args {
         screenshot: None,
         tick: 0,
         player: None,
-        at: None,
         view_center: None,
         size: (1280, 800),
         zoom: 1.0,
@@ -156,7 +153,6 @@ fn parse_args(raw: &[String]) -> Args {
             "--screenshot" => args.screenshot = Some(value()),
             "--tick" => args.tick = parse_value(&value(), "tick"),
             "--player" => args.player = Some(parse_value(&value(), "player index")),
-            "--at" => args.at = Some(parse_pair(&value(), ',', "position")),
             "--view-center" => args.view_center = Some(parse_pair(&value(), ',', "view center")),
             "--zoom" => args.zoom = parse_value(&value(), "zoom"),
             "--size" => args.size = parse_pair(&value(), 'x', "size"),
@@ -225,7 +221,7 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
     let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
     let mut scene = scene::Scene::new(&mut renderer, &world, read_file);
     let (w, h) = args.size;
-    let (cx, cy) = args.at.unwrap_or_else(|| app::map_center(&world));
+    let (cx, cy) = args.view_center.map_or_else(|| app::map_center(&world), |(x, y)| (x as f32, y as f32));
     let cam = Camera {
         x: cx - w as f32 / 2.0 / args.zoom,
         y: cy - h as f32 / 2.0 / args.zoom,
