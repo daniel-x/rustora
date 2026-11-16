@@ -10,6 +10,13 @@
 //! - the body: world fields, player fields, effects, and per actor its owner, flags, conditions, the states of its
 //!   traits and its activities.
 //!
+//! The header carries the format version as major and minor number ([`SaveVersion`]). A reader accepts a save game
+//! of its own major version and any minor version. A minor version may only append fields to the end of the state of
+//! a trait: a reader asks [`SaveReader::has_more_in_block`] before it reads such a field and keeps the default if a
+//! save game of an older minor version lacks it, and it skips the appended fields of a newer minor version that it
+//! does not know. Every other change of the format, of a world, player, effect or actor core field, or of the traits
+//! of an actor, needs a new major version.
+//!
 //! [`restore`] expects a world that was created for the lobby of the header with [`World::set_restoring`] set
 //! before `load_complete`, so that the map actors and starting units are not spawned. It recreates the actors with
 //! their ids and inits, initializes them, and then overwrites all state with the saved one.
@@ -26,11 +33,27 @@ use crate::player::WinState;
 use crate::world::World;
 
 const MAGIC: &[u8; 12] = b"RUSTORA-SAVE";
-const VERSION: u32 = 1;
+
+/// The format version of a save game, see the module documentation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveVersion {
+    pub major: u16,
+    pub minor: u16,
+}
+
+/// The format version that this build writes.
+pub const VERSION: SaveVersion = SaveVersion { major: 1, minor: 0 };
+
+impl std::fmt::Display for SaveVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
 
 /// The header of a save game, enough to create the world to restore it into.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SaveHeader {
+    pub version: SaveVersion,
     pub mod_id: String,
     pub map_uid: String,
     /// The serialized lobby `Session`.
@@ -43,7 +66,8 @@ pub struct SaveHeader {
 impl SaveHeader {
     fn write(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(MAGIC);
-        out.extend_from_slice(&VERSION.to_le_bytes());
+        out.extend_from_slice(&self.version.major.to_le_bytes());
+        out.extend_from_slice(&self.version.minor.to_le_bytes());
         for s in [&self.mod_id, &self.map_uid, &self.lobby] {
             out.extend_from_slice(&(s.len() as u32).to_le_bytes());
             out.extend_from_slice(s.as_bytes());
@@ -52,7 +76,8 @@ impl SaveHeader {
         out.extend_from_slice(&self.net_frame.to_le_bytes());
     }
 
-    /// Parses the header and returns it with the length of its bytes.
+    /// Parses the header and returns it with the length of its bytes. A save game of another major version is an
+    /// error.
     pub fn read(data: &[u8]) -> Result<(SaveHeader, usize), String> {
         fn take<'a>(data: &'a [u8], pos: &mut usize, n: usize) -> Result<&'a [u8], String> {
             let s = data.get(*pos..*pos + n).ok_or("the save game is truncated")?;
@@ -70,11 +95,14 @@ impl SaveHeader {
         if take(data, &mut pos, MAGIC.len())? != MAGIC {
             return Err("not a rustora save game".into());
         }
-        let version = int(data, &mut pos)?;
-        if version != VERSION {
-            return Err(format!("unsupported save game version {version}, expected {VERSION}"));
+        let major = u16::from_le_bytes(take(data, &mut pos, 2)?.try_into().expect("2 bytes"));
+        let minor = u16::from_le_bytes(take(data, &mut pos, 2)?.try_into().expect("2 bytes"));
+        let version = SaveVersion { major, minor };
+        if major != VERSION.major {
+            return Err(format!("the save game has the format version {version}, this build reads {}.x", VERSION.major));
         }
         let header = SaveHeader {
+            version,
             mod_id: string(data, &mut pos)?,
             map_uid: string(data, &mut pos)?,
             lobby: string(data, &mut pos)?,
@@ -142,6 +170,7 @@ pub fn save(world: &Rc<World>, mod_id: &str) -> Result<Vec<u8>, String> {
         }
     }
     let header = SaveHeader {
+        version: VERSION,
         mod_id: mod_id.to_string(),
         map_uid: world.map().uid.clone(),
         lobby: world.lobby_info.serialize(),
@@ -273,8 +302,8 @@ fn write_actor(w: &mut SaveWriter, a: &ActorRef) {
 
 /// Restores the state of `data` into `world`, see the module documentation.
 pub fn restore(world: &Rc<World>, data: &[u8]) -> Result<(), String> {
-    let (_, header_len) = SaveHeader::read(data)?;
-    let result = catch(|| read_state(world, &data[header_len..]));
+    let (header, header_len) = SaveHeader::read(data)?;
+    let result = catch(|| read_state(world, &data[header_len..], header.version));
     world.set_restoring(false);
     result
 }
@@ -286,8 +315,9 @@ struct Entry {
     disposed: bool,
 }
 
-fn read_state(world: &Rc<World>, data: &[u8]) {
+fn read_state(world: &Rc<World>, data: &[u8], version: SaveVersion) {
     let mut r = SaveReader::new(world, data);
+    r.set_version(version);
     let existing: HashMap<u32, ActorRef> = world.registered_actors().into_iter().map(|a| (a.id, a)).collect();
     let saved_next_aid = r.u32();
     world.set_next_aid(world.peek_next_aid().max(saved_next_aid));
@@ -392,7 +422,12 @@ fn read_actor(r: &mut SaveReader, a: &ActorRef) {
         let len = r.u32() as usize;
         let start = r.position();
         r.label = format!("{a:?} {name}");
+        r.set_block_end(Some(start + len));
         t.load_state(r);
+        r.set_block_end(None);
+        if r.position() - start < len && r.version().minor > VERSION.minor {
+            r.take(len - (r.position() - start));
+        }
         if r.position() - start != len {
             r.fail(format!(
                 "actor {a:?}: trait {name} read {} bytes of its {len}",
@@ -417,5 +452,55 @@ impl Persist for WinState {
             2 => WinState::Lost,
             v => r.fail(format!("invalid win state {v}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(version: SaveVersion) -> SaveHeader {
+        SaveHeader {
+            version,
+            mod_id: "ra".into(),
+            map_uid: "uid".into(),
+            lobby: "lobby".into(),
+            world_tick: 7,
+            net_frame: 3,
+        }
+    }
+
+    fn bytes(h: &SaveHeader) -> Vec<u8> {
+        let mut out = Vec::new();
+        h.write(&mut out);
+        out
+    }
+
+    #[test]
+    fn a_header_reads_back_with_its_version() {
+        let h = header(VERSION);
+        let data = bytes(&h);
+        assert_eq!(SaveHeader::read(&data).unwrap(), (h, data.len()));
+    }
+
+    #[test]
+    fn any_minor_version_of_the_own_major_version_reads() {
+        for minor in [0, VERSION.minor + 1, u16::MAX] {
+            let h = header(SaveVersion { major: VERSION.major, minor });
+            assert_eq!(SaveHeader::read(&bytes(&h)).unwrap().0.version.minor, minor);
+        }
+    }
+
+    #[test]
+    fn another_major_version_is_rejected() {
+        let h = header(SaveVersion { major: VERSION.major + 1, minor: 0 });
+        assert!(SaveHeader::read(&bytes(&h)).unwrap_err().contains("format version"));
+    }
+
+    #[test]
+    fn the_former_u32_version_1_reads_as_1_0() {
+        let mut data = bytes(&header(VERSION));
+        data[MAGIC.len()..MAGIC.len() + 4].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(SaveHeader::read(&data).unwrap().0.version, SaveVersion { major: 1, minor: 0 });
     }
 }

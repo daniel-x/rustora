@@ -456,6 +456,10 @@ pub struct SaveReader<'a> {
     pub label: String,
     /// The labels where shared values were first read, by slot.
     value_origins: HashMap<usize, String>,
+    /// The format version of the save game.
+    version: crate::savegame::SaveVersion,
+    /// The end of the state of the trait that is being read.
+    block_end: Option<usize>,
 }
 
 type Loader<D> = fn(&mut SaveReader) -> Rc<D>;
@@ -495,7 +499,28 @@ impl<'a> SaveReader<'a> {
             current_actor: None,
             label: String::new(),
             value_origins: HashMap::new(),
+            version: crate::savegame::VERSION,
+            block_end: None,
         }
+    }
+
+    /// The format version of the save game that is being read.
+    pub fn version(&self) -> crate::savegame::SaveVersion {
+        self.version
+    }
+
+    pub fn set_version(&mut self, version: crate::savegame::SaveVersion) {
+        self.version = version;
+    }
+
+    pub fn set_block_end(&mut self, end: Option<usize>) {
+        self.block_end = end;
+    }
+
+    /// True if the state of the current trait has more bytes. A trait reads a field that a minor version appended
+    /// only then, so that a save game of an older minor version keeps the default.
+    pub fn has_more_in_block(&self) -> bool {
+        self.block_end.is_some_and(|end| self.pos < end)
     }
 
     pub fn world(&self) -> &Rc<World> {
