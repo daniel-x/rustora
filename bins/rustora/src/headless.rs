@@ -4,11 +4,13 @@
 //! `rustora --headless <command> ...`: replay verification and test games without window, graphics or sound.
 //! [`HELP`] lists the commands.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use rustora_client::replay::Replay;
 use rustora_engine::order_manager::OrderManager;
+use rustora_core::world_types::WPos;
 use rustora_engine::world::World;
 use rustora_launch::{LoadedGame, ReplayDriver, Step, load_game};
 
@@ -46,6 +48,23 @@ fn print_detail(world: &World) {
     for l in world.sync_detail() {
         println!("{l}");
     }
+}
+
+/// Prints "gone <tick> <id> <type> <owner> <x> <y>" for each actor with health that was in the world after the last
+/// tick (`alive`) and no longer is, at its last position. Returns the actors with health in the world now.
+fn print_deaths(world: &World, alive: HashMap<u32, (String, String, WPos)>) -> HashMap<u32, (String, String, WPos)> {
+    let mut now = HashMap::new();
+    for a in world.actors() {
+        if a.is_in_world() && !a.is_dead() && a.trait_or_default::<rustora_mods_common::health::Health>().is_some() {
+            now.insert(a.id, (a.info.name.clone(), a.owner().internal_name.clone(), a.center_position()));
+        }
+    }
+    for (id, (name, owner, pos)) in alive {
+        if !now.contains_key(&id) {
+            println!("gone {} {id} {name} {owner} {} {}", world.world_tick(), pos.x, pos.y);
+        }
+    }
+    now
 }
 
 /// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick. `PROGRESS=n` prints the time and
@@ -404,6 +423,8 @@ Environment:
   EXTRA_STEPS=<n>       world: run n more replay steps after the last tick
   TRACE_ACTOR=<id>      world, skirmish: print position, facing and activity chain of an actor each tick
   TRACE_CELL=<x>,<y>    world: print the actors in a cell each tick
+  TRACE_DEATHS=1        world: print \"gone <tick> <id> <type> <owner> <x> <y>\" when an actor with health leaves
+                        the world, at its last position
   TRACE_FROZEN=<player-actor-id>:<frozen-id>
                         world: print the state of a frozen actor of a player each tick
   TRACE_RANDOM=<from>,<to>
@@ -466,7 +487,12 @@ pub fn main(args: Vec<String>) {
                     let (x, y) = v.split_once(',')?;
                     Some(rustora_core::world_types::CPos::new(x.parse().ok()?, y.parse().ok()?))
                 });
+                let trace_deaths = std::env::var_os("TRACE_DEATHS").is_some();
+                let mut alive = HashMap::new();
                 run_driver(&world, driver, tick, |w, _| {
+                    if trace_deaths {
+                        alive = print_deaths(w, std::mem::take(&mut alive));
+                    }
                     if let Some(c) = trace_cell {
                         use rustora_mods_common::actor_map::WorldExt;
                         let actors: Vec<String> = w
