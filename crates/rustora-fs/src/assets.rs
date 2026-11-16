@@ -72,4 +72,28 @@ mod tests {
         assert!(!elsewhere.contains("asset.txt"));
         std::fs::remove_dir_all(&base).unwrap();
     }
+
+    /// The map folder of a mod is in the engine directory and in the assets, which hold the art of a few maps. Opened
+    /// from the mod folder, it lists the maps of both.
+    #[test]
+    fn a_subfolder_in_both_opens_with_the_files_of_both() {
+        let base = std::env::temp_dir().join(format!("rustora-assets-subfolder-test-{}", std::process::id()));
+        let (engine, support) = (base.join("engine"), base.join("support"));
+        let overlay = support.join(assets_subdir());
+        std::fs::create_dir_all(engine.join("mods/x/maps/scripted")).unwrap();
+        std::fs::create_dir_all(overlay.join("mods/x/maps/scripted")).unwrap();
+        std::fs::create_dir_all(overlay.join("mods/x/maps/art-only")).unwrap();
+        std::fs::write(engine.join("mods/x/maps/plain.oramap"), "map").unwrap();
+        std::fs::write(engine.join("mods/x/maps/scripted/map.yaml"), "yaml").unwrap();
+        std::fs::write(overlay.join("mods/x/maps/scripted/art.shp"), "art").unwrap();
+        register_overlay(&engine, &support);
+
+        let fs = crate::FileSystem::new(crate::Platform::new(engine.clone(), support.clone()), "x", Default::default(), Vec::new());
+        let maps = Folder::new(engine.join("mods/x")).open_package("maps", &fs).expect("maps folder");
+        assert_eq!(maps.contents(), vec!["art-only", "plain.oramap", "scripted"]);
+        let scripted = maps.open_package("scripted", &fs).expect("scripted map");
+        assert_eq!(scripted.contents(), vec!["art.shp", "map.yaml"]);
+        assert!(maps.open_package("art-only", &fs).is_some());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }

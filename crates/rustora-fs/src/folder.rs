@@ -89,7 +89,13 @@ impl Package for Folder {
         self.join(filename).is_file()
     }
 
+    /// A subfolder of the folder itself opens as such, so that the overlay only adds its files; a subfolder that
+    /// only the overlay has opens from there.
     fn open_package(&self, filename: &str, fs: &FileSystem) -> Option<Arc<dyn Package>> {
+        let own = self.path.join(filename);
+        if own.is_dir() {
+            return Some(Arc::new(Folder::new(own)));
+        }
         let resolved = fs.platform().resolve_path(&self.join(filename).to_string_lossy());
         let resolved_path = Path::new(&resolved);
         if resolved_path.is_dir() {
