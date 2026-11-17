@@ -42,7 +42,7 @@ pub struct SaveVersion {
 }
 
 /// The format version that this build writes.
-pub const VERSION: SaveVersion = SaveVersion { major: 2, minor: 0 };
+pub const VERSION: SaveVersion = SaveVersion { major: 1, minor: 0 };
 
 impl std::fmt::Display for SaveVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -507,9 +507,9 @@ mod tests {
     }
 
     #[test]
-    fn the_former_u32_version_1_is_rejected_as_1_0() {
+    fn the_former_u32_version_1_reads_as_1_0() {
         let mut data = bytes(&header(VERSION));
         data[MAGIC.len()..MAGIC.len() + 4].copy_from_slice(&1u32.to_le_bytes());
-        assert!(SaveHeader::read(&data).unwrap_err().contains("format version 1.0,"));
+        assert_eq!(SaveHeader::read(&data).unwrap().0.version, SaveVersion { major: 1, minor: 0 });
     }
 }
