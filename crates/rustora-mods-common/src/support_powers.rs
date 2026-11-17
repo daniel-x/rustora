@@ -203,6 +203,11 @@ pub struct SupportPowerInfo {
 
     // NukePower
     pub missile_weapon: String,
+    pub missile_image: Option<String>,
+    pub missile_up: String,
+    pub missile_down: String,
+    pub missile_palette: String,
+    pub is_player_palette: bool,
     pub missile_delay: i32,
     pub spawn_offset: WVec,
     pub detonation_altitude: WDist,
@@ -218,6 +223,8 @@ pub struct SupportPowerInfo {
     pub trail_sequences: Vec<String>,
     pub trail_interval: i32,
     pub trail_delay: i32,
+    pub trail_palette: String,
+    pub trail_use_player_palette: bool,
     pub condition: Option<String>,
     pub duration: i32,
     pub dimensions: CVec,
@@ -338,6 +345,11 @@ impl Default for SupportPowerInfo {
             beacon_delay: 0,
             beacon_remove_advance: 25,
             missile_weapon: String::new(),
+            missile_image: None,
+            missile_up: "up".into(),
+            missile_down: "down".into(),
+            missile_palette: "effect".into(),
+            is_player_palette: false,
             missile_delay: 0,
             spawn_offset: WVec::ZERO,
             detonation_altitude: WDist::ZERO,
@@ -353,6 +365,8 @@ impl Default for SupportPowerInfo {
             trail_sequences: Vec::new(),
             trail_interval: 1,
             trail_delay: 1,
+            trail_palette: "effect".into(),
+            trail_use_player_palette: false,
             condition: None,
             duration: 0,
             dimensions: CVec::ZERO,
@@ -1480,7 +1494,7 @@ impl SupportPower {
     }
 }
 
-/// `Projectiles/NukeLaunch.cs`, without the missile animation.
+/// `Projectiles/NukeLaunch.cs`.
 #[derive(rustora_engine::persist::Persist)]
 #[persist(effect)]
 pub struct NukeLaunch {
@@ -1488,6 +1502,14 @@ pub struct NukeLaunch {
     me: Weak<NukeLaunch>,
     fired_by: rustora_engine::player::PlayerRef,
     weapon: Rc<rustora_engine::weapon::WeaponInfo>,
+    image: Option<String>,
+    up_sequence: String,
+    down_sequence: String,
+    weapon_palette: String,
+    is_player_palette: bool,
+    /// The missile animation. A loaded effect creates it again on its next tick.
+    #[persist(skip)]
+    anim: RefCell<Option<Rc<rustora_engine::sequence::Animation>>>,
     ascend_source: rustora_core::world_types::WPos,
     ascend_target: rustora_core::world_types::WPos,
     descend_source: rustora_core::world_types::WPos,
@@ -1498,7 +1520,10 @@ pub struct NukeLaunch {
     turn: i32,
     trail_image: Option<String>,
     trail_sequences: Vec<String>,
+    trail_palette: String,
+    trail_use_player_palette: bool,
     trail_interval: i32,
+    trail_delay: i32,
     pos: Cell<rustora_core::world_types::WPos>,
     ticks: Cell<i32>,
     trail_ticks: Cell<i32>,
@@ -1523,6 +1548,12 @@ impl NukeLaunch {
             me: me.clone(),
             fired_by,
             weapon,
+            image: info.missile_image.clone().filter(|i| !i.is_empty()),
+            up_sequence: info.missile_up.clone(),
+            down_sequence: info.missile_down.clone(),
+            weapon_palette: info.missile_palette.clone(),
+            is_player_palette: info.is_player_palette,
+            anim: RefCell::new(None),
             ascend_source: launch_pos,
             ascend_target: launch_pos + offset,
             descend_source,
@@ -1533,7 +1564,10 @@ impl NukeLaunch {
             turn,
             trail_image: info.trail_image.clone().filter(|t| !t.is_empty()),
             trail_sequences: info.trail_sequences.clone(),
+            trail_palette: info.trail_palette.clone(),
+            trail_use_player_palette: info.trail_use_player_palette,
             trail_interval: info.trail_interval,
+            trail_delay: info.trail_delay,
             pos: Cell::new(if skip_ascent { descend_source } else { launch_pos }),
             ticks: Cell::new(0),
             trail_ticks: Cell::new(info.trail_delay),
@@ -1545,6 +1579,38 @@ impl NukeLaunch {
     /// `NukeLaunch.FractionComplete`: the share of the flight that is over.
     pub fn fraction_complete(&self) -> f32 {
         self.ticks.get() as f32 / self.impact_delay.max(1) as f32
+    }
+
+    /// Returns the missile animation, created with the sequence of the current flight phase if missing.
+    fn animation(&self, world: &World, image: &str) -> Rc<rustora_engine::sequence::Animation> {
+        if let Some(anim) = self.anim.borrow().as_ref() {
+            return anim.clone();
+        }
+        let anim = rustora_engine::sequence::Animation::new(world.map().sequences().clone(), image, None, None);
+        let sequence = if self.ticks.get() > self.turn {
+            &self.down_sequence
+        } else {
+            &self.up_sequence
+        };
+        anim.play_repeating(sequence);
+        *self.anim.borrow_mut() = Some(anim.clone());
+        anim
+    }
+
+    /// The position `ticks` after the start of the flight, on the ascent or on the descent.
+    fn lerp_flight(&self, descending: bool, ticks: i32) -> rustora_core::world_types::WPos {
+        let lerp = rustora_core::world_types::WPos::lerp_quadratic;
+        if descending {
+            lerp(
+                self.descend_source,
+                self.descend_target,
+                WAngle::ZERO,
+                ticks - self.turn,
+                self.impact_delay - self.turn,
+            )
+        } else {
+            lerp(self.ascend_source, self.ascend_target, WAngle::ZERO, ticks, self.turn)
+        }
     }
 
     fn explode(&self, world: &Rc<World>, remove: bool) {
@@ -1581,25 +1647,36 @@ impl rustora_engine::effect::Effect for NukeLaunch {
             sound::play_random_at(world, SoundType::World, &self.weapon.report, self.pos.get(), 1.0);
         }
         let ticks = self.ticks.get();
+        if let Some(image) = &self.image {
+            let anim = self.animation(world, image);
+            anim.tick();
+            if ticks == self.turn {
+                anim.play_repeating(&self.down_sequence);
+            }
+        }
         let descending = ticks >= self.turn;
-        let lerp = rustora_core::world_types::WPos::lerp_quadratic;
-        let pos = if !descending {
-            lerp(self.ascend_source, self.ascend_target, WAngle::ZERO, ticks, self.turn)
-        } else {
-            lerp(
-                self.descend_source,
-                self.descend_target,
-                WAngle::ZERO,
-                ticks - self.turn,
-                self.impact_delay - self.turn,
-            )
-        };
+        let pos = self.lerp_flight(descending, ticks);
         self.pos.set(pos);
-        if self.trail_image.is_some() {
+        if let Some(trail_image) = &self.trail_image {
             self.trail_ticks.set(self.trail_ticks.get() - 1);
             if self.trail_ticks.get() < 0 {
+                let trail_pos = self.lerp_flight(descending, ticks - self.trail_delay);
                 if !self.trail_sequences.is_empty() {
-                    world.shared_random.borrow_mut().next_max(self.trail_sequences.len() as i32);
+                    let i = world.shared_random.borrow_mut().next_max(self.trail_sequences.len() as i32);
+                    let palette = rustora_engine::render::PaletteRef::resolve(
+                        Some(&self.trail_palette),
+                        self.trail_use_player_palette,
+                        &self.fired_by,
+                    );
+                    let trail: rustora_engine::effect::EffectRef = crate::effects::SpriteEffect::at(
+                        world,
+                        trail_pos,
+                        WAngle::ZERO,
+                        trail_image,
+                        &self.trail_sequences[i as usize],
+                        palette,
+                    );
+                    world.add_frame_end_task(Box::new(move |w| w.add_effect(trail)));
                 }
                 self.trail_ticks.set(self.trail_interval);
             }
@@ -1609,6 +1686,15 @@ impl rustora_engine::effect::Effect for NukeLaunch {
             self.explode(world, ticks == self.impact_delay || self.remove_on_detonation);
         }
         self.ticks.set(ticks + 1);
+    }
+
+    fn render(&self, _viewer: Option<&rustora_engine::player::PlayerRef>, out: &mut Vec<rustora_engine::render::Renderable>) {
+        if self.launch_delay.get() >= 0 {
+            return;
+        }
+        let Some(anim) = self.anim.borrow().clone() else { return };
+        let palette = rustora_engine::render::PaletteRef::resolve(Some(&self.weapon_palette), self.is_player_palette, &self.fired_by);
+        rustora_engine::render::render_animation(&anim, self.pos.get(), WVec::ZERO, 0, &palette, out);
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
