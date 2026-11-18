@@ -697,6 +697,8 @@ pub struct Client {
     view_center: Option<(i32, i32)>,
     /// The world ticks of the benchmark of `--bench-ticks` (`Launch.BenchTicks`).
     bench_ticks: Option<i32>,
+    /// The world tick at which the replay pauses itself (`Launch.PauseAtTick`), for reproducible screenshots.
+    pause_at_tick: Option<i32>,
     load_screen_drawn: bool,
     load_screen: rustora_ui::load_screen::LoadScreen,
     ui_tick_time: TickTime,
@@ -855,6 +857,10 @@ impl Client {
             bench_ticks: args
                 .iter()
                 .find_map(|a| a.strip_prefix("Launch.BenchTicks="))
+                .and_then(|n| n.parse().ok()),
+            pause_at_tick: args
+                .iter()
+                .find_map(|a| a.strip_prefix("Launch.PauseAtTick="))
                 .and_then(|n| n.parse().ok()),
             load_screen_drawn: false,
             load_screen,
@@ -1043,6 +1049,10 @@ impl Client {
             if let Some(shell) = &mut self.shell {
                 let tick_before = shell.world.world_tick();
                 shell.tick(now, timestep, &lag);
+                if shell.world.is_replay() && self.pause_at_tick.is_some_and(|t| shell.world.world_tick() >= t) {
+                    shell.world.replay_timestep.set(0);
+                    self.pause_at_tick = None;
+                }
                 if shell.world.world_tick() != tick_before {
                     if tick_before == 0 {
                         rustora_ui::perf::reset();

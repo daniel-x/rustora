@@ -63,6 +63,8 @@ Options:
   --bench-ticks <n>      once the first game or replay runs, plays n world ticks as fast as possible
                          with one render per tick and without vsync, prints a BENCH line with the
                          wall, CPU and render times and quits
+  --pause-at-tick <n>    pauses the --replay once it reached world tick n, for reproducible
+                         screenshots
   --view-center <x>,<y>  centers the view on this position in world pixels when the first game or
                          replay starts, and the --screenshot (default map center)
   --load-game <name>     loads the game save of this file name in the saves directory of the support
@@ -103,6 +105,7 @@ struct Args {
     player: Option<usize>,
     view_center: Option<(i32, i32)>,
     bench_ticks: Option<i32>,
+    pause_at_tick: Option<i32>,
     size: (u32, u32),
     zoom: f32,
 }
@@ -140,6 +143,7 @@ fn parse_args(raw: &[String]) -> Args {
         player: None,
         view_center: None,
         bench_ticks: None,
+        pause_at_tick: None,
         size: (1280, 800),
         zoom: 1.0,
     };
@@ -161,6 +165,7 @@ fn parse_args(raw: &[String]) -> Args {
             "--player" => args.player = Some(parse_value(&value(), "player index")),
             "--view-center" => args.view_center = Some(parse_pair(&value(), ',', "view center")),
             "--bench-ticks" => args.bench_ticks = Some(parse_value(&value(), "tick count")),
+            "--pause-at-tick" => args.pause_at_tick = Some(parse_value(&value(), "tick")),
             "--zoom" => args.zoom = parse_value(&value(), "zoom"),
             "--size" => args.size = parse_pair(&value(), 'x', "size"),
             o if o.starts_with('-') => usage(&format!("unknown option {o}")),
@@ -292,5 +297,6 @@ fn main() {
     settings.extend(args.connect.iter().map(|c| format!("Launch.Connect={c}")));
     settings.extend(args.view_center.iter().map(|(x, y)| format!("Launch.ViewCenter={x},{y}")));
     settings.extend(args.bench_ticks.iter().map(|n| format!("Launch.BenchTicks={n}")));
+    settings.extend(args.pause_at_tick.iter().map(|n| format!("Launch.PauseAtTick={n}")));
     window::run(&engine, &support, args.window, &settings);
 }
