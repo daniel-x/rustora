@@ -30,6 +30,10 @@ pub trait Connection {
     fn send(&mut self, _frame: i32, _orders: Vec<RawOrder>) {}
     fn send_immediate(&mut self, _orders: Vec<RawOrder>) {}
     fn send_sync(&mut self, frame: i32, sync_hash: i32, defeat_state: u64);
+    /// False when the connection drops the sync hashes, so the order manager need not compute them.
+    fn uses_sync(&self) -> bool {
+        true
+    }
     fn receive(&mut self, net_frame_number: i32) -> Vec<Incoming>;
     /// False once a network connection is lost.
     fn is_connected(&self) -> bool {
@@ -320,7 +324,7 @@ impl OrderManager {
                 defeat |= 1u64 << i;
             }
         }
-        if self.net_frame_number >= self.world.game_save_last_sync_frame() {
+        if self.connection.uses_sync() && self.net_frame_number >= self.world.game_save_last_sync_frame() {
             let hash = self.world.sync_hash();
             self.connection.send_sync(self.net_frame_number, hash, defeat);
         } else {

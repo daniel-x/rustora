@@ -143,6 +143,10 @@ impl Connection for LocalConnection {
 
     fn send_sync(&mut self, _frame: i32, _sync_hash: i32, _defeat_state: u64) {}
 
+    fn uses_sync(&self) -> bool {
+        false
+    }
+
     fn receive(&mut self, _net_frame_number: i32) -> Vec<Incoming> {
         self.incoming.drain(..).collect()
     }

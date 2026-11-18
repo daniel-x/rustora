@@ -69,12 +69,12 @@ fn print_deaths(world: &World, alive: HashMap<u32, (String, String, WPos)>) -> H
 
 /// Runs the replay up to `max_ticks` and calls `on_tick` after each world tick. `PROGRESS=n` prints the time and
 /// actor count of every n ticks.
-fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
+fn run_replay(world: &Rc<World>, replay: Replay, max_ticks: i32, on_tick: impl FnMut(&World) -> bool) -> OrderManager {
     run_driver(world, ReplayDriver::new(world, replay), max_ticks, on_tick)
 }
 
 /// [`run_replay`] with a given driver, such as one resumed from a save game.
-fn run_driver(world: &Rc<World>, mut driver: ReplayDriver, max_ticks: i32, mut on_tick: impl FnMut(&World, i32) -> bool) -> OrderManager {
+fn run_driver(world: &Rc<World>, mut driver: ReplayDriver, max_ticks: i32, mut on_tick: impl FnMut(&World) -> bool) -> OrderManager {
     let progress: i32 = std::env::var("PROGRESS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut last = std::time::Instant::now();
     while world.world_tick() < max_ticks && driver.orders.out_of_sync.is_none() {
@@ -89,7 +89,7 @@ fn run_driver(world: &Rc<World>, mut driver: ReplayDriver, max_ticks: i32, mut o
                     );
                     last = std::time::Instant::now();
                 }
-                if !on_tick(world, world.sync_hash()) {
+                if !on_tick(world) {
                     break;
                 }
             }
@@ -136,7 +136,7 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
     }));
     let mut next = 0;
     let mut failure: Option<String> = None;
-    run_replay(world, replay, i32::MAX, |w, _| {
+    run_replay(world, replay, i32::MAX, |w| {
         let t = w.world_tick();
         let count = w.bot_random.borrow().total_count;
         if let Some(&c) = counts.get(&t)
@@ -214,6 +214,9 @@ fn skirmish(args: &[String]) {
                         facing,
                         activity_chain(&a, a.current_activity())
                     );
+                }
+                if out.is_none() && expected.is_none() {
+                    continue;
                 }
                 let line = format!(
                     "{} {} {}",
@@ -489,7 +492,7 @@ pub fn main(args: Vec<String>) {
                 });
                 let trace_deaths = std::env::var_os("TRACE_DEATHS").is_some();
                 let mut alive = HashMap::new();
-                run_driver(&world, driver, tick, |w, _| {
+                run_driver(&world, driver, tick, |w| {
                     if trace_deaths {
                         alive = print_deaths(w, std::mem::take(&mut alive));
                     }
@@ -582,10 +585,10 @@ pub fn main(args: Vec<String>) {
                 .file_stem()
                 .map_or_else(|| "replay".to_string(), |s| s.to_string_lossy().into_owned());
             let mut saver = options.saver(&stem);
-            let om = run_driver(&world, driver, i32::MAX, |w, hash| {
+            let om = run_driver(&world, driver, i32::MAX, |w| {
                 let t = w.world_tick();
                 if let Some((_, h)) = dump.iter().find(|(k, _)| *k == t).or(dump.get((t - 1) as usize))
-                    && *h != hash
+                    && *h != w.sync_hash()
                 {
                     mismatch = Some(t);
                     return false;
