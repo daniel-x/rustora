@@ -8,11 +8,12 @@
 //! By default neither thread waits for the other: the simulation thread builds a frame at every render time of
 //! `Game.Loop` while the logic has time left before its next tick, and otherwise whenever the main thread has no
 //! frame waiting, so that the main thread draws as many frames as it can. Unlike `Game.Loop`, a logic that falls
-//! behind does not drop to the minimum frame rate. The main thread draws the newest frame (`Graphics.FrameDrawSkip`). With
-//! `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
+//! behind does not drop to the minimum frame rate. The main thread draws the newest frame (`Graphics.FrameDrawSkip`).
+//! With `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
 //! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
-//! only when the previous one was presented, and after each tick it waits until the frame of that tick was presented,
-//! so that the game slows down instead of skipping frames.
+//! after each tick, but only when the previous one was presented, and the next tick waits until that frame is built.
+//! Like `Game.Loop` with `ThreadedGraphicsContext`, a tick runs while the main thread draws the frame of the tick
+//! before, and the game slows down instead of skipping frames.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -271,18 +272,13 @@ impl GameLoop {
     fn next_wake(&self) -> Instant {
         let now = Instant::now();
         let mut wake = now + MAX_RENDER_INTERVAL;
-        if !self.render_before_next_tick && !self.tick_waits_for_frame() {
+        if !self.render_before_next_tick {
             wake = wake.min(self.next_logic);
         }
         if self.suspended || self.may_build() {
             wake = wake.min(self.next_render);
         }
         wake
-    }
-
-    /// True while every frame is drawn and a frame is in flight: the next tick waits until it is presented.
-    fn tick_waits_for_frame(&self) -> bool {
-        self.draws_every_frame && self.frames_in_flight > 0
     }
 
     /// False while a frame skip setting holds the next frame back until the main thread reports the previous one.
@@ -508,7 +504,7 @@ impl GameLoop {
             self.next_logic = now;
         }
         let force_render = self.render_before_next_tick || now >= self.forced_next_render;
-        if now >= self.next_logic && !self.render_before_next_tick && !self.tick_waits_for_frame() {
+        if now >= self.next_logic && !self.render_before_next_tick {
             if self.client.benchmarking() {
                 self.next_logic = now;
             } else {
