@@ -383,7 +383,13 @@ impl GpuBackend {
                     passes,
                 } => {
                     if let Some(target) = target {
-                        self.render_world(target, *camera, *ui_scale, &frame.quads[quads.clone()], &frame.passes[passes.clone()]);
+                        self.render_world(
+                            target,
+                            *camera,
+                            *ui_scale,
+                            &frame.quads[quads.clone()],
+                            &frame.passes[passes.clone()],
+                        );
                     }
                 }
                 Command::Ui { size, scale, list } => {

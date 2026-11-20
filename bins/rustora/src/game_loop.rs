@@ -87,7 +87,10 @@ pub enum CursorChange {
     /// The mod or the cursor scale changed: the main thread drops its cursors.
     Reset,
     /// The image of a mod cursor frame, already scaled.
-    Image { key: (String, usize), image: CursorImage },
+    Image {
+        key: (String, usize),
+        image: CursorImage,
+    },
     Show(ShownCursor),
 }
 

@@ -242,11 +242,7 @@ impl App {
         let backend = GpuBackend::new(device, queue, config.format);
         Gpu {
             window,
-            surface: Surface {
-                surface,
-                config,
-                backend,
-            },
+            surface: Surface { surface, config, backend },
         }
     }
 
