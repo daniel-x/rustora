@@ -96,6 +96,12 @@ impl FrameCommands {
     }
 }
 
+/// [`FrameCommands`] cross from the thread that builds a frame to the thread that executes it.
+const _: fn() = || {
+    fn send<T: Send>() {}
+    send::<FrameCommands>();
+};
+
 /// Shelf packer state of the current sheet.
 struct Packer {
     x: u32,

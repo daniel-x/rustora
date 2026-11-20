@@ -8,6 +8,7 @@
 mod app;
 mod bench;
 mod client;
+mod frames;
 mod headless;
 mod net;
 mod palettes;

@@ -22,6 +22,7 @@ use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::window::{CustomCursor, Fullscreen, Window, WindowId};
 
 use crate::client::Client;
+use crate::frames::{Frame, Presented, Surface};
 
 /// `MaxLogicTicksBehind` of `Game.Loop`.
 const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
@@ -36,9 +37,7 @@ const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
 
 struct Gpu {
     window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    backend: GpuBackend,
+    surface: Surface,
 }
 
 /// How long a link waits for an activation token of the window system before it opens without one.
@@ -549,49 +548,32 @@ impl App {
         self.redraw_requested = None;
         self.apply_cursor(el);
         let Some(gpu) = self.gpu.as_mut() else { return };
-        self.client.prepare(&mut self.renderer, (gpu.config.width, gpu.config.height));
-        let frame = match gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            _ => {
-                let commands = self.renderer.take_frame();
-                gpu.backend.upload(&commands);
-                self.renderer.recycle(commands);
-                gpu.surface.configure(&gpu.backend.device, &gpu.config);
-                return;
-            }
-        };
-        let size = (gpu.config.width, gpu.config.height);
-        self.client.render(&mut self.renderer, size);
-        let commands = self.renderer.take_frame();
-        let view = frame.texture.create_view(&Default::default());
-        if std::mem::take(&mut self.client.screenshot_requested) {
-            let client = &mut self.client;
-            let mut pixels = rustora_render::render_offscreen_as(&mut gpu.backend, &commands, size.0, size.1, gpu.config.format);
-            gpu.backend.draw(&commands, &view);
-            if matches!(
-                gpu.config.format,
-                wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-            ) {
-                pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p.swap(0, 2));
-            }
-            pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);
-            client.save_screenshot(&pixels, size.0, size.1);
-        } else {
-            gpu.backend.execute(&commands, &view);
-        }
-        self.renderer.recycle(commands);
-        let scene = start.elapsed();
-        {
-            let _flip = rustora_ui::perf::PerfSample::new("render_flip");
-            gpu.window.pre_present_notify();
-            gpu.backend.queue.present(frame);
-        }
-        rustora_ui::perf::increment("batches", gpu.backend.take_draw_calls() as f64);
+        let frame = build_frame(&mut self.client, &mut self.renderer, (gpu.surface.config.width, gpu.surface.config.height));
+        let built = start.elapsed();
+        let window = gpu.window.clone();
+        let report = gpu.surface.present(frame, || window.pre_present_notify());
+        let drawn = report.drawn;
+        let scene = built + report.execute;
+        self.presented(report);
         drop(render);
-        rustora_ui::perf::frame_tick();
-        if let Some(bench) = &mut self.bench {
-            bench.frame(scene, start.elapsed());
+        if drawn {
+            rustora_ui::perf::frame_tick();
+            if let Some(bench) = &mut self.bench {
+                bench.frame(scene, start.elapsed());
+            }
         }
+    }
+
+    /// Takes the report of a presented frame: the perf counters, the screenshot, and the buffers for reuse.
+    fn presented(&mut self, report: Presented) {
+        if report.drawn {
+            rustora_ui::perf::increment("render_flip", 1000.0 * report.present.as_secs_f64());
+        }
+        rustora_ui::perf::increment("batches", report.draw_calls as f64);
+        if let Some(pixels) = &report.screenshot {
+            self.client.save_screenshot(pixels, report.size.0, report.size.1);
+        }
+        self.renderer.recycle(report.commands);
     }
 
     fn create_gpu(&self, el: &ActiveEventLoop) -> Gpu {
@@ -629,9 +611,11 @@ impl App {
         let backend = GpuBackend::new(device, queue, config.format);
         Gpu {
             window,
-            surface,
-            config,
-            backend,
+            surface: Surface {
+                surface,
+                config,
+                backend,
+            },
         }
     }
 }
@@ -648,9 +632,10 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = self.gpu.as_mut() {
-                    gpu.config.width = size.width.max(1);
-                    gpu.config.height = size.height.max(1);
-                    gpu.surface.configure(&gpu.backend.device, &gpu.config);
+                    let s = &mut gpu.surface;
+                    s.config.width = size.width.max(1);
+                    s.config.height = size.height.max(1);
+                    s.surface.configure(&s.backend.device, &s.config);
                 }
             }
             WindowEvent::Occluded(occluded) => self.suspended = occluded,
@@ -747,6 +732,17 @@ impl ApplicationHandler for App {
             el.exit();
         }
         el.set_control_flow(ControlFlow::WaitUntil(self.next_logic.min(self.next_render)));
+    }
+}
+
+/// Prepares and records one frame of `client` for a window of `size` pixels.
+fn build_frame(client: &mut Client, renderer: &mut Renderer, size: (u32, u32)) -> Frame {
+    client.prepare(renderer, size);
+    client.render(renderer, size);
+    Frame {
+        commands: renderer.take_frame(),
+        size,
+        screenshot: std::mem::take(&mut client.screenshot_requested),
     }
 }
 
