@@ -65,7 +65,7 @@ Options:
   --bench-ticks <n>      once the first game or replay runs, plays n world ticks as fast as possible
                          with one frame built per tick and without vsync, prints a BENCH line with
                          the wall and CPU times, the frame times of both threads and their busy
-                         times, and quits; Graphics.FrameBuildSkip and Graphics.FrameRenderSkip
+                         times, and quits; Graphics.FrameBuildSkip and Graphics.FrameDrawSkip
                          decide which frames are drawn
   --pause-at-tick <n>    pauses the --replay once it reached world tick n, for reproducible
                          screenshots

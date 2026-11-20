@@ -1513,10 +1513,10 @@ impl Client {
         self.services.settings.borrow().graphics.cursor_double
     }
 
-    /// The `FrameBuildSkip` and `FrameRenderSkip` settings.
+    /// The `FrameBuildSkip` and `FrameDrawSkip` settings.
     pub fn frame_skip(&self) -> (bool, bool) {
         let graphics = &self.services.settings.borrow().graphics;
-        (graphics.frame_build_skip, graphics.frame_render_skip)
+        (graphics.frame_build_skip, graphics.frame_draw_skip)
     }
 
     pub fn ui_scale(&self) -> f32 {

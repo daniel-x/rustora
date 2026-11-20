@@ -83,8 +83,8 @@ struct App {
     redraw_requested: Option<Instant>,
     /// When a stalled redraw is requested again.
     forced_redraw: Instant,
-    /// `Graphics.FrameRenderSkip`.
-    render_skip: bool,
+    /// `Graphics.FrameDrawSkip`.
+    draw_skip: bool,
     /// The time spent in the event handlers since the last report to the simulation thread.
     busy: Duration,
     /// The mod cursor frames that the simulation thread sent.
@@ -184,7 +184,7 @@ impl ApplicationHandler<Wake> for Launcher {
                 suspended: false,
                 redraw_requested: None,
                 forced_redraw: Instant::now(),
-                render_skip: graphics.frame_render_skip,
+                draw_skip: graphics.frame_draw_skip,
                 busy: Duration::ZERO,
                 hardware_cursors: HashMap::new(),
                 links_awaiting_token: Vec::new(),
@@ -354,11 +354,11 @@ impl App {
         }
     }
 
-    /// Draws a waiting frame: with `FrameRenderSkip` the newest after the uploads of the older ones, without it the
+    /// Draws a waiting frame: with `FrameDrawSkip` the newest after the uploads of the older ones, without it the
     /// oldest, and the next redraw takes the next one.
     fn render(&mut self) {
         self.redraw_requested = None;
-        let frame = if self.render_skip {
+        let frame = if self.draw_skip {
             let newest = self.frames.pop_back();
             self.skip_frames();
             newest

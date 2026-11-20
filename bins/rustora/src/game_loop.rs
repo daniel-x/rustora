@@ -6,7 +6,7 @@
 //! which owns the window and the GPU and presents them.
 //!
 //! By default neither thread waits for the other: the simulation thread builds a frame at every render time of
-//! `Game.Loop`, and the main thread draws the newest one (`Graphics.FrameRenderSkip`). With
+//! `Game.Loop`, and the main thread draws the newest one (`Graphics.FrameDrawSkip`). With
 //! `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
 //! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
 //! only when the previous one was presented, and after each tick it waits until the frame of that tick was presented,
@@ -191,7 +191,7 @@ struct GameLoop {
     quit: bool,
     /// `Graphics.FrameBuildSkip`.
     build_skip: bool,
-    /// Every frame is drawn: neither `Graphics.FrameBuildSkip` nor `Graphics.FrameRenderSkip` is on.
+    /// Every frame is drawn: neither `Graphics.FrameBuildSkip` nor `Graphics.FrameDrawSkip` is on.
     draws_every_frame: bool,
     /// The frames sent to the main thread and not reported back yet.
     frames_in_flight: usize,
@@ -207,7 +207,7 @@ impl GameLoop {
         client.logic_tick();
         let now = Instant::now();
         let bench = client.bench_ticks().map(crate::bench::Bench::new);
-        let (build_skip, render_skip) = client.frame_skip();
+        let (build_skip, draw_skip) = client.frame_skip();
         let cursor_mod = client.mod_id().to_string();
         GameLoop {
             client,
@@ -236,7 +236,7 @@ impl GameLoop {
             last_logic_tick: now,
             quit: false,
             build_skip,
-            draws_every_frame: !build_skip && !render_skip,
+            draws_every_frame: !build_skip && !draw_skip,
             frames_in_flight: 0,
             idle: Duration::ZERO,
         }

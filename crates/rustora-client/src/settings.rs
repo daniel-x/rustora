@@ -323,8 +323,8 @@ section!(
 );
 
 section!(
-    /// `GraphicSettings`. `FrameBuildSkip` and `FrameRenderSkip` are rustora's own: with `FrameBuildSkip` the
-    /// simulation thread builds a frame only after the previous one was presented, with `FrameRenderSkip` the main
+    /// `GraphicSettings`. `FrameBuildSkip` and `FrameDrawSkip` are rustora's own: with `FrameBuildSkip` the
+    /// simulation thread builds a frame only after the previous one was presented, with `FrameDrawSkip` the main
     /// thread draws only the newest of the waiting frames.
     GraphicsSection {
         "Mode" mode: WindowMode = WindowMode::PseudoFullscreen,
@@ -344,7 +344,7 @@ section!(
         "BatchSize" batch_size: i32 = 8192,
         "SheetSize" sheet_size: i32 = 2048,
         "FrameBuildSkip" frame_build_skip: bool = false,
-        "FrameRenderSkip" frame_render_skip: bool = true,
+        "FrameDrawSkip" frame_draw_skip: bool = true,
     }
 );
 
