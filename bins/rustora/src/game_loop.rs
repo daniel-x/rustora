@@ -36,7 +36,7 @@ use winit::event_loop::EventLoopProxy;
 use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
-use crate::client::Client;
+use crate::client::{Client, Startup};
 use crate::frames::{Frame, FrameQueue, Presented};
 
 /// `MaxLogicTicksBehind` of `Game.Loop`.
@@ -211,7 +211,24 @@ struct GameLoop {
 impl GameLoop {
     fn new(start: Start, rx: Receiver<ToSim>, link: MainLink) -> GameLoop {
         let resolution = (start.size.0 as i32, start.size.1 as i32);
-        let mut client = Client::new(&start.engine, &start.support, resolution, &start.args);
+        let mut renderer = Renderer::new();
+        let mut send = |renderer: &mut Renderer| {
+            let frame = Frame {
+                commands: renderer.take_frame(),
+                size: start.window_size,
+                screenshot: false,
+            };
+            if let Some(left) = start.queue.push_merging(frame) {
+                renderer.recycle(left);
+            }
+            link.wake();
+        };
+        let mut startup = Startup {
+            renderer: &mut renderer,
+            window: start.window_size,
+            send: &mut send,
+        };
+        let mut client = Client::new(&start.engine, &start.support, resolution, &start.args, Some(&mut startup));
         client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
         client.logic_tick();
         let now = Instant::now();
@@ -219,7 +236,7 @@ impl GameLoop {
         let cursor_mod = client.mod_id().to_string();
         GameLoop {
             client,
-            renderer: Renderer::new(),
+            renderer,
             rx,
             link,
             window_size: start.window_size,

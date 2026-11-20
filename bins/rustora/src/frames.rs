@@ -155,6 +155,18 @@ impl Surface {
         Some(pixels)
     }
 
+    /// Presents a black surface texture, so that the window shows before the first frame is built. `pre_present` runs
+    /// right before the present.
+    pub fn present_black(&mut self, pre_present: impl FnOnce()) {
+        let texture = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            _ => return,
+        };
+        self.backend.clear(&texture.texture.create_view(&Default::default()));
+        pre_present();
+        self.backend.queue.present(texture);
+    }
+
     /// Executes `frame` on the next surface texture and presents it. `pre_present` runs right before the present.
     /// Without a surface texture only the uploads run, and the surface is configured anew.
     pub fn present(&mut self, frame: Frame, pre_present: impl FnOnce()) -> Presented {
