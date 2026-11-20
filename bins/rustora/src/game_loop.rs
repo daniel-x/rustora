@@ -261,9 +261,14 @@ impl GameLoop {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            while let Ok(message) = self.rx.try_recv() {
-                self.handle(message);
-            }
+            self.handle_waiting();
+        }
+    }
+
+    /// Handles the messages of the main thread that arrived so far.
+    fn handle_waiting(&mut self) {
+        while let Ok(message) = self.rx.try_recv() {
+            self.handle(message);
         }
     }
 
@@ -494,8 +499,9 @@ impl GameLoop {
     }
 
     /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders whenever the
-    /// main thread has no frame waiting, and at least every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the logic runs on without frames. The frame skip
-    /// settings hold renders and ticks back as the module describes.
+    /// main thread has no frame waiting, and at least every [`MAX_RENDER_INTERVAL`]; the reports that arrived during
+    /// the tick count for that. While the window is hidden, the logic runs on without frames. The frame skip settings
+    /// hold renders and ticks back as the module describes.
     fn pass(&mut self) {
         self.flush_motion();
         self.open_links();
@@ -523,6 +529,10 @@ impl GameLoop {
                 return;
             }
             self.render_before_next_tick = self.draws_every_frame;
+        }
+        self.handle_waiting();
+        if self.quit {
+            return;
         }
         let is_time_to_render = now >= self.next_render;
         if self.suspended {
