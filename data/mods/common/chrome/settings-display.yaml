@@ -331,6 +331,29 @@ Container@DISPLAY_PANEL:
 					Width: PARENT_WIDTH - 24
 					Height: 50
 					Children:
+						Container@FRAME_SKIP_CHECKBOX_CONTAINER:
+							X: 10
+							Width: PARENT_WIDTH / 2 - 20
+							Children:
+								Checkbox@FRAME_SKIP_CHECKBOX:
+									Width: PARENT_WIDTH
+									Height: 20
+									Font: Regular
+						Container@FRAME_SKIP_SLIDER_CONTAINER:
+							Width: PARENT_WIDTH / 2 - 20
+							Children:
+								Slider@FRAME_SKIP_SLIDER:
+									X: 20
+									Y: 25
+									Width: PARENT_WIDTH - 20
+									Height: 20
+									Ticks: 12
+									MinimumValue: 5
+									MaximumValue: 60
+				Container@ROW:
+					Width: PARENT_WIDTH - 24
+					Height: 50
+					Children:
 						Container@GL_PROFILE_DROPDOWN_CONTAINER:
 							X: 10
 							Width: PARENT_WIDTH / 2 - 20

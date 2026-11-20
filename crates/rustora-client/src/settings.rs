@@ -323,8 +323,9 @@ section!(
 );
 
 section!(
-    /// `GraphicSettings`. `FrameSkip` is rustora's own: with it, a logic tick never waits for its frame, and a
-    /// frame that finds two frames waiting for the main thread replaces the newer one, so that frame is not drawn.
+    /// `GraphicSettings`. `FrameSkip` and `FrameSkipMinFps` are rustora's own. With `FrameSkip`, a logic tick never
+    /// waits for its frame: no frame is built after a tick when the next tick is due already, unless the last build is
+    /// `1 / FrameSkipMinFps` ago, and a frame that finds two frames waiting for the main thread replaces the newer one.
     /// Without it, every frame is drawn, and a tick waits while the frame of the tick before waits for the main thread.
     GraphicsSection {
         "Mode" mode: WindowMode = WindowMode::PseudoFullscreen,
@@ -343,7 +344,8 @@ section!(
         "GLProfile" gl_profile: GlProfile = GlProfile::Automatic,
         "BatchSize" batch_size: i32 = 8192,
         "SheetSize" sheet_size: i32 = 2048,
-        "FrameSkip" frame_skip: bool = false,
+        "FrameSkip" frame_skip: bool = true,
+        "FrameSkipMinFps" frame_skip_min_fps: i32 = 16,
     }
 );
 

@@ -428,6 +428,7 @@ pub fn viewport_size_name(ui: &Ui, distance: WorldViewport) -> String {
 struct DisplayPanel {
     restart: Rc<Cell<bool>>,
     frame_limit_text: Rc<RefCell<String>>,
+    frame_skip_text: Rc<RefCell<String>>,
     window_width: WidgetId,
     window_height: WidgetId,
     original_text: (String, String),
@@ -450,7 +451,22 @@ impl ChromeLogic for DisplayPanel {
             "checkbox-frame-limiter",
             &[("fps", MessageArg::Number(i64::from(s.max_framerate)))],
         );
+        *self.frame_skip_text.borrow_mut() = message_with(
+            ui,
+            "checkbox-frame-skip",
+            &[("fps", MessageArg::Number(i64::from(s.frame_skip_min_fps)))],
+        );
     }
+}
+
+/// Binds the frame skip row of rustora's display panel, which the chrome of OpenRA lacks. The checkbox shows `text`.
+fn bind_frame_skip(ui: &mut Ui, panel: WidgetId, text: Rc<RefCell<String>>) {
+    let checkbox = checkbox!(ui, panel, "FRAME_SKIP_CHECKBOX", graphics.frame_skip);
+    slider!(ui, panel, "FRAME_SKIP_SLIDER", graphics.frame_skip_min_fps);
+    ui.get::<CheckboxWidget>(checkbox).button.get_text = Some(Rc::new(move || text.borrow().clone()));
+    let skip_on = settings_getter(ui, |s| s.graphics.frame_skip);
+    let slider = ui.child(panel, "FRAME_SKIP_SLIDER");
+    ui.get::<SliderWidget>(slider).is_disabled = Some(Rc::new(move || !skip_on()));
 }
 
 /// `DisplaySettingsLogic`.
@@ -581,6 +597,11 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     let slider = ui.child(panel, "FRAME_LIMIT_SLIDER");
     ui.get::<SliderWidget>(slider).is_disabled = Some(Rc::new(move || !limit_on() || gamespeed_on()));
 
+    let frame_skip_text = Rc::new(RefCell::new(String::new()));
+    if ui.find(panel, "FRAME_SKIP_CHECKBOX").is_some() {
+        bind_frame_skip(ui, panel, frame_skip_text.clone());
+    }
+
     let name_field = bind_player_name(ui, panel, in_game);
     bind_player_color(ui, panel, in_game);
 
@@ -609,6 +630,8 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         g.cap_framerate = d.graphics.cap_framerate;
         g.max_framerate = d.graphics.max_framerate;
         g.cap_framerate_to_game_fps = d.graphics.cap_framerate_to_game_fps;
+        g.frame_skip = d.graphics.frame_skip;
+        g.frame_skip_min_fps = d.graphics.frame_skip_min_fps;
         g.gl_profile = d.graphics.gl_profile;
         g.mode = d.graphics.mode;
         g.video_display = d.graphics.video_display;
@@ -624,6 +647,7 @@ pub fn display(ui: &mut Ui, panel: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     cell(DisplayPanel {
         restart,
         frame_limit_text,
+        frame_skip_text,
         window_width,
         window_height,
         original_text: (w.to_string(), h.to_string()),

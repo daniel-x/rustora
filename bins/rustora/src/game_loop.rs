@@ -5,17 +5,20 @@
 //! `Sdl2Input.PumpInput`, and the timing of `Game.Loop`. It builds the frames and sends them to the main thread,
 //! which owns the window and the GPU and presents them.
 //!
-//! The simulation thread builds one frame after every logic tick and none in between, and puts it into the
+//! The simulation thread builds at most one frame after every logic tick and none in between, and puts it into the
 //! [`FrameQueue`]. The main thread takes the frames out one by one and draws each. Only the simulation thread decides
 //! which frames are skipped, with `Graphics.FrameSkip`:
 //!
-//! - Off: every frame is drawn. The queue holds at most one frame. A built frame that finds the queue full waits
-//!   outside of it, and the next tick waits until the frame is in the queue. Like `Game.Loop` with
-//!   `ThreadedGraphicsContext`, a tick runs while the main thread draws the frame of the tick before, and the game
-//!   slows down instead of skipping frames. At most three frames exist: the one drawn, the one in the queue and the
-//!   one waiting to get in.
-//! - On: ticks never wait for frames. The queue holds at most two frames. A frame that finds it full replaces the
-//!   newer of the two, which keeps only its uploads for the later frames.
+//! - Off: every tick is drawn. A frame is built after every tick. The queue holds at most one frame. A built frame
+//!   that finds the queue full waits outside of it, and the next tick waits until the frame is in the queue. Like
+//!   `Game.Loop` with `ThreadedGraphicsContext`, a tick runs while the main thread draws the frame of the tick before,
+//!   and the game slows down instead of skipping frames. At most three frames exist: the one drawn, the one in the
+//!   queue and the one waiting to get in.
+//! - On: ticks never wait for frames. No frame is built after a tick when the logic is behind, that is when the next
+//!   tick is due already, unless the last build is `1 / Graphics.FrameSkipMinFps` ago; the uploads that the tick recorded
+//!   go into the queue as a frame without draws. The queue holds at most two frames. A frame that finds it full
+//!   replaces the newer of the two, which keeps only its uploads; a frame without draws adds its uploads to the newer
+//!   one.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -196,11 +199,11 @@ struct GameLoop {
     /// When the last logic tick ran, to log gaps.
     last_logic_tick: Instant,
     quit: bool,
-    /// `Graphics.FrameSkip`.
-    frame_skip: bool,
     queue: FrameQueue,
-    /// A built frame that found the queue full, without `Graphics.FrameSkip`.
+    /// A built frame that found the queue full.
     waiting: Option<Frame>,
+    /// When the last frame was built.
+    last_build: Instant,
     /// The time spent waiting for messages.
     idle: Duration,
 }
@@ -213,7 +216,6 @@ impl GameLoop {
         client.logic_tick();
         let now = Instant::now();
         let bench = client.bench_ticks().map(crate::bench::Bench::new);
-        let frame_skip = client.frame_skip();
         let cursor_mod = client.mod_id().to_string();
         GameLoop {
             client,
@@ -238,9 +240,9 @@ impl GameLoop {
             bench,
             last_logic_tick: now,
             quit: false,
-            frame_skip,
             queue: start.queue,
             waiting: None,
+            last_build: now,
             idle: Duration::ZERO,
         }
     }
@@ -457,6 +459,39 @@ impl GameLoop {
         self.shown_cursor = wanted;
     }
 
+    /// True if the frame of the tick that just ran is built: always without `Graphics.FrameSkip`, with it only when
+    /// the logic keeps up, or when the last build is `1 / Graphics.FrameSkipMinFps` ago.
+    fn builds_after_tick(&self) -> bool {
+        let now = Instant::now();
+        !self.client.frame_skip() || now < self.next_logic || now.duration_since(self.last_build) >= self.client.frame_skip_max_interval()
+    }
+
+    /// Puts the uploads that the ticks since the last frame recorded into the queue, for a tick whose build is skipped.
+    fn send_uploads(&mut self) {
+        let commands = self.renderer.take_frame();
+        if commands.is_empty() {
+            self.renderer.recycle(commands);
+            return;
+        }
+        self.push_merging(Frame {
+            commands,
+            size: self.window_size,
+            screenshot: false,
+        });
+    }
+
+    /// Puts `frame` into the queue with `Graphics.FrameSkip`, merging it if the queue is full.
+    fn push_merging(&mut self, frame: Frame) {
+        let draws = frame.commands.has_draws();
+        if let Some(left) = self.queue.push_merging(frame) {
+            self.renderer.recycle(left);
+            if draws && let Some(bench) = &mut self.bench {
+                bench.merged();
+            }
+        }
+        self.link.wake();
+    }
+
     /// Builds a frame and puts it into the queue: `Game.RenderTick` up to the present. The perf items of the frame
     /// take their sample when a frame is drawn, so that they and the frame rate describe the frames on screen.
     fn render(&mut self) {
@@ -464,17 +499,12 @@ impl GameLoop {
         let render = rustora_ui::perf::PerfSample::new("render");
         self.apply_cursor();
         let frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
+        self.last_build = Instant::now();
         if let Some(bench) = &mut self.bench {
             bench.built(start.elapsed());
         }
-        if self.frame_skip {
-            if let Some(merged) = self.queue.push_merging(frame) {
-                self.renderer.recycle(merged);
-                if let Some(bench) = &mut self.bench {
-                    bench.merged();
-                }
-            }
-            self.link.wake();
+        if self.client.frame_skip() {
+            self.push_merging(frame);
         } else {
             self.waiting = Some(frame);
             self.enqueue_waiting();
@@ -505,8 +535,9 @@ impl GameLoop {
         self.renderer.recycle(report.commands);
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick, followed by its frame. A tick waits while a frame waits to
-    /// get into the queue. While the window is hidden, the logic runs on without frames.
+    /// One pass of `Game.Loop`: at most one logic tick, followed by its frame unless `Graphics.FrameSkip` skips it. A
+    /// tick waits while a frame waits to get into the queue. While the window is hidden, the logic runs on without
+    /// frames.
     fn pass(&mut self) {
         self.flush_motion();
         self.open_links();
@@ -534,7 +565,14 @@ impl GameLoop {
                 return;
             }
             if !self.suspended {
-                self.render();
+                if self.builds_after_tick() {
+                    self.render();
+                } else {
+                    self.send_uploads();
+                    if let Some(bench) = &mut self.bench {
+                        bench.skipped_build();
+                    }
+                }
             }
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {

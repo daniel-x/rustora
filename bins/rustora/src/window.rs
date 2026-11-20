@@ -349,12 +349,21 @@ impl App {
         }
     }
 
-    /// Takes the oldest waiting frame out of the queue and draws it. The simulation thread learns at once that the
-    /// queue has room, and the next redraw takes the next frame.
+    /// Takes the oldest waiting frame out of the queue and draws it. A frame without draws only uploads, and the next
+    /// one is taken. The simulation thread learns at once that the queue has room, and the next redraw takes the next
+    /// frame.
     fn render(&mut self) {
         self.redraw_requested = None;
-        let Some(frame) = self.queue.pop() else { return };
-        self.send(ToSim::FrameTaken);
+        let frame = loop {
+            let Some(frame) = self.queue.pop() else { return };
+            self.send(ToSim::FrameTaken);
+            let Some(gpu) = self.gpu.as_mut() else { return };
+            if frame.commands.has_draws() {
+                break frame;
+            }
+            let report = gpu.surface.skip(frame, Skip::NoDraws);
+            self.report(report);
+        };
         let Some(gpu) = self.gpu.as_mut() else { return };
         let window = gpu.window.clone();
         let report = gpu.surface.present(frame, || window.pre_present_notify());

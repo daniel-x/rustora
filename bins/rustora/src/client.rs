@@ -1519,6 +1519,12 @@ impl Client {
         self.services.settings.borrow().graphics.frame_skip
     }
 
+    /// With `FrameSkip`, the longest time between two built frames: `1 / FrameSkipMinFps`.
+    pub fn frame_skip_max_interval(&self) -> std::time::Duration {
+        let fps = self.services.settings.borrow().graphics.frame_skip_min_fps.max(1);
+        std::time::Duration::from_secs(1) / fps as u32
+    }
+
     pub fn ui_scale(&self) -> f32 {
         self.ui_scale
     }

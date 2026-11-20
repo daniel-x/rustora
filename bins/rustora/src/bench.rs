@@ -3,17 +3,21 @@
 
 //! The benchmark of `--bench-ticks`: once a game or replay runs, the client plays that many world ticks as fast as
 //! possible without vsync, prints one `BENCH` line and quits. `Graphics.FrameSkip` decides whether the
-//! simulation waits for its frames or merges them. The line counts the frames that were merged into newer ones, those
-//! that were not drawn by their reason, and those whose report had not come back when the run ended.
+//! simulation waits for its frames or skips building and merging them. The line counts the world ticks whose frame
+//! was not built, the frames that were merged into newer ones, the frames that were not drawn by their reason, and those whose report had not come back when the run ended.
 
 use std::time::{Duration, Instant};
 
-use crate::frames::Presented;
+use crate::frames::{Presented, Skip};
 
 /// The measurement of a benchmark, started at the first world tick after the world began to run.
 pub struct Bench {
     ticks: i32,
     run: Option<Run>,
+    /// The world tick of the previous logic tick.
+    world_tick: Option<i32>,
+    /// The last logic tick advanced the world.
+    advanced: bool,
 }
 
 struct Run {
@@ -24,6 +28,8 @@ struct Run {
     start_idle: Duration,
     built: u64,
     drawn: u64,
+    /// The world ticks whose frame was not built.
+    unbuilt: u64,
     /// The frames that a newer frame replaced in the queue.
     merged: u64,
     /// The frames that were not drawn, by [`crate::frames::Skip`] in its declaration order.
@@ -36,12 +42,19 @@ struct Run {
 
 impl Bench {
     pub fn new(ticks: i32) -> Bench {
-        Bench { ticks, run: None }
+        Bench {
+            ticks,
+            run: None,
+            world_tick: None,
+            advanced: false,
+        }
     }
 
     /// Starts the measurement at the first `world_tick` and prints the result once `ticks` world ticks passed.
     /// `idle` is the time that the simulation thread waited so far. Returns true when the benchmark is over.
     pub fn after_logic_tick(&mut self, world_tick: Option<i32>, idle: Duration) -> bool {
+        self.advanced = world_tick != self.world_tick;
+        self.world_tick = world_tick;
         let Some(tick) = world_tick else { return false };
         let Some(run) = &self.run else {
             self.run = Some(Run {
@@ -51,6 +64,7 @@ impl Bench {
                 start_idle: idle,
                 built: 0,
                 drawn: 0,
+                unbuilt: 0,
                 merged: 0,
                 skipped: [0; 3],
                 build: Duration::ZERO,
@@ -74,7 +88,7 @@ impl Bench {
         let ticks = ticks.max(1) as u64;
         println!(
             "BENCH ticks {ticks} from {} wall {:.1} s{cpu} frames {} drawn {} fps {:.1} build {:.2} ms/frame execute {:.2} \
-             ms/drawn present {:.2} ms/drawn busy sim {:.2} ms/tick main {:.2} ms/tick merged {} skipped no-texture {} \
+             ms/drawn present {:.2} ms/drawn busy sim {:.2} ms/tick main {:.2} ms/tick unbuilt {} merged {} skipped no-texture {} \
              stalled {} hidden {} unreported {}",
             run.start_tick,
             wall.as_secs_f64(),
@@ -86,6 +100,7 @@ impl Bench {
             ms(run.present, run.drawn),
             ms(sim_busy, ticks),
             ms(run.main_busy, ticks),
+            run.unbuilt,
             run.merged,
             run.skipped[0],
             run.skipped[1],
@@ -110,11 +125,21 @@ impl Bench {
         }
     }
 
+    /// Counts a logic tick whose frame was not built, if it advanced the world.
+    pub fn skipped_build(&mut self) {
+        if let Some(run) = &mut self.run
+            && self.advanced
+        {
+            run.unbuilt += 1;
+        }
+    }
+
     /// Counts the report of the main thread on a frame. The execute time includes the uploads of skipped frames.
     pub fn presented(&mut self, report: &Presented) {
         if let Some(run) = &mut self.run {
             match report.skipped {
                 None => run.drawn += 1,
+                Some(Skip::NoDraws) => {}
                 Some(skip) => run.skipped[skip as usize] += 1,
             }
             run.execute += report.execute;

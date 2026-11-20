@@ -19,8 +19,8 @@ pub struct Frame {
 }
 
 /// The frames that the simulation thread built and the main thread has not taken out yet, oldest first. The
-/// simulation thread puts frames in and, with `Graphics.FrameSkip`, merges them; the main thread only takes them
-/// out one by one.
+/// simulation thread puts frames in and, with `Graphics.FrameSkip`, merges them; the main thread only takes them out
+/// one by one.
 #[derive(Clone, Default)]
 pub struct FrameQueue(Arc<Mutex<VecDeque<Frame>>>);
 
@@ -54,8 +54,9 @@ impl FrameQueue {
         true
     }
 
-    /// Puts `frame` in. If the queue is full, `frame` replaces the newest waiting frame, which keeps only its uploads,
-    /// and the commands that are left over come back for reuse.
+    /// Puts `frame` in. If the queue is full, a frame that draws replaces the newer waiting frame, which keeps only its
+    /// uploads, and the uploads of a frame without draws join the newer waiting frame. The commands that are left over
+    /// come back for reuse.
     pub fn push_merging(&self, mut frame: Frame) -> Option<FrameCommands> {
         let mut older = {
             let mut frames = self.frames();
@@ -65,9 +66,13 @@ impl FrameQueue {
             }
             frames.pop_back().expect("full queue")
         };
-        older.commands.merge_newer(&mut frame.commands);
-        older.size = frame.size;
-        older.screenshot |= frame.screenshot;
+        if frame.commands.has_draws() {
+            older.commands.merge_newer(&mut frame.commands);
+            older.size = frame.size;
+            older.screenshot |= frame.screenshot;
+        } else {
+            older.commands.append_uploads(&mut frame.commands);
+        }
         self.frames().push_back(older);
         Some(frame.commands)
     }
@@ -82,6 +87,8 @@ pub enum Skip {
     Stalled,
     /// The window is hidden or has no surface.
     Hidden,
+    /// The frame holds only the uploads of ticks whose build was skipped.
+    NoDraws,
 }
 
 /// What the window did with a [`Frame`].
@@ -112,9 +119,10 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// Executes only the uploads of `frame`, for a frame that is not drawn for `reason`. A screenshot frame is still
-    /// read back.
+    /// Executes only the uploads of `frame`, for a frame that is not drawn for `reason`, or for [`Skip::NoDraws`] if
+    /// it has nothing to draw. A screenshot frame is still read back.
     pub fn skip(&mut self, frame: Frame, reason: Skip) -> Presented {
+        let reason = if frame.commands.has_draws() { reason } else { Skip::NoDraws };
         let start = Instant::now();
         let screenshot = self.read_back(&frame);
         if screenshot.is_none() {

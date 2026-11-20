@@ -90,11 +90,6 @@ impl FrameCommands {
     pub fn clear(&mut self) {
         self.uploads.clear();
         self.bytes.clear();
-        self.clear_draws();
-    }
-
-    /// Removes the draws and keeps the uploads.
-    fn clear_draws(&mut self) {
         self.draws.clear();
         self.quads.clear();
         self.passes.clear();
@@ -106,14 +101,27 @@ impl FrameCommands {
         self.uploads.is_empty() && self.draws.is_empty()
     }
 
-    /// Replaces this frame by the `newer` one and keeps the uploads of this frame before those of `newer`, for a frame
-    /// that is never drawn. `newer` is left empty with the draw buffers of this frame, for reuse.
-    pub fn merge_newer(&mut self, newer: &mut FrameCommands) {
-        self.clear_draws();
+    /// True if the frame draws anything.
+    pub fn has_draws(&self) -> bool {
+        !self.draws.is_empty()
+    }
+
+    /// Moves the uploads of `newer` after those of this frame and keeps the draws of this frame.
+    pub fn append_uploads(&mut self, newer: &mut FrameCommands) {
         let offset = self.bytes.len();
         self.bytes.extend_from_slice(&newer.bytes);
         self.uploads.extend(newer.uploads.drain(..).map(|c| c.shifted(offset)));
         newer.bytes.clear();
+    }
+
+    /// Replaces the draws of this frame by those of `newer` and moves the uploads of `newer` after those of this
+    /// frame, for a frame that is never drawn. `newer` is left empty with the draw buffers of this frame, for reuse.
+    pub fn merge_newer(&mut self, newer: &mut FrameCommands) {
+        self.append_uploads(newer);
+        self.draws.clear();
+        self.quads.clear();
+        self.passes.clear();
+        self.ui_lists_used = 0;
         std::mem::swap(&mut self.draws, &mut newer.draws);
         std::mem::swap(&mut self.quads, &mut newer.quads);
         std::mem::swap(&mut self.passes, &mut newer.passes);
