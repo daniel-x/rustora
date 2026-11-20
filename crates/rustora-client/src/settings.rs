@@ -22,8 +22,8 @@ pub trait SettingValue: Sized {
 impl SettingValue for bool {
     fn parse_setting(value: &str) -> Option<bool> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "true" => Some(true),
-            "false" => Some(false),
+            "true" | "yes" => Some(true),
+            "false" | "no" => Some(false),
             _ => None,
         }
     }
@@ -323,7 +323,9 @@ section!(
 );
 
 section!(
-    /// `GraphicSettings`.
+    /// `GraphicSettings`. `FrameBuildSkip` and `FrameRenderSkip` are rustora's own: with `FrameBuildSkip` the
+    /// simulation thread builds a frame only after the previous one was presented, with `FrameRenderSkip` the main
+    /// thread draws only the newest of the waiting frames.
     GraphicsSection {
         "Mode" mode: WindowMode = WindowMode::PseudoFullscreen,
         "VSync" vsync: bool = true,
@@ -341,6 +343,8 @@ section!(
         "GLProfile" gl_profile: GlProfile = GlProfile::Automatic,
         "BatchSize" batch_size: i32 = 8192,
         "SheetSize" sheet_size: i32 = 2048,
+        "FrameBuildSkip" frame_build_skip: bool = false,
+        "FrameRenderSkip" frame_render_skip: bool = true,
     }
 );
 

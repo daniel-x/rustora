@@ -1007,7 +1007,8 @@ impl Client {
     }
 
     /// True while a world other than a replay runs: `Game.Loop` renders at least once per logic tick then. The
-    /// benchmark of `--bench-ticks` renders every tick of replays too.
+    /// benchmark of `--bench-ticks` builds a frame every tick of replays too; the frame skip settings decide whether
+    /// the tick waits for it.
     pub fn renders_every_tick(&self) -> bool {
         if self.benchmarking() {
             return true;
@@ -1522,6 +1523,12 @@ impl Client {
     /// The `CursorDouble` setting.
     pub fn cursor_double(&self) -> bool {
         self.services.settings.borrow().graphics.cursor_double
+    }
+
+    /// The `FrameBuildSkip` and `FrameRenderSkip` settings.
+    pub fn frame_skip(&self) -> (bool, bool) {
+        let graphics = &self.services.settings.borrow().graphics;
+        (graphics.frame_build_skip, graphics.frame_render_skip)
     }
 
     pub fn ui_scale(&self) -> f32 {

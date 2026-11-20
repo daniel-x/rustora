@@ -18,7 +18,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::frames::{Frame, Surface};
+use crate::frames::{Frame, Presented, Surface};
 use crate::game_loop::{MAX_RENDER_INTERVAL, Start, ToMain, ToSim, Wake};
 
 /// A requested redraw that has not come after this time means that the window system does not let the window draw,
@@ -55,6 +55,10 @@ struct App {
     redraw_requested: Option<Instant>,
     /// When a stalled redraw is requested again.
     forced_redraw: Instant,
+    /// `Graphics.FrameRenderSkip`.
+    render_skip: bool,
+    /// The time spent in the event handlers since the last report to the simulation thread.
+    busy: Duration,
 }
 
 /// Opens the client window. Without an explicit `size`, the window follows the `Graphics.Mode` setting like
@@ -118,10 +122,22 @@ impl Launcher {
     }
 }
 
+impl Launcher {
+    /// Runs `handle` on the app and adds its time to the busy time of the main thread.
+    fn timed(&mut self, handle: impl FnOnce(&mut App)) {
+        if let Some(app) = self.app.as_mut() {
+            let start = Instant::now();
+            handle(app);
+            app.busy += start.elapsed();
+        }
+    }
+}
+
 impl ApplicationHandler<Wake> for Launcher {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.app.is_none() {
             let (size, fullscreen) = self.window_layout(el);
+            let graphics = Settings::load(Path::new(&self.support).join("settings.yaml"), &self.args).graphics;
             self.app = Some(App {
                 engine: self.engine.clone(),
                 support: self.support.clone(),
@@ -136,29 +152,23 @@ impl ApplicationHandler<Wake> for Launcher {
                 suspended: false,
                 redraw_requested: None,
                 forced_redraw: Instant::now(),
+                render_skip: graphics.frame_render_skip,
+                busy: Duration::ZERO,
             });
         }
-        if let Some(app) = self.app.as_mut() {
-            app.resumed(el);
-        }
+        self.timed(|app| app.resumed(el));
     }
 
     fn user_event(&mut self, el: &ActiveEventLoop, _event: Wake) {
-        if let Some(app) = self.app.as_mut() {
-            app.receive(el);
-        }
+        self.timed(|app| app.receive(el));
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        if let Some(app) = self.app.as_mut() {
-            app.window_event(el, id, event);
-        }
+        self.timed(|app| app.window_event(el, id, event));
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        if let Some(app) = self.app.as_mut() {
-            app.about_to_wait(el);
-        }
+        self.timed(|app| app.about_to_wait(el));
     }
 }
 
@@ -228,6 +238,12 @@ impl App {
         }
     }
 
+    /// Reports a frame to the simulation thread, with the busy time of the main thread since the last report.
+    fn report(&mut self, mut report: Presented) {
+        report.main_busy = std::mem::take(&mut self.busy);
+        self.send(ToSim::Presented(report));
+    }
+
     /// Takes the messages of the simulation thread.
     fn receive(&mut self, el: &ActiveEventLoop) {
         let Some(sim) = &self.sim else { return };
@@ -252,23 +268,35 @@ impl App {
     /// Runs only the uploads of all waiting frames and reports them to the simulation thread.
     fn skip_frames(&mut self) {
         let Some(gpu) = self.gpu.as_mut() else { return };
+        let mut reports = Vec::with_capacity(self.frames.len());
         while let Some(frame) = self.frames.pop_front() {
-            let report = gpu.surface.skip(frame);
-            if let Some(sim) = &self.sim {
-                let _ = sim.tx.send(ToSim::Presented(report));
-            }
+            reports.push(gpu.surface.skip(frame));
+        }
+        for report in reports {
+            self.report(report);
         }
     }
 
-    /// Draws the newest waiting frame after the uploads of the older ones.
+    /// Draws a waiting frame: with `FrameRenderSkip` the newest after the uploads of the older ones, without it the
+    /// oldest, and the next redraw takes the next one.
     fn render(&mut self) {
         self.redraw_requested = None;
-        let Some(newest) = self.frames.pop_back() else { return };
-        self.skip_frames();
+        let frame = if self.render_skip {
+            let newest = self.frames.pop_back();
+            self.skip_frames();
+            newest
+        } else {
+            self.frames.pop_front()
+        };
+        let Some(frame) = frame else { return };
         let Some(gpu) = self.gpu.as_mut() else { return };
         let window = gpu.window.clone();
-        let report = gpu.surface.present(newest, || window.pre_present_notify());
-        self.send(ToSim::Presented(report));
+        let report = gpu.surface.present(frame, || window.pre_present_notify());
+        if !self.frames.is_empty() {
+            window.request_redraw();
+            self.redraw_requested = Some(Instant::now());
+        }
+        self.report(report);
     }
 
     /// Tells the simulation thread to quit and waits for it. A panic of the simulation thread goes on here.

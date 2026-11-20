@@ -4,6 +4,13 @@
 //! The simulation thread: the client with its world, network, user interface and audio, the input translation of
 //! `Sdl2Input.PumpInput`, and the timing of `Game.Loop`. It builds the frames and sends them to the main thread,
 //! which owns the window and the GPU and presents them.
+//!
+//! By default neither thread waits for the other: the simulation thread builds a frame at every render time of
+//! `Game.Loop`, and the main thread draws the newest one (`Graphics.FrameRenderSkip`). With
+//! `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
+//! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
+//! only when the previous one was presented, and after a tick of a game it waits until the frame of that tick was
+//! presented, so that the game slows down instead of skipping frames.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -143,6 +150,16 @@ struct GameLoop {
     /// When the last logic tick ran, to log gaps.
     last_logic_tick: Instant,
     quit: bool,
+    /// `Graphics.FrameBuildSkip`.
+    build_skip: bool,
+    /// Every frame is drawn: neither `Graphics.FrameBuildSkip` nor `Graphics.FrameRenderSkip` is on.
+    draws_every_frame: bool,
+    /// The frames sent to the main thread and not reported back yet.
+    frames_in_flight: usize,
+    /// The frame of the last logic tick is in flight, and the next tick waits for it.
+    awaiting_tick_frame: bool,
+    /// The time spent waiting for messages.
+    idle: Duration,
 }
 
 impl GameLoop {
@@ -153,6 +170,7 @@ impl GameLoop {
         client.logic_tick();
         let now = Instant::now();
         let bench = client.bench_ticks().map(crate::bench::Bench::new);
+        let (build_skip, render_skip) = client.frame_skip();
         GameLoop {
             client,
             renderer: Renderer::new(),
@@ -174,6 +192,11 @@ impl GameLoop {
             bench,
             last_logic_tick: now,
             quit: false,
+            build_skip,
+            draws_every_frame: !build_skip && !render_skip,
+            frames_in_flight: 0,
+            awaiting_tick_frame: false,
+            idle: Duration::ZERO,
         }
     }
 
@@ -185,8 +208,10 @@ impl GameLoop {
             if self.quit {
                 break;
             }
-            let timeout = self.next_wake().saturating_duration_since(Instant::now());
-            match self.rx.recv_timeout(timeout) {
+            let wait = Instant::now();
+            let received = self.rx.recv_timeout(self.next_wake().saturating_duration_since(wait));
+            self.idle += wait.elapsed();
+            match received {
                 Ok(message) => self.handle(message),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -197,9 +222,22 @@ impl GameLoop {
         }
     }
 
-    /// The time of the next logic tick or render.
+    /// The time of the next logic tick or render. A tick or render that waits for a frame report waits for a message
+    /// instead, up to [`MAX_RENDER_INTERVAL`].
     fn next_wake(&self) -> Instant {
-        self.next_logic.min(self.next_render)
+        let mut wake = Instant::now() + MAX_RENDER_INTERVAL;
+        if !self.render_before_next_tick && !self.awaiting_tick_frame {
+            wake = wake.min(self.next_logic);
+        }
+        if self.suspended || self.may_build() {
+            wake = wake.min(self.next_render);
+        }
+        wake
+    }
+
+    /// False while a frame skip setting holds the next frame back until the main thread reports the previous one.
+    fn may_build(&self) -> bool {
+        self.frames_in_flight == 0 || !(self.build_skip || self.draws_every_frame)
     }
 
     fn handle(&mut self, message: ToSim) {
@@ -346,8 +384,11 @@ impl GameLoop {
         let render = rustora_ui::perf::PerfSample::new("render");
         self.render_before_next_tick = false;
         self.client.update_cursor(self.mouse);
-        let mut frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
-        frame.build = start.elapsed();
+        let frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
+        if let Some(bench) = &mut self.bench {
+            bench.built(start.elapsed());
+        }
+        self.frames_in_flight += 1;
         self.link.send(ToMain::Frame(frame));
         drop(render);
         rustora_ui::perf::frame_tick();
@@ -355,11 +396,15 @@ impl GameLoop {
 
     /// Takes the report of a presented frame: the perf counters, the screenshot, and the buffers for reuse.
     fn presented(&mut self, report: Presented) {
+        self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
+        if self.frames_in_flight == 0 {
+            self.awaiting_tick_frame = false;
+        }
+        if let Some(bench) = &mut self.bench {
+            bench.presented(&report);
+        }
         if report.drawn {
             rustora_ui::perf::increment("render_flip", 1000.0 * report.present.as_secs_f64());
-            if let Some(bench) = &mut self.bench {
-                bench.frame(report.build + report.execute, report.build + report.execute + report.present);
-            }
         }
         rustora_ui::perf::increment("batches", report.draw_calls as f64);
         if let Some(pixels) = &report.screenshot {
@@ -370,7 +415,7 @@ impl GameLoop {
 
     /// One pass of `Game.Loop`: at most one logic tick and one render. A game renders after each world tick, and a
     /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the
-    /// logic runs on without frames.
+    /// logic runs on without frames. The frame skip settings hold renders and ticks back as the module describes.
     fn pass(&mut self) {
         self.flush_motion();
         self.open_links();
@@ -379,7 +424,7 @@ impl GameLoop {
             self.next_logic = now;
         }
         let force_render = self.render_before_next_tick || now >= self.forced_next_render;
-        if now >= self.next_logic && !self.render_before_next_tick {
+        if now >= self.next_logic && !self.render_before_next_tick && !self.awaiting_tick_frame {
             self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
             let gap = now.saturating_duration_since(self.last_logic_tick);
             if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
@@ -388,7 +433,7 @@ impl GameLoop {
             self.last_logic_tick = now;
             self.client.logic_tick();
             if let Some(bench) = &mut self.bench
-                && bench.after_logic_tick(self.client.running_world_tick())
+                && bench.after_logic_tick(self.client.running_world_tick(), self.idle)
             {
                 self.quit = true;
                 return;
@@ -403,10 +448,14 @@ impl GameLoop {
                 self.next_render = now + RENDER_INTERVAL;
                 self.render_before_next_tick = false;
             }
-        } else if (is_time_to_render && now < self.next_logic) || force_render {
+        } else if ((is_time_to_render && now < self.next_logic) || force_render) && self.may_build() {
+            let tick_frame = self.render_before_next_tick;
             self.next_render = now + RENDER_INTERVAL;
             self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
             self.render();
+            self.awaiting_tick_frame = tick_frame && self.draws_every_frame;
+        } else if self.build_skip {
+            self.render_before_next_tick = false;
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
             self.quit = true;
@@ -422,7 +471,6 @@ fn build_frame(client: &mut Client, renderer: &mut Renderer, size: (u32, u32)) -
         commands: renderer.take_frame(),
         size,
         screenshot: std::mem::take(&mut client.screenshot_requested),
-        build: Duration::ZERO,
     }
 }
 
