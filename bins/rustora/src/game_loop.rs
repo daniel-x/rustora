@@ -6,9 +6,8 @@
 //! which owns the window and the GPU and presents them.
 //!
 //! By default neither thread waits for the other: the simulation thread builds a frame at every render time of
-//! `Game.Loop` while the logic has time left before its next tick, and otherwise whenever the main thread has no
-//! frame waiting, so that the main thread draws as many frames as it can. Unlike `Game.Loop`, a logic that falls
-//! behind does not drop to the minimum frame rate. The main thread draws the newest frame (`Graphics.FrameDrawSkip`).
+//! `Game.Loop`, and after every tick while the logic is behind. Unlike `Game.Loop`, a logic that falls behind does
+//! not drop to the minimum frame rate. The main thread draws the newest frame (`Graphics.FrameDrawSkip`).
 //! With `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
 //! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
 //! after each tick, but only when the previous one was presented, and the next tick waits until that frame is built.
@@ -498,9 +497,9 @@ impl GameLoop {
         self.renderer.recycle(report.commands);
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders whenever the
-    /// main thread has no frame waiting, and at least every [`MAX_RENDER_INTERVAL`]; the reports that arrived during
-    /// the tick count for that. While the window is hidden, the logic runs on without frames. The frame skip settings
+    /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders after every
+    /// tick, with `Graphics.FrameBuildSkip` only when the main thread has no frame waiting, which the reports that
+    /// arrived during the tick tell, and at least every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the logic runs on without frames. The frame skip settings
     /// hold renders and ticks back as the module describes.
     fn pass(&mut self) {
         self.flush_motion();
@@ -540,7 +539,7 @@ impl GameLoop {
                 self.next_render = now + RENDER_INTERVAL;
                 self.render_before_next_tick = false;
             }
-        } else if force_render || (is_time_to_render && (now < self.next_logic || self.frames_in_flight == 0)) {
+        } else if force_render || (is_time_to_render && (now < self.next_logic || !self.build_skip || self.frames_in_flight == 0)) {
             if self.may_build() {
                 self.next_render = now + RENDER_INTERVAL;
                 self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
