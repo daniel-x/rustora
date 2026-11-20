@@ -459,7 +459,8 @@ impl GameLoop {
         self.shown_cursor = wanted;
     }
 
-    /// Builds a frame and sends it to the main thread: `Game.RenderTick`.
+    /// Builds a frame and sends it to the main thread: `Game.RenderTick` up to the present. The perf items of the
+    /// frame take their sample when a frame is drawn, so that they and the frame rate describe the frames on screen.
     fn render(&mut self) {
         let start = Instant::now();
         let render = rustora_ui::perf::PerfSample::new("render");
@@ -472,7 +473,6 @@ impl GameLoop {
         self.frames_in_flight += 1;
         self.link.send(ToMain::Frame(frame));
         drop(render);
-        rustora_ui::perf::frame_tick();
     }
 
     /// Takes the report of a presented frame: the perf counters, the screenshot, and the buffers for reuse.
@@ -484,10 +484,11 @@ impl GameLoop {
         if let Some(bench) = &mut self.bench {
             bench.presented(&report);
         }
+        rustora_ui::perf::increment("batches", report.draw_calls as f64);
         if report.drawn {
             rustora_ui::perf::increment("render_flip", 1000.0 * report.present.as_secs_f64());
+            rustora_ui::perf::frame_tick();
         }
-        rustora_ui::perf::increment("batches", report.draw_calls as f64);
         if let Some(pixels) = &report.screenshot {
             self.client.save_screenshot(pixels, report.size.0, report.size.1);
         }
