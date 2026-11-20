@@ -19,7 +19,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{CustomCursor, Fullscreen, Window, WindowId};
 
-use crate::frames::{Frame, Presented, Surface};
+use crate::frames::{Frame, Presented, Skip, Surface};
 use crate::game_loop::{CursorChange, MAX_RENDER_INTERVAL, ShownCursor, Start, ToMain, ToSim, Wake};
 
 /// A requested redraw that has not come after this time means that the window system does not let the window draw,
@@ -295,7 +295,7 @@ impl App {
                 gpu.window.request_redraw();
                 self.redraw_requested.get_or_insert_with(Instant::now);
             }
-            _ => self.skip_frames(),
+            _ => self.skip_frames(Skip::Hidden),
         }
     }
 
@@ -342,12 +342,12 @@ impl App {
         });
     }
 
-    /// Runs only the uploads of all waiting frames and reports them to the simulation thread.
-    fn skip_frames(&mut self) {
+    /// Runs only the uploads of all waiting frames and reports them to the simulation thread as skipped for `reason`.
+    fn skip_frames(&mut self, reason: Skip) {
         let Some(gpu) = self.gpu.as_mut() else { return };
         let mut reports = Vec::with_capacity(self.frames.len());
         while let Some(frame) = self.frames.pop_front() {
-            reports.push(gpu.surface.skip(frame));
+            reports.push(gpu.surface.skip(frame, reason));
         }
         for report in reports {
             self.report(report);
@@ -360,7 +360,7 @@ impl App {
         self.redraw_requested = None;
         let frame = if self.draw_skip {
             let newest = self.frames.pop_back();
-            self.skip_frames();
+            self.skip_frames(Skip::Newer);
             newest
         } else {
             self.frames.pop_front()
@@ -437,8 +437,10 @@ impl App {
         let now = Instant::now();
         self.open_overdue_links(now);
         let redraw_stalled = self.redraw_requested.is_some_and(|t| now.duration_since(t) > REDRAW_STALL);
-        if self.suspended || redraw_stalled {
-            self.skip_frames();
+        if self.suspended {
+            self.skip_frames(Skip::Hidden);
+        } else if redraw_stalled {
+            self.skip_frames(Skip::Stalled);
         }
         if redraw_stalled
             && now >= self.forced_redraw

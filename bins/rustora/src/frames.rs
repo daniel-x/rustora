@@ -16,6 +16,19 @@ pub struct Frame {
     pub screenshot: bool,
 }
 
+/// Why the window ran only the uploads of a frame and did not draw it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Skip {
+    /// `Graphics.FrameDrawSkip`: a newer frame was drawn instead.
+    Newer,
+    /// The surface had no texture, and it is configured anew.
+    NoTexture,
+    /// A requested redraw did not come in time.
+    Stalled,
+    /// The window is hidden or has no surface.
+    Hidden,
+}
+
 /// What the window did with a [`Frame`].
 pub struct Presented {
     /// The commands of the frame, cleared by the receiver for the next frame.
@@ -26,9 +39,8 @@ pub struct Presented {
     pub execute: Duration,
     /// The time of the present.
     pub present: Duration,
-    /// False if only the uploads of the frame ran, because a newer frame was drawn instead or the window could not
-    /// draw.
-    pub drawn: bool,
+    /// Why only the uploads of the frame ran, or `None` if it was drawn.
+    pub skipped: Option<Skip>,
     /// The time that the main thread spent in its event handlers since its previous report.
     pub main_busy: Duration,
     /// The window pixels of the frame.
@@ -45,8 +57,9 @@ pub struct Surface {
 }
 
 impl Surface {
-    /// Executes only the uploads of `frame`, for a frame that is not drawn. A screenshot frame is still read back.
-    pub fn skip(&mut self, frame: Frame) -> Presented {
+    /// Executes only the uploads of `frame`, for a frame that is not drawn for `reason`. A screenshot frame is still
+    /// read back.
+    pub fn skip(&mut self, frame: Frame, reason: Skip) -> Presented {
         let start = Instant::now();
         let screenshot = self.read_back(&frame);
         if screenshot.is_none() {
@@ -58,7 +71,7 @@ impl Surface {
             execute: start.elapsed(),
             present: Duration::ZERO,
             main_busy: Duration::ZERO,
-            drawn: false,
+            skipped: Some(reason),
             size: frame.size,
             screenshot,
         }
@@ -86,7 +99,7 @@ impl Surface {
         let texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {
-                let report = self.skip(frame);
+                let report = self.skip(frame, Skip::NoTexture);
                 self.surface.configure(&self.backend.device, &self.config);
                 return report;
             }
@@ -108,7 +121,7 @@ impl Surface {
             execute,
             present: start.elapsed(),
             main_busy: Duration::ZERO,
-            drawn: true,
+            skipped: None,
             size: frame.size,
             screenshot,
         }

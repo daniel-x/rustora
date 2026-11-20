@@ -2,8 +2,9 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The benchmark of `--bench-ticks`: once a game or replay runs, the client plays that many world ticks as fast as
-//! possible with one frame built per tick and without vsync, prints one `BENCH` line and quits. The frame skip
-//! settings decide which of the frames the main thread draws and whether the simulation waits for them.
+//! possible without vsync, prints one `BENCH` line and quits. The frame skip settings decide which frames are built
+//! and drawn and whether the simulation waits for them. The line counts the frames that were not drawn by their
+//! reason, and those whose report had not come back when the run ended.
 
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,8 @@ struct Run {
     start_idle: Duration,
     built: u64,
     drawn: u64,
+    /// The frames that were not drawn, by [`crate::frames::Skip`] in its declaration order.
+    skipped: [u64; 4],
     build: Duration,
     execute: Duration,
     present: Duration,
@@ -46,6 +49,7 @@ impl Bench {
                 start_idle: idle,
                 built: 0,
                 drawn: 0,
+                skipped: [0; 4],
                 build: Duration::ZERO,
                 execute: Duration::ZERO,
                 present: Duration::ZERO,
@@ -67,7 +71,8 @@ impl Bench {
         let ticks = ticks.max(1) as u64;
         println!(
             "BENCH ticks {ticks} from {} wall {:.1} s{cpu} frames {} drawn {} fps {:.1} build {:.2} ms/frame execute {:.2} \
-             ms/drawn present {:.2} ms/drawn busy sim {:.2} ms/tick main {:.2} ms/tick",
+             ms/drawn present {:.2} ms/drawn busy sim {:.2} ms/tick main {:.2} ms/tick skipped newer {} no-texture {} \
+             stalled {} hidden {} unreported {}",
             run.start_tick,
             wall.as_secs_f64(),
             run.built,
@@ -78,6 +83,11 @@ impl Bench {
             ms(run.present, run.drawn),
             ms(sim_busy, ticks),
             ms(run.main_busy, ticks),
+            run.skipped[0],
+            run.skipped[1],
+            run.skipped[2],
+            run.skipped[3],
+            run.built.saturating_sub(run.drawn + run.skipped.iter().sum::<u64>()),
         );
         true
     }
@@ -93,7 +103,10 @@ impl Bench {
     /// Counts the report of the main thread on a frame. The execute time includes the uploads of skipped frames.
     pub fn presented(&mut self, report: &Presented) {
         if let Some(run) = &mut self.run {
-            run.drawn += u64::from(report.drawn);
+            match report.skipped {
+                None => run.drawn += 1,
+                Some(skip) => run.skipped[skip as usize] += 1,
+            }
             run.execute += report.execute;
             run.present += report.present;
             run.main_busy += report.main_busy;
