@@ -6,7 +6,9 @@
 //! which owns the window and the GPU and presents them.
 //!
 //! By default neither thread waits for the other: the simulation thread builds a frame at every render time of
-//! `Game.Loop`, and the main thread draws the newest one (`Graphics.FrameDrawSkip`). With
+//! `Game.Loop` while the logic has time left before its next tick, and otherwise whenever the main thread has no
+//! frame waiting, so that the main thread draws as many frames as it can. Unlike `Game.Loop`, a logic that falls
+//! behind does not drop to the minimum frame rate. The main thread draws the newest frame (`Graphics.FrameDrawSkip`). With
 //! `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
 //! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
 //! only when the previous one was presented, and after each tick it waits until the frame of that tick was presented,
@@ -495,8 +497,8 @@ impl GameLoop {
         self.renderer.recycle(report.commands);
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders at least
-    /// every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the logic runs on without frames. The frame skip
+    /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders whenever the
+    /// main thread has no frame waiting, and at least every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the logic runs on without frames. The frame skip
     /// settings hold renders and ticks back as the module describes.
     fn pass(&mut self) {
         self.flush_motion();
@@ -528,7 +530,7 @@ impl GameLoop {
                 self.next_render = now + RENDER_INTERVAL;
                 self.render_before_next_tick = false;
             }
-        } else if (is_time_to_render && now < self.next_logic) || force_render {
+        } else if force_render || (is_time_to_render && (now < self.next_logic || self.frames_in_flight == 0)) {
             if self.may_build() {
                 self.next_render = now + RENDER_INTERVAL;
                 self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
