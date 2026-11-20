@@ -286,18 +286,36 @@ fn awaits_game_loaded(world: &World) -> bool {
     world.is_loading_game_save() || (world.game_save_last_frame() >= 0 && !world.is_replay())
 }
 
+/// The shortest time between two load screen frames, the 5 frames per second limit of `SheetLoadScreen.Display`.
+const LOAD_SCREEN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Shows the load screen while the client starts, as `LoadScreen.Display` does during `Game.InitializeMod`.
 pub struct Startup<'a> {
-    pub renderer: &'a mut Renderer,
+    renderer: &'a mut Renderer,
     /// The size of the window in its pixels.
-    pub window: (u32, u32),
+    window: (u32, u32),
     /// Takes the frame that `renderer` recorded and sends it to the window.
-    pub send: &'a mut dyn FnMut(&mut Renderer),
+    send: &'a mut dyn FnMut(&mut Renderer),
+    /// When the last frame was sent.
+    last_display: Option<std::time::Instant>,
 }
 
-impl Startup<'_> {
-    /// Records a frame of `screen` at the user interface scale `ui_scale` and sends it.
+impl<'a> Startup<'a> {
+    pub fn new(renderer: &'a mut Renderer, window: (u32, u32), send: &'a mut dyn FnMut(&mut Renderer)) -> Startup<'a> {
+        Startup {
+            renderer,
+            window,
+            send,
+            last_display: None,
+        }
+    }
+
+    /// `SheetLoadScreen.Display`: records a frame of `screen` at the user interface scale `ui_scale` and sends it,
+    /// unless the last one is less than 200 ms old.
     fn show(&mut self, screen: &mut rustora_ui::load_screen::LoadScreen, assets: &Rc<RefCell<Assets>>, ui_scale: f32) {
+        if self.last_display.is_some_and(|at| at.elapsed() < LOAD_SCREEN_INTERVAL) {
+            return;
+        }
         let renderer = &mut *self.renderer;
         renderer.ui_scale = ui_scale;
         let (w, h) = effective_resolution((self.window.0 as i32, self.window.1 as i32), ui_scale);
@@ -313,6 +331,7 @@ impl Startup<'_> {
         renderer.render(camera, &[]);
         renderer.render_ui(self.window, &list);
         (self.send)(renderer);
+        self.last_display = Some(std::time::Instant::now());
     }
 }
 
@@ -358,7 +377,7 @@ impl ShellWorld {
             log::info!("Restored the state snapshot at net frame {}", world.net_frame_number());
         }
         let (world, _, read_file) =
-            restored.unwrap_or_else(|| load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true));
+            restored.unwrap_or_else(|| load_world_with_sound(engine, support, package, lobby, false, WorldType::Regular, true, &mut || {}));
         let manifest = &mod_data.manifest;
         connection.set_replay_metadata(create_game_information(&world, &manifest.id, &manifest.metadata.version));
         let driver = if resumed {
@@ -421,7 +440,8 @@ impl ShellWorld {
                 (world, driver, read_file)
             }
             None => {
-                let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, true, WorldType::Regular, true);
+                let (world, _, read_file) =
+                    load_world_with_sound(engine, support, package, lobby, true, WorldType::Regular, true, &mut || {});
                 let connection = ReplayConnection::new(replay.chunks, world.order_latency);
                 let driver = SkirmishDriver::replay(&world, Box::new(connection));
                 (world, driver, read_file)
@@ -446,9 +466,18 @@ impl ShellWorld {
         }
     }
 
-    /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map.
-    fn load(engine: &Path, support: &str, mod_id: &str, view: (i32, i32), distance: WorldViewport) -> Option<ShellWorld> {
+    /// Port of `Game.LoadShellMap` and `ChooseShellmap`. `None` without a shell map. `progress` runs between the
+    /// loading steps.
+    fn load(
+        engine: &Path,
+        support: &str,
+        mod_id: &str,
+        view: (i32, i32),
+        distance: WorldViewport,
+        progress: &mut dyn FnMut(),
+    ) -> Option<ShellWorld> {
         let names = shellmaps(engine, mod_id);
+        progress();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -456,7 +485,7 @@ impl ShellWorld {
         let package = open_map(engine, mod_id, name)?;
         let map = MapPackage::load(package.clone()).ok()?;
         let lobby = skirmish_session(&map, &[], now.subsec_nanos() as i32).ok()?;
-        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Shellmap, true);
+        let (world, _, read_file) = load_world_with_sound(engine, support, package, lobby, false, WorldType::Shellmap, true, progress);
         let driver = SkirmishDriver::new(&world);
         let viewport = world_viewport(&world, view, distance);
         Some(ShellWorld {
@@ -780,12 +809,17 @@ impl Client {
         let ui_scale = Some(settings.graphics.ui_scale).filter(|s| *s > 0.0).unwrap_or(1.0);
         assets.set_font_scale(ui_scale);
         let assets = Rc::new(RefCell::new(assets));
-        if let Some(startup) = startup.as_mut() {
-            startup.show(&mut load_screen, &assets, ui_scale);
-        }
+        let mut progress = || {
+            if let Some(startup) = startup.as_mut() {
+                startup.show(&mut load_screen, &assets, ui_scale);
+            }
+        };
+        progress();
         let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
+        progress();
         let maps = Rc::new(RefCell::new(MapCache::load(&mod_data)));
+        progress();
         let lobby_data = LobbyData::new(mod_data.clone(), maps.clone());
         let sound = open_sound(&mod_data, &settings);
         let mod_audio = load_mod_audio(&mod_data);
@@ -823,11 +857,8 @@ impl Client {
         let resolution = effective_resolution(window_size, ui_scale);
         let script_host = Rc::new(crate::script_host::ClientScriptHost::new(assets.clone()));
         rustora_scripting::host::set_host(script_host.clone());
-        if let Some(startup) = startup.as_mut() {
-            startup.show(&mut load_screen, &assets, ui_scale);
-        }
         let shell = if mod_data.content_available && content.is_none() {
-            ShellWorld::load(engine, support, &mod_data.manifest.id, resolution, distance)
+            ShellWorld::load(engine, support, &mod_data.manifest.id, resolution, distance, &mut progress)
         } else {
             None
         };
@@ -1240,6 +1271,7 @@ impl Client {
                 &self.mod_data.manifest.id,
                 self.ui.resolution,
                 distance,
+                &mut || {},
             )
         } else {
             None
