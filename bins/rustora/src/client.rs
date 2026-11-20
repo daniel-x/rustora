@@ -31,7 +31,7 @@ use rustora_mods_common::world::create_game_information;
 use rustora_net::order::RawOrder;
 use rustora_net::session::Session;
 use rustora_render::ui::UiList;
-use rustora_render::{Camera, Quad, Renderer};
+use rustora_render::{Camera, GpuBackend, Quad, Renderer};
 use rustora_ui::assets::Assets;
 use rustora_ui::cursor::{CursorState, Cursors};
 use rustora_ui::draw::{DrawContext, Rect};
@@ -1559,14 +1559,14 @@ impl Client {
         rustora_ui::screenshot::save(&self.ui, &support_dir, rgba, width, height);
     }
 
-    pub fn render(&mut self, renderer: &mut Renderer, target: &rustora_render::wgpu::TextureView, size: (u32, u32)) {
+    /// Records the draws of the frame that [`Client::prepare`] filled, for a window of `size` pixels.
+    pub fn render(&mut self, renderer: &mut Renderer, size: (u32, u32)) {
         renderer.ui_scale = self.ui_scale;
         let window = size;
         let size = self.ui_size(size);
         match self.shell.as_ref().filter(|_| self.pending_load.is_none()) {
-            Some(shell) => renderer.render_with_passes(target, shell.camera(size), &shell.quads, &shell.passes),
+            Some(shell) => renderer.render_with_passes(shell.camera(size), &shell.quads, &shell.passes),
             None => renderer.render(
-                target,
                 Camera {
                     x: 0.0,
                     y: 0.0,
@@ -1577,7 +1577,7 @@ impl Client {
                 &[],
             ),
         }
-        renderer.render_ui(target, window, &self.list);
+        renderer.render_ui(window, &self.list);
     }
 
     /// Sends a left click at a screen position, as the window would.
@@ -1601,16 +1601,16 @@ impl Client {
 /// Renders the user interface offscreen after the given clicks and writes it as a lossless WebP file.
 pub fn screenshot(engine: &Path, support: &str, size: (u32, u32), clicks: &[(i32, i32)], out: &str) {
     let (device, queue) = rustora_render::headless_device().expect("no graphics adapter");
-    let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut backend = GpuBackend::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut renderer = Renderer::new();
     let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), &[]);
     client.logic_tick();
     for &(x, y) in clicks {
         client.click(x, y);
     }
     client.prepare(&mut renderer, size);
-    let rgba = rustora_render::render_offscreen(&mut renderer, size.0, size.1, |renderer, view| {
-        client.render(renderer, view, size);
-    });
+    client.render(&mut renderer, size);
+    let rgba = rustora_render::render_offscreen(&mut backend, &renderer.take_frame(), size.0, size.1);
     let file = std::fs::File::create(out).expect("create screenshot");
     image_webp::WebPEncoder::new(std::io::BufWriter::new(file))
         .encode(&rgba, size.0, size.1, image_webp::ColorType::Rgba8)

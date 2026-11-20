@@ -3,12 +3,18 @@
 
 //! A 2D sprite renderer on wgpu. Sprites are 8-bit palette indices packed into `R8Uint` sheets; the fragment shader
 //! looks the index up in a row of the palette texture, so player colors and palette effects cost no extra sprites.
+//!
+//! The front [`Renderer`] records the calls of a frame into [`FrameCommands`], and the [`GpuBackend`] executes them
+//! in the same order.
 
 use bytemuck::{Pod, Zeroable};
-use rustora_formats::palette::Palette;
 
+pub use frame::{FrameCommands, Renderer};
 pub use wgpu;
 
+use frame::Command;
+
+mod frame;
 pub mod post;
 pub mod ui;
 
@@ -137,36 +143,28 @@ struct Sheet {
     bind_group: wgpu::BindGroup,
 }
 
-/// Shelf packer state of the current sheet.
-struct Packer {
-    x: u32,
-    y: u32,
-    row_height: u32,
-}
-
-pub struct Renderer {
+/// The GPU side of the renderer: pipelines, buffers, sprite sheets, the palette texture, the user interface pass and
+/// the post-processing resources. It executes the [`FrameCommands`] that the front [`Renderer`] records.
+pub struct GpuBackend {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub ui: ui::UiPass,
-    /// `Graphics.UIScale`: user interface pixels per window pixel.
-    pub ui_scale: f32,
-    /// The draw calls since the last [`Renderer::take_draw_calls`], as `PerfHistory` "batches" counts them.
-    draw_calls: std::cell::Cell<u32>,
+    /// The draw calls since the last [`GpuBackend::take_draw_calls`], as `PerfHistory` "batches" counts them.
+    draw_calls: u32,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     palette_texture: wgpu::Texture,
     palette_view: wgpu::TextureView,
     sheets: Vec<Sheet>,
-    packer: Packer,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: usize,
     format: wgpu::TextureFormat,
     post: Option<post::PostResources>,
 }
 
-impl Renderer {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Renderer {
+impl GpuBackend {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> GpuBackend {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite"),
             source: wgpu::ShaderSource::Wgsl(include_str!("sprite.wgsl").into()),
@@ -266,10 +264,9 @@ impl Renderer {
         let vertex_capacity = 6 * 4096;
         let vertex_buffer = Self::create_vertex_buffer(&device, vertex_capacity);
         let ui = ui::UiPass::new(&device, &queue, format);
-        Renderer {
+        GpuBackend {
             ui,
-            ui_scale: 1.0,
-            draw_calls: std::cell::Cell::new(0),
+            draw_calls: 0,
             device,
             queue,
             pipeline,
@@ -278,7 +275,6 @@ impl Renderer {
             palette_texture,
             palette_view,
             sheets: Vec::new(),
-            packer: Packer { x: 0, y: 0, row_height: 0 },
             vertex_buffer,
             vertex_capacity,
             format,
@@ -330,85 +326,104 @@ impl Renderer {
             ],
         });
         self.sheets.push(Sheet { texture, bind_group });
-        self.packer = Packer { x: 0, y: 0, row_height: 0 };
     }
 
-    /// Draws the user interface over the current content of `target`.
     /// The draw calls since the last call.
     pub fn take_draw_calls(&mut self) -> u32 {
-        self.draw_calls.take() + std::mem::take(&mut self.ui.draw_calls)
+        std::mem::take(&mut self.draw_calls) + std::mem::take(&mut self.ui.draw_calls)
     }
 
-    pub fn render_ui(&mut self, target: &wgpu::TextureView, size: (u32, u32), list: &ui::UiList) {
-        self.ui.render(&self.device, &self.queue, target, size, self.ui_scale, list);
+    /// Executes all commands of `frame` in order, drawing into `target`.
+    pub fn execute(&mut self, frame: &FrameCommands, target: &wgpu::TextureView) {
+        self.run(frame, Some(target), true);
     }
 
-    /// Creates a user interface texture from premultiplied RGBA rows.
-    pub fn add_ui_texture(&mut self, width: u32, height: u32, rgba: &[u8], linear: bool) -> ui::UiTexture {
-        self.ui.add_texture(&self.device, &self.queue, width, height, rgba, linear)
+    /// Executes only the uploads of `frame`: the commands that later frames depend on.
+    pub fn upload(&mut self, frame: &FrameCommands) {
+        self.run(frame, None, true);
     }
 
-    /// Replaces a region of a user interface texture.
-    pub fn update_ui_texture(&mut self, texture: ui::UiTexture, x: u32, y: u32, width: u32, height: u32, rgba: &[u8]) {
-        self.ui.update_texture(&self.queue, texture, x, y, width, height, rgba);
+    /// Executes only the draws of `frame` into `target`, for a frame whose uploads ran already.
+    pub fn draw(&mut self, frame: &FrameCommands, target: &wgpu::TextureView) {
+        self.run(frame, Some(target), false);
     }
 
-    /// Uploads an 8-bit indexed image of `w` x `h` pixels. A 1 px gap separates sprites.
-    pub fn add_sprite(&mut self, w: u32, h: u32, data: &[u8]) -> SpriteRect {
-        assert!(w < SHEET_SIZE && h < SHEET_SIZE, "sprite of {w}x{h} exceeds the sheet size");
-        if self.sheets.is_empty() {
-            self.add_sheet();
+    fn run(&mut self, frame: &FrameCommands, target: Option<&wgpu::TextureView>, uploads: bool) {
+        for command in &frame.commands {
+            if !uploads && command.is_upload() {
+                continue;
+            }
+            match command {
+                Command::AddSheet => self.add_sheet(),
+                Command::Sprite { rect, data } => self.write_sprite(*rect, &frame.bytes[data.clone()]),
+                Command::Palette { row, data } => self.write_palette(*row, &frame.bytes[data.clone()]),
+                &Command::AddUiTexture {
+                    width,
+                    height,
+                    linear,
+                    ref data,
+                } => {
+                    self.ui
+                        .add_texture(&self.device, &self.queue, width, height, &frame.bytes[data.clone()], linear);
+                }
+                &Command::UpdateUiTexture {
+                    texture,
+                    x,
+                    y,
+                    width,
+                    height,
+                    ref data,
+                } => self
+                    .ui
+                    .update_texture(&self.queue, texture, x, y, width, height, &frame.bytes[data.clone()]),
+                Command::World {
+                    camera,
+                    ui_scale,
+                    quads,
+                    passes,
+                } => {
+                    if let Some(target) = target {
+                        self.render_world(target, *camera, *ui_scale, &frame.quads[quads.clone()], &frame.passes[passes.clone()]);
+                    }
+                }
+                Command::Ui { size, scale, list } => {
+                    if let Some(target) = target {
+                        self.ui
+                            .render(&self.device, &self.queue, target, *size, *scale, &frame.ui_lists[*list]);
+                    }
+                }
+            }
         }
-        if self.packer.x + w > SHEET_SIZE {
-            self.packer = Packer {
-                x: 0,
-                y: self.packer.y + self.packer.row_height + 1,
-                row_height: 0,
-            };
-        }
-        if self.packer.y + h > SHEET_SIZE {
-            self.add_sheet();
-        }
-        let p = &mut self.packer;
-        let rect = SpriteRect {
-            sheet: (self.sheets.len() - 1) as u16,
-            x: p.x as u16,
-            y: p.y as u16,
-            w: w as u16,
-            h: h as u16,
-        };
-        p.x += w + 1;
-        p.row_height = p.row_height.max(h);
-        if w > 0 && h > 0 {
-            self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &self.sheets[rect.sheet as usize].texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: rect.x as u32,
-                        y: rect.y as u32,
-                        z: 0,
-                    },
-                    aspect: wgpu::TextureAspect::All,
+    }
+
+    fn write_sprite(&self, rect: SpriteRect, data: &[u8]) {
+        let (w, h) = (rect.w as u32, rect.h as u32);
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.sheets[rect.sheet as usize].texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: rect.x as u32,
+                    y: rect.y as u32,
+                    z: 0,
                 },
-                data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(w),
-                    rows_per_image: Some(h),
-                },
-                wgpu::Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 1,
-                },
-            );
-        }
-        rect
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
-    pub fn set_palette(&self, row: u32, palette: &Palette) {
-        assert!(row < MAX_PALETTES);
+    fn write_palette(&self, row: u32, rgba: &[u8]) {
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.palette_texture,
@@ -416,7 +431,7 @@ impl Renderer {
                 origin: wgpu::Origin3d { x: 0, y: row, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
-            palette.as_flattened(),
+            rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(256 * 4),
@@ -430,19 +445,11 @@ impl Renderer {
         );
     }
 
-    /// Clears `target` to black and draws `quads` in order.
-    pub fn render(&mut self, target: &wgpu::TextureView, camera: Camera, quads: &[Quad]) {
-        self.render_with_passes(target, camera, quads, &[]);
-    }
-
-    /// Draws `quads` like [`Renderer::render`], with the post-processing `passes` between them.
-    ///
-    /// Like `Renderer.BeginWorld` and `BeginUI`, the world draws into a buffer with one texel per world pixel, which
-    /// the pixel art scaling then stretches onto `target` by the zoom and the user interface scale. Without passes
-    /// and at a total scale of 1, the quads draw directly onto `target`.
-    pub fn render_with_passes(&mut self, target: &wgpu::TextureView, camera: Camera, quads: &[Quad], passes: &[post::PostPass]) {
+    /// Clears `target` to black and draws `quads` with the post-processing `passes` between them, as
+    /// [`Renderer::render_with_passes`] describes.
+    fn render_world(&mut self, target: &wgpu::TextureView, camera: Camera, ui_scale: f32, quads: &[Quad], passes: &[post::PostPass]) {
         let world_size = (camera.width as f32 / camera.zoom, camera.height as f32 / camera.zoom);
-        let buffered = !passes.is_empty() || (camera.zoom * self.ui_scale - 1.0).abs() > 1e-6;
+        let buffered = !passes.is_empty() || (camera.zoom * ui_scale - 1.0).abs() > 1e-6;
         let (width, height, zoom) = if buffered {
             (world_size.0.ceil().max(1.0) as u32, world_size.1.ceil().max(1.0) as u32, 1.0)
         } else {
@@ -456,9 +463,6 @@ impl Renderer {
             ],
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
-        if self.sheets.is_empty() {
-            self.add_sheet();
-        }
 
         let mut vertices = Vec::with_capacity(quads.len() * 6);
         let mut batches: Vec<(u16, u32, u32)> = Vec::new();
@@ -561,7 +565,7 @@ impl Renderer {
 
     /// Draws the parts of `batches` within the vertices `start..end` into `target`.
     fn draw_batches(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
         clear: bool,
@@ -596,7 +600,7 @@ impl Renderer {
             if s < e {
                 pass.set_bind_group(0, &self.sheets[sheet as usize].bind_group, &[]);
                 pass.draw(s..e, 0..1);
-                self.draw_calls.set(self.draw_calls.get() + 1);
+                self.draw_calls += 1;
             }
         }
     }
@@ -641,28 +645,25 @@ pub fn headless_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     pollster_block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
 }
 
-/// Renders `quads` into an offscreen RGBA texture and reads it back as tightly packed RGBA rows.
-pub fn render_to_rgba(renderer: &mut Renderer, camera: Camera, quads: &[Quad]) -> Vec<u8> {
-    render_offscreen(renderer, camera.width, camera.height, |renderer, view| {
-        renderer.render(view, camera, quads)
-    })
+/// Records `quads` after the commands that `renderer` holds, executes them all into an offscreen RGBA texture and
+/// reads it back as tightly packed RGBA rows.
+pub fn render_to_rgba(renderer: &mut Renderer, backend: &mut GpuBackend, camera: Camera, quads: &[Quad]) -> Vec<u8> {
+    renderer.render(camera, quads);
+    let frame = renderer.take_frame();
+    let rgba = render_offscreen(backend, &frame, camera.width, camera.height);
+    renderer.recycle(frame);
+    rgba
 }
 
-/// Runs `draw` on an offscreen RGBA texture of the given size and reads it back as tightly packed RGBA rows.
-pub fn render_offscreen(renderer: &mut Renderer, w: u32, h: u32, draw: impl FnOnce(&mut Renderer, &wgpu::TextureView)) -> Vec<u8> {
-    render_offscreen_as(renderer, w, h, wgpu::TextureFormat::Rgba8Unorm, draw)
+/// Executes `frame` on an offscreen RGBA texture of the given size and reads it back as tightly packed RGBA rows.
+pub fn render_offscreen(backend: &mut GpuBackend, frame: &FrameCommands, w: u32, h: u32) -> Vec<u8> {
+    render_offscreen_as(backend, frame, w, h, wgpu::TextureFormat::Rgba8Unorm)
 }
 
-/// Runs `draw` on an offscreen texture of the given size and 8 bit, 4 channel format, and reads it back as tightly
-/// packed rows in that format.
-pub fn render_offscreen_as(
-    renderer: &mut Renderer,
-    w: u32,
-    h: u32,
-    format: wgpu::TextureFormat,
-    draw: impl FnOnce(&mut Renderer, &wgpu::TextureView),
-) -> Vec<u8> {
-    let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+/// Executes `frame` on an offscreen texture of the given size and 8 bit, 4 channel format, and reads it back as
+/// tightly packed rows in that format.
+pub fn render_offscreen_as(backend: &mut GpuBackend, frame: &FrameCommands, w: u32, h: u32, format: wgpu::TextureFormat) -> Vec<u8> {
+    let texture = backend.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("offscreen"),
         size: wgpu::Extent3d {
             width: w,
@@ -676,15 +677,15 @@ pub fn render_offscreen_as(
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    draw(renderer, &texture.create_view(&Default::default()));
+    backend.execute(frame, &texture.create_view(&Default::default()));
     let row = (4 * w).div_ceil(256) * 256;
-    let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+    let buffer = backend.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
         size: (row * h) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut encoder = renderer.device.create_command_encoder(&Default::default());
+    let mut encoder = backend.device.create_command_encoder(&Default::default());
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
@@ -706,10 +707,10 @@ pub fn render_offscreen_as(
             depth_or_array_layers: 1,
         },
     );
-    renderer.queue.submit([encoder.finish()]);
+    backend.queue.submit([encoder.finish()]);
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, |r| r.expect("map readback buffer"));
-    renderer.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+    backend.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
     let data = slice.get_mapped_range().expect("mapped range");
     let mut out = Vec::with_capacity((4 * w * h) as usize);
     for y in 0..h {

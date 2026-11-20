@@ -44,6 +44,14 @@ impl UiList {
         self.clips.clear();
     }
 
+    /// Replaces the content with a copy of `other`, keeping the capacity.
+    pub fn copy_from(&mut self, other: &UiList) {
+        self.quads.clear();
+        self.quads.extend_from_slice(&other.quads);
+        self.clips.clear();
+        self.clips.extend_from_slice(&other.clips);
+    }
+
     /// Adds a solid rectangle with a premultiplied color.
     pub fn solid(&mut self, dst: [f32; 4], color: [f32; 4]) {
         self.quads.push(UiQuad {

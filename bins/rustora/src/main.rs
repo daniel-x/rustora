@@ -230,7 +230,8 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
         }
     }
     let (device, queue) = rustora_render::headless_device().expect("no graphics adapter");
-    let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut backend = rustora_render::GpuBackend::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut renderer = Renderer::new();
     let mut scene = scene::Scene::new(&mut renderer, &world, read_file);
     let (w, h) = args.size;
     let (cx, cy) = args
@@ -247,7 +248,7 @@ fn screenshot(game: LoadedGame, args: &Args, out: &str) {
     let mut screen_map = rustora_ui::screen_map::ScreenMap::default();
     let on_screen = scene.update_screen_map(&mut renderer, &world, &cam, &mut screen_map);
     let quads = scene.build(&mut renderer, &world, viewer.as_ref(), &cam, &on_screen, &[]);
-    let rgba = rustora_render::render_to_rgba(&mut renderer, cam, &quads);
+    let rgba = rustora_render::render_to_rgba(&mut renderer, &mut backend, cam, &quads);
     let file = std::fs::File::create(out).expect("create screenshot");
     image_webp::WebPEncoder::new(std::io::BufWriter::new(file))
         .encode(&rgba, w, h, image_webp::ColorType::Rgba8)

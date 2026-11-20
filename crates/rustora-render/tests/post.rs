@@ -2,12 +2,13 @@
 // Copyright (c) The rustora authors.
 
 use rustora_render::post::{PostEffect, PostPass};
-use rustora_render::{Camera, Quad, Renderer, headless_device, render_offscreen};
+use rustora_render::{Camera, GpuBackend, Quad, Renderer, headless_device, render_offscreen};
 
 /// Renders a white 4x4 quad, then `passes`, and returns the first pixel. `None` without a graphics adapter.
 fn first_pixel(passes: &[PostPass]) -> Option<[u8; 4]> {
     let (device, queue) = headless_device()?;
-    let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut backend = GpuBackend::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut renderer = Renderer::new();
     let camera = Camera {
         x: 0.0,
         y: 0.0,
@@ -16,7 +17,8 @@ fn first_pixel(passes: &[PostPass]) -> Option<[u8; 4]> {
         height: 4,
     };
     let quads = [Quad::solid(0.0, 0.0, 4.0, 4.0, [1.0, 1.0, 1.0, 1.0])];
-    let rgba = render_offscreen(&mut renderer, 4, 4, |r, view| r.render_with_passes(view, camera, &quads, passes));
+    renderer.render_with_passes(camera, &quads, passes);
+    let rgba = render_offscreen(&mut backend, &renderer.take_frame(), 4, 4);
     Some([rgba[0], rgba[1], rgba[2], rgba[3]])
 }
 
@@ -56,7 +58,8 @@ fn passes_run_in_order_after_their_quads() {
 /// 0 to 3. `None` without a graphics adapter.
 fn column_brightness() -> Option<Vec<u32>> {
     let (device, queue) = headless_device()?;
-    let mut renderer = Renderer::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut backend = GpuBackend::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
+    let mut renderer = Renderer::new();
     renderer.ui_scale = 1.5;
     let quads = [Quad::solid(10.0, 0.0, 1.0, 4.0, [1.0, 1.0, 1.0, 1.0])];
     let mut sums = Vec::new();
@@ -68,7 +71,8 @@ fn column_brightness() -> Option<Vec<u32>> {
             width: 20,
             height: 4,
         };
-        let rgba = render_offscreen(&mut renderer, 30, 6, |r, view| r.render(view, camera, &quads));
+        renderer.render(camera, &quads);
+        let rgba = render_offscreen(&mut backend, &renderer.take_frame(), 30, 6);
         let row = &rgba[3 * 30 * 4..4 * 30 * 4];
         sums.push(row.chunks(4).map(|p| u32::from(p[0])).sum());
     }

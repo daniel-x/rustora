@@ -35,7 +35,7 @@ pub struct Palettes {
 }
 
 impl Palettes {
-    pub fn new(renderer: &Renderer, world: &World, read_file: &ReadFile) -> Palettes {
+    pub fn new(renderer: &mut Renderer, world: &World, read_file: &ReadFile) -> Palettes {
         let mut p = Palettes {
             rows: Vec::new(),
             named: HashMap::new(),
@@ -202,7 +202,7 @@ impl Palettes {
     }
 
     /// `RotationPaletteEffect.AdjustPalette` and `LightPaletteRotator.AdjustPalette`, once per world tick.
-    pub fn update(&mut self, renderer: &Renderer, world: &World) {
+    pub fn update(&mut self, renderer: &mut Renderer, world: &World) {
         let world_tick = world.world_tick();
         if !self.update_player_colors(world) && world_tick == self.last_tick {
             return;
@@ -211,7 +211,7 @@ impl Palettes {
         self.update_all(renderer, world_tick);
     }
 
-    fn update_all(&self, renderer: &Renderer, world_tick: i32) {
+    fn update_all(&self, renderer: &mut Renderer, world_tick: i32) {
         for (i, row) in self.rows.iter().enumerate() {
             let mut pal = row.base;
             if row.allow_modifiers {

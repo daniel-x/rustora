@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rustora_client::settings::{Settings, WindowMode};
-use rustora_render::{Renderer, wgpu};
+use rustora_render::{GpuBackend, Renderer, wgpu};
 use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
 use rustora_ui::widget::{AppRequest, Clipboard};
 use winit::application::ApplicationHandler;
@@ -38,7 +38,7 @@ struct Gpu {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    renderer: Renderer,
+    backend: GpuBackend,
 }
 
 /// How long a link waits for an activation token of the window system before it opens without one.
@@ -81,6 +81,7 @@ fn request_activation_token(_window: &Window) -> Option<winit::event_loop::Async
 
 struct App {
     client: Client,
+    renderer: Renderer,
     size: (u32, u32),
     fullscreen: Option<Fullscreen>,
     gpu: Option<Gpu>,
@@ -218,6 +219,7 @@ impl App {
         let bench = client.bench_ticks().map(crate::bench::Bench::new);
         App {
             client,
+            renderer: Renderer::new(),
             size,
             fullscreen,
             gpu: None,
@@ -547,20 +549,25 @@ impl App {
         self.redraw_requested = None;
         self.apply_cursor(el);
         let Some(gpu) = self.gpu.as_mut() else { return };
-        self.client.prepare(&mut gpu.renderer, (gpu.config.width, gpu.config.height));
+        self.client.prepare(&mut self.renderer, (gpu.config.width, gpu.config.height));
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {
-                gpu.surface.configure(&gpu.renderer.device, &gpu.config);
+                let commands = self.renderer.take_frame();
+                gpu.backend.upload(&commands);
+                self.renderer.recycle(commands);
+                gpu.surface.configure(&gpu.backend.device, &gpu.config);
                 return;
             }
         };
         let size = (gpu.config.width, gpu.config.height);
+        self.client.render(&mut self.renderer, size);
+        let commands = self.renderer.take_frame();
+        let view = frame.texture.create_view(&Default::default());
         if std::mem::take(&mut self.client.screenshot_requested) {
             let client = &mut self.client;
-            let mut pixels = rustora_render::render_offscreen_as(&mut gpu.renderer, size.0, size.1, gpu.config.format, |r, v| {
-                client.render(r, v, size)
-            });
+            let mut pixels = rustora_render::render_offscreen_as(&mut gpu.backend, &commands, size.0, size.1, gpu.config.format);
+            gpu.backend.draw(&commands, &view);
             if matches!(
                 gpu.config.format,
                 wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
@@ -569,16 +576,17 @@ impl App {
             }
             pixels.as_chunks_mut::<4>().0.iter_mut().for_each(|p| p[3] = 255);
             client.save_screenshot(&pixels, size.0, size.1);
+        } else {
+            gpu.backend.execute(&commands, &view);
         }
-        let view = frame.texture.create_view(&Default::default());
-        self.client.render(&mut gpu.renderer, &view, size);
+        self.renderer.recycle(commands);
         let scene = start.elapsed();
         {
             let _flip = rustora_ui::perf::PerfSample::new("render_flip");
             gpu.window.pre_present_notify();
-            gpu.renderer.queue.present(frame);
+            gpu.backend.queue.present(frame);
         }
-        rustora_ui::perf::increment("batches", gpu.renderer.take_draw_calls() as f64);
+        rustora_ui::perf::increment("batches", gpu.backend.take_draw_calls() as f64);
         drop(render);
         rustora_ui::perf::frame_tick();
         if let Some(bench) = &mut self.bench {
@@ -618,12 +626,12 @@ impl App {
             config.present_mode = wgpu::PresentMode::AutoNoVsync;
         }
         surface.configure(&device, &config);
-        let renderer = Renderer::new(device, queue, config.format);
+        let backend = GpuBackend::new(device, queue, config.format);
         Gpu {
             window,
             surface,
             config,
-            renderer,
+            backend,
         }
     }
 }
@@ -642,7 +650,7 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = self.gpu.as_mut() {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
-                    gpu.surface.configure(&gpu.renderer.device, &gpu.config);
+                    gpu.surface.configure(&gpu.backend.device, &gpu.config);
                 }
             }
             WindowEvent::Occluded(occluded) => self.suspended = occluded,

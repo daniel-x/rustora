@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use rustora_engine::world::World;
 use rustora_launch::{LoadedGame, ReplayDriver, Step};
-use rustora_render::{Camera, Renderer, wgpu};
+use rustora_render::{Camera, GpuBackend, Renderer, wgpu};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -34,6 +34,7 @@ struct Gpu {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    backend: GpuBackend,
     renderer: Renderer,
     scene: Scene,
     screen_map: rustora_ui::screen_map::ScreenMap,
@@ -129,7 +130,8 @@ impl App {
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => {
-                gpu.surface.configure(&gpu.renderer.device, &gpu.config);
+                gpu.backend.upload(&gpu.renderer.take_frame());
+                gpu.surface.configure(&gpu.backend.device, &gpu.config);
                 return;
             }
         };
@@ -149,8 +151,11 @@ impl App {
             .scene
             .build(&mut gpu.renderer, &self.world, viewer.as_ref(), &cam, &on_screen, &[]);
         let view = frame.texture.create_view(&Default::default());
-        gpu.renderer.render(&view, cam, &quads);
-        gpu.renderer.queue.present(frame);
+        gpu.renderer.render(cam, &quads);
+        let commands = gpu.renderer.take_frame();
+        gpu.backend.execute(&commands, &view);
+        gpu.renderer.recycle(commands);
+        gpu.backend.queue.present(frame);
         gpu.window.set_title(&title);
     }
 
@@ -225,12 +230,14 @@ impl ApplicationHandler for App {
         let caps = surface.get_capabilities(&adapter);
         config.format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(config.format);
         surface.configure(&device, &config);
-        let mut renderer = Renderer::new(device, queue, config.format);
+        let backend = GpuBackend::new(device, queue, config.format);
+        let mut renderer = Renderer::new();
         let scene = Scene::new(&mut renderer, &self.world, self.read_file.clone());
         self.gpu = Some(Gpu {
             window,
             surface,
             config,
+            backend,
             renderer,
             scene,
             screen_map: Default::default(),
@@ -245,7 +252,7 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = self.gpu.as_mut() {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
-                    gpu.surface.configure(&gpu.renderer.device, &gpu.config);
+                    gpu.surface.configure(&gpu.backend.device, &gpu.config);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => self.key(&event, el),
