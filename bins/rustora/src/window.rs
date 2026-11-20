@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! The client window on the main thread: the winit event loop, the window, the surface and the GPU. It forwards the
-//! window events to the simulation thread of [`crate::game_loop`] and presents the frames that come back.
+//! The client window on the main thread: the winit event loop, the window, the surface, the GPU, the hardware cursors
+//! of `Sdl2PlatformWindow` and the links. It forwards the window events to the simulation thread of
+//! [`crate::game_loop`] and presents the frames that come back.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -15,15 +16,42 @@ use rustora_client::settings::{Settings, WindowMode};
 use rustora_render::{GpuBackend, wgpu};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::window::{Fullscreen, Window, WindowId};
+use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop, EventLoopProxy};
+use winit::window::{CustomCursor, Fullscreen, Window, WindowId};
 
 use crate::frames::{Frame, Presented, Surface};
-use crate::game_loop::{MAX_RENDER_INTERVAL, Start, ToMain, ToSim, Wake};
+use crate::game_loop::{CursorChange, MAX_RENDER_INTERVAL, ShownCursor, Start, ToMain, ToSim, Wake};
 
 /// A requested redraw that has not come after this time means that the window system does not let the window draw,
 /// like Wayland for a hidden window, which sends no frame callbacks. The frames then only upload until it draws.
 const REDRAW_STALL: Duration = Duration::from_millis(100);
+/// How long a link waits for an activation token of the window system before it opens without one.
+const ACTIVATION_TOKEN_WAIT: Duration = Duration::from_secs(1);
+
+/// Asks the window system for an activation token, which X11 and Wayland deliver with `ActivationTokenDone`.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
+fn request_activation_token(window: &Window) -> Option<AsyncRequestSerial> {
+    use winit::platform::startup_notify::WindowExtStartupNotify;
+    window.request_activation_token().ok()
+}
+
+/// Other systems let the browser come to the front without a token.
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd"
+)))]
+fn request_activation_token(_window: &Window) -> Option<AsyncRequestSerial> {
+    None
+}
 
 struct Gpu {
     window: Arc<Window>,
@@ -59,6 +87,10 @@ struct App {
     render_skip: bool,
     /// The time spent in the event handlers since the last report to the simulation thread.
     busy: Duration,
+    /// The mod cursor frames that the simulation thread sent.
+    hardware_cursors: HashMap<(String, usize), CustomCursor>,
+    /// The links that wait for an activation token of the window system, with the time they were requested.
+    links_awaiting_token: Vec<(AsyncRequestSerial, String, Instant)>,
 }
 
 /// Opens the client window. Without an explicit `size`, the window follows the `Graphics.Mode` setting like
@@ -154,6 +186,8 @@ impl ApplicationHandler<Wake> for Launcher {
                 forced_redraw: Instant::now(),
                 render_skip: graphics.frame_render_skip,
                 busy: Duration::ZERO,
+                hardware_cursors: HashMap::new(),
+                links_awaiting_token: Vec::new(),
             });
         }
         self.timed(|app| app.resumed(el));
@@ -226,6 +260,7 @@ impl App {
             support: self.support.clone(),
             size: self.size,
             window_size: (gpu.surface.config.width, gpu.surface.config.height),
+            scale_factor: gpu.window.scale_factor(),
             args: self.args.clone(),
         };
         let thread = crate::game_loop::spawn(start, sim_rx, sim_tx, self.proxy.clone());
@@ -247,9 +282,12 @@ impl App {
     /// Takes the messages of the simulation thread.
     fn receive(&mut self, el: &ActiveEventLoop) {
         let Some(sim) = &self.sim else { return };
-        while let Ok(message) = sim.rx.try_recv() {
+        let messages: Vec<ToMain> = sim.rx.try_iter().collect();
+        for message in messages {
             match message {
                 ToMain::Frame(frame) => self.frames.push_back(frame),
+                ToMain::Cursor(change) => self.change_cursor(el, change),
+                ToMain::OpenUrl(url) => self.open_link(url),
                 ToMain::Quit => el.exit(),
             }
         }
@@ -263,6 +301,49 @@ impl App {
             }
             _ => self.skip_frames(),
         }
+    }
+
+    fn change_cursor(&mut self, el: &ActiveEventLoop, change: CursorChange) {
+        let Some(gpu) = &self.gpu else { return };
+        match change {
+            CursorChange::Reset => self.hardware_cursors.clear(),
+            CursorChange::Image { key, image } => {
+                let source = CustomCursor::from_rgba(image.rgba, image.width, image.height, image.hotspot.0, image.hotspot.1)
+                    .expect("valid cursor image");
+                self.hardware_cursors.insert(key, el.create_custom_cursor(source));
+            }
+            CursorChange::Show(ShownCursor::Hidden) => gpu.window.set_cursor_visible(false),
+            CursorChange::Show(ShownCursor::Link) => {
+                gpu.window.set_cursor(winit::window::CursorIcon::Pointer);
+                gpu.window.set_cursor_visible(true);
+            }
+            CursorChange::Show(ShownCursor::Mod(name, frame)) => {
+                if let Some(cursor) = self.hardware_cursors.get(&(name, frame)) {
+                    gpu.window.set_cursor(cursor.clone());
+                    gpu.window.set_cursor_visible(true);
+                }
+            }
+        }
+    }
+
+    /// Opens a link. Where the window system hands out activation tokens, the link waits for one, so that the browser
+    /// may come to the front; without a token after [`ACTIVATION_TOKEN_WAIT`], it opens anyway.
+    fn open_link(&mut self, url: String) {
+        match self.gpu.as_ref().and_then(|gpu| request_activation_token(&gpu.window)) {
+            Some(serial) => self.links_awaiting_token.push((serial, url, Instant::now())),
+            None => rustora_ui::links::open(&url),
+        }
+    }
+
+    /// Opens the links that waited for an activation token for [`ACTIVATION_TOKEN_WAIT`] without one.
+    fn open_overdue_links(&mut self, now: Instant) {
+        self.links_awaiting_token.retain(|(_, url, requested)| {
+            let waiting = now.duration_since(*requested) < ACTIVATION_TOKEN_WAIT;
+            if !waiting {
+                rustora_ui::links::open(url);
+            }
+            waiting
+        });
     }
 
     /// Runs only the uploads of all waiting frames and reports them to the simulation thread.
@@ -336,6 +417,13 @@ impl App {
                 self.send(ToSim::Occluded(occluded));
             }
             WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => self.send(ToSim::ScaleFactor(scale_factor)),
+            WindowEvent::ActivationTokenDone { serial, token } => {
+                if let Some(i) = self.links_awaiting_token.iter().position(|(s, _, _)| *s == serial) {
+                    let (_, url, _) = self.links_awaiting_token.remove(i);
+                    rustora_ui::links::open_with_activation_token(&url, &token.into_raw());
+                }
+            }
             WindowEvent::ModifiersChanged(_)
             | WindowEvent::CursorMoved { .. }
             | WindowEvent::MouseInput { .. }
@@ -347,9 +435,11 @@ impl App {
     }
 
     /// While the window is hidden or its redraws stall, the waiting frames only upload, so that the simulation
-    /// thread runs on; a stalled redraw is requested again every [`MAX_RENDER_INTERVAL`].
+    /// thread runs on; a stalled redraw is requested again every [`MAX_RENDER_INTERVAL`]. Links that waited too long
+    /// for an activation token open.
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         let now = Instant::now();
+        self.open_overdue_links(now);
         let redraw_stalled = self.redraw_requested.is_some_and(|t| now.duration_since(t) > REDRAW_STALL);
         if self.suspended || redraw_stalled {
             self.skip_frames();
@@ -361,9 +451,14 @@ impl App {
             self.forced_redraw = now + MAX_RENDER_INTERVAL;
             gpu.window.request_redraw();
         }
-        el.set_control_flow(match self.redraw_requested {
-            Some(t) if !redraw_stalled => ControlFlow::WaitUntil(t + REDRAW_STALL),
-            Some(_) => ControlFlow::WaitUntil(self.forced_redraw),
+        let redraw_wake = match self.redraw_requested {
+            Some(t) if !redraw_stalled => Some(t + REDRAW_STALL),
+            Some(_) => Some(self.forced_redraw),
+            None => None,
+        };
+        let link_wake = self.links_awaiting_token.iter().map(|(_, _, t)| *t + ACTIVATION_TOKEN_WAIT).min();
+        el.set_control_flow(match redraw_wake.into_iter().chain(link_wake).min() {
+            Some(t) => ControlFlow::WaitUntil(t),
             None => ControlFlow::Wait,
         });
     }

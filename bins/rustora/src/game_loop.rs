@@ -13,13 +13,14 @@
 //! presented, so that the game slows down instead of skipping frames.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use rustora_render::Renderer;
+use rustora_ui::cursor::CursorImage;
 use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
 use rustora_ui::widget::{AppRequest, Clipboard};
 use winit::event::{ElementState, KeyEvent, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
@@ -52,6 +53,8 @@ pub enum ToSim {
     Resized((u32, u32)),
     /// The window is hidden, or visible again.
     Occluded(bool),
+    /// The scale factor of the window system for the window.
+    ScaleFactor(f64),
     /// The main thread is done with a frame.
     Presented(Presented),
     /// The window closes.
@@ -61,8 +64,31 @@ pub enum ToSim {
 /// Messages of the simulation thread to the main thread.
 pub enum ToMain {
     Frame(Frame),
+    Cursor(CursorChange),
+    /// A link to open in the browser.
+    OpenUrl(String),
     /// The client quits.
     Quit,
+}
+
+/// The cursor that the window shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShownCursor {
+    Hidden,
+    /// A frame of a cursor of the mod.
+    Mod(String, usize),
+    /// The pointing hand of the system, over links.
+    Link,
+}
+
+/// A change of the hardware cursors. The images of the mod cursors go to the main thread once per mod and scale,
+/// the first time they are shown; after that only their key does.
+pub enum CursorChange {
+    /// The mod or the cursor scale changed: the main thread drops its cursors.
+    Reset,
+    /// The image of a mod cursor frame, already scaled.
+    Image { key: (String, usize), image: CursorImage },
+    Show(ShownCursor),
 }
 
 /// The sending side of the simulation thread: messages to the main thread, each followed by a [`Wake`].
@@ -94,6 +120,8 @@ pub struct Start {
     pub size: (u32, u32),
     /// The size of the created window in its pixels.
     pub window_size: (u32, u32),
+    /// The scale factor of the window system for the window.
+    pub scale_factor: f64,
     pub args: Vec<String>,
 }
 
@@ -133,6 +161,14 @@ struct GameLoop {
     rx: Receiver<ToSim>,
     link: MainLink,
     window_size: (u32, u32),
+    scale_factor: f64,
+    /// The mod whose cursor images the main thread has.
+    cursor_mod: String,
+    /// The pixel doubling of the cursor images.
+    cursor_scale: u16,
+    /// The mod cursor frames whose images the main thread has.
+    sent_cursors: HashSet<(String, usize)>,
+    shown_cursor: ShownCursor,
     /// The window is hidden: `Renderer.WindowIsSuspended`.
     suspended: bool,
     modifiers: Modifiers,
@@ -171,12 +207,18 @@ impl GameLoop {
         let now = Instant::now();
         let bench = client.bench_ticks().map(crate::bench::Bench::new);
         let (build_skip, render_skip) = client.frame_skip();
+        let cursor_mod = client.mod_id().to_string();
         GameLoop {
             client,
             renderer: Renderer::new(),
             rx,
             link,
             window_size: start.window_size,
+            scale_factor: start.scale_factor,
+            cursor_mod,
+            cursor_scale: 1,
+            sent_cursors: HashSet::new(),
+            shown_cursor: ShownCursor::Hidden,
             suspended: false,
             modifiers: Modifiers::default(),
             mouse: (0, 0),
@@ -245,6 +287,7 @@ impl GameLoop {
             ToSim::Window(event) => self.window_event(event),
             ToSim::Resized(size) => self.window_size = size,
             ToSim::Occluded(occluded) => self.suspended = occluded,
+            ToSim::ScaleFactor(scale) => self.scale_factor = scale,
             ToSim::Presented(report) => self.presented(report),
             ToSim::Quit => self.quit = true,
         }
@@ -371,11 +414,46 @@ impl GameLoop {
         }
     }
 
-    /// Opens the links that the client asked for.
+    /// Hands the links that the client asked for to the main thread, which opens them.
     fn open_links(&mut self) {
         for url in std::mem::take(&mut self.client.open_urls) {
-            rustora_ui::links::open(&url);
+            self.link.send(ToMain::OpenUrl(url));
         }
+    }
+
+    /// `Sdl2PlatformWindow.CreateHardwareCursor`: cursors are pixel doubled when the window scale is above 1.5 and
+    /// again when the player chose doubled cursors. Sends the changes of the shown cursor to the main thread.
+    fn apply_cursor(&mut self) {
+        let cursor_scale = cursor_scale(self.client.cursor_double(), self.scale_factor);
+        if self.cursor_mod != self.client.mod_id() || cursor_scale != self.cursor_scale {
+            self.cursor_mod = self.client.mod_id().to_string();
+            self.cursor_scale = cursor_scale;
+            self.sent_cursors.clear();
+            self.shown_cursor = ShownCursor::Hidden;
+            self.link.send(ToMain::Cursor(CursorChange::Reset));
+        }
+        self.client.update_cursor(self.mouse);
+        let wanted = if self.client.link_cursor {
+            ShownCursor::Link
+        } else {
+            match self.client.cursor.current(&self.client.cursors) {
+                Some((name, frame)) => ShownCursor::Mod(name.to_string(), frame),
+                None => ShownCursor::Hidden,
+            }
+        };
+        if wanted == self.shown_cursor {
+            return;
+        }
+        if let ShownCursor::Mod(name, frame) = &wanted {
+            let key = (name.clone(), *frame);
+            if !self.sent_cursors.contains(&key) {
+                let image = self.client.cursors.image(name, *frame).expect("known cursor").scaled(cursor_scale);
+                self.sent_cursors.insert(key.clone());
+                self.link.send(ToMain::Cursor(CursorChange::Image { key, image }));
+            }
+        }
+        self.link.send(ToMain::Cursor(CursorChange::Show(wanted.clone())));
+        self.shown_cursor = wanted;
     }
 
     /// Builds a frame and sends it to the main thread: `Game.RenderTick`.
@@ -383,7 +461,7 @@ impl GameLoop {
         let start = Instant::now();
         let render = rustora_ui::perf::PerfSample::new("render");
         self.render_before_next_tick = false;
-        self.client.update_cursor(self.mouse);
+        self.apply_cursor();
         let frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
         if let Some(bench) = &mut self.bench {
             bench.built(start.elapsed());
@@ -461,6 +539,12 @@ impl GameLoop {
             self.quit = true;
         }
     }
+}
+
+/// The pixel doubling of the hardware cursors for the `CursorDouble` setting and the scale of the window system.
+fn cursor_scale(cursor_double: bool, window_scale: f64) -> u16 {
+    let native = if window_scale > 1.5 { 2 } else { 1 };
+    if cursor_double { 2 * native } else { native }
 }
 
 /// Prepares and records one frame of `client` for a window of `size` pixels.
