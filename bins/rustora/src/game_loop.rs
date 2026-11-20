@@ -195,8 +195,6 @@ struct GameLoop {
     draws_every_frame: bool,
     /// The frames sent to the main thread and not reported back yet.
     frames_in_flight: usize,
-    /// The frame of the last logic tick is in flight, and the next tick waits for it.
-    awaiting_tick_frame: bool,
     /// The time spent waiting for messages.
     idle: Duration,
 }
@@ -240,7 +238,6 @@ impl GameLoop {
             build_skip,
             draws_every_frame: !build_skip && !render_skip,
             frames_in_flight: 0,
-            awaiting_tick_frame: false,
             idle: Duration::ZERO,
         }
     }
@@ -272,13 +269,18 @@ impl GameLoop {
     fn next_wake(&self) -> Instant {
         let now = Instant::now();
         let mut wake = now + MAX_RENDER_INTERVAL;
-        if !self.render_before_next_tick && !self.awaiting_tick_frame {
+        if !self.render_before_next_tick && !self.tick_waits_for_frame() {
             wake = wake.min(self.next_logic);
         }
         if self.suspended || self.may_build() {
             wake = wake.min(self.next_render);
         }
         wake
+    }
+
+    /// True while every frame is drawn and a frame is in flight: the next tick waits until it is presented.
+    fn tick_waits_for_frame(&self) -> bool {
+        self.draws_every_frame && self.frames_in_flight > 0
     }
 
     /// False while a frame skip setting holds the next frame back until the main thread reports the previous one.
@@ -479,9 +481,6 @@ impl GameLoop {
     /// Takes the report of a presented frame: the perf counters, the screenshot, and the buffers for reuse.
     fn presented(&mut self, report: Presented) {
         self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
-        if self.frames_in_flight == 0 {
-            self.awaiting_tick_frame = false;
-        }
         if let Some(bench) = &mut self.bench {
             bench.presented(&report);
         }
@@ -507,7 +506,7 @@ impl GameLoop {
             self.next_logic = now;
         }
         let force_render = self.render_before_next_tick || now >= self.forced_next_render;
-        if now >= self.next_logic && !self.render_before_next_tick && !self.awaiting_tick_frame {
+        if now >= self.next_logic && !self.render_before_next_tick && !self.tick_waits_for_frame() {
             self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
             let gap = now.saturating_duration_since(self.last_logic_tick);
             if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
@@ -531,11 +530,9 @@ impl GameLoop {
             }
         } else if (is_time_to_render && now < self.next_logic) || force_render {
             if self.may_build() {
-                let tick_frame = self.render_before_next_tick;
                 self.next_render = now + RENDER_INTERVAL;
                 self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
                 self.render();
-                self.awaiting_tick_frame = tick_frame;
             }
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {

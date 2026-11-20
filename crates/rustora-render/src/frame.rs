@@ -84,11 +84,6 @@ impl FrameCommands {
         self.commands.is_empty()
     }
 
-    /// True if the frame holds a draw.
-    pub fn has_draws(&self) -> bool {
-        self.commands.iter().any(|c| !c.is_upload())
-    }
-
     fn push_bytes(&mut self, data: &[u8]) -> Range<usize> {
         let start = self.bytes.len();
         self.bytes.extend_from_slice(data);
