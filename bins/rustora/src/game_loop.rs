@@ -223,11 +223,7 @@ impl GameLoop {
             }
             link.wake();
         };
-        let mut startup = Startup {
-            renderer: &mut renderer,
-            window: start.window_size,
-            send: &mut send,
-        };
+        let mut startup = Startup::new(&mut renderer, start.window_size, &mut send);
         let mut client = Client::new(&start.engine, &start.support, resolution, &start.args, Some(&mut startup));
         client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
         client.logic_tick();

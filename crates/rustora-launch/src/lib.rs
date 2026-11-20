@@ -162,10 +162,12 @@ pub fn load_world_of_type(
     is_replay: bool,
     world_type: WorldType,
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
-    load_world_with_sound(engine, support, pkg, lobby, is_replay, world_type, false)
+    load_world_with_sound(engine, support, pkg, lobby, is_replay, world_type, false, &mut || {})
 }
 
 /// [`load_world_of_type`] with the choice to queue the sound calls of the world for a client, from its creation on.
+/// `progress` runs between the loading steps, where OpenRA calls `LoadScreen.Display`.
+#[allow(clippy::too_many_arguments)]
 pub fn load_world_with_sound(
     engine: &Path,
     support: &str,
@@ -174,8 +176,9 @@ pub fn load_world_with_sound(
     is_replay: bool,
     world_type: WorldType,
     sound: bool,
+    progress: &mut dyn FnMut(),
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
-    build_world(engine, support, pkg, lobby, is_replay, world_type, sound, false)
+    build_world(engine, support, pkg, lobby, is_replay, world_type, sound, false, progress)
 }
 
 /// Creates the world of the save game `save` and restores its state, see `rustora_engine::savegame`.
@@ -202,7 +205,7 @@ pub fn restore_game_from(
 ) -> Result<(Rc<World>, Rc<ModData>, ReadFile), String> {
     let (header, _) = rustora_engine::savegame::SaveHeader::read(save)?;
     let lobby = rustora_net::session::Session::deserialize(&header.lobby, "save game").map_err(|e| e.to_string())?;
-    let (world, md, read_file) = build_world(engine, support, pkg, lobby, is_replay, WorldType::Regular, sound, true);
+    let (world, md, read_file) = build_world(engine, support, pkg, lobby, is_replay, WorldType::Regular, sound, true, &mut || {});
     rustora_engine::savegame::restore(&world, save)?;
     Ok((world, md, read_file))
 }
@@ -222,16 +225,19 @@ fn build_world(
     world_type: WorldType,
     sound: bool,
     restoring: bool,
+    progress: &mut dyn FnMut(),
 ) -> (Rc<World>, Rc<ModData>, ReadFile) {
     rustora_mods_common::register_persist();
     let map_package = MapPackage::load(pkg.clone()).expect("load map");
     let md = ModData::load(Platform::new(engine, support), &map_mod_id(&map_package)).expect("load mod");
+    progress();
 
     let fs = MapFs {
         package: pkg.as_ref(),
         fs: &md.file_system,
     };
     let rules_yaml = ModData::load_yaml(&fs, &md.manifest.rules, map_package.section("Rules")).expect("rules");
+    progress();
     let mut registry = TraitRegistry::default();
     rustora_mods_common::register(&mut registry);
     rustora_scripting::register(&mut registry);
@@ -248,6 +254,7 @@ fn build_world(
             .expect("ruleset")
             .with_audio(audio),
     );
+    progress();
     let map_package_sequences = map_package.section("Sequences").cloned();
     let tileset = map_package
         .yaml
@@ -274,7 +281,9 @@ fn build_world(
     world.set_is_replay(is_replay);
     world.sound.set_enabled(sound);
     world.set_restoring(restoring);
+    progress();
     world.load_complete();
+    progress();
     (world, md, read_file)
 }
 
