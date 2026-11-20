@@ -388,7 +388,10 @@ impl App {
 impl App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.gpu.is_none() {
-            self.gpu = Some(self.create_gpu(el));
+            let mut gpu = self.create_gpu(el);
+            let window = gpu.window.clone();
+            gpu.surface.present_black(|| window.pre_present_notify());
+            self.gpu = Some(gpu);
             self.start_sim();
         }
     }

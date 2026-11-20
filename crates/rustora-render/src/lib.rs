@@ -328,6 +328,27 @@ impl GpuBackend {
         self.sheets.push(Sheet { texture, bind_group });
     }
 
+    /// Clears `target` to black.
+    pub fn clear(&self, target: &wgpu::TextureView) {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("clear") });
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        self.queue.submit([encoder.finish()]);
+    }
+
     /// The draw calls since the last call.
     pub fn take_draw_calls(&mut self) -> u32 {
         std::mem::take(&mut self.draw_calls) + std::mem::take(&mut self.ui.draw_calls)

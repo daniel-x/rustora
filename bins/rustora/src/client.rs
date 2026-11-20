@@ -286,6 +286,36 @@ fn awaits_game_loaded(world: &World) -> bool {
     world.is_loading_game_save() || (world.game_save_last_frame() >= 0 && !world.is_replay())
 }
 
+/// Shows the load screen while the client starts, as `LoadScreen.Display` does during `Game.InitializeMod`.
+pub struct Startup<'a> {
+    pub renderer: &'a mut Renderer,
+    /// The size of the window in its pixels.
+    pub window: (u32, u32),
+    /// Takes the frame that `renderer` recorded and sends it to the window.
+    pub send: &'a mut dyn FnMut(&mut Renderer),
+}
+
+impl Startup<'_> {
+    /// Records a frame of `screen` at the user interface scale `ui_scale` and sends it.
+    fn show(&mut self, screen: &mut rustora_ui::load_screen::LoadScreen, assets: &Rc<RefCell<Assets>>, ui_scale: f32) {
+        let renderer = &mut *self.renderer;
+        renderer.ui_scale = ui_scale;
+        let (w, h) = effective_resolution((self.window.0 as i32, self.window.1 as i32), ui_scale);
+        let mut list = UiList::default();
+        screen.draw(&mut DrawContext::new(renderer, &mut list, assets.borrow_mut()), (w, h));
+        let camera = Camera {
+            x: 0.0,
+            y: 0.0,
+            zoom: 1.0,
+            width: w.max(1) as u32,
+            height: h.max(1) as u32,
+        };
+        renderer.render(camera, &[]);
+        renderer.render_ui(self.window, &list);
+        (self.send)(renderer);
+    }
+}
+
 /// The size in user interface pixels of a window of `window_size` pixels at the user interface scale `scale`.
 fn effective_resolution(window_size: (i32, i32), scale: f32) -> (i32, i32) {
     let scale = if scale > 0.0 { scale } else { 1.0 };
@@ -708,10 +738,11 @@ pub struct Client {
 }
 
 impl Client {
-    /// Starts the mod of the `Game.Mod=<id>` argument, `ra` without one.
-    pub fn new(engine: &Path, support: &str, resolution: (i32, i32), args: &[String]) -> Client {
+    /// Starts the mod of the `Game.Mod=<id>` argument, `ra` without one. With `startup`, the load screen shows
+    /// while the mod and the shellmap load.
+    pub fn new(engine: &Path, support: &str, resolution: (i32, i32), args: &[String], startup: Option<&mut Startup>) -> Client {
         let mod_id = args.iter().rev().find_map(|a| a.strip_prefix("Game.Mod=")).unwrap_or("ra");
-        Client::initialize_mod(engine, support, resolution, args, mod_id)
+        Client::initialize_mod(engine, support, resolution, args, mod_id, startup)
     }
 
     pub fn mod_id(&self) -> &str {
@@ -719,7 +750,14 @@ impl Client {
     }
 
     /// Port of `Game.InitializeMod`: a mod with missing content opens its content installer mod instead.
-    fn initialize_mod(engine: &Path, support: &str, resolution: (i32, i32), args: &[String], mod_id: &str) -> Client {
+    fn initialize_mod(
+        engine: &Path,
+        support: &str,
+        resolution: (i32, i32),
+        args: &[String],
+        mod_id: &str,
+        mut startup: Option<&mut Startup>,
+    ) -> Client {
         let settings = Settings::load(Path::new(support).join("settings.yaml"), args);
         let platform = Platform::new(engine.to_path_buf(), support);
         let mut mod_data = ModData::load(platform.clone(), mod_id).expect("load mod");
@@ -735,10 +773,16 @@ impl Client {
             .then(|| ModContent::load(&mod_data).expect("load mod content"));
         let mod_data = Rc::new(mod_data);
         let widget_roots = rustora_game::lobby_rules::WidgetRoots::load(&mod_data);
-        let load_screen = rustora_ui::load_screen::LoadScreen::new(&mod_data.manifest.load_screen);
+        let mut load_screen = rustora_ui::load_screen::LoadScreen::new(&mod_data.manifest.load_screen);
         let fs: Rc<dyn ReadFs> = Rc::new(ModFs(mod_data.clone()));
         let mut assets = Assets::load(&mod_data, fs.clone()).expect("load chrome");
         assets.hotkeys.apply_settings(&settings.keys);
+        let ui_scale = Some(settings.graphics.ui_scale).filter(|s| *s > 0.0).unwrap_or(1.0);
+        assets.set_font_scale(ui_scale);
+        let assets = Rc::new(RefCell::new(assets));
+        if let Some(startup) = startup.as_mut() {
+            startup.show(&mut load_screen, &assets, ui_scale);
+        }
         let cursors = Cursors::load(&mod_data, &*fs).expect("load cursors");
         let loader = WidgetLoader::new(&mod_data.manifest.chrome_layout, &*fs).expect("load chrome layouts");
         let maps = Rc::new(RefCell::new(MapCache::load(&mod_data)));
@@ -775,15 +819,13 @@ impl Client {
         let pause_shellmap = services.settings.borrow().game.pause_shellmap;
         let ui_scroll_speed = services.settings.borrow().game.ui_scroll_speed;
         let distance = services.settings.borrow().graphics.viewport_distance;
-        let ui_scale = Some(services.settings.borrow().graphics.ui_scale)
-            .filter(|s| *s > 0.0)
-            .unwrap_or(1.0);
         let window_size = resolution;
         let resolution = effective_resolution(window_size, ui_scale);
-        assets.set_font_scale(ui_scale);
-        let assets = Rc::new(RefCell::new(assets));
         let script_host = Rc::new(crate::script_host::ClientScriptHost::new(assets.clone()));
         rustora_scripting::host::set_host(script_host.clone());
+        if let Some(startup) = startup.as_mut() {
+            startup.show(&mut load_screen, &assets, ui_scale);
+        }
         let shell = if mod_data.content_available && content.is_none() {
             ShellWorld::load(engine, support, &mod_data.manifest.id, resolution, distance)
         } else {
@@ -1269,7 +1311,7 @@ impl Client {
         self.dispose_world();
         let clipboard = self.ui.clipboard.clone();
         let (engine, support, resolution) = (self.engine.clone(), self.support.clone(), self.window_size);
-        *self = Client::initialize_mod(&engine, &support, resolution, &[], mod_id);
+        *self = Client::initialize_mod(&engine, &support, resolution, &[], mod_id, None);
         self.ui.clipboard = clipboard;
     }
 
@@ -1604,7 +1646,7 @@ pub fn screenshot(engine: &Path, support: &str, size: (u32, u32), clicks: &[(i32
     let (device, queue) = rustora_render::headless_device().expect("no graphics adapter");
     let mut backend = GpuBackend::new(device, queue, rustora_render::wgpu::TextureFormat::Rgba8Unorm);
     let mut renderer = Renderer::new();
-    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), &[]);
+    let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), &[], None);
     client.logic_tick();
     for &(x, y) in clicks {
         client.click(x, y);
