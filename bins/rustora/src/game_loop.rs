@@ -509,7 +509,11 @@ impl GameLoop {
         }
         let force_render = self.render_before_next_tick || now >= self.forced_next_render;
         if now >= self.next_logic && !self.render_before_next_tick && !self.tick_waits_for_frame() {
-            self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
+            if self.client.benchmarking() {
+                self.next_logic = now;
+            } else {
+                self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
+            }
             let gap = now.saturating_duration_since(self.last_logic_tick);
             if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
                 log::warn!(target: "client", "No logic tick ran for {:.1} s.", gap.as_secs_f64());

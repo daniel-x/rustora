@@ -993,8 +993,9 @@ impl Client {
         (shell.ingame.is_some() && self.loading_root.is_none() && !shell.world.is_loading_game_save()).then(|| shell.world.world_tick())
     }
 
-    /// True while the benchmark of `--bench-ticks` measures a running world.
-    fn benchmarking(&self) -> bool {
+    /// True while the benchmark of `--bench-ticks` measures a running world. The world then ticks at every call of
+    /// [`Client::logic_tick`], without waiting for its timestep.
+    pub fn benchmarking(&self) -> bool {
         self.bench_ticks.is_some() && self.running_world_tick().is_some()
     }
 
@@ -1030,7 +1031,7 @@ impl Client {
             self.pump_network();
         }
         let timestep = self.world_timestep();
-        if self.world_tick_time.should_advance(now, timestep) {
+        if self.benchmarking() || self.world_tick_time.should_advance(now, timestep) {
             self.world_tick_time.advance(now, timestep);
             self.update_script_host();
             let lag = LagContext::new(&self.services.net.borrow(), now);
