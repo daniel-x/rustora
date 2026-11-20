@@ -5,14 +5,17 @@
 //! `Sdl2Input.PumpInput`, and the timing of `Game.Loop`. It builds the frames and sends them to the main thread,
 //! which owns the window and the GPU and presents them.
 //!
-//! By default neither thread waits for the other: the simulation thread builds a frame at every render time of
-//! `Game.Loop`, and after every tick while the logic is behind. Unlike `Game.Loop`, a logic that falls behind does
-//! not drop to the minimum frame rate. The main thread draws the newest frame (`Graphics.FrameDrawSkip`).
-//! With `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
-//! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
-//! after each tick, but only when the previous one was presented, and the next tick waits until that frame is built.
-//! Like `Game.Loop` with `ThreadedGraphicsContext`, a tick runs while the main thread draws the frame of the tick
-//! before, and the game slows down instead of skipping frames.
+//! The simulation thread builds one frame after every logic tick and none in between, and puts it into the
+//! [`FrameQueue`]. The main thread takes the frames out one by one and draws each. Only the simulation thread decides
+//! which frames are skipped, with `Graphics.FrameSkip`:
+//!
+//! - Off: every frame is drawn. The queue holds at most one frame. A built frame that finds the queue full waits
+//!   outside of it, and the next tick waits until the frame is in the queue. Like `Game.Loop` with
+//!   `ThreadedGraphicsContext`, a tick runs while the main thread draws the frame of the tick before, and the game
+//!   slows down instead of skipping frames. At most three frames exist: the one drawn, the one in the queue and the
+//!   one waiting to get in.
+//! - On: ticks never wait for frames. The queue holds at most two frames. A frame that finds it full replaces the
+//!   newer of the two, which keeps only its uploads for the later frames.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -31,14 +34,12 @@ use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::client::Client;
-use crate::frames::{Frame, Presented};
+use crate::frames::{Frame, FrameQueue, Presented};
 
 /// `MaxLogicTicksBehind` of `Game.Loop`.
 const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
-/// The render interval of `Game.Loop` with the default settings, where OpenRA waits for vertical sync.
-const RENDER_INTERVAL: Duration = Duration::from_millis(1);
-/// `1000 / MinReplayFps` of `Game.Loop`: the longest time between two renders while the logic falls behind.
-pub const MAX_RENDER_INTERVAL: Duration = Duration::from_millis(100);
+/// The longest wait for a message while a frame waits to get into the queue.
+const QUEUE_WAIT: Duration = Duration::from_millis(100);
 const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
 /// The stack size of the simulation thread, that of the main thread on Linux.
 const STACK_SIZE: usize = 8 << 20;
@@ -49,6 +50,8 @@ pub struct Wake;
 
 /// Messages of the main thread to the simulation thread.
 pub enum ToSim {
+    /// The main thread took a frame out of the queue, so the queue has room.
+    FrameTaken,
     /// An input or focus event of the window.
     Window(WindowEvent),
     /// The new size of the window in its pixels.
@@ -65,7 +68,6 @@ pub enum ToSim {
 
 /// Messages of the simulation thread to the main thread.
 pub enum ToMain {
-    Frame(Frame),
     Cursor(CursorChange),
     /// A link to open in the browser.
     OpenUrl(String),
@@ -105,8 +107,13 @@ struct MainLink {
 impl MainLink {
     fn send(&self, message: ToMain) {
         if self.tx.send(message).is_ok() {
-            let _ = self.proxy.send_event(Wake);
+            self.wake();
         }
+    }
+
+    /// Wakes the main thread, which then looks at its messages and the frame queue.
+    fn wake(&self) {
+        let _ = self.proxy.send_event(Wake);
     }
 }
 
@@ -128,6 +135,7 @@ pub struct Start {
     /// The scale factor of the window system for the window.
     pub scale_factor: f64,
     pub args: Vec<String>,
+    pub queue: FrameQueue,
 }
 
 /// Starts the simulation thread, which builds the client and runs [`GameLoop::run`].
@@ -184,19 +192,15 @@ struct GameLoop {
     mouse_taps: HashMap<WinitButton, TapHistory>,
     key_taps: HashMap<(String, [bool; 4]), TapHistory>,
     next_logic: Instant,
-    next_render: Instant,
-    forced_next_render: Instant,
-    render_before_next_tick: bool,
     bench: Option<crate::bench::Bench>,
     /// When the last logic tick ran, to log gaps.
     last_logic_tick: Instant,
     quit: bool,
-    /// `Graphics.FrameBuildSkip`.
-    build_skip: bool,
-    /// Every frame is drawn: neither `Graphics.FrameBuildSkip` nor `Graphics.FrameDrawSkip` is on.
-    draws_every_frame: bool,
-    /// The frames sent to the main thread and not reported back yet.
-    frames_in_flight: usize,
+    /// `Graphics.FrameSkip`.
+    frame_skip: bool,
+    queue: FrameQueue,
+    /// A built frame that found the queue full, without `Graphics.FrameSkip`.
+    waiting: Option<Frame>,
     /// The time spent waiting for messages.
     idle: Duration,
 }
@@ -209,7 +213,7 @@ impl GameLoop {
         client.logic_tick();
         let now = Instant::now();
         let bench = client.bench_ticks().map(crate::bench::Bench::new);
-        let (build_skip, draw_skip) = client.frame_skip();
+        let frame_skip = client.frame_skip();
         let cursor_mod = client.mod_id().to_string();
         GameLoop {
             client,
@@ -231,15 +235,12 @@ impl GameLoop {
             mouse_taps: HashMap::new(),
             key_taps: HashMap::new(),
             next_logic: now,
-            next_render: now,
-            forced_next_render: now,
-            render_before_next_tick: false,
             bench,
             last_logic_tick: now,
             quit: false,
-            build_skip,
-            draws_every_frame: !build_skip && !draw_skip,
-            frames_in_flight: 0,
+            frame_skip,
+            queue: start.queue,
+            waiting: None,
             idle: Duration::ZERO,
         }
     }
@@ -271,23 +272,14 @@ impl GameLoop {
         }
     }
 
-    /// The time of the next logic tick or render. A tick or render that waits for a frame report waits for a message
-    /// instead, up to [`MAX_RENDER_INTERVAL`]. A frame that `Graphics.FrameBuildSkip` drops is dropped at once.
+    /// The time of the next logic tick. While a frame waits to get into the queue, the next tick waits for a message
+    /// instead, up to [`QUEUE_WAIT`].
     fn next_wake(&self) -> Instant {
-        let now = Instant::now();
-        let mut wake = now + MAX_RENDER_INTERVAL;
-        if !self.render_before_next_tick {
-            wake = wake.min(self.next_logic);
+        if self.waiting.is_some() {
+            Instant::now() + QUEUE_WAIT
+        } else {
+            self.next_logic
         }
-        if self.suspended || self.may_build() {
-            wake = wake.min(self.next_render);
-        }
-        wake
-    }
-
-    /// False while a frame skip setting holds the next frame back until the main thread reports the previous one.
-    fn may_build(&self) -> bool {
-        self.frames_in_flight == 0 || !(self.build_skip || self.draws_every_frame)
     }
 
     fn handle(&mut self, message: ToSim) {
@@ -296,6 +288,7 @@ impl GameLoop {
             ToSim::Resized(size) => self.window_size = size,
             ToSim::Occluded(occluded) => self.suspended = occluded,
             ToSim::ScaleFactor(scale) => self.scale_factor = scale,
+            ToSim::FrameTaken => {}
             ToSim::Presented(report) => self.presented(report),
             ToSim::Quit => self.quit = true,
         }
@@ -464,25 +457,40 @@ impl GameLoop {
         self.shown_cursor = wanted;
     }
 
-    /// Builds a frame and sends it to the main thread: `Game.RenderTick` up to the present. The perf items of the
-    /// frame take their sample when a frame is drawn, so that they and the frame rate describe the frames on screen.
+    /// Builds a frame and puts it into the queue: `Game.RenderTick` up to the present. The perf items of the frame
+    /// take their sample when a frame is drawn, so that they and the frame rate describe the frames on screen.
     fn render(&mut self) {
         let start = Instant::now();
         let render = rustora_ui::perf::PerfSample::new("render");
-        self.render_before_next_tick = false;
         self.apply_cursor();
         let frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
         if let Some(bench) = &mut self.bench {
             bench.built(start.elapsed());
         }
-        self.frames_in_flight += 1;
-        self.link.send(ToMain::Frame(frame));
+        if self.frame_skip {
+            if let Some(merged) = self.queue.push_merging(frame) {
+                self.renderer.recycle(merged);
+                if let Some(bench) = &mut self.bench {
+                    bench.merged();
+                }
+            }
+            self.link.wake();
+        } else {
+            self.waiting = Some(frame);
+            self.enqueue_waiting();
+        }
         drop(render);
+    }
+
+    /// Puts the waiting frame into the queue if it has room.
+    fn enqueue_waiting(&mut self) {
+        if self.queue.push_waiting(&mut self.waiting) {
+            self.link.wake();
+        }
     }
 
     /// Takes the report of a presented frame: the perf counters, the screenshot, and the buffers for reuse.
     fn presented(&mut self, report: Presented) {
-        self.frames_in_flight = self.frames_in_flight.saturating_sub(1);
         if let Some(bench) = &mut self.bench {
             bench.presented(&report);
         }
@@ -497,19 +505,17 @@ impl GameLoop {
         self.renderer.recycle(report.commands);
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders after every
-    /// tick, with `Graphics.FrameBuildSkip` only when the main thread has no frame waiting, which the reports that
-    /// arrived during the tick tell, and at least every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the logic runs on without frames. The frame skip settings
-    /// hold renders and ticks back as the module describes.
+    /// One pass of `Game.Loop`: at most one logic tick, followed by its frame. A tick waits while a frame waits to
+    /// get into the queue. While the window is hidden, the logic runs on without frames.
     fn pass(&mut self) {
         self.flush_motion();
         self.open_links();
+        self.enqueue_waiting();
         let now = Instant::now();
         if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
             self.next_logic = now;
         }
-        let force_render = self.render_before_next_tick || now >= self.forced_next_render;
-        if now >= self.next_logic && !self.render_before_next_tick {
+        if self.waiting.is_none() && now >= self.next_logic {
             if self.client.benchmarking() {
                 self.next_logic = now;
             } else {
@@ -527,22 +533,7 @@ impl GameLoop {
                 self.quit = true;
                 return;
             }
-            self.render_before_next_tick = self.draws_every_frame;
-        }
-        self.handle_waiting();
-        if self.quit {
-            return;
-        }
-        let is_time_to_render = now >= self.next_render;
-        if self.suspended {
-            if is_time_to_render {
-                self.next_render = now + RENDER_INTERVAL;
-                self.render_before_next_tick = false;
-            }
-        } else if force_render || (is_time_to_render && (now < self.next_logic || !self.build_skip || self.frames_in_flight == 0)) {
-            if self.may_build() {
-                self.next_render = now + RENDER_INTERVAL;
-                self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
+            if !self.suspended {
                 self.render();
             }
         }

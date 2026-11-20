@@ -5,7 +5,7 @@
 //! of `Sdl2PlatformWindow` and the links. It forwards the window events to the simulation thread of
 //! [`crate::game_loop`] and presents the frames that come back.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -19,12 +19,14 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop, EventLoopProxy};
 use winit::window::{CustomCursor, Fullscreen, Window, WindowId};
 
-use crate::frames::{Frame, Presented, Skip, Surface};
-use crate::game_loop::{CursorChange, MAX_RENDER_INTERVAL, ShownCursor, Start, ToMain, ToSim, Wake};
+use crate::frames::{FrameQueue, Presented, Skip, Surface};
+use crate::game_loop::{CursorChange, ShownCursor, Start, ToMain, ToSim, Wake};
 
 /// A requested redraw that has not come after this time means that the window system does not let the window draw,
 /// like Wayland for a hidden window, which sends no frame callbacks. The frames then only upload until it draws.
 const REDRAW_STALL: Duration = Duration::from_millis(100);
+/// How often a stalled redraw is requested again.
+const STALLED_REDRAW_INTERVAL: Duration = Duration::from_millis(100);
 /// How long a link waits for an activation token of the window system before it opens without one.
 const ACTIVATION_TOKEN_WAIT: Duration = Duration::from_secs(1);
 
@@ -76,15 +78,13 @@ struct App {
     no_vsync: bool,
     gpu: Option<Gpu>,
     sim: Option<Sim>,
-    /// The frames that wait for the next redraw, oldest first.
-    frames: VecDeque<Frame>,
+    /// The frames that wait for the next redraw.
+    queue: FrameQueue,
     suspended: bool,
     /// When the redraw that the window waits for was requested.
     redraw_requested: Option<Instant>,
     /// When a stalled redraw is requested again.
     forced_redraw: Instant,
-    /// `Graphics.FrameDrawSkip`.
-    draw_skip: bool,
     /// The time spent in the event handlers since the last report to the simulation thread.
     busy: Duration,
     /// The mod cursor frames that the simulation thread sent.
@@ -169,7 +169,6 @@ impl ApplicationHandler<Wake> for Launcher {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.app.is_none() {
             let (size, fullscreen) = self.window_layout(el);
-            let graphics = Settings::load(Path::new(&self.support).join("settings.yaml"), &self.args).graphics;
             self.app = Some(App {
                 engine: self.engine.clone(),
                 support: self.support.clone(),
@@ -180,11 +179,10 @@ impl ApplicationHandler<Wake> for Launcher {
                 no_vsync: self.args.iter().any(|a| a.starts_with("Launch.BenchTicks=")),
                 gpu: None,
                 sim: None,
-                frames: VecDeque::new(),
+                queue: FrameQueue::default(),
                 suspended: false,
                 redraw_requested: None,
                 forced_redraw: Instant::now(),
-                draw_skip: graphics.frame_draw_skip,
                 busy: Duration::ZERO,
                 hardware_cursors: HashMap::new(),
                 links_awaiting_token: Vec::new(),
@@ -258,6 +256,7 @@ impl App {
             window_size: (gpu.surface.config.width, gpu.surface.config.height),
             scale_factor: gpu.window.scale_factor(),
             args: self.args.clone(),
+            queue: self.queue.clone(),
         };
         let thread = crate::game_loop::spawn(start, sim_rx, sim_tx, self.proxy.clone());
         self.sim = Some(Sim { tx, rx, thread });
@@ -281,13 +280,12 @@ impl App {
         let messages: Vec<ToMain> = sim.rx.try_iter().collect();
         for message in messages {
             match message {
-                ToMain::Frame(frame) => self.frames.push_back(frame),
                 ToMain::Cursor(change) => self.change_cursor(el, change),
                 ToMain::OpenUrl(url) => self.open_link(url),
                 ToMain::Quit => el.exit(),
             }
         }
-        if self.frames.is_empty() {
+        if self.queue.is_empty() {
             return;
         }
         match &self.gpu {
@@ -344,32 +342,23 @@ impl App {
 
     /// Runs only the uploads of all waiting frames and reports them to the simulation thread as skipped for `reason`.
     fn skip_frames(&mut self, reason: Skip) {
-        let Some(gpu) = self.gpu.as_mut() else { return };
-        let mut reports = Vec::with_capacity(self.frames.len());
-        while let Some(frame) = self.frames.pop_front() {
-            reports.push(gpu.surface.skip(frame, reason));
-        }
-        for report in reports {
+        while let Some(frame) = self.queue.pop() {
+            let Some(gpu) = self.gpu.as_mut() else { return };
+            let report = gpu.surface.skip(frame, reason);
             self.report(report);
         }
     }
 
-    /// Draws a waiting frame: with `FrameDrawSkip` the newest after the uploads of the older ones, without it the
-    /// oldest, and the next redraw takes the next one.
+    /// Takes the oldest waiting frame out of the queue and draws it. The simulation thread learns at once that the
+    /// queue has room, and the next redraw takes the next frame.
     fn render(&mut self) {
         self.redraw_requested = None;
-        let frame = if self.draw_skip {
-            let newest = self.frames.pop_back();
-            self.skip_frames(Skip::Newer);
-            newest
-        } else {
-            self.frames.pop_front()
-        };
-        let Some(frame) = frame else { return };
+        let Some(frame) = self.queue.pop() else { return };
+        self.send(ToSim::FrameTaken);
         let Some(gpu) = self.gpu.as_mut() else { return };
         let window = gpu.window.clone();
         let report = gpu.surface.present(frame, || window.pre_present_notify());
-        if !self.frames.is_empty() {
+        if !self.queue.is_empty() {
             window.request_redraw();
             self.redraw_requested = Some(Instant::now());
         }
@@ -431,7 +420,7 @@ impl App {
     }
 
     /// While the window is hidden or its redraws stall, the waiting frames only upload, so that the simulation
-    /// thread runs on; a stalled redraw is requested again every [`MAX_RENDER_INTERVAL`]. Links that waited too long
+    /// thread runs on; a stalled redraw is requested again every [`STALLED_REDRAW_INTERVAL`]. Links that waited too long
     /// for an activation token open.
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         let now = Instant::now();
@@ -446,7 +435,7 @@ impl App {
             && now >= self.forced_redraw
             && let Some(gpu) = &self.gpu
         {
-            self.forced_redraw = now + MAX_RENDER_INTERVAL;
+            self.forced_redraw = now + STALLED_REDRAW_INTERVAL;
             gpu.window.request_redraw();
         }
         let redraw_wake = match self.redraw_requested {

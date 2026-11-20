@@ -2,9 +2,9 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The benchmark of `--bench-ticks`: once a game or replay runs, the client plays that many world ticks as fast as
-//! possible without vsync, prints one `BENCH` line and quits. The frame skip settings decide which frames are built
-//! and drawn and whether the simulation waits for them. The line counts the frames that were not drawn by their
-//! reason, and those whose report had not come back when the run ended.
+//! possible without vsync, prints one `BENCH` line and quits. `Graphics.FrameSkip` decides whether the
+//! simulation waits for its frames or merges them. The line counts the frames that were merged into newer ones, those
+//! that were not drawn by their reason, and those whose report had not come back when the run ended.
 
 use std::time::{Duration, Instant};
 
@@ -24,8 +24,10 @@ struct Run {
     start_idle: Duration,
     built: u64,
     drawn: u64,
+    /// The frames that a newer frame replaced in the queue.
+    merged: u64,
     /// The frames that were not drawn, by [`crate::frames::Skip`] in its declaration order.
-    skipped: [u64; 4],
+    skipped: [u64; 3],
     build: Duration,
     execute: Duration,
     present: Duration,
@@ -49,7 +51,8 @@ impl Bench {
                 start_idle: idle,
                 built: 0,
                 drawn: 0,
-                skipped: [0; 4],
+                merged: 0,
+                skipped: [0; 3],
                 build: Duration::ZERO,
                 execute: Duration::ZERO,
                 present: Duration::ZERO,
@@ -71,7 +74,7 @@ impl Bench {
         let ticks = ticks.max(1) as u64;
         println!(
             "BENCH ticks {ticks} from {} wall {:.1} s{cpu} frames {} drawn {} fps {:.1} build {:.2} ms/frame execute {:.2} \
-             ms/drawn present {:.2} ms/drawn busy sim {:.2} ms/tick main {:.2} ms/tick skipped newer {} no-texture {} \
+             ms/drawn present {:.2} ms/drawn busy sim {:.2} ms/tick main {:.2} ms/tick merged {} skipped no-texture {} \
              stalled {} hidden {} unreported {}",
             run.start_tick,
             wall.as_secs_f64(),
@@ -83,11 +86,11 @@ impl Bench {
             ms(run.present, run.drawn),
             ms(sim_busy, ticks),
             ms(run.main_busy, ticks),
+            run.merged,
             run.skipped[0],
             run.skipped[1],
             run.skipped[2],
-            run.skipped[3],
-            run.built.saturating_sub(run.drawn + run.skipped.iter().sum::<u64>()),
+            run.built.saturating_sub(run.merged + run.drawn + run.skipped.iter().sum::<u64>()),
         );
         true
     }
@@ -97,6 +100,13 @@ impl Bench {
         if let Some(run) = &mut self.run {
             run.built += 1;
             run.build += build;
+        }
+    }
+
+    /// Counts a frame that a newer frame replaced in the queue.
+    pub fn merged(&mut self) {
+        if let Some(run) = &mut self.run {
+            run.merged += 1;
         }
     }
 

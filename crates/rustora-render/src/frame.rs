@@ -51,17 +51,33 @@ pub(crate) enum Command {
 
 impl Command {
     /// True for the commands that change GPU resources which later frames use, false for the draws.
-    pub(crate) fn is_upload(&self) -> bool {
+    fn is_upload(&self) -> bool {
         !matches!(self, Command::World { .. } | Command::Ui { .. })
+    }
+
+    /// The command with its pixel data `offset` bytes further in the byte buffer.
+    fn shifted(mut self, offset: usize) -> Command {
+        match &mut self {
+            Command::Sprite { data, .. }
+            | Command::Palette { data, .. }
+            | Command::AddUiTexture { data, .. }
+            | Command::UpdateUiTexture { data, .. } => *data = data.start + offset..data.end + offset,
+            Command::AddSheet | Command::World { .. } | Command::Ui { .. } => {}
+        }
+        self
     }
 }
 
-/// The recorded renderer calls of one frame. The buffers keep their capacity when the frame is cleared, so a
-/// recycled frame records the next one without allocating.
+/// The recorded renderer calls of one frame in two parts: the uploads, which later frames depend on, and the draws,
+/// which only this frame needs. The backend runs all uploads before the draws. The buffers keep their capacity when
+/// the frame is cleared, so a recycled frame records the next one without allocating.
 #[derive(Default)]
 pub struct FrameCommands {
-    pub(crate) commands: Vec<Command>,
+    /// The uploads in recording order. Their pixel data lives in `bytes`.
+    pub(crate) uploads: Vec<Command>,
     pub(crate) bytes: Vec<u8>,
+    /// The draws in recording order. Their quads, passes and lists live in the buffers below.
+    pub(crate) draws: Vec<Command>,
     pub(crate) quads: Vec<Quad>,
     pub(crate) passes: Vec<PostPass>,
     pub(crate) ui_lists: Vec<UiList>,
@@ -72,8 +88,14 @@ pub struct FrameCommands {
 impl FrameCommands {
     /// Removes all commands and keeps the capacity of the buffers.
     pub fn clear(&mut self) {
-        self.commands.clear();
+        self.uploads.clear();
         self.bytes.clear();
+        self.clear_draws();
+    }
+
+    /// Removes the draws and keeps the uploads.
+    fn clear_draws(&mut self) {
+        self.draws.clear();
         self.quads.clear();
         self.passes.clear();
         self.ui_lists_used = 0;
@@ -81,7 +103,30 @@ impl FrameCommands {
 
     /// True if nothing was recorded.
     pub fn is_empty(&self) -> bool {
-        self.commands.is_empty()
+        self.uploads.is_empty() && self.draws.is_empty()
+    }
+
+    /// Replaces this frame by the `newer` one and keeps the uploads of this frame before those of `newer`, for a frame
+    /// that is never drawn. `newer` is left empty with the draw buffers of this frame, for reuse.
+    pub fn merge_newer(&mut self, newer: &mut FrameCommands) {
+        self.clear_draws();
+        let offset = self.bytes.len();
+        self.bytes.extend_from_slice(&newer.bytes);
+        self.uploads.extend(newer.uploads.drain(..).map(|c| c.shifted(offset)));
+        newer.bytes.clear();
+        std::mem::swap(&mut self.draws, &mut newer.draws);
+        std::mem::swap(&mut self.quads, &mut newer.quads);
+        std::mem::swap(&mut self.passes, &mut newer.passes);
+        std::mem::swap(&mut self.ui_lists, &mut newer.ui_lists);
+        std::mem::swap(&mut self.ui_lists_used, &mut newer.ui_lists_used);
+    }
+
+    fn push(&mut self, command: Command) {
+        if command.is_upload() {
+            self.uploads.push(command);
+        } else {
+            self.draws.push(command);
+        }
     }
 
     fn push_bytes(&mut self, data: &[u8]) -> Range<usize> {
@@ -149,13 +194,13 @@ impl Renderer {
     fn add_sheet(&mut self) {
         self.sheets += 1;
         self.packer = Packer { x: 0, y: 0, row_height: 0 };
-        self.frame.commands.push(Command::AddSheet);
+        self.frame.push(Command::AddSheet);
     }
 
     /// Creates a user interface texture from premultiplied RGBA rows.
     pub fn add_ui_texture(&mut self, width: u32, height: u32, rgba: &[u8], linear: bool) -> UiTexture {
         let data = self.frame.push_bytes(rgba);
-        self.frame.commands.push(Command::AddUiTexture {
+        self.frame.push(Command::AddUiTexture {
             width,
             height,
             linear,
@@ -172,7 +217,7 @@ impl Renderer {
             return;
         }
         let data = self.frame.push_bytes(rgba);
-        self.frame.commands.push(Command::UpdateUiTexture {
+        self.frame.push(Command::UpdateUiTexture {
             texture,
             x,
             y,
@@ -210,7 +255,7 @@ impl Renderer {
         p.row_height = p.row_height.max(h);
         if w > 0 && h > 0 {
             let data = self.frame.push_bytes(&data[..(w * h) as usize]);
-            self.frame.commands.push(Command::Sprite { rect, data });
+            self.frame.push(Command::Sprite { rect, data });
         }
         rect
     }
@@ -218,7 +263,7 @@ impl Renderer {
     pub fn set_palette(&mut self, row: u32, palette: &Palette) {
         assert!(row < MAX_PALETTES);
         let data = self.frame.push_bytes(palette.as_flattened());
-        self.frame.commands.push(Command::Palette { row, data });
+        self.frame.push(Command::Palette { row, data });
     }
 
     /// Clears the target to black and draws `quads` in order.
@@ -240,7 +285,7 @@ impl Renderer {
         f.quads.extend_from_slice(quads);
         let pass_start = f.passes.len();
         f.passes.extend_from_slice(passes);
-        f.commands.push(Command::World {
+        f.push(Command::World {
             camera,
             ui_scale: self.ui_scale,
             quads: quad_start..f.quads.len(),
@@ -257,7 +302,7 @@ impl Renderer {
         let index = f.ui_lists_used;
         f.ui_lists[index].copy_from(list);
         f.ui_lists_used += 1;
-        f.commands.push(Command::Ui {
+        f.push(Command::Ui {
             size,
             scale: self.ui_scale,
             list: index,

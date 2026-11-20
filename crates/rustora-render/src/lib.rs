@@ -333,7 +333,7 @@ impl GpuBackend {
         std::mem::take(&mut self.draw_calls) + std::mem::take(&mut self.ui.draw_calls)
     }
 
-    /// Executes all commands of `frame` in order, drawing into `target`.
+    /// Executes all commands of `frame`, the uploads before the draws, drawing into `target`.
     pub fn execute(&mut self, frame: &FrameCommands, target: &wgpu::TextureView) {
         self.run(frame, Some(target), true);
     }
@@ -349,10 +349,9 @@ impl GpuBackend {
     }
 
     fn run(&mut self, frame: &FrameCommands, target: Option<&wgpu::TextureView>, uploads: bool) {
-        for command in &frame.commands {
-            if !uploads && command.is_upload() {
-                continue;
-            }
+        let uploads = if uploads { &frame.uploads[..] } else { &[] };
+        let draws = if target.is_some() { &frame.draws[..] } else { &[] };
+        for command in uploads.iter().chain(draws) {
             match command {
                 Command::AddSheet => self.add_sheet(),
                 Command::Sprite { rect, data } => self.write_sprite(*rect, &frame.bytes[data.clone()]),

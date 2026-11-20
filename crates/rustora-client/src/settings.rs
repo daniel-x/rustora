@@ -22,8 +22,8 @@ pub trait SettingValue: Sized {
 impl SettingValue for bool {
     fn parse_setting(value: &str) -> Option<bool> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "true" | "yes" => Some(true),
-            "false" | "no" => Some(false),
+            "true" => Some(true),
+            "false" => Some(false),
             _ => None,
         }
     }
@@ -323,9 +323,9 @@ section!(
 );
 
 section!(
-    /// `GraphicSettings`. `FrameBuildSkip` and `FrameDrawSkip` are rustora's own: with `FrameBuildSkip` the
-    /// simulation thread builds a frame only after the previous one was presented, with `FrameDrawSkip` the main
-    /// thread draws only the newest of the waiting frames.
+    /// `GraphicSettings`. `FrameSkip` is rustora's own: with it, a logic tick never waits for its frame, and a
+    /// frame that finds two frames waiting for the main thread replaces the newer one, so that frame is not drawn.
+    /// Without it, every frame is drawn, and a tick waits while the frame of the tick before waits for the main thread.
     GraphicsSection {
         "Mode" mode: WindowMode = WindowMode::PseudoFullscreen,
         "VSync" vsync: bool = true,
@@ -343,8 +343,7 @@ section!(
         "GLProfile" gl_profile: GlProfile = GlProfile::Automatic,
         "BatchSize" batch_size: i32 = 8192,
         "SheetSize" sheet_size: i32 = 2048,
-        "FrameBuildSkip" frame_build_skip: bool = false,
-        "FrameDrawSkip" frame_draw_skip: bool = true,
+        "FrameSkip" frame_skip: bool = false,
     }
 );
 
