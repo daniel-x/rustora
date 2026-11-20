@@ -9,8 +9,8 @@
 //! `Game.Loop`, and the main thread draws the newest one (`Graphics.FrameRenderSkip`). With
 //! `Graphics.FrameBuildSkip` the simulation thread builds a frame only when the previous one was presented, and
 //! skips the frames in between. With both settings off, every frame is drawn: the simulation thread builds a frame
-//! only when the previous one was presented, and after a tick of a game it waits until the frame of that tick was
-//! presented, so that the game slows down instead of skipping frames.
+//! only when the previous one was presented, and after each tick it waits until the frame of that tick was presented,
+//! so that the game slows down instead of skipping frames.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -271,9 +271,6 @@ impl GameLoop {
     /// instead, up to [`MAX_RENDER_INTERVAL`]. A frame that `Graphics.FrameBuildSkip` drops is dropped at once.
     fn next_wake(&self) -> Instant {
         let now = Instant::now();
-        if self.render_before_next_tick && self.build_skip && !self.may_build() {
-            return now;
-        }
         let mut wake = now + MAX_RENDER_INTERVAL;
         if !self.render_before_next_tick && !self.awaiting_tick_frame {
             wake = wake.min(self.next_logic);
@@ -499,9 +496,9 @@ impl GameLoop {
         self.renderer.recycle(report.commands);
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick and one render. A game renders after each world tick, and a
-    /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the
-    /// logic runs on without frames. The frame skip settings hold renders and ticks back as the module describes.
+    /// One pass of `Game.Loop`: at most one logic tick and one render. A logic that falls behind renders at least
+    /// every [`MAX_RENDER_INTERVAL`]. While the window is hidden, the logic runs on without frames. The frame skip
+    /// settings hold renders and ticks back as the module describes.
     fn pass(&mut self) {
         self.flush_motion();
         self.open_links();
@@ -524,9 +521,7 @@ impl GameLoop {
                 self.quit = true;
                 return;
             }
-            if self.client.renders_every_tick() {
-                self.render_before_next_tick = true;
-            }
+            self.render_before_next_tick = self.draws_every_frame;
         }
         let is_time_to_render = now >= self.next_render;
         if self.suspended {
@@ -540,9 +535,7 @@ impl GameLoop {
                 self.next_render = now + RENDER_INTERVAL;
                 self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
                 self.render();
-                self.awaiting_tick_frame = tick_frame && self.draws_every_frame;
-            } else if self.build_skip {
-                self.render_before_next_tick = false;
+                self.awaiting_tick_frame = tick_frame;
             }
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {

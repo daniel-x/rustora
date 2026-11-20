@@ -1006,18 +1006,6 @@ impl Client {
         }
     }
 
-    /// True while a world other than a replay runs: `Game.Loop` renders at least once per logic tick then. The
-    /// benchmark of `--bench-ticks` builds a frame every tick of replays too; the frame skip settings decide whether
-    /// the tick waits for it.
-    pub fn renders_every_tick(&self) -> bool {
-        if self.benchmarking() {
-            return true;
-        }
-        self.shell
-            .as_ref()
-            .is_some_and(|s| !s.world.is_replay() && !s.world.is_loading_game_save())
-    }
-
     /// Port of `Game.InnerLogicTick`: the user interface ticks at `Ui.Timestep`, the world at its own timestep.
     pub fn logic_tick(&mut self) {
         if self.load_screen_drawn
