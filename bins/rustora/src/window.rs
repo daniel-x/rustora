@@ -1,148 +1,81 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
-//! The client window: port of `Sdl2Input.PumpInput`, `Game.Loop` and the hardware cursors of `Sdl2PlatformWindow`.
+//! The client window on the main thread: the winit event loop, the window, the surface and the GPU. It forwards the
+//! window events to the simulation thread of [`crate::game_loop`] and presents the frames that come back.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use rustora_client::settings::{Settings, WindowMode};
-use rustora_render::{GpuBackend, Renderer, wgpu};
-use rustora_ui::input::{KeyEvent as UiKeyEvent, KeyInput, Modifiers, MouseButton, MouseEvent, MouseInput, TapHistory};
-use rustora_ui::widget::{AppRequest, Clipboard};
+use rustora_render::{GpuBackend, wgpu};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseButton as WinitButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-use winit::window::{CustomCursor, Fullscreen, Window, WindowId};
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::client::Client;
-use crate::frames::{Frame, Presented, Surface};
+use crate::frames::{Frame, Surface};
+use crate::game_loop::{MAX_RENDER_INTERVAL, Start, ToMain, ToSim, Wake};
 
-/// `MaxLogicTicksBehind` of `Game.Loop`.
-const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
-/// The render interval of `Game.Loop` with the default settings: the swap chain waits for vertical sync.
-const RENDER_INTERVAL: Duration = Duration::from_millis(1);
-/// `1000 / MinReplayFps` of `Game.Loop`: the longest time between two renders while the logic falls behind.
-const MAX_RENDER_INTERVAL: Duration = Duration::from_millis(100);
 /// A requested redraw that has not come after this time means that the window system does not let the window draw,
-/// like Wayland for a hidden window, which sends no frame callbacks. The logic then runs without waiting for frames.
+/// like Wayland for a hidden window, which sends no frame callbacks. The frames then only upload until it draws.
 const REDRAW_STALL: Duration = Duration::from_millis(100);
-const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
 
 struct Gpu {
     window: Arc<Window>,
     surface: Surface,
 }
 
-/// How long a link waits for an activation token of the window system before it opens without one.
-const ACTIVATION_TOKEN_WAIT: Duration = Duration::from_secs(1);
-
-/// The cursor that the window shows.
-#[derive(Clone, PartialEq, Eq)]
-enum ShownCursor {
-    Hidden,
-    /// A frame of a cursor of the mod.
-    Mod(String, usize),
-    /// The pointing hand of the system, over links.
-    Link,
-}
-
-/// Asks the window system for an activation token, which X11 and Wayland deliver with `ActivationTokenDone`.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "netbsd",
-    target_os = "openbsd"
-))]
-fn request_activation_token(window: &Window) -> Option<winit::event_loop::AsyncRequestSerial> {
-    use winit::platform::startup_notify::WindowExtStartupNotify;
-    window.request_activation_token().ok()
-}
-
-/// Other systems let the browser come to the front without a token.
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "netbsd",
-    target_os = "openbsd"
-)))]
-fn request_activation_token(_window: &Window) -> Option<winit::event_loop::AsyncRequestSerial> {
-    None
+/// The channels to the simulation thread and its handle.
+struct Sim {
+    tx: Sender<ToSim>,
+    rx: Receiver<ToMain>,
+    thread: JoinHandle<()>,
 }
 
 struct App {
-    client: Client,
-    renderer: Renderer,
+    engine: PathBuf,
+    support: String,
+    args: Vec<String>,
+    proxy: EventLoopProxy<Wake>,
     size: (u32, u32),
     fullscreen: Option<Fullscreen>,
+    /// The benchmark runs without vertical sync.
+    no_vsync: bool,
     gpu: Option<Gpu>,
-    modifiers: Modifiers,
-    mouse: (i32, i32),
-    held: [bool; 3],
-    pending_motion: bool,
-    scroll_remainder: f64,
-    mouse_taps: HashMap<WinitButton, TapHistory>,
-    key_taps: HashMap<(String, [bool; 4]), TapHistory>,
-    /// The mod whose cursors `hardware_cursors` holds.
-    cursor_mod: String,
-    hardware_cursors: HashMap<(String, usize), CustomCursor>,
-    /// The pixel doubling of `hardware_cursors`.
-    cursor_scale: u16,
-    shown_cursor: ShownCursor,
-    /// The links that wait for an activation token of the window system, with the time they were requested.
-    links_awaiting_token: Vec<(winit::event_loop::AsyncRequestSerial, String, Instant)>,
+    sim: Option<Sim>,
+    /// The frames that wait for the next redraw, oldest first.
+    frames: VecDeque<Frame>,
     suspended: bool,
     /// When the redraw that the window waits for was requested.
     redraw_requested: Option<Instant>,
-    next_logic: Instant,
-    next_render: Instant,
-    forced_next_render: Instant,
-    render_before_next_tick: bool,
-    bench: Option<crate::bench::Bench>,
-    /// When the last logic tick ran, to log gaps.
-    last_logic_tick: Instant,
+    /// When a stalled redraw is requested again.
+    forced_redraw: Instant,
 }
 
-/// The system clipboard. It is empty and ignores writes where the system offers none.
-struct SystemClipboard(RefCell<Option<arboard::Clipboard>>);
-
-impl Clipboard for SystemClipboard {
-    fn get(&self) -> String {
-        self.0.borrow_mut().as_mut().and_then(|c| c.get_text().ok()).unwrap_or_default()
-    }
-
-    fn set(&self, text: &str) {
-        if let Some(clipboard) = self.0.borrow_mut().as_mut()
-            && let Err(e) = clipboard.set_text(text)
-        {
-            eprintln!("cannot write the clipboard: {e}");
-        }
-    }
-}
-
-/// Opens a window with the user interface of the mod and runs until the window closes.
 /// Opens the client window. Without an explicit `size`, the window follows the `Graphics.Mode` setting like
-/// OpenRA: fullscreen modes cover the monitor, windowed mode uses `Graphics.WindowedSize`.
+/// OpenRA: fullscreen modes cover the monitor, windowed mode uses `Graphics.WindowedSize`. Runs until the window
+/// closes or the client quits.
 pub fn run(engine: &Path, support: &str, size: Option<(u32, u32)>, args: &[String]) {
     rustora_core::log_channels::init(Path::new(support), rustora_core::log_channels::CLIENT_CHANNELS);
     rustora_core::log_channels::install_panic_hook(Path::new(support));
+    let event_loop = EventLoop::<Wake>::with_user_event().build().expect("event loop");
     let mut launcher = Launcher {
         engine: engine.to_path_buf(),
         support: support.to_string(),
         size,
         args: args.to_vec(),
+        proxy: event_loop.create_proxy(),
         app: None,
     };
-    let event_loop = EventLoop::new().expect("event loop");
     event_loop.run_app(&mut launcher).expect("run event loop");
+    if let Some(app) = launcher.app.take() {
+        app.shut_down();
+    }
     log::logger().flush();
 }
 
@@ -152,6 +85,7 @@ struct Launcher {
     support: String,
     size: Option<(u32, u32)>,
     args: Vec<String>,
+    proxy: EventLoopProxy<Wake>,
     app: Option<App>,
 }
 
@@ -184,14 +118,34 @@ impl Launcher {
     }
 }
 
-impl ApplicationHandler for Launcher {
+impl ApplicationHandler<Wake> for Launcher {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.app.is_none() {
             let (size, fullscreen) = self.window_layout(el);
-            self.app = Some(App::new(&self.engine, &self.support, size, fullscreen, &self.args));
+            self.app = Some(App {
+                engine: self.engine.clone(),
+                support: self.support.clone(),
+                args: self.args.clone(),
+                proxy: self.proxy.clone(),
+                size,
+                fullscreen,
+                no_vsync: self.args.iter().any(|a| a.starts_with("Launch.BenchTicks=")),
+                gpu: None,
+                sim: None,
+                frames: VecDeque::new(),
+                suspended: false,
+                redraw_requested: None,
+                forced_redraw: Instant::now(),
+            });
         }
         if let Some(app) = self.app.as_mut() {
             app.resumed(el);
+        }
+    }
+
+    fn user_event(&mut self, el: &ActiveEventLoop, _event: Wake) {
+        if let Some(app) = self.app.as_mut() {
+            app.receive(el);
         }
     }
 
@@ -209,373 +163,6 @@ impl ApplicationHandler for Launcher {
 }
 
 impl App {
-    fn new(engine: &Path, support: &str, size: (u32, u32), fullscreen: Option<Fullscreen>, args: &[String]) -> App {
-        let mut client = Client::new(engine, support, (size.0 as i32, size.1 as i32), args);
-        client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
-        client.logic_tick();
-        let now = Instant::now();
-        let client_mod = client.mod_id().to_string();
-        let bench = client.bench_ticks().map(crate::bench::Bench::new);
-        App {
-            client,
-            renderer: Renderer::new(),
-            size,
-            fullscreen,
-            gpu: None,
-            modifiers: Modifiers::default(),
-            mouse: (0, 0),
-            held: [false; 3],
-            pending_motion: false,
-            scroll_remainder: 0.0,
-            mouse_taps: HashMap::new(),
-            key_taps: HashMap::new(),
-            cursor_mod: client_mod,
-            hardware_cursors: HashMap::new(),
-            cursor_scale: 1,
-            shown_cursor: ShownCursor::Hidden,
-            links_awaiting_token: Vec::new(),
-            suspended: false,
-            redraw_requested: None,
-            next_logic: now,
-            next_render: now,
-            forced_next_render: now,
-            render_before_next_tick: false,
-            bench,
-            last_logic_tick: Instant::now(),
-        }
-    }
-}
-
-fn char_key_name(c: char) -> Option<&'static str> {
-    Some(match c {
-        ' ' => "SPACE",
-        '!' => "EXCLAIM",
-        '"' => "QUOTEDBL",
-        '#' => "HASH",
-        '%' => "PERCENT",
-        '$' => "DOLLAR",
-        '&' => "AMPERSAND",
-        '\'' => "QUOTE",
-        '(' => "LEFTPAREN",
-        ')' => "RIGHTPAREN",
-        '*' => "ASTERISK",
-        '+' => "PLUS",
-        ',' => "COMMA",
-        '-' => "MINUS",
-        '.' => "PERIOD",
-        '/' => "SLASH",
-        ':' => "COLON",
-        ';' => "SEMICOLON",
-        '<' => "LESS",
-        '=' => "EQUALS",
-        '>' => "GREATER",
-        '?' => "QUESTION",
-        '@' => "AT",
-        '[' => "LEFTBRACKET",
-        '\\' => "BACKSLASH",
-        ']' => "RIGHTBRACKET",
-        '^' => "CARET",
-        '_' => "UNDERSCORE",
-        '`' => "BACKQUOTE",
-        _ => return None,
-    })
-}
-
-fn named_key_name(key: NamedKey, location: KeyLocation) -> Option<&'static str> {
-    let right = location == KeyLocation::Right;
-    Some(match key {
-        NamedKey::Enter if location == KeyLocation::Numpad => "KP_ENTER",
-        NamedKey::Enter => "RETURN",
-        NamedKey::Escape => "ESCAPE",
-        NamedKey::Backspace => "BACKSPACE",
-        NamedKey::Tab => "TAB",
-        NamedKey::Space => "SPACE",
-        NamedKey::CapsLock => "CAPSLOCK",
-        NamedKey::PrintScreen => "PRINTSCREEN",
-        NamedKey::ScrollLock => "SCROLLLOCK",
-        NamedKey::Pause => "PAUSE",
-        NamedKey::Insert => "INSERT",
-        NamedKey::Home => "HOME",
-        NamedKey::PageUp => "PAGEUP",
-        NamedKey::Delete => "DELETE",
-        NamedKey::End => "END",
-        NamedKey::PageDown => "PAGEDOWN",
-        NamedKey::ArrowRight => "RIGHT",
-        NamedKey::ArrowLeft => "LEFT",
-        NamedKey::ArrowDown => "DOWN",
-        NamedKey::ArrowUp => "UP",
-        NamedKey::NumLock => "NUMLOCKCLEAR",
-        NamedKey::Control if right => "RCTRL",
-        NamedKey::Control => "LCTRL",
-        NamedKey::Shift if right => "RSHIFT",
-        NamedKey::Shift => "LSHIFT",
-        NamedKey::Alt if right => "RALT",
-        NamedKey::Alt => "LALT",
-        NamedKey::Super if right => "RGUI",
-        NamedKey::Super => "LGUI",
-        NamedKey::F1 => "F1",
-        NamedKey::F2 => "F2",
-        NamedKey::F3 => "F3",
-        NamedKey::F4 => "F4",
-        NamedKey::F5 => "F5",
-        NamedKey::F6 => "F6",
-        NamedKey::F7 => "F7",
-        NamedKey::F8 => "F8",
-        NamedKey::F9 => "F9",
-        NamedKey::F10 => "F10",
-        NamedKey::F11 => "F11",
-        NamedKey::F12 => "F12",
-        NamedKey::AudioVolumeMute => "MUTE",
-        NamedKey::AudioVolumeUp => "VOLUMEUP",
-        NamedKey::AudioVolumeDown => "VOLUMEDOWN",
-        NamedKey::MediaTrackNext => "AUDIONEXT",
-        NamedKey::MediaTrackPrevious => "AUDIOPREV",
-        NamedKey::MediaStop => "AUDIOSTOP",
-        NamedKey::MediaPlayPause => "AUDIOPLAY",
-        _ => return None,
-    })
-}
-
-fn numpad_char_name(c: char) -> Option<String> {
-    Some(match c {
-        '0'..='9' => format!("KP_{c}"),
-        '/' => "KP_DIVIDE".into(),
-        '*' => "KP_MULTIPLY".into(),
-        '-' => "KP_MINUS".into(),
-        '+' => "KP_PLUS".into(),
-        '.' => "KP_PERIOD".into(),
-        '=' => "KP_EQUALS".into(),
-        _ => return None,
-    })
-}
-
-/// Names a key as the `Keycode` enum does. A character without a name becomes its code point, which `Hotkey.TryParse`
-/// accepts too. Letters and digits ignore the shift state, as SDL key symbols do.
-fn key_name(key: &Key, location: KeyLocation) -> Option<String> {
-    match key {
-        Key::Named(named) => named_key_name(*named, location).map(str::to_string),
-        Key::Character(text) => {
-            let c = text.chars().next()?;
-            if location == KeyLocation::Numpad
-                && let Some(name) = numpad_char_name(c)
-            {
-                return Some(name);
-            }
-            Some(match c {
-                'a'..='z' | 'A'..='Z' => c.to_ascii_uppercase().to_string(),
-                '0'..='9' => format!("NUMBER_{c}"),
-                _ => char_key_name(c).map_or_else(|| (c as u32).to_string(), str::to_string),
-            })
-        }
-        _ => None,
-    }
-}
-
-fn to_modifiers(state: ModifiersState) -> Modifiers {
-    Modifiers {
-        shift: state.shift_key(),
-        ctrl: state.control_key(),
-        alt: state.alt_key(),
-        meta: state.super_key(),
-    }
-}
-
-impl App {
-    fn mouse_input(&self, event: MouseEvent, button: MouseButton, scroll_delta: i32, multi_tap: i32) -> MouseInput {
-        MouseInput {
-            event,
-            button,
-            x: self.mouse.0,
-            y: self.mouse.1,
-            scroll_delta,
-            modifiers: self.modifiers,
-            multi_tap,
-        }
-    }
-
-    /// The button of a move event. C# passes all held buttons as flags, here the first held one is enough for `==` tests.
-    fn held_button(&self) -> MouseButton {
-        match self.held {
-            [true, _, _] => MouseButton::Left,
-            [_, true, _] => MouseButton::Right,
-            [_, _, true] => MouseButton::Middle,
-            _ => MouseButton::None,
-        }
-    }
-
-    fn flush_motion(&mut self) {
-        if std::mem::take(&mut self.pending_motion) {
-            let mi = self.mouse_input(MouseEvent::Move, self.held_button(), 0, 0);
-            self.client.ui.handle_input(&mi);
-        }
-    }
-
-    fn mouse_button(&mut self, state: ElementState, button: WinitButton) {
-        let (ui_button, index) = match button {
-            WinitButton::Left => (MouseButton::Left, 0),
-            WinitButton::Right => (MouseButton::Right, 1),
-            WinitButton::Middle => (MouseButton::Middle, 2),
-            WinitButton::Back => return self.key_press(state, "MOUSE4".into(), false),
-            WinitButton::Forward => return self.key_press(state, "MOUSE5".into(), false),
-            WinitButton::Other(_) => return,
-        };
-        self.flush_motion();
-        self.held[index] = state == ElementState::Pressed;
-        let taps = self.mouse_taps.entry(button).or_default();
-        let (event, count) = match state {
-            ElementState::Pressed => (MouseEvent::Down, taps.press(Instant::now(), self.mouse)),
-            ElementState::Released => (MouseEvent::Up, taps.count()),
-        };
-        let mi = self.mouse_input(event, ui_button, 0, count);
-        self.client.ui.handle_input(&mi);
-    }
-
-    fn scroll(&mut self, delta: MouseScrollDelta) {
-        let steps = match delta {
-            MouseScrollDelta::LineDelta(_, y) => y as f64,
-            MouseScrollDelta::PixelDelta(p) => p.y / PIXELS_PER_SCROLL_STEP,
-        };
-        self.scroll_remainder += steps;
-        let whole = self.scroll_remainder.trunc();
-        self.scroll_remainder -= whole;
-        if whole != 0.0 {
-            self.flush_motion();
-            let mi = self.mouse_input(MouseEvent::Scroll, MouseButton::None, whole as i32, 0);
-            self.client.ui.handle_input(&mi);
-        }
-    }
-
-    fn key_press(&mut self, state: ElementState, key: String, repeat: bool) {
-        let m = self.modifiers;
-        let taps = self.key_taps.entry((key.clone(), [m.shift, m.ctrl, m.alt, m.meta])).or_default();
-        let (event, multi_tap) = match state {
-            ElementState::Pressed => (UiKeyEvent::Down, taps.press(Instant::now(), (0, 0))),
-            ElementState::Released => (UiKeyEvent::Up, taps.count()),
-        };
-        self.client.ui.handle_key(&KeyInput {
-            event,
-            key,
-            modifiers: m,
-            multi_tap,
-            repeat,
-        });
-    }
-
-    fn keyboard(&mut self, event: &KeyEvent) {
-        self.flush_motion();
-        if let Some(name) = key_name(&event.key_without_modifiers(), event.location) {
-            self.key_press(event.state, name, event.repeat);
-        }
-        if event.state == ElementState::Pressed
-            && let Some(text) = event.text_with_all_modifiers().filter(|t| !t.chars().any(char::is_control))
-        {
-            self.client.ui.handle_text(text);
-        }
-    }
-
-    /// `Sdl2PlatformWindow.CreateHardwareCursor`: cursors are pixel doubled when the window scale is above 1.5 and
-    /// again when the player chose doubled cursors.
-    fn apply_cursor(&mut self, el: &ActiveEventLoop) {
-        if self.cursor_mod != self.client.mod_id() {
-            self.cursor_mod = self.client.mod_id().to_string();
-            self.hardware_cursors.clear();
-            self.shown_cursor = ShownCursor::Hidden;
-        }
-        let Some(gpu) = &self.gpu else { return };
-        let cursor_scale = cursor_scale(self.client.cursor_double(), gpu.window.scale_factor());
-        if cursor_scale != self.cursor_scale {
-            self.cursor_scale = cursor_scale;
-            self.hardware_cursors.clear();
-            self.shown_cursor = ShownCursor::Hidden;
-        }
-        self.client.update_cursor(self.mouse);
-        let wanted = if self.client.link_cursor {
-            ShownCursor::Link
-        } else {
-            match self.client.cursor.current(&self.client.cursors) {
-                Some((name, frame)) => ShownCursor::Mod(name.to_string(), frame),
-                None => ShownCursor::Hidden,
-            }
-        };
-        if wanted == self.shown_cursor {
-            return;
-        }
-        match &wanted {
-            ShownCursor::Hidden => gpu.window.set_cursor_visible(false),
-            ShownCursor::Link => {
-                gpu.window.set_cursor(winit::window::CursorIcon::Pointer);
-                gpu.window.set_cursor_visible(true);
-            }
-            ShownCursor::Mod(name, frame) => {
-                let key = (name.clone(), *frame);
-                if !self.hardware_cursors.contains_key(&key) {
-                    let image = self.client.cursors.image(&key.0, key.1).expect("known cursor").scaled(cursor_scale);
-                    let source = CustomCursor::from_rgba(image.rgba.clone(), image.width, image.height, image.hotspot.0, image.hotspot.1)
-                        .expect("valid cursor image");
-                    self.hardware_cursors.insert(key.clone(), el.create_custom_cursor(source));
-                }
-                gpu.window.set_cursor(self.hardware_cursors[&key].clone());
-                gpu.window.set_cursor_visible(true);
-            }
-        }
-        self.shown_cursor = wanted;
-    }
-
-    /// Opens the links that the client asked for. Where the window system hands out activation tokens, a link
-    /// waits for one, so that the browser may come to the front; without a token after [`ACTIVATION_TOKEN_WAIT`], it
-    /// opens anyway.
-    fn open_links(&mut self) {
-        let now = Instant::now();
-        for url in std::mem::take(&mut self.client.open_urls) {
-            match self.gpu.as_ref().and_then(|gpu| request_activation_token(&gpu.window)) {
-                Some(serial) => self.links_awaiting_token.push((serial, url, now)),
-                None => rustora_ui::links::open(&url),
-            }
-        }
-        self.links_awaiting_token.retain(|(_, url, requested)| {
-            let waiting = now.duration_since(*requested) < ACTIVATION_TOKEN_WAIT;
-            if !waiting {
-                rustora_ui::links::open(url);
-            }
-            waiting
-        });
-    }
-
-    fn render(&mut self, el: &ActiveEventLoop) {
-        let start = Instant::now();
-        let render = rustora_ui::perf::PerfSample::new("render");
-        self.render_before_next_tick = false;
-        self.redraw_requested = None;
-        self.apply_cursor(el);
-        let Some(gpu) = self.gpu.as_mut() else { return };
-        let frame = build_frame(&mut self.client, &mut self.renderer, (gpu.surface.config.width, gpu.surface.config.height));
-        let built = start.elapsed();
-        let window = gpu.window.clone();
-        let report = gpu.surface.present(frame, || window.pre_present_notify());
-        let drawn = report.drawn;
-        let scene = built + report.execute;
-        self.presented(report);
-        drop(render);
-        if drawn {
-            rustora_ui::perf::frame_tick();
-            if let Some(bench) = &mut self.bench {
-                bench.frame(scene, start.elapsed());
-            }
-        }
-    }
-
-    /// Takes the report of a presented frame: the perf counters, the screenshot, and the buffers for reuse.
-    fn presented(&mut self, report: Presented) {
-        if report.drawn {
-            rustora_ui::perf::increment("render_flip", 1000.0 * report.present.as_secs_f64());
-        }
-        rustora_ui::perf::increment("batches", report.draw_calls as f64);
-        if let Some(pixels) = &report.screenshot {
-            self.client.save_screenshot(pixels, report.size.0, report.size.1);
-        }
-        self.renderer.recycle(report.commands);
-    }
-
     fn create_gpu(&self, el: &ActiveEventLoop) -> Gpu {
         let window = Arc::new(
             el.create_window(
@@ -604,7 +191,7 @@ impl App {
             .expect("surface config");
         let caps = surface.get_capabilities(&adapter);
         config.format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(config.format);
-        if self.bench.is_some() {
+        if self.no_vsync {
             config.present_mode = wgpu::PresentMode::AutoNoVsync;
         }
         surface.configure(&device, &config);
@@ -618,12 +205,88 @@ impl App {
             },
         }
     }
+
+    /// Starts the simulation thread once the window exists.
+    fn start_sim(&mut self) {
+        let Some(gpu) = &self.gpu else { return };
+        let (tx, sim_rx) = channel();
+        let (sim_tx, rx) = channel();
+        let start = Start {
+            engine: self.engine.clone(),
+            support: self.support.clone(),
+            size: self.size,
+            window_size: (gpu.surface.config.width, gpu.surface.config.height),
+            args: self.args.clone(),
+        };
+        let thread = crate::game_loop::spawn(start, sim_rx, sim_tx, self.proxy.clone());
+        self.sim = Some(Sim { tx, rx, thread });
+    }
+
+    fn send(&self, message: ToSim) {
+        if let Some(sim) = &self.sim {
+            let _ = sim.tx.send(message);
+        }
+    }
+
+    /// Takes the messages of the simulation thread.
+    fn receive(&mut self, el: &ActiveEventLoop) {
+        let Some(sim) = &self.sim else { return };
+        while let Ok(message) = sim.rx.try_recv() {
+            match message {
+                ToMain::Frame(frame) => self.frames.push_back(frame),
+                ToMain::Quit => el.exit(),
+            }
+        }
+        if self.frames.is_empty() {
+            return;
+        }
+        match &self.gpu {
+            Some(gpu) if !self.suspended => {
+                gpu.window.request_redraw();
+                self.redraw_requested.get_or_insert_with(Instant::now);
+            }
+            _ => self.skip_frames(),
+        }
+    }
+
+    /// Runs only the uploads of all waiting frames and reports them to the simulation thread.
+    fn skip_frames(&mut self) {
+        let Some(gpu) = self.gpu.as_mut() else { return };
+        while let Some(frame) = self.frames.pop_front() {
+            let report = gpu.surface.skip(frame);
+            if let Some(sim) = &self.sim {
+                let _ = sim.tx.send(ToSim::Presented(report));
+            }
+        }
+    }
+
+    /// Draws the newest waiting frame after the uploads of the older ones.
+    fn render(&mut self) {
+        self.redraw_requested = None;
+        let Some(newest) = self.frames.pop_back() else { return };
+        self.skip_frames();
+        let Some(gpu) = self.gpu.as_mut() else { return };
+        let window = gpu.window.clone();
+        let report = gpu.surface.present(newest, || window.pre_present_notify());
+        self.send(ToSim::Presented(report));
+    }
+
+    /// Tells the simulation thread to quit and waits for it. A panic of the simulation thread goes on here.
+    fn shut_down(mut self) {
+        let Some(sim) = self.sim.take() else { return };
+        let _ = sim.tx.send(ToSim::Quit);
+        drop(sim.rx);
+        if let Err(panic) = sim.thread.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
 }
 
-impl ApplicationHandler for App {
+impl App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         if self.gpu.is_none() {
             self.gpu = Some(self.create_gpu(el));
+            self.start_sim();
         }
     }
 
@@ -636,150 +299,44 @@ impl ApplicationHandler for App {
                     s.config.width = size.width.max(1);
                     s.config.height = size.height.max(1);
                     s.surface.configure(&s.backend.device, &s.config);
+                    let size = (s.config.width, s.config.height);
+                    self.send(ToSim::Resized(size));
                 }
             }
-            WindowEvent::Occluded(occluded) => self.suspended = occluded,
-            WindowEvent::ModifiersChanged(state) => {
-                self.modifiers = to_modifiers(state.state());
-                self.client.ui.modifiers = self.modifiers;
+            WindowEvent::Occluded(occluded) => {
+                self.suspended = occluded;
+                self.send(ToSim::Occluded(occluded));
             }
-            WindowEvent::CursorMoved { position, .. } => {
-                self.client.user_acted();
-                let scale = f64::from(self.client.ui_scale());
-                self.mouse = ((position.x / scale) as i32, (position.y / scale) as i32);
-                self.pending_motion = true;
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                self.client.user_acted();
-                self.mouse_button(state, button)
-            }
-            WindowEvent::MouseWheel { delta, .. } => {
-                self.client.user_acted();
-                self.scroll(delta)
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                self.client.user_acted();
-                self.keyboard(&event)
-            }
-            WindowEvent::Focused(focused) => self.client.ui.window_has_focus = focused,
-            WindowEvent::RedrawRequested => self.render(el),
-            WindowEvent::ActivationTokenDone { serial, token } => {
-                if let Some(i) = self.links_awaiting_token.iter().position(|(s, _, _)| *s == serial) {
-                    let (_, url, _) = self.links_awaiting_token.remove(i);
-                    rustora_ui::links::open_with_activation_token(&url, &token.into_raw());
-                }
-            }
+            WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::ModifiersChanged(_)
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::KeyboardInput { .. }
+            | WindowEvent::Focused(_) => self.send(ToSim::Window(event)),
             _ => {}
         }
-        if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
-            el.exit();
-        }
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick and one render. A game renders after each world tick, and a
-    /// replay that falls behind renders at least every [`MAX_RENDER_INTERVAL`]. While the window cannot draw,
-    /// because it is suspended or its redraws stall, the logic runs on without waiting for frames.
+    /// While the window is hidden or its redraws stall, the waiting frames only upload, so that the simulation
+    /// thread runs on; a stalled redraw is requested again every [`MAX_RENDER_INTERVAL`].
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        self.flush_motion();
-        self.open_links();
         let now = Instant::now();
-        if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
-            self.next_logic = now;
-        }
-        let force_render = self.render_before_next_tick || now >= self.forced_next_render;
-        if now >= self.next_logic && !self.render_before_next_tick {
-            self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
-            let gap = now.saturating_duration_since(self.last_logic_tick);
-            if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
-                log::warn!(target: "client", "No logic tick ran for {:.1} s.", gap.as_secs_f64());
-            }
-            self.last_logic_tick = now;
-            self.client.logic_tick();
-            if let Some(bench) = &mut self.bench
-                && bench.after_logic_tick(self.client.running_world_tick())
-            {
-                el.exit();
-            }
-            if self.client.renders_every_tick() {
-                self.render_before_next_tick = true;
-            }
-        }
-        let is_time_to_render = now >= self.next_render;
         let redraw_stalled = self.redraw_requested.is_some_and(|t| now.duration_since(t) > REDRAW_STALL);
         if self.suspended || redraw_stalled {
-            if is_time_to_render {
-                self.next_render = now + RENDER_INTERVAL;
-                self.render_before_next_tick = false;
-            }
-            if redraw_stalled && now >= self.forced_next_render {
-                self.forced_next_render = now + MAX_RENDER_INTERVAL;
-                if let Some(gpu) = &self.gpu {
-                    gpu.window.request_redraw();
-                }
-            }
-        } else if (is_time_to_render && now < self.next_logic) || force_render {
-            self.next_render = now + RENDER_INTERVAL;
-            self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
-            match &self.gpu {
-                Some(gpu) => {
-                    gpu.window.request_redraw();
-                    self.redraw_requested.get_or_insert(now);
-                }
-                None => self.render_before_next_tick = false,
-            }
+            self.skip_frames();
         }
-        if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
-            el.exit();
+        if redraw_stalled
+            && now >= self.forced_redraw
+            && let Some(gpu) = &self.gpu
+        {
+            self.forced_redraw = now + MAX_RENDER_INTERVAL;
+            gpu.window.request_redraw();
         }
-        el.set_control_flow(ControlFlow::WaitUntil(self.next_logic.min(self.next_render)));
-    }
-}
-
-/// Prepares and records one frame of `client` for a window of `size` pixels.
-fn build_frame(client: &mut Client, renderer: &mut Renderer, size: (u32, u32)) -> Frame {
-    client.prepare(renderer, size);
-    client.render(renderer, size);
-    Frame {
-        commands: renderer.take_frame(),
-        size,
-        screenshot: std::mem::take(&mut client.screenshot_requested),
-    }
-}
-
-/// The pixel doubling of the hardware cursors for the `CursorDouble` setting and the scale of the window system.
-fn cursor_scale(cursor_double: bool, window_scale: f64) -> u16 {
-    let native = if window_scale > 1.5 { 2 } else { 1 };
-    if cursor_double { 2 * native } else { native }
-}
-
-#[cfg(test)]
-mod tests {
-    use winit::keyboard::SmolStr;
-
-    use super::*;
-
-    fn character(text: &str, location: KeyLocation) -> Option<String> {
-        key_name(&Key::Character(SmolStr::new(text)), location)
-    }
-
-    #[test]
-    fn names_keys_as_the_keycode_enum() {
-        assert_eq!(character("a", KeyLocation::Standard).as_deref(), Some("A"));
-        assert_eq!(character("7", KeyLocation::Standard).as_deref(), Some("NUMBER_7"));
-        assert_eq!(character("7", KeyLocation::Numpad).as_deref(), Some("KP_7"));
-        assert_eq!(character("-", KeyLocation::Standard).as_deref(), Some("MINUS"));
-        assert_eq!(character("ä", KeyLocation::Standard).as_deref(), Some("228"));
-        assert_eq!(
-            key_name(&Key::Named(NamedKey::Enter), KeyLocation::Standard).as_deref(),
-            Some("RETURN")
-        );
-        assert_eq!(
-            key_name(&Key::Named(NamedKey::Enter), KeyLocation::Numpad).as_deref(),
-            Some("KP_ENTER")
-        );
-        assert_eq!(
-            key_name(&Key::Named(NamedKey::Shift), KeyLocation::Right).as_deref(),
-            Some("RSHIFT")
-        );
+        el.set_control_flow(match self.redraw_requested {
+            Some(t) if !redraw_stalled => ControlFlow::WaitUntil(t + REDRAW_STALL),
+            Some(_) => ControlFlow::WaitUntil(self.forced_redraw),
+            None => ControlFlow::Wait,
+        });
     }
 }

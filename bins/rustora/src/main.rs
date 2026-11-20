@@ -9,6 +9,7 @@ mod app;
 mod bench;
 mod client;
 mod frames;
+mod game_loop;
 mod headless;
 mod net;
 mod palettes;

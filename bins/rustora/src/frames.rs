@@ -14,6 +14,8 @@ pub struct Frame {
     pub size: (u32, u32),
     /// `Game.TakeScreenshot`: the frame is also read back.
     pub screenshot: bool,
+    /// The time to build the frame.
+    pub build: Duration,
 }
 
 /// What the window did with a [`Frame`].
@@ -22,6 +24,8 @@ pub struct Presented {
     pub commands: FrameCommands,
     /// The draw calls of the frame, as `PerfHistory` "batches" counts them.
     pub draw_calls: u32,
+    /// The time to build the frame.
+    pub build: Duration,
     /// The time to execute the commands.
     pub execute: Duration,
     /// The time of the present.
@@ -52,6 +56,7 @@ impl Surface {
         }
         Presented {
             commands: frame.commands,
+            build: frame.build,
             draw_calls: self.backend.take_draw_calls(),
             execute: start.elapsed(),
             present: Duration::ZERO,
@@ -101,6 +106,7 @@ impl Surface {
         self.backend.queue.present(texture);
         Presented {
             commands: frame.commands,
+            build: frame.build,
             draw_calls: self.backend.take_draw_calls(),
             execute,
             present: start.elapsed(),
