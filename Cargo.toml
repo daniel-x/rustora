@@ -29,7 +29,7 @@ overflow-checks = false
 opt-level = 3
 
 [profile.release]
-debug = 1
+debug = "line-tables-only"
 
 # Packaged builds: whole-program optimization and no debug info, for smaller and faster binaries.
 [profile.dist]
