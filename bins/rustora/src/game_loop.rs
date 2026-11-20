@@ -268,9 +268,13 @@ impl GameLoop {
     }
 
     /// The time of the next logic tick or render. A tick or render that waits for a frame report waits for a message
-    /// instead, up to [`MAX_RENDER_INTERVAL`].
+    /// instead, up to [`MAX_RENDER_INTERVAL`]. A frame that `Graphics.FrameBuildSkip` drops is dropped at once.
     fn next_wake(&self) -> Instant {
-        let mut wake = Instant::now() + MAX_RENDER_INTERVAL;
+        let now = Instant::now();
+        if self.render_before_next_tick && self.build_skip && !self.may_build() {
+            return now;
+        }
+        let mut wake = now + MAX_RENDER_INTERVAL;
         if !self.render_before_next_tick && !self.awaiting_tick_frame {
             wake = wake.min(self.next_logic);
         }
@@ -530,14 +534,16 @@ impl GameLoop {
                 self.next_render = now + RENDER_INTERVAL;
                 self.render_before_next_tick = false;
             }
-        } else if ((is_time_to_render && now < self.next_logic) || force_render) && self.may_build() {
-            let tick_frame = self.render_before_next_tick;
-            self.next_render = now + RENDER_INTERVAL;
-            self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
-            self.render();
-            self.awaiting_tick_frame = tick_frame && self.draws_every_frame;
-        } else if self.build_skip {
-            self.render_before_next_tick = false;
+        } else if (is_time_to_render && now < self.next_logic) || force_render {
+            if self.may_build() {
+                let tick_frame = self.render_before_next_tick;
+                self.next_render = now + RENDER_INTERVAL;
+                self.forced_next_render = now + MAX_RENDER_INTERVAL.max(RENDER_INTERVAL);
+                self.render();
+                self.awaiting_tick_frame = tick_frame && self.draws_every_frame;
+            } else if self.build_skip {
+                self.render_before_next_tick = false;
+            }
         }
         if self.client.ui.requests.iter().any(|r| matches!(r, AppRequest::Quit)) {
             self.quit = true;
