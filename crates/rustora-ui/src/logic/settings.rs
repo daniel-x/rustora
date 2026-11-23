@@ -453,17 +453,19 @@ impl ChromeLogic for DisplayPanel {
         );
         *self.frame_skip_text.borrow_mut() = message_with(
             ui,
-            "checkbox-frame-skip",
+            "label-frame-skip-min-fps",
             &[("fps", MessageArg::Number(i64::from(s.frame_skip_min_fps)))],
         );
     }
 }
 
-/// Binds the frame skip row of rustora's display panel, which the chrome of OpenRA lacks. The checkbox shows `text`.
+/// Binds the frame skip row of rustora's display panel, which the chrome of OpenRA lacks. The label of the slider
+/// shows `text`; the slider is enabled only while frame skipping is.
 fn bind_frame_skip(ui: &mut Ui, panel: WidgetId, text: Rc<RefCell<String>>) {
-    let checkbox = checkbox!(ui, panel, "FRAME_SKIP_CHECKBOX", graphics.frame_skip);
+    checkbox!(ui, panel, "FRAME_SKIP_CHECKBOX", graphics.frame_skip);
     slider!(ui, panel, "FRAME_SKIP_SLIDER", graphics.frame_skip_min_fps);
-    ui.get::<CheckboxWidget>(checkbox).button.get_text = Some(Rc::new(move || text.borrow().clone()));
+    let label = ui.child(panel, "FRAME_SKIP_LABEL");
+    ui.get::<LabelWidget>(label).get_text = Some(Rc::new(move || text.borrow().clone()));
     let skip_on = settings_getter(ui, |s| s.graphics.frame_skip);
     let slider = ui.child(panel, "FRAME_SKIP_SLIDER");
     ui.get::<SliderWidget>(slider).is_disabled = Some(Rc::new(move || !skip_on()));

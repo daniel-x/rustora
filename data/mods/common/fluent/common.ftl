@@ -404,7 +404,8 @@ options-target-lines =
     .disabled = Disabled
 
 checkbox-frame-limiter = Enable Frame Limiter ({ $fps } FPS)
-checkbox-frame-skip = Skip Frames (at least { $fps } FPS)
+checkbox-frame-skip = Enable Frame Skipping
+label-frame-skip-min-fps = Min. { $fps } FPS
 
 ## HotkeysSettingsLogic
 label-original-notice = The default is "{ $key }"

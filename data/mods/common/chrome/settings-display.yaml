@@ -329,7 +329,7 @@ Container@DISPLAY_PANEL:
 									Text: checkbox-frame-limit-gamespeed-container
 				Container@ROW:
 					Width: PARENT_WIDTH - 24
-					Height: 50
+					Height: 75
 					Children:
 						Container@FRAME_SKIP_CHECKBOX_CONTAINER:
 							X: 10
@@ -339,12 +339,20 @@ Container@DISPLAY_PANEL:
 									Width: PARENT_WIDTH
 									Height: 20
 									Font: Regular
+									Text: checkbox-frame-skip
 						Container@FRAME_SKIP_SLIDER_CONTAINER:
 							Width: PARENT_WIDTH / 2 - 20
 							Children:
-								Slider@FRAME_SKIP_SLIDER:
+								LabelForInput@FRAME_SKIP_LABEL:
 									X: 20
 									Y: 25
+									Width: PARENT_WIDTH - 20
+									Height: 20
+									Font: Regular
+									For: FRAME_SKIP_SLIDER
+								Slider@FRAME_SKIP_SLIDER:
+									X: 20
+									Y: 50
 									Width: PARENT_WIDTH - 20
 									Height: 20
 									Ticks: 12
