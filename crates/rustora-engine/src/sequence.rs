@@ -31,7 +31,12 @@ fn field_bool(data: &MiniYaml, defaults: &MiniYaml, key: &str) -> bool {
 }
 
 /// A sprite sequence: the data the simulation reads, plus the yaml for the renderer.
+/// The id of the next [`Sequence`].
+static NEXT_SEQUENCE_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 pub struct Sequence {
+    /// A process-wide unique id, so that clients can cache what they derive from the sequence.
+    pub id: u32,
     pub image: String,
     pub name: String,
     pub start: i32,
@@ -63,6 +68,7 @@ impl Sequence {
             facings = -facings;
         }
         Sequence {
+            id: NEXT_SEQUENCE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             image: image.to_string(),
             name: name.to_string(),
             start: field_i32(data, defaults, "Start", 0),

@@ -88,6 +88,8 @@ pub struct ActorCache {
     pub sync_hashes: Vec<Rc<dyn ISync>>,
     pub targetables: Vec<Rc<dyn crate::actor_ext::ITargetable>>,
     pub targetable_positions: Vec<Rc<dyn crate::actor_ext::ITargetablePositions>>,
+    pub renders: Vec<Rc<dyn crate::render::IRender>>,
+    pub render_modifiers: Vec<Rc<dyn crate::render::IRenderModifier>>,
     /// C# class names of the sync traits, for diagnostics.
     pub sync_names: Vec<&'static str>,
 }
@@ -213,6 +215,8 @@ impl Actor {
             sync_hashes: dict.with_interface::<dyn ISync>(&actor),
             targetables: dict.with_interface::<dyn crate::actor_ext::ITargetable>(&actor),
             targetable_positions: dict.with_interface::<dyn crate::actor_ext::ITargetablePositions>(&actor),
+            renders: dict.with_interface::<dyn crate::render::IRender>(&actor),
+            render_modifiers: dict.with_interface::<dyn crate::render::IRenderModifier>(&actor),
             sync_names,
         };
         let _ = actor.cache.set(cache);

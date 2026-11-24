@@ -233,15 +233,24 @@ impl Scene {
         (y0..y1).flat_map(move |y| (x0..x1).map(move |x| CPos::new(x, y)))
     }
 
-    /// Appends the quads of `renderables`, sorted as in `WorldRenderer.GenerateRenderables`, and culled to `cam`.
-    fn add_renderables(&mut self, renderer: &mut Renderer, world: &World, renderables: &[Renderable], cam: &Camera, quads: &mut Vec<Quad>) {
-        let mut keyed: Vec<(i32, Quad)> = Vec::with_capacity(renderables.len());
+    /// Appends the quads of `renderables`, sorted as in `WorldRenderer.GenerateRenderables`, and culled to `cam`. The
+    /// sort moves keys and indices instead of quads; it is stable, as the C# `OrderBy`.
+    fn add_renderables<'r>(
+        &mut self,
+        renderer: &mut Renderer,
+        world: &World,
+        renderables: impl IntoIterator<Item = &'r Renderable>,
+        cam: &Camera,
+        quads: &mut Vec<Quad>,
+    ) {
+        let mut keyed: Vec<(i32, Quad)> = Vec::new();
         for r in renderables {
             let key = r.sort_key();
             self.add_renderable(renderer, world, r, key, cam, &mut keyed);
         }
-        keyed.sort_by_key(|(k, _)| *k);
-        quads.extend(keyed.into_iter().map(|(_, q)| q));
+        let mut order: Vec<(i32, u32)> = keyed.iter().enumerate().map(|(i, (k, _))| (*k, i as u32)).collect();
+        order.sort_by_key(|&(k, _)| k);
+        quads.extend(order.iter().map(|&(_, i)| keyed[i as usize].1));
     }
 
     fn add_renderable(
@@ -376,16 +385,18 @@ impl Scene {
                 render_actor(a, &mut renderables);
             }
         }
+        let mut frozen = Vec::new();
         if let Some(v) = viewer
             && let Some(layer) = v.player_actor().trait_or_default::<FrozenActorLayer>()
             && let (Some(&first), Some(&last)) = (cells.first(), cells.last())
         {
             for f in layer.frozen_actors_in_region(first, last, true) {
                 if !f.shrouded() {
-                    renderables.extend(f.renderables.borrow().iter().cloned());
+                    frozen.push(f.renderables.borrow().clone());
                 }
             }
         }
+        let mut effects = Vec::new();
         let view = view_rect(cam);
         for e in world.effects() {
             if let Some(bounds) = e.screen_bounds() {
@@ -396,9 +407,10 @@ impl Scene {
                     continue;
                 }
             }
-            e.render(viewer, &mut renderables);
+            e.render(viewer, &mut effects);
         }
-        self.add_renderables(renderer, world, &renderables, cam, &mut quads);
+        let all = renderables.iter().chain(frozen.iter().flat_map(|f| f.iter())).chain(effects.iter());
+        self.add_renderables(renderer, world, all, cam, &mut quads);
         self.after_actors = quads.len();
         self.add_above_world(world, cam, &mut quads);
         self.after_world = quads.len();

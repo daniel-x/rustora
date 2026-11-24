@@ -156,6 +156,8 @@ pub struct SpriteCache {
     files: HashMap<String, Rc<Vec<Option<Sprite>>>>,
     file_names: Vec<String>,
     sequences: HashMap<(String, String), Option<Rc<ResolvedSequence>>>,
+    /// `sequences` by [`Sequence::id`], which spares building the name key for every sprite.
+    by_id: HashMap<u32, Option<Rc<ResolvedSequence>>>,
 }
 
 impl SpriteCache {
@@ -166,6 +168,7 @@ impl SpriteCache {
             files: HashMap::default(),
             file_names: Vec::new(),
             sequences: HashMap::default(),
+            by_id: HashMap::default(),
         }
     }
 
@@ -207,15 +210,21 @@ impl SpriteCache {
     }
 
     pub fn sequence(&mut self, renderer: &mut Renderer, seq: &Sequence) -> Option<Rc<ResolvedSequence>> {
+        if let Some(s) = self.by_id.get(&seq.id) {
+            return s.clone();
+        }
         let key = (seq.image.clone(), seq.name.clone());
         if let Some(s) = self.sequences.get(&key) {
-            return s.clone();
+            let s = s.clone();
+            self.by_id.insert(seq.id, s.clone());
+            return s;
         }
         let resolved = self.resolve(renderer, seq).map(Rc::new);
         if resolved.is_none() {
             eprintln!("cannot resolve sequence {}.{}", seq.image, seq.name);
         }
         self.sequences.insert(key, resolved.clone());
+        self.by_id.insert(seq.id, resolved.clone());
         resolved
     }
 

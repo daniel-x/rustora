@@ -27,6 +27,10 @@ pub struct Palettes {
     rows: Vec<Row>,
     named: HashMap<String, u32>,
     player: HashMap<String, HashMap<u32, u32>>,
+    /// `named` by interned name id, for [`PaletteRef`] lookups.
+    named_by_id: HashMap<u32, u32>,
+    /// The rows of the player palettes by interned base name id and player actor id.
+    player_by_id: HashMap<(u32, u32), u32>,
     rotations: Vec<Rc<RotationPaletteEffectInfo>>,
     lights: Vec<Rc<LightPaletteRotatorInfo>>,
     last_tick: i32,
@@ -40,6 +44,8 @@ impl Palettes {
             rows: Vec::new(),
             named: HashMap::default(),
             player: HashMap::default(),
+            named_by_id: HashMap::default(),
+            player_by_id: HashMap::default(),
             rotations: Vec::new(),
             lights: Vec::new(),
             last_tick: -1,
@@ -179,12 +185,14 @@ impl Palettes {
             allow_modifiers,
         });
         self.named.insert(name.to_string(), row);
+        self.named_by_id.insert(rustora_core::expression::intern(name), row);
         row
     }
 
     fn add_player(&mut self, base: &str, player_id: u32, internal_name: &str, pal: Palette) {
         let row = self.add(&format!("{base}{internal_name}"), pal, true);
         self.player.entry(base.to_string()).or_default().insert(player_id, row);
+        self.player_by_id.insert((rustora_core::expression::intern(base), player_id), row);
     }
 
     /// The row of a palette name, which must exist.
@@ -193,12 +201,12 @@ impl Palettes {
     }
 
     pub fn row(&self, p: &PaletteRef) -> u32 {
-        if let Some(pl) = &p.player
-            && let Some(&row) = self.player.get(&*p.name).and_then(|m| m.get(&pl.player_actor().id))
+        if let Some(pl) = p.player
+            && let Some(&row) = self.player_by_id.get(&(p.name, pl))
         {
             return row;
         }
-        self.named(&p.name)
+        self.named_by_id.get(&p.name).copied().unwrap_or(0)
     }
 
     /// `RotationPaletteEffect.AdjustPalette` and `LightPaletteRotator.AdjustPalette`, once per world tick.

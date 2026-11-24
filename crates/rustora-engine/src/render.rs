@@ -11,29 +11,30 @@ use crate::actor::ActorRef;
 use crate::player::PlayerRef;
 use crate::sequence::{Animation, AnimationWithOffset, Sequence};
 
-/// `PaletteReference`: a named palette, or the player palette `name + player.InternalName`.
-#[derive(Clone)]
+/// `PaletteReference`: a named palette, or the player palette `name + player.InternalName`. The name is an id from
+/// [`rustora_core::expression::intern`] and the player is given by the id of its player actor, so that the reference
+/// is a plain value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PaletteRef {
-    pub name: Rc<str>,
-    pub player: Option<PlayerRef>,
+    pub name: u32,
+    pub player: Option<u32>,
 }
 
 impl PaletteRef {
     pub fn named(name: &str) -> PaletteRef {
         PaletteRef {
-            name: Rc::from(name),
+            name: rustora_core::expression::intern(name),
             player: None,
         }
     }
 
     pub fn player(base: &str, player: &PlayerRef) -> PaletteRef {
         PaletteRef {
-            name: Rc::from(base),
-            player: Some(player.clone()),
+            name: rustora_core::expression::intern(base),
+            player: Some(player.player_actor().id),
         }
     }
 
-    /// `RenderSprites.AnimationWrapper.CachePalette` with the owner of the actor.
     pub fn resolve(name: Option<&str>, is_player_palette: bool, owner: &PlayerRef) -> PaletteRef {
         let name = name.unwrap_or("player");
         if is_player_palette {
@@ -147,7 +148,7 @@ pub fn render_animation(anim: &Animation, pos: WPos, offset: WVec, z_offset: i32
         pos,
         offset,
         z_offset,
-        palette: palette.clone(),
+        palette: *palette,
         alpha: 1.0,
         replace_color: None,
         is_decoration: anim.is_decoration.get(),
@@ -232,11 +233,18 @@ pub trait IRenderModifier {
 
 /// `Actor.Render`.
 pub fn render_actor(self_: &ActorRef, out: &mut Vec<Renderable>) {
+    let cache = self_.cache();
+    if cache.render_modifiers.is_empty() {
+        for r in &cache.renders {
+            r.render(self_, out);
+        }
+        return;
+    }
     let mut own = Vec::new();
-    for r in self_.traits_implementing::<dyn IRender>() {
+    for r in &cache.renders {
         r.render(self_, &mut own);
     }
-    for m in self_.traits_implementing::<dyn IRenderModifier>() {
+    for m in &cache.render_modifiers {
         m.modify_render(self_, &mut own);
     }
     out.append(&mut own);
@@ -244,11 +252,12 @@ pub fn render_actor(self_: &ActorRef, out: &mut Vec<Renderable>) {
 
 /// `Actor.ScreenBounds`.
 pub fn actor_screen_bounds(self_: &ActorRef, out: &mut Vec<ScreenBounds>) {
+    let cache = self_.cache();
     let mut own = Vec::new();
-    for r in self_.traits_implementing::<dyn IRender>() {
+    for r in &cache.renders {
         r.screen_bounds(self_, &mut own);
     }
-    for m in self_.traits_implementing::<dyn IRenderModifier>() {
+    for m in &cache.render_modifiers {
         m.modify_screen_bounds(self_, &mut own);
     }
     out.append(&mut own);

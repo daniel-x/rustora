@@ -1921,7 +1921,7 @@ fn draw_zap(from: [f32; 2], to: [f32; 2], seq: &Rc<Sequence>, palette: &PaletteR
             pos: WPos::new(1024 * x / 24, 1024 * y / 24, 0),
             offset: WVec::ZERO,
             z_offset: 0,
-            palette: palette.clone(),
+            palette: *palette,
             alpha: 1.0,
             replace_color: None,
             is_decoration: true,

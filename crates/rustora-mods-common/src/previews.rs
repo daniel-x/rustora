@@ -133,7 +133,7 @@ impl ActorPreview {
 fn overlay_palette(palette: Option<&str>, is_player: bool, owner: &PlayerRef, fallback: &PaletteRef) -> PaletteRef {
     match palette {
         Some(_) => PaletteRef::resolve(palette, is_player, owner),
-        None => fallback.clone(),
+        None => *fallback,
     }
 }
 
@@ -231,7 +231,7 @@ pub fn render_previews(world: &World, ai: &ActorInfo, owner: &PlayerRef, faction
             animation,
             offset: WVec::ZERO,
             z_offset: bi.center_offset(world).y + 512,
-            palette: default_palette.clone(),
+            palette: default_palette,
         });
     }
     out

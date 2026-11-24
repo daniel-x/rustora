@@ -159,7 +159,7 @@ impl PlacePreview {
                 pos,
                 offset: WVec::new(0, 0, top_left_z - pos.z),
                 z_offset: FOOTPRINT_Z_OFFSET,
-                palette: palette.clone(),
+                palette,
                 alpha,
                 replace_color: None,
                 is_decoration: true,
