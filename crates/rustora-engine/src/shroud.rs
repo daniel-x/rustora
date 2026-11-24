@@ -53,9 +53,62 @@ enum CellType {
 pub const VISIBILITY_EXPLORED: u8 = 1;
 pub const VISIBILITY_VISIBLE: u8 = 2;
 
+/// The per-cell source counts of a shroud, packed so that a source update touches one cache line per cell.
+#[derive(Clone, Copy, Default)]
+struct Counts {
+    visible: i16,
+    passive_visible: i16,
+    generated_shroud: i16,
+    explored: bool,
+}
+
+/// The cell layers. `resolved` stays a separate byte array, as the visibility queries read only it.
+#[derive(Default)]
+struct Layers {
+    counts: Vec<Counts>,
+    /// One bit per cell, set when the cell needs to be resolved again.
+    touched: Vec<u64>,
+    resolved: Vec<u8>,
+    sources: HashMap<crate::persist::AddrKey, (SourceType, Rc<[PPos]>)>,
+}
+
+impl Layers {
+    fn new(n: usize) -> Layers {
+        Layers {
+            counts: vec![Counts::default(); n],
+            touched: vec![0; n.div_ceil(64)],
+            resolved: vec![0; n],
+            sources: HashMap::default(),
+        }
+    }
+
+    fn touch(&mut self, i: usize) {
+        self.touched[i / 64] |= 1 << (i % 64);
+    }
+
+    /// Clears and returns the first touched cell index in `from..n`.
+    fn take_next_touched(&mut self, from: usize, n: usize) -> Option<usize> {
+        let mut w = from / 64;
+        let mut bits = self.touched.get(w)? & (!0u64 << (from % 64));
+        loop {
+            if bits != 0 {
+                let i = w * 64 + bits.trailing_zeros() as usize;
+                if i >= n {
+                    return None;
+                }
+                self.touched[w] &= !(1 << (i % 64));
+                return Some(i);
+            }
+            w += 1;
+            bits = *self.touched.get(w)?;
+        }
+    }
+}
+
+/// The save game form of [`Layers`], with one array per field.
 #[derive(Default, crate::persist::Persist)]
 #[persist(value)]
-struct Layers {
+struct LayersRecord {
     passive_visible: Vec<i16>,
     visible: Vec<i16>,
     generated_shroud: Vec<i16>,
@@ -63,6 +116,42 @@ struct Layers {
     touched: Vec<bool>,
     resolved: Vec<u8>,
     sources: HashMap<crate::persist::AddrKey, (SourceType, Rc<[PPos]>)>,
+}
+
+impl crate::persist::Persist for Layers {
+    fn save(&self, w: &mut crate::persist::SaveWriter) {
+        let n = self.resolved.len();
+        LayersRecord {
+            passive_visible: self.counts.iter().map(|c| c.passive_visible).collect(),
+            visible: self.counts.iter().map(|c| c.visible).collect(),
+            generated_shroud: self.counts.iter().map(|c| c.generated_shroud).collect(),
+            explored: self.counts.iter().map(|c| c.explored).collect(),
+            touched: (0..n).map(|i| self.touched[i / 64] & (1 << (i % 64)) != 0).collect(),
+            resolved: self.resolved.clone(),
+            sources: self.sources.clone(),
+        }
+        .save(w);
+    }
+
+    fn load(r: &mut crate::persist::SaveReader) -> Self {
+        let rec = LayersRecord::load(r);
+        let n = rec.resolved.len();
+        let mut l = Layers::new(n);
+        for (i, c) in l.counts.iter_mut().enumerate() {
+            *c = Counts {
+                visible: rec.visible[i],
+                passive_visible: rec.passive_visible[i],
+                generated_shroud: rec.generated_shroud[i],
+                explored: rec.explored[i],
+            };
+            if rec.touched[i] {
+                l.touched[i / 64] |= 1 << (i % 64);
+            }
+        }
+        l.resolved = rec.resolved;
+        l.sources = rec.sources;
+        l
+    }
 }
 
 pub type ShroudChanged = Rc<dyn Fn(PPos)>;
@@ -75,7 +164,7 @@ pub struct Shroud {
     height: i32,
     l: RefCell<Layers>,
     #[persist(skip)]
-    listeners: RefCell<Vec<ShroudChanged>>,
+    listeners: RefCell<Rc<Vec<ShroudChanged>>>,
     any_cell_touched: Cell<bool>,
     disabled_changed: Cell<bool>,
     disabled: Cell<bool>,
@@ -97,16 +186,8 @@ info_impl!(ShroudInfo => |info, init| {
         map,
         width,
         height,
-        l: RefCell::new(Layers {
-            passive_visible: vec![0; n],
-            visible: vec![0; n],
-            generated_shroud: vec![0; n],
-            explored: vec![false; n],
-            touched: vec![false; n],
-            resolved: vec![0; n],
-            sources: HashMap::default(),
-        }),
-        listeners: RefCell::new(Vec::new()),
+        l: RefCell::new(Layers::new(n)),
+        listeners: RefCell::new(Rc::default()),
         any_cell_touched: Cell::new(true),
         disabled_changed: Cell::new(false),
         disabled: Cell::new(false),
@@ -154,7 +235,7 @@ impl ITick for Shroud {
         }
         let n = (self.width * self.height) as usize;
         if self.disabled_changed.get() {
-            self.l.borrow_mut().touched.iter_mut().for_each(|t| *t = false);
+            self.l.borrow_mut().touched.iter_mut().for_each(|t| *t = 0);
             for i in 0..n {
                 self.update_cell(i, self_);
             }
@@ -184,23 +265,20 @@ impl Shroud {
         self.l.borrow().resolved[self.index(p)]
     }
 
-    /// Clears and returns the first touched cell index in `from..n`.
     fn take_next_touched(&self, from: usize, n: usize) -> Option<usize> {
-        let mut l = self.l.borrow_mut();
-        let j = from + l.touched[from..n].iter().position(|&t| t)?;
-        l.touched[j] = false;
-        Some(j)
+        self.l.borrow_mut().take_next_touched(from, n)
     }
 
     fn update_cell(&self, index: usize, self_: &ActorRef) {
         let (ty, old) = {
             let l = self.l.borrow();
             let mut ty = CellType::Shroud as u8;
-            if l.explored[index] {
-                let mut count = l.visible[index];
-                if !self.shroud_generation_enabled.get() || count > 0 || l.generated_shroud[index] == 0 {
+            let c = l.counts[index];
+            if c.explored {
+                let mut count = c.visible;
+                if !self.shroud_generation_enabled.get() || count > 0 || c.generated_shroud == 0 {
                     if self.passive_visibility_enabled.get() {
-                        count += l.passive_visible[index];
+                        count += c.passive_visible;
                     }
                     ty = if count > 0 { CellType::Visible as u8 } else { CellType::Fog as u8 };
                 }
@@ -213,7 +291,7 @@ impl Shroud {
             let puv = PPos::new(index as i32 % self.width, index as i32 / self.width);
             if self.map.contains_ppos(puv) {
                 let listeners = self.listeners.borrow().clone();
-                for f in listeners {
+                for f in listeners.iter() {
                     f(puv);
                 }
             }
@@ -231,7 +309,7 @@ impl Shroud {
     }
 
     pub fn on_shroud_changed(&self, f: ShroudChanged) {
-        self.listeners.borrow_mut().push(f);
+        Rc::make_mut(&mut self.listeners.borrow_mut()).push(f);
     }
 
     pub fn disabled(&self) -> bool {
@@ -294,21 +372,22 @@ impl Shroud {
                 continue;
             }
             let i = self.index(puv);
-            l.touched[i] = true;
+            l.touch(i);
             self.any_cell_touched.set(true);
+            let c = &mut l.counts[i];
             match ty {
                 SourceType::PassiveVisibility => {
                     self.passive_visibility_enabled.set(true);
-                    l.passive_visible[i] += 1;
-                    l.explored[i] = true;
+                    c.passive_visible += 1;
+                    c.explored = true;
                 }
                 SourceType::Visibility => {
-                    l.visible[i] += 1;
-                    l.explored[i] = true;
+                    c.visible += 1;
+                    c.explored = true;
                 }
                 SourceType::Shroud => {
                     self.shroud_generation_enabled.set(true);
-                    l.generated_shroud[i] += 1;
+                    c.generated_shroud += 1;
                 }
             }
         }
@@ -322,12 +401,13 @@ impl Shroud {
         for &puv in cells.iter() {
             if self.map.contains_ppos(puv) {
                 let i = self.index(puv);
-                l.touched[i] = true;
+                l.touch(i);
                 self.any_cell_touched.set(true);
+                let c = &mut l.counts[i];
                 match ty {
-                    SourceType::PassiveVisibility => l.passive_visible[i] -= 1,
-                    SourceType::Visibility => l.visible[i] -= 1,
-                    SourceType::Shroud => l.generated_shroud[i] -= 1,
+                    SourceType::PassiveVisibility => c.passive_visible -= 1,
+                    SourceType::Visibility => c.visible -= 1,
+                    SourceType::Shroud => c.generated_shroud -= 1,
                 }
             }
         }
@@ -338,24 +418,24 @@ impl Shroud {
         for &puv in cells {
             if self.map.contains_ppos(puv) {
                 let i = self.index(puv);
-                if !l.explored[i] {
-                    l.touched[i] = true;
+                if !l.counts[i].explored {
+                    l.touch(i);
                     self.any_cell_touched.set(true);
-                    l.explored[i] = true;
+                    l.counts[i].explored = true;
                 }
             }
         }
     }
 
     pub fn explore(&self, s: &Shroud) {
-        let other = s.l.borrow().explored.clone();
+        let other: Vec<bool> = s.l.borrow().counts.iter().map(|c| c.explored).collect();
         let mut l = self.l.borrow_mut();
         for puv in self.map.projected_cells() {
             let i = self.index(puv);
-            if !l.explored[i] && other[i] {
-                l.touched[i] = true;
+            if !l.counts[i].explored && other[i] {
+                l.touch(i);
                 self.any_cell_touched.set(true);
-                l.explored[i] = true;
+                l.counts[i].explored = true;
             }
         }
     }
@@ -364,10 +444,10 @@ impl Shroud {
         let mut l = self.l.borrow_mut();
         for puv in self.map.projected_cells() {
             let i = self.index(puv);
-            if !l.explored[i] {
-                l.touched[i] = true;
+            if !l.counts[i].explored {
+                l.touch(i);
                 self.any_cell_touched.set(true);
-                l.explored[i] = true;
+                l.counts[i].explored = true;
             }
         }
     }
@@ -376,8 +456,9 @@ impl Shroud {
         let mut l = self.l.borrow_mut();
         for puv in self.map.projected_cells() {
             let i = self.index(puv);
-            l.touched[i] = true;
-            l.explored[i] = l.visible[i] + l.passive_visible[i] > 0;
+            l.touch(i);
+            let c = &mut l.counts[i];
+            c.explored = c.visible + c.passive_visible > 0;
         }
         self.any_cell_touched.set(true);
     }
