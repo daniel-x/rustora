@@ -119,16 +119,59 @@ pub struct Camera {
     pub height: u32,
 }
 
+/// One quad as the sprite shader draws it: the vertex shader makes its two triangles from the vertex index, with the
+/// same per-vertex values that six separate vertices had.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
-    pos: [f32; 2],
-    uv: [f32; 2],
+pub(crate) struct Instance {
+    /// The left, top, right and bottom edge; unused for lines.
+    pos: [f32; 4],
+    /// The sprite's texels: the lowest u and v and the highest u and v, exclusive. Lines keep their end color here.
+    uv: [f32; 4],
+    /// The palette row; -1 draws the color, -2 draws a line with its corners in `tint`.
     palette: f32,
     color: [f32; 4],
-    tint: [f32; 3],
-    /// The sprite's texels: the lowest u and v and the highest u and v, exclusive.
-    rect: [f32; 4],
+    /// The world tint of the four corners, as three components each. Lines keep their four corners here.
+    tint: [f32; 12],
+    /// The sprite sheet, or `u32::MAX` for a solid quad that keeps the sheet of the quads before it. Not read by the
+    /// shader.
+    sheet: u32,
+}
+
+impl Instance {
+    pub(crate) fn of(q: &Quad) -> Instance {
+        let palette = q.palette.map_or(-1.0, |p| p as f32);
+        let sheet = if q.palette.is_some() { q.sprite.sheet as u32 } else { u32::MAX };
+        let color = if q.replace_color {
+            [q.color[0], q.color[1], q.color[2], -q.color[3]]
+        } else {
+            q.color
+        };
+        if let Some(l) = &q.line {
+            let [a, b, c, d] = l.corners;
+            return Instance {
+                pos: [0.0; 4],
+                uv: l.end_color,
+                palette: -2.0,
+                color: q.color,
+                tint: [a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1], 0.0, 0.0, 0.0, 0.0],
+                sheet,
+            };
+        }
+        let (u0, v0) = (q.sprite.x as f32, q.sprite.y as f32);
+        let (u1, v1) = (u0 + q.sprite.w as f32, v0 + q.sprite.h as f32);
+        let t = q.tint;
+        Instance {
+            pos: [q.x, q.y, q.x + q.w, q.y + q.h],
+            uv: [u0, v0, u1, v1],
+            palette,
+            color,
+            tint: [
+                t[0][0], t[0][1], t[0][2], t[1][0], t[1][1], t[1][2], t[2][0], t[2][1], t[2][2], t[3][0], t[3][1], t[3][2],
+            ],
+            sheet,
+        }
+    }
 }
 
 #[repr(C)]
@@ -209,8 +252,10 @@ impl GpuBackend {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let attributes =
-            wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Float32x4, 4 => Float32x3, 5 => Float32x4];
+        let attributes = wgpu::vertex_attr_array![
+            0 => Float32x4, 1 => Float32x4, 2 => Float32, 3 => Float32x4,
+            4 => Float32x4, 5 => Float32x4, 6 => Float32x4
+        ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sprite"),
             layout: Some(&pipeline_layout),
@@ -219,8 +264,8 @@ impl GpuBackend {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
+                    array_stride: std::mem::size_of::<Instance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &attributes,
                 })],
             },
@@ -261,7 +306,7 @@ impl GpuBackend {
             view_formats: &[],
         });
         let palette_view = palette_texture.create_view(&Default::default());
-        let vertex_capacity = 6 * 4096;
+        let vertex_capacity = 4096;
         let vertex_buffer = Self::create_vertex_buffer(&device, vertex_capacity);
         let ui = ui::UiPass::new(&device, &queue, format);
         GpuBackend {
@@ -282,10 +327,10 @@ impl GpuBackend {
         }
     }
 
-    fn create_vertex_buffer(device: &wgpu::Device, vertices: usize) -> wgpu::Buffer {
+    fn create_vertex_buffer(device: &wgpu::Device, instances: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sprite vertices"),
-            size: (vertices * std::mem::size_of::<Vertex>()) as u64,
+            label: Some("sprite instances"),
+            size: (instances * std::mem::size_of::<Instance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
@@ -473,7 +518,7 @@ impl GpuBackend {
 
     /// Clears `target` to black and draws `quads` with the post-processing `passes` between them, as
     /// [`Renderer::render_with_passes`] describes.
-    fn render_world(&mut self, target: &wgpu::TextureView, camera: Camera, ui_scale: f32, quads: &[Quad], passes: &[post::PostPass]) {
+    fn render_world(&mut self, target: &wgpu::TextureView, camera: Camera, ui_scale: f32, quads: &[Instance], passes: &[post::PostPass]) {
         let world_size = (camera.width as f32 / camera.zoom, camera.height as f32 / camera.zoom);
         let buffered = !passes.is_empty() || (camera.zoom * ui_scale - 1.0).abs() > 1e-6;
         let (width, height, zoom) = if buffered {
@@ -490,77 +535,30 @@ impl GpuBackend {
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
 
-        let mut vertices = Vec::with_capacity(quads.len() * 6);
         let mut batches: Vec<(u16, u32, u32)> = Vec::new();
-        for q in quads {
-            let start = vertices.len() as u32;
-            let palette = q.palette.map_or(-1.0, |p| p as f32);
-            let (u0, v0) = (q.sprite.x as f32, q.sprite.y as f32);
-            let (u1, v1) = (u0 + q.sprite.w as f32, v0 + q.sprite.h as f32);
-            let color = if q.replace_color {
-                [q.color[0], q.color[1], q.color[2], -q.color[3]]
-            } else {
-                q.color
-            };
-            let rect = [u0.min(u1), v0.min(v1), u0.max(u1), v0.max(v1)];
-            let v = |x: f32, y: f32, u: f32, w: f32, corner: usize| Vertex {
-                pos: [x, y],
-                uv: [u, w],
-                palette,
-                color,
-                tint: q.tint[corner],
-                rect,
-            };
-            if let Some(l) = &q.line {
-                let [a, b, c, d] = l.corners;
-                let p = |pos: [f32; 2], color: [f32; 4]| Vertex {
-                    pos,
-                    uv: [0.0, 0.0],
-                    palette,
-                    color,
-                    tint: [1.0; 3],
-                    rect: [0.0; 4],
-                };
-                vertices.extend_from_slice(&[
-                    p(a, q.color),
-                    p(b, q.color),
-                    p(c, l.end_color),
-                    p(a, q.color),
-                    p(c, l.end_color),
-                    p(d, l.end_color),
-                ]);
-            } else {
-                let (x0, y0, x1, y1) = (q.x, q.y, q.x + q.w, q.y + q.h);
-                vertices.extend_from_slice(&[
-                    v(x0, y0, u0, v0, 0),
-                    v(x1, y0, u1, v0, 1),
-                    v(x1, y1, u1, v1, 2),
-                    v(x0, y0, u0, v0, 0),
-                    v(x1, y1, u1, v1, 2),
-                    v(x0, y1, u0, v1, 3),
-                ]);
-            }
-            let sheet = if q.palette.is_some() {
-                q.sprite.sheet
+        for (i, q) in quads.iter().enumerate() {
+            let i = i as u32;
+            let sheet = if q.sheet != u32::MAX {
+                q.sheet as u16
             } else {
                 batches.last().map_or(0, |b| b.0)
             };
             match batches.last_mut() {
-                Some(b) if b.0 == sheet => b.2 = start + 6,
-                _ => batches.push((sheet, start, start + 6)),
+                Some(b) if b.0 == sheet => b.2 = i + 1,
+                _ => batches.push((sheet, i, i + 1)),
             }
         }
-        if vertices.len() > self.vertex_capacity {
-            self.vertex_capacity = vertices.len().next_power_of_two();
+        if quads.len() > self.vertex_capacity {
+            self.vertex_capacity = quads.len().next_power_of_two();
             self.vertex_buffer = Self::create_vertex_buffer(&self.device, self.vertex_capacity);
         }
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(quads));
 
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         if !buffered {
-            self.draw_batches(&mut encoder, target, true, &batches, 0, vertices.len() as u32);
+            self.draw_batches(&mut encoder, target, true, &batches, 0, quads.len() as u32);
             self.queue.submit([encoder.finish()]);
             return;
         }
@@ -572,7 +570,7 @@ impl GpuBackend {
         let mut start = 0u32;
         let mut first = true;
         for pass in passes {
-            let end = (pass.at.min(quads.len()) * 6) as u32;
+            let end = pass.at.min(quads.len()) as u32;
             self.draw_batches(&mut encoder, &post.world_view, first, &batches, start, end.max(start));
             first = false;
             start = end.max(start);
@@ -580,7 +578,7 @@ impl GpuBackend {
             let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::of(pass.effect));
             Self::draw_post(&mut encoder, &post, &post.world_view, &bind_group, false);
         }
-        self.draw_batches(&mut encoder, &post.world_view, first, &batches, start, vertices.len() as u32);
+        self.draw_batches(&mut encoder, &post.world_view, first, &batches, start, quads.len() as u32);
         post.snapshot(&mut encoder);
         let region = [world_size.0 / width as f32, world_size.1 / height as f32];
         let bind_group = post.bind_group(&self.device, &self.queue, post::PostUniform::copy(region));
@@ -589,7 +587,7 @@ impl GpuBackend {
         self.post = Some(post);
     }
 
-    /// Draws the parts of `batches` within the vertices `start..end` into `target`.
+    /// Draws the parts of `batches` within the instances `start..end` into `target`.
     fn draw_batches(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -625,7 +623,7 @@ impl GpuBackend {
             let (s, e) = (s.max(start), e.min(end));
             if s < e {
                 pass.set_bind_group(0, &self.sheets[sheet as usize].bind_group, &[]);
-                pass.draw(s..e, 0..1);
+                pass.draw(0..6, s..e);
                 self.draw_calls += 1;
             }
         }

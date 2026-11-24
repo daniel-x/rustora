@@ -9,13 +9,16 @@ struct Camera {
 @group(0) @binding(1) var sheet: texture_2d<u32>;
 @group(0) @binding(2) var palettes: texture_2d<f32>;
 
-struct VertexIn {
-    @location(0) pos: vec2<f32>,
-    @location(1) uv: vec2<f32>,
+// One quad: left, top, right and bottom; the texel rect; the palette row (-1 solid color, -2 a line); the color;
+// the world tint of the four corners (or the line's four corners and, in `uv`, its end color).
+struct InstanceIn {
+    @location(0) pos: vec4<f32>,
+    @location(1) uv: vec4<f32>,
     @location(2) palette: f32,
     @location(3) color: vec4<f32>,
-    @location(4) tint: vec3<f32>,
-    @location(5) rect: vec4<f32>,
+    @location(4) tint0: vec4<f32>,
+    @location(5) tint1: vec4<f32>,
+    @location(6) tint2: vec4<f32>,
 };
 
 struct VertexOut {
@@ -27,15 +30,34 @@ struct VertexOut {
     @location(4) @interpolate(flat) rect: vec4<f32>,
 };
 
+// The two triangles top left, top right, bottom right and top left, bottom right, bottom left.
+const CORNERS = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
+
 @vertex
-fn vs_main(v: VertexIn) -> VertexOut {
+fn vs_main(@builtin(vertex_index) vi: u32, q: InstanceIn) -> VertexOut {
+    let t = array<f32, 12>(q.tint0.x, q.tint0.y, q.tint0.z, q.tint0.w, q.tint1.x, q.tint1.y, q.tint1.z, q.tint1.w,
+                           q.tint2.x, q.tint2.y, q.tint2.z, q.tint2.w);
+    let c = CORNERS[vi];
     var o: VertexOut;
-    o.pos = vec4<f32>(v.pos * camera.scale + camera.offset, 0.0, 1.0);
-    o.uv = v.uv;
-    o.palette = v.palette;
-    o.color = v.color;
-    o.tint = v.tint;
-    o.rect = v.rect;
+    var pos: vec2<f32>;
+    if (q.palette < -1.5) {
+        pos = vec2<f32>(t[2u * c], t[2u * c + 1u]);
+        o.uv = vec2<f32>(0.0);
+        o.palette = -1.0;
+        o.color = select(q.color, q.uv, c >= 2u);
+        o.tint = vec3<f32>(1.0);
+        o.rect = vec4<f32>(0.0);
+    } else {
+        let right = c == 1u || c == 2u;
+        let bottom = c >= 2u;
+        pos = vec2<f32>(select(q.pos.x, q.pos.z, right), select(q.pos.y, q.pos.w, bottom));
+        o.uv = vec2<f32>(select(q.uv.x, q.uv.z, right), select(q.uv.y, q.uv.w, bottom));
+        o.palette = q.palette;
+        o.color = q.color;
+        o.tint = vec3<f32>(t[3u * c], t[3u * c + 1u], t[3u * c + 2u]);
+        o.rect = q.uv;
+    }
+    o.pos = vec4<f32>(pos * camera.scale + camera.offset, 0.0, 1.0);
     return o;
 }
 

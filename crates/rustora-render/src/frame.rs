@@ -78,7 +78,8 @@ pub struct FrameCommands {
     pub(crate) bytes: Vec<u8>,
     /// The draws in recording order. Their quads, passes and lists live in the buffers below.
     pub(crate) draws: Vec<Command>,
-    pub(crate) quads: Vec<Quad>,
+    /// The world quads, converted for the GPU while the frame is recorded.
+    pub(crate) quads: Vec<crate::Instance>,
     pub(crate) passes: Vec<PostPass>,
     pub(crate) ui_lists: Vec<UiList>,
     /// The entries of `ui_lists` that this frame uses; the others wait for reuse.
@@ -290,7 +291,7 @@ impl Renderer {
         }
         let f = &mut self.frame;
         let quad_start = f.quads.len();
-        f.quads.extend_from_slice(quads);
+        f.quads.extend(quads.iter().map(crate::Instance::of));
         let pass_start = f.passes.len();
         f.passes.extend_from_slice(passes);
         f.push(Command::World {
