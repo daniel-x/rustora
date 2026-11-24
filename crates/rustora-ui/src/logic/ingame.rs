@@ -32,7 +32,7 @@ pub struct Ingame {
     pub world_sprites: Rc<dyn WorldSprites>,
     order_generator: RefCell<Rc<dyn OrderGenerator>>,
     /// The selected actor ids of the previous frame, to notice newly selected actors for their target lines.
-    pub target_line_selection: RefCell<std::collections::HashSet<u32>>,
+    pub target_line_selection: RefCell<rustora_core::hash::HashSet<u32>>,
     world_default_cursor: String,
     default_order_generator: Rc<dyn OrderGenerator>,
     unit_order_generator: UnitOrderGenerator,
@@ -98,7 +98,7 @@ impl Ingame {
             selection,
             world_sprites,
             order_generator: RefCell::new(default_order_generator.clone()),
-            target_line_selection: RefCell::new(std::collections::HashSet::new()),
+            target_line_selection: RefCell::new(rustora_core::hash::HashSet::default()),
             world_default_cursor,
             default_order_generator,
             unit_order_generator,

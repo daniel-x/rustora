@@ -6,8 +6,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::{LoadError, load};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{CPos, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
@@ -240,7 +240,7 @@ info_impl!(SupportPowerBotModuleInfo => |info, init| Some(Rc::new(SupportPowerBo
     state: ConditionalState::new(&info.base),
     self_: init.self_.clone(),
     waiting_powers: RefCell::new(Vec::new()),
-    power_decisions: RefCell::new(IndexMap::new()),
+    power_decisions: RefCell::new(IndexMap::default()),
     info,
 })));
 

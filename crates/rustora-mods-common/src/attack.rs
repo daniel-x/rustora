@@ -10,8 +10,8 @@ use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{WAngle, WDist, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::LINE_CRIMSON;
@@ -671,7 +671,7 @@ impl Default for AttackBaseInfo {
             instance_name: None,
             kind: AttackKind::Frontal,
             base: PausableConditionalTraitInfo::default(),
-            armaments: IndexSet::from(["primary".to_string(), "secondary".to_string()]),
+            armaments: IndexSet::from_iter(["primary".to_string(), "secondary".to_string()]),
             attack_requires_entering_cell: false,
             target_frozen_actors: false,
             force_fire_ignores_actors: false,
@@ -848,7 +848,7 @@ info_impl!(AttackBaseInfo => |info, init| {
         charging: Cell::new(false),
         charge_level: Cell::new(0),
         notify_attacks: RefCell::new(Vec::new()),
-        pax: RefCell::new(IndexMap::new()),
+        pax: RefCell::new(IndexMap::default()),
         bomber_target: RefCell::new(Target::Invalid),
         in_attack_range: Cell::new(false),
         facing_target: Cell::new(true),

@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_core::world_types::{WDist, WPos};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -70,7 +70,7 @@ register_traits!(TerrainLighting: ITerrainLighting);
 info_impl!(TerrainLightingInfo => |info, init| Some(Rc::new(TerrainLighting {
     info,
     world: Rc::downgrade(&init.world()),
-    sources: RefCell::new(IndexMap::new()),
+    sources: RefCell::new(IndexMap::default()),
     next_token: Cell::new(1),
 })));
 

@@ -6,8 +6,8 @@
 
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::IndexMap;
 use rustora_net::order::RawOrder;
 use rustora_net::session::{Client, Session};
 
@@ -137,7 +137,7 @@ pub struct NetState {
     pub server_map_pool: Option<Vec<String>>,
     /// The software of the clients that announced it, from rustora's `SyncClientSoftware` extension. Others count
     /// as OpenRA.
-    pub client_software: std::collections::HashMap<i32, String>,
+    pub client_software: rustora_core::hash::HashMap<i32, String>,
     /// The last `LagReport` of a rustora server and the `Game.RunTime` it arrived at.
     pub lag_report: Option<(i64, rustora_net::extensions::LagReport)>,
     /// Whether this client announced its software on the current connection.
@@ -148,18 +148,18 @@ pub struct NetState {
     pub chat_disabled_until: i64,
     pub notifications: Vec<TextNotification>,
     /// `TextNotificationsManager.MutedPlayers`: the client indexes whose chat is hidden.
-    pub muted_players: std::collections::HashSet<i32>,
+    pub muted_players: rustora_core::hash::HashSet<i32>,
     /// `UnitOrders.KickVoteTarget`.
     pub kick_vote_target: Option<i32>,
     pub outgoing: Vec<RawOrder>,
     /// The `Game.BeforeGameStart` handler.
     pub before_game_start: Option<crate::widget::Action>,
     /// The names this client banned as admin. rustora enforces them on servers without name bans.
-    pub banned_names: std::collections::HashSet<String>,
+    pub banned_names: rustora_core::hash::HashSet<String>,
     /// The banned names whose later joins also ban the address of the joining client.
-    pub auto_ban_ips_by_nickname: std::collections::HashSet<String>,
+    pub auto_ban_ips_by_nickname: rustora_core::hash::HashSet<String>,
     /// The client indexes that [`NetState::enforce_name_bans`] kicked already.
-    pub name_ban_kicks: std::collections::HashSet<i32>,
+    pub name_ban_kicks: rustora_core::hash::HashSet<i32>,
     /// `Game.RunTime` of the last input of the user, for the idle timeout of the lobby.
     pub last_user_action: i64,
     /// Whether the user got the idle warning since the last input.

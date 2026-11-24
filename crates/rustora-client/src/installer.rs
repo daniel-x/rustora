@@ -5,7 +5,7 @@
 //! user interface and runs on worker threads, so it reports status as `StatusMessage` values that the user interface
 //! thread turns into text. `ExtractBlast` and `ExtractMscab` are not ported, because only other mods use them.
 
-use std::collections::HashSet;
+use rustora_core::hash::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -372,7 +372,7 @@ fn steam_directories() -> Vec<PathBuf> {
         candidates.push(home_dir().join(".steam/root"));
         candidates.push(home_dir().join(".var/app/com.valvesoftware.Steam/.steam/root"));
     }
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     let mut directories = Vec::new();
     for steam in candidates {
         if !steam.is_dir() {

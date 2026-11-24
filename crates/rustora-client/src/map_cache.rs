@@ -11,8 +11,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::{ArrayAware, Rectangle, get_value};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::CPos;
 use rustora_fs::{FileSystem, Package};
@@ -329,7 +329,7 @@ pub struct MapCache {
 impl Default for MapCache {
     fn default() -> Self {
         MapCache {
-            previews: IndexMap::new(),
+            previews: IndexMap::default(),
             grid_type: MapGridType::Rectangular,
             compatibility: Vec::new(),
             user_folder: None,

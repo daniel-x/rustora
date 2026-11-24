@@ -5,8 +5,8 @@
 //! `DownloadPackageLogic.cs` and `InstallFromSourceLogic.cs`. Worker threads do the slow parts and send events that the
 //! logic classes read in `tick`, because Fluent messages and widgets exist only on the user interface thread.
 
+use rustora_core::hash::HashSet;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -198,7 +198,7 @@ impl PackageListLogic {
             let required = package.required;
             ui.set_visible_fn(required_widget, move || required);
 
-            let mut seen = HashSet::new();
+            let mut seen = HashSet::default();
             let titles: Vec<String> = package
                 .sources
                 .iter()

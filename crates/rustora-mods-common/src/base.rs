@@ -6,8 +6,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
 use rustora_core::field_flags;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, CVec, WAngle, WDist};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
@@ -1097,7 +1097,7 @@ impl Default for RequiresBuildableAreaInfo {
     fn default() -> Self {
         RequiresBuildableAreaInfo {
             instance_name: None,
-            area_types: IndexSet::new(),
+            area_types: IndexSet::default(),
             adjacent: 2,
         }
     }
@@ -1148,7 +1148,7 @@ impl Default for LineBuildInfo {
         LineBuildInfo {
             instance_name: None,
             range: 5,
-            node_types: IndexSet::from(["wall".to_string()]),
+            node_types: IndexSet::from_iter(["wall".to_string()]),
             segment_type: None,
             segments_require_node: false,
         }
@@ -1240,7 +1240,7 @@ impl Default for LineBuildNodeInfo {
     fn default() -> Self {
         LineBuildNodeInfo {
             instance_name: None,
-            types: IndexSet::from(["wall".to_string()]),
+            types: IndexSet::from_iter(["wall".to_string()]),
             connections: vec![CVec::new(1, 0), CVec::new(0, 1), CVec::new(-1, 0), CVec::new(0, -1)],
         }
     }

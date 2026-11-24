@@ -7,7 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, WDist};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef, for_each_activity};
@@ -57,7 +57,7 @@ impl Default for MinelayerInfo {
             mine: "minv".into(),
             ammo_pool_name: "primary".into(),
             minefield_depth: WDist::new(1536),
-            terrain_types: IndexSet::new(),
+            terrain_types: IndexSet::default(),
             ammo_usage: 1,
             pre_lay_delay: 0,
             after_laying_delay: 20,

@@ -7,7 +7,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::conditional::*;
@@ -143,7 +143,7 @@ impl Default for GainsExperienceInfo {
             level_up_notification: None,
             level_up_text_notification: None,
             instance_name: None,
-            conditions: IndexMap::new(),
+            conditions: IndexMap::default(),
             experience_modifier: -1,
         }
     }
@@ -655,7 +655,7 @@ pub trait IConditionTimerWatcher {
 }
 
 register_traits!(ExternalCondition: ITick, INotifyOwnerChanged, INotifyCreated);
-info_impl!(ExternalConditionInfo => |info, _init| Some(Rc::new(ExternalCondition { info, permanent_tokens: RefCell::new(IndexMap::new()), timed_tokens: RefCell::new(Vec::new()), watchers: RefCell::new(Vec::new()), duration: Cell::new(0), expires: Cell::new(0) })));
+info_impl!(ExternalConditionInfo => |info, _init| Some(Rc::new(ExternalCondition { info, permanent_tokens: RefCell::new(IndexMap::default()), timed_tokens: RefCell::new(Vec::new()), watchers: RefCell::new(Vec::new()), duration: Cell::new(0), expires: Cell::new(0) })));
 
 impl ExternalCondition {
     fn permanent_count(&self) -> i32 {

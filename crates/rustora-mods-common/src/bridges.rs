@@ -3,8 +3,9 @@
 
 //! Ports of `Bridge`, `LegacyBridgeHut`, `LegacyBridgeLayer`, `RepairsBridges` and `RepairBridge`.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 
 use rustora_core::world_types::{CPos, CVec};
@@ -701,7 +702,7 @@ pub struct LegacyBridgeLayer {
 register_traits!(LegacyBridgeLayer: IWorldLoaded);
 info_impl!(LegacyBridgeLayerInfo => |info, _init| Some(Rc::new(LegacyBridgeLayer {
     info,
-    bridges: RefCell::new(HashMap::new()),
+    bridges: RefCell::new(HashMap::default()),
 })));
 
 impl LegacyBridgeLayer {

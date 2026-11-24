@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use indexmap::IndexMap;
 use rustora_client::game_information::{self, GameInformation};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
 use rustora_net::order::RawOrder;
@@ -92,7 +92,7 @@ pub struct World {
     game_save_trait_data: RefCell<IndexMap<i32, MiniYaml>>,
     game_info: RefCell<Option<GameInfoTracker>>,
     /// The actor and trait index of each trait, by the address of the trait, for save games.
-    trait_owners: RefCell<std::collections::HashMap<usize, (std::rc::Weak<Actor>, u32)>>,
+    trait_owners: RefCell<rustora_core::hash::HashMap<usize, (std::rc::Weak<Actor>, u32)>>,
     /// True while a save game is restored: the world loaded hooks create no actors.
     restoring: Cell<bool>,
 }
@@ -172,9 +172,9 @@ impl World {
             game_save_last_frame: Cell::new(-1),
             game_save_last_sync_frame: Cell::new(-1),
             was_loading_game_save: Cell::new(false),
-            game_save_trait_data: RefCell::new(IndexMap::new()),
+            game_save_trait_data: RefCell::new(IndexMap::default()),
             game_info: RefCell::new(None),
-            trait_owners: RefCell::new(std::collections::HashMap::new()),
+            trait_owners: RefCell::new(rustora_core::hash::HashMap::default()),
             restoring: Cell::new(false),
         });
 

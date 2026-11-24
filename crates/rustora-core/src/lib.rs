@@ -5,6 +5,7 @@
 
 pub mod expression;
 pub mod fieldloader;
+pub mod hash;
 pub mod log_channels;
 pub mod miniyaml;
 pub mod own_files;

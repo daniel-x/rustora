@@ -3,11 +3,11 @@
 
 //! Port of `McvManagerBotModule.cs`, `HarvesterBotModule.cs` and `BuildingRepairBotModule.cs`.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{CPos, WDist, WVec};
 use rustora_derive::FieldLoad;
@@ -64,9 +64,9 @@ impl Default for McvManagerBotModuleInfo {
         McvManagerBotModuleInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
-            mcv_types: IndexSet::new(),
-            construction_yard_types: IndexSet::new(),
-            mcv_factory_types: IndexSet::new(),
+            mcv_types: IndexSet::default(),
+            construction_yard_types: IndexSet::default(),
+            mcv_factory_types: IndexSet::default(),
             minimum_construction_yard_count: 1,
             scan_for_new_mcv_interval: 20,
             min_base_radius: 2,
@@ -269,8 +269,8 @@ impl Default for HarvesterBotModuleInfo {
         HarvesterBotModuleInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
-            harvester_types: IndexSet::new(),
-            refinery_types: IndexSet::new(),
+            harvester_types: IndexSet::default(),
+            refinery_types: IndexSet::default(),
             scan_for_idle_harvesters_interval: 50,
             scan_interval_multipler_when_no_resources: 5,
             harvester_enemy_avoidance_radius: WDist::from_cells(10),
@@ -500,7 +500,7 @@ impl HarvesterBotModule {
             .min()
             .unwrap_or(0);
         let multiplier = self.info.harvester_enemy_avoidance_cost_multipler;
-        let bins: Rc<RefCell<HashMap<(i32, i32), i32>>> = Rc::new(RefCell::new(HashMap::new()));
+        let bins: Rc<RefCell<HashMap<(i32, i32), i32>>> = Rc::new(RefCell::new(HashMap::default()));
         let (w2, a2) = (w.clone(), actor.clone());
         let cost: crate::pathfinder::CustomCost = Rc::new(move |loc: CPos| {
             let bin = (loc.x() / cell_radius, loc.y() / cell_radius);
@@ -601,7 +601,7 @@ impl Default for MinelayerBotModuleInfo {
             base: ConditionalTraitInfo::default(),
             ignored_enemy_target_types: Default::default(),
             use_enemy_location_target_types: Default::default(),
-            minelaying_actor_types: IndexSet::new(),
+            minelaying_actor_types: IndexSet::default(),
             max_per_assign: 1,
             scan_tick: 320,
             mine_field_radius: 1,
@@ -928,8 +928,8 @@ impl Default for CaptureManagerBotModuleInfo {
         CaptureManagerBotModuleInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
-            capturing_actor_types: IndexSet::new(),
-            capturable_actor_types: IndexSet::new(),
+            capturing_actor_types: IndexSet::default(),
+            capturable_actor_types: IndexSet::default(),
             minimum_capture_delay: 375,
             maximum_capture_target_options: 10,
             check_capture_targets_for_visibility: true,

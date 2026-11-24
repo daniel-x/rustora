@@ -7,7 +7,7 @@
 
 use std::rc::{Rc, Weak};
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::bitset::BitSet;
@@ -235,7 +235,7 @@ impl Default for AcceptsDeliveredCashInfo {
     fn default() -> Self {
         AcceptsDeliveredCashInfo {
             instance_name: None,
-            valid_types: IndexSet::new(),
+            valid_types: IndexSet::default(),
             valid_relationships: PlayerRelationship::ALLY,
             sounds: Vec::new(),
         }

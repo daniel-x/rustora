@@ -3,12 +3,12 @@
 
 //! Port of `Traits/World/ResourceLayer.cs` and `Traits/SeedsResource.cs`.
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::{LoadError, load};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::MiniYaml;
 use rustora_core::world_types::{CPos, CVec, Int2};
 use rustora_derive::FieldLoad;
@@ -54,7 +54,7 @@ impl Default for ResourceTypeInfo {
         ResourceTypeInfo {
             resource_index: 0,
             terrain_type: String::new(),
-            allowed_terrain_types: IndexSet::new(),
+            allowed_terrain_types: IndexSet::default(),
             max_density: 10,
         }
     }
@@ -70,7 +70,7 @@ pub struct ResourceLayerInfo {
 }
 
 fn load_resource_types(yaml: &MiniYaml) -> Result<IndexMap<String, ResourceTypeInfo>, LoadError> {
-    let mut ret = IndexMap::new();
+    let mut ret = IndexMap::default();
     if let Some(r) = yaml.node_with_key_or_default("ResourceTypes")? {
         for n in &r.value.nodes {
             ret.insert(n.key.clone(), load::<ResourceTypeInfo>(&n.value)?);
@@ -90,7 +90,7 @@ pub struct ResourceRendererInfo {
 }
 
 fn load_resource_names(yaml: &MiniYaml) -> Result<IndexMap<String, String>, LoadError> {
-    let mut ret = IndexMap::new();
+    let mut ret = IndexMap::default();
     if let Some(r) = yaml.node_with_key_or_default("ResourceTypes")? {
         for n in &r.value.nodes {
             let name = n.value.nodes.iter().find(|x| x.key == "Name").and_then(|x| x.value.value.clone());

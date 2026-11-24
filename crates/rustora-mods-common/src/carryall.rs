@@ -9,8 +9,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef, LINE_YELLOW, with_line_color};
@@ -80,7 +80,7 @@ impl Default for CarryallInfo {
             drop_off_blocked_cursor: "move-blocked".into(),
             pick_up_cursor: "ability".into(),
             carry_condition: None,
-            carryable_conditions: IndexMap::new(),
+            carryable_conditions: IndexMap::default(),
             voice: "Action".into(),
             target_line_color: LINE_YELLOW,
         }

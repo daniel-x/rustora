@@ -4,7 +4,7 @@
 //! Turns the world into sorted quads: terrain, resources, actor animations and shroud.
 //! Coordinates are world pixels of the RA rectangular grid: 24 px per 1024 world units, height drawn upwards.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos, WVec};
@@ -191,7 +191,7 @@ impl Scene {
         Scene {
             palettes: Palettes::new(renderer, world, &read_file),
             sprites: SpriteCache::new(read_file, &world.map().tileset),
-            terrain: HashMap::new(),
+            terrain: HashMap::default(),
             variant_seed: 0x9e37_79b9,
             after_actors: 0,
             after_world: 0,

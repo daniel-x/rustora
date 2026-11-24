@@ -21,7 +21,7 @@
 //! before `load_complete`, so that the map actors and starting units are not spawned. It recreates the actors with
 //! their ids and inits, initializes them, and then overwrites all state with the saved one.
 
-use std::collections::{HashMap, HashSet};
+use rustora_core::hash::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
@@ -326,7 +326,7 @@ fn read_state(world: &Rc<World>, data: &[u8], version: SaveVersion) {
     world.set_next_aid(world.peek_next_aid().max(saved_next_aid));
     let n = r.len_prefix();
     let mut entries = Vec::with_capacity(n);
-    let mut ids = HashSet::new();
+    let mut ids = HashSet::default();
     for _ in 0..n {
         let id = r.u32();
         let name = r.string();

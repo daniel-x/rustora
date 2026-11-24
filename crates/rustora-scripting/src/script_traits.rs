@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::traits::*;
@@ -30,7 +30,7 @@ pub struct ScriptTags {
 register_traits!(ScriptTags);
 info_impl!(ScriptTagsInfo => |info, init| {
     let name = info.instance_name.as_deref();
-    let mut tags = IndexSet::new();
+    let mut tags = IndexSet::default();
     if let Some(i) = init.inits.get_for::<ScriptTagsInit>(name) {
         tags.extend(i.value.iter().cloned().map(Some));
     } else if let Some(i) = init
@@ -82,7 +82,7 @@ impl Default for ScriptLobbyDropdownInfo {
             label: String::new(),
             description: None,
             default: String::new(),
-            values: IndexMap::new(),
+            values: IndexMap::default(),
             locked: false,
             visible: true,
             display_order: 0,

@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_derive::FieldLoad;
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::{info_impl, load_info, register_traits};
@@ -170,7 +170,7 @@ impl Default for IndexedPlayerPaletteInfo {
             base_palette: String::new(),
             base_name: "player".into(),
             remap_index: Vec::new(),
-            player_index: IndexMap::new(),
+            player_index: IndexMap::default(),
         }
     }
 }

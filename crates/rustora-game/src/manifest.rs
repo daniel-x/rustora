@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_fs::Package;
 

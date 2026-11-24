@@ -7,8 +7,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_client::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::MiniYaml;
 use rustora_net::order::RawOrder;
 
@@ -589,7 +589,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
         playing: Cell::new(PlayingVideo::None),
         panel: Cell::new(PanelType::MissionInfo),
         minified_options: Cell::new(true),
-        mission_options: RefCell::new(IndexMap::new()),
+        mission_options: RefCell::new(IndexMap::default()),
         selected_difficulty: RefCell::new(None),
         selected_game_speed: RefCell::new(None),
         cached_volumes: Cell::new((0.0, 0.0)),

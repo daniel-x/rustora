@@ -4,8 +4,8 @@
 //! Port of `LobbyLogic.cs`. The `Game.LobbyInfoChanged` event becomes a check of `NetState::revision` in each tick.
 //! Not ported: sounds, the Discord status, the music and server list tabs, and map downloads.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_client::map_cache::{MapClassification, MapPreview, MapStatus, MapVisibility};
@@ -743,7 +743,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
     let template_noneditable_spectator = take_template(ui, players, "TEMPLATE_NONEDITABLE_SPECTATOR");
     let template_new_spectator = take_template(ui, players, "TEMPLATE_NEW_SPECTATOR");
 
-    let mut chat_templates = HashMap::new();
+    let mut chat_templates = HashMap::default();
     if let Some(templates) = logic_args.iter().find(|n| n.key == "ChatTemplates") {
         for item in &templates.value.nodes {
             if let Some(pool) = pool_from_name(&item.key) {

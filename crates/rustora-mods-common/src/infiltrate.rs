@@ -9,8 +9,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::field_flags;
+use rustora_core::hash::IndexMap;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::actor_ext::{all_target_types, enabled_target_types};
@@ -665,7 +665,7 @@ impl Default for DisguiseInfo {
             ),
             target_types: BitSet::new(&["Disguise"]),
             reveal_disguise_on: RevealDisguiseType::Attack,
-            disguised_as_conditions: IndexMap::new(),
+            disguised_as_conditions: IndexMap::default(),
             cursor: "ability".into(),
         }
     }

@@ -109,7 +109,7 @@ struct LagContext {
     /// The clients with a slow connection.
     slow_connections: Vec<i32>,
     /// The software of the clients that announced it; the others count as OpenRA.
-    software: std::collections::HashMap<i32, String>,
+    software: rustora_core::hash::HashMap<i32, String>,
 }
 
 impl LagContext {

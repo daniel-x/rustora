@@ -4,10 +4,10 @@
 //! Port of `OpenRA.Game/Support/VariableExpression.cs`: condition expressions such as
 //! `!disabled && (veteran || rank > 2)` evaluated against integer variables.
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use crate::hash::IndexSet;
 
 use crate::fieldloader::{ArrayAware, FieldValue, LoadError, invalid};
 use crate::miniyaml::MiniYaml;
@@ -416,9 +416,9 @@ impl Variables for HashMap<String, i32> {
     }
 }
 
-impl Variables for indexmap::IndexMap<String, i32> {
+impl Variables for crate::hash::IndexMap<String, i32> {
     fn get(&self, name: &str) -> i32 {
-        indexmap::IndexMap::get(self, name).copied().unwrap_or(0)
+        crate::hash::IndexMap::get(self, name).copied().unwrap_or(0)
     }
 }
 
@@ -440,7 +440,7 @@ fn build(expression: &str, result: Ty) -> Result<Parsed, String> {
     let e: Vec<char> = expression.chars().collect();
     let mut tokens: Vec<Token> = Vec::new();
     let mut openers: Vec<usize> = Vec::new();
-    let mut variables = IndexSet::new();
+    let mut variables = IndexSet::default();
     let mut i = 0;
     loop {
         let last_ty = tokens.last().map_or(Tok::Invalid, |t| t.ty);

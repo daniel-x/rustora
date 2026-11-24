@@ -7,8 +7,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
 use rustora_core::expression::BooleanExpression;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef, for_each_activity};
@@ -176,8 +176,8 @@ impl Default for RearmableInfo {
     fn default() -> Self {
         RearmableInfo {
             instance_name: None,
-            rearm_actors: IndexSet::new(),
-            ammo_pools: IndexSet::from(["primary".to_string()]),
+            rearm_actors: IndexSet::default(),
+            ammo_pools: IndexSet::from_iter(["primary".to_string()]),
         }
     }
 }
@@ -274,7 +274,7 @@ impl Default for RepairableInfo {
         RepairableInfo {
             voice: "Action".into(),
             instance_name: None,
-            repair_actors: IndexSet::new(),
+            repair_actors: IndexSet::default(),
             hp_per_step: -1,
             require_force_move_condition: None,
             enter_cursor: "enter".into(),
@@ -408,7 +408,7 @@ impl Default for RepairableNearInfo {
             enter_blocked_cursor: "enter-blocked".into(),
             voice: "Action".into(),
             instance_name: None,
-            repair_actors: IndexSet::new(),
+            repair_actors: IndexSet::default(),
             close_enough: WDist::from_cells(4),
             require_force_move_condition: None,
         }

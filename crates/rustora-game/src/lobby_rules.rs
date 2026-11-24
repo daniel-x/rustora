@@ -5,11 +5,11 @@
 //! options (`ILobbyOptions` implementers), bots, factions and player color rules. The server and the client lobby
 //! share it, like `MapPreview` and the rulesets in C#.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_fs::{MapFs, Package};
 use rustora_net::session::{LobbyOptionState, Session};
@@ -301,8 +301,8 @@ impl ModLobbyRules {
             .value
             .value_str()
             .to_string();
-        let mut speeds = IndexMap::new();
-        let mut speed_names = IndexMap::new();
+        let mut speeds = IndexMap::default();
+        let mut speed_names = IndexMap::default();
         for n in &game_speeds.node_with_key("Speeds").map_err(|e| e.to_string())?.value.nodes {
             let get = |k: &str| n.value.nodes.iter().find(|c| c.key == k).map(|c| c.value.value_str().to_string());
             let int = |k: &str| get(k).and_then(|v| v.trim().parse().ok());
@@ -316,14 +316,14 @@ impl ModLobbyRules {
             speed_names.insert(n.key.clone(), get("Name").unwrap_or_default());
         }
 
-        let mut fluent = HashMap::new();
+        let mut fluent = HashMap::default();
         for f in &data.manifest.fluent_messages {
             if let Some(bytes) = data.file_system.try_open(f) {
                 parse_fluent(&String::from_utf8_lossy(&bytes), &mut fluent);
             }
         }
 
-        let mut restricted_colors = HashMap::new();
+        let mut restricted_colors = HashMap::default();
         for f in &data.manifest.tile_sets {
             let y = ModData::load_yaml(&data.file_system, std::slice::from_ref(f), None).map_err(|e| e.to_string())?;
             let (id, colors) = restricted_player_colors(&y)?;
@@ -366,7 +366,7 @@ impl ModLobbyRules {
             package: package.as_ref(),
             fs: &data.file_system,
         };
-        let mut map_messages = HashMap::new();
+        let mut map_messages = HashMap::default();
         for file in map
             .section("FluentMessages")
             .map(MiniYaml::value_str)
@@ -476,7 +476,7 @@ impl ModLobbyRules {
         LobbyOption {
             id: id.to_string(),
             name: messages.get(name),
-            values: IndexMap::from([
+            values: IndexMap::from_iter([
                 ("True".to_string(), "Enabled".to_string()),
                 ("False".to_string(), "Disabled".to_string()),
             ]),
@@ -696,7 +696,7 @@ impl ModLobbyRules {
                     out.push(option);
                 }
                 "ScriptLobbyDropdown" => {
-                    let values = t.yaml.nodes.iter().find(|n| n.key == "Values").map_or_else(IndexMap::new, |v| {
+                    let values = t.yaml.nodes.iter().find(|n| n.key == "Values").map_or_else(IndexMap::default, |v| {
                         v.value
                             .nodes
                             .iter()
@@ -756,7 +756,7 @@ mod tests {
 
     #[test]
     fn fluent_messages_and_attributes() {
-        let mut m = HashMap::new();
+        let mut m = HashMap::default();
         parse_fluent(
             "# comment\ncheckbox-short-game =\n    .label = Short Game\n    .description = Bases\n\nplain = Text here\n",
             &mut m,

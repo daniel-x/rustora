@@ -7,8 +7,8 @@ use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, CVec, WAngle, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -191,7 +191,7 @@ impl Default for WithDeathAnimationInfo {
             crushed_sequence: None,
             crushed_sequence_palette: "effect".into(),
             crushed_palette_is_player_palette: false,
-            death_types: IndexMap::new(),
+            death_types: IndexMap::default(),
             fallback_sequence: None,
             delay: 0,
         }
@@ -469,7 +469,7 @@ impl Default for LeavesTrailsInfo {
             image: None,
             sequences: vec!["idle".into()],
             palette: "effect".into(),
-            terrain_types: IndexSet::new(),
+            terrain_types: IndexSet::default(),
             trail_type: "Cell".into(),
             visible_through_fog: false,
             trail_while_stationary: false,
@@ -1426,7 +1426,7 @@ impl Default for WithLandingCraftAnimationInfo {
     fn default() -> Self {
         WithLandingCraftAnimationInfo {
             instance_name: None,
-            open_terrain_types: IndexSet::from(["Clear".to_string()]),
+            open_terrain_types: IndexSet::from_iter(["Clear".to_string()]),
             open_sequence: "open".into(),
             close_sequence: "close".into(),
             unload_sequence: "unload".into(),
@@ -1500,7 +1500,7 @@ impl Default for WithCrateBodyInfo {
         WithCrateBodyInfo {
             instance_name: None,
             xmas_images: Vec::new(),
-            water_terrain_types: IndexSet::from(["Water".to_string()]),
+            water_terrain_types: IndexSet::from_iter(["Water".to_string()]),
             idle_sequence: "idle".into(),
             water_sequence: None,
             land_sequence: None,

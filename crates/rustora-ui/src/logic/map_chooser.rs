@@ -3,8 +3,9 @@
 
 //! Port of `MapChooserLogic.cs`. Remote map queries are not ported: a remote pool lists the maps found locally.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::UNIX_EPOCH;
 

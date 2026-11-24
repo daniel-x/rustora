@@ -4,11 +4,11 @@
 //! Port of `ProductionQueue`, `ClassicProductionQueue`, `TechTree`, `Production`, `Exit`, `Buildable`,
 //! `Valued`, `ProvidesPrerequisite`, `PrimaryBuilding`, `RallyPoint`, `PlaceBuilding` and `Reservable`.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, CVec, WAngle, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
@@ -117,7 +117,7 @@ impl Default for BuildableInfo {
         BuildableInfo {
             instance_name: None,
             prerequisites: Vec::new(),
-            queue: IndexSet::new(),
+            queue: IndexSet::default(),
             build_at_production_type: None,
             build_limit: 0,
             force_faction: None,
@@ -225,7 +225,7 @@ info_impl!(TechTreeInfo => |_, init| {
 });
 
 fn gather_owned_prerequisites(player: &PlayerRef, world: &World) -> HashMap<String, i32> {
-    let mut ret: HashMap<String, i32> = HashMap::new();
+    let mut ret: HashMap<String, i32> = HashMap::default();
     let valid = |a: &ActorRef| a.is_owned_by(player) && a.is_in_world() && !a.is_dead();
     world.for_each_with_trait::<dyn ITechTreePrerequisite>(|a, t| {
         if valid(a) {
@@ -324,7 +324,7 @@ impl Default for ExitInfo {
             spawn_offset: WVec::ZERO,
             exit_cell: CVec::ZERO,
             facing: None,
-            production_types: IndexSet::new(),
+            production_types: IndexSet::default(),
             exit_delay: 0,
             priority: 1,
         }
@@ -392,7 +392,7 @@ pub fn random_exit_or_default(
     if !actor.is_in_world() || actor.disposed() {
         return None;
     }
-    let mut groups: IndexMap<i32, Vec<Rc<Exit>>> = IndexMap::new();
+    let mut groups: IndexMap<i32, Vec<Rc<Exit>>> = IndexMap::default();
     for e in exits(actor, production_type) {
         groups.entry(e.info.priority).or_default().push(e);
     }
@@ -887,7 +887,7 @@ impl Default for ProductionQueueInfo {
             ty: String::new(),
             display_order: 0,
             group: None,
-            factions: IndexSet::new(),
+            factions: IndexSet::default(),
             sticky: true,
             pay_up_front: false,
             disallow_paused: false,
@@ -1133,7 +1133,7 @@ fn new_queue(
         classic,
         me: me.clone(),
         actor: init.self_.clone(),
-        producible: RefCell::new(IndexMap::new()),
+        producible: RefCell::new(IndexMap::default()),
         queue: RefCell::new(Vec::new()),
         production_traits: RefCell::new(Vec::new()),
         refs: RefCell::new(None),
@@ -1462,7 +1462,7 @@ impl ProductionQueue {
         if self.queue.borrow().is_empty() {
             return;
         }
-        let buildable: std::collections::HashSet<String> = self.buildable_items().into_iter().collect();
+        let buildable: rustora_core::hash::HashSet<String> = self.buildable_items().into_iter().collect();
         let pr = self.player_resources();
         let mut i = self.queue.borrow().len();
         while i > 0 {
@@ -2055,7 +2055,7 @@ pub struct GrantConditionOnPrerequisiteManager {
 register_traits!(GrantConditionOnPrerequisiteManager: ITechTreeElement);
 info_impl!(GrantConditionOnPrerequisiteManagerInfo => |_, init| Some(Rc::new_cyclic(|me| GrantConditionOnPrerequisiteManager {
     me: me.clone(),
-    upgradables: RefCell::new(HashMap::new()),
+    upgradables: RefCell::new(HashMap::default()),
     tech_tree: init.self_.trait_::<TechTree>(),
 })));
 
@@ -2680,7 +2680,7 @@ fn num_buildables(w: &World, player: &PlayerRef) -> usize {
     if !w.sound.local_player().is_some_and(|l| Rc::ptr_eq(&l, player)) {
         return 0;
     }
-    let mut items = IndexSet::new();
+    let mut items = IndexSet::default();
     for (a, q) in w.actors_with_trait::<ProductionQueue>() {
         if a.is_owned_by(player) {
             items.extend(q.buildable_items());

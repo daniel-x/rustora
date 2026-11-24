@@ -4,8 +4,8 @@
 //! The player references of a map (`PlayerReference`, `MapPlayers`) and how the lobby derives slots and client
 //! settings from them. Client and server use them.
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::{Color, load};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::CPos;
 use rustora_derive::FieldLoad;
@@ -103,7 +103,7 @@ pub fn sync_client_to_player_reference(c: &mut Client, pr: &PlayerReference) {
 
 /// `MapPlayers`: player references keyed by name, in definition order.
 pub fn map_players(defs: &[MiniYamlNode]) -> IndexMap<String, PlayerReference> {
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     for d in defs {
         let pr: PlayerReference = load(&MiniYaml::new(Some(d.key.clone()), d.value.nodes.clone())).expect("valid player reference");
         out.insert(pr.name.clone(), pr);

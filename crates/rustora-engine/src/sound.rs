@@ -6,13 +6,13 @@
 //! Simulation code only queues [`SoundEvent`]s on the world, so it runs the same without an audio device. The client
 //! drains the queue into its [`Sound`] once per frame, which applies the rules of `Sound.cs` and drives an [`AudioDevice`].
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{MersenneTwister, WPos};
 use rustora_formats::audio::{Pcm, decode_sound, sound_length_in_seconds};
@@ -80,7 +80,7 @@ fn split_names(value: &str) -> Vec<String> {
 
 fn name_lists(y: &MiniYaml, key: &str) -> HashMap<String, Vec<String>> {
     let Ok(Some(node)) = y.node_with_key_or_default(key) else {
-        return HashMap::new();
+        return HashMap::default();
     };
     node.value
         .nodes
@@ -134,7 +134,7 @@ impl SoundInfo {
 /// `SoundInfo.ParseSoundPool`.
 fn notification_pools(y: &MiniYaml) -> HashMap<String, SoundPool> {
     let Ok(Some(node)) = y.node_with_key_or_default("Notifications") else {
-        return HashMap::new();
+        return HashMap::default();
     };
     node.value
         .nodes

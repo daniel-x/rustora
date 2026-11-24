@@ -3,8 +3,9 @@
 
 //! Port of `WidgetLoader.cs`.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rustora_core::expression::IntegerExpression;
@@ -33,7 +34,7 @@ const RUSTORA_CHROME: &str = include_str!("../chrome/rustora.yaml");
 impl WidgetLoader {
     /// Loads the chrome layout `files` and the widgets of rustora.
     pub fn new(files: &[String], fs: &dyn ReadFs) -> Result<WidgetLoader, String> {
-        let mut widgets = HashMap::new();
+        let mut widgets = HashMap::default();
         let mut add = |data: &[u8], file: &str| -> Result<(), String> {
             for w in MiniYaml::from_bytes(data, file, true).map_err(|e| e.to_string())? {
                 let key = w.key.split_once('@').map_or(w.key.as_str(), |k| k.1).to_string();

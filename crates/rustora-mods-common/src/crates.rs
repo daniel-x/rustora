@@ -8,7 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, CVec, WAngle, WDist, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -88,7 +88,7 @@ impl Default for CrateSpawnerInfo {
             spawn_interval: 4500,
             initial_spawn_delay: 0,
             valid_ground: ["Clear", "Rough", "Road", "Ore", "Beach"].iter().map(|s| s.to_string()).collect(),
-            valid_water: IndexSet::from(["Water".to_string()]),
+            valid_water: IndexSet::from_iter(["Water".to_string()]),
             water_chance: 20,
             crate_actors: vec!["crate".to_string()],
             crate_actor_shares: vec![10],
@@ -258,7 +258,7 @@ impl Default for CrateInfo {
         CrateInfo {
             instance_name: None,
             duration: 0,
-            terrain_types: IndexSet::new(),
+            terrain_types: IndexSet::default(),
             crush_class: "crate".to_string(),
         }
     }
@@ -628,7 +628,7 @@ impl Default for CrateActionInfo {
             max_duplicate_value: -1,
             max_radius: 4,
             valid_targets: BitSet::new(&["Ground", "Water"]),
-            valid_factions: IndexSet::new(),
+            valid_factions: IndexSet::default(),
             owner: None,
             units: Vec::new(),
             no_base_selection_shares: 1000,

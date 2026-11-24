@@ -7,7 +7,7 @@ use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, CVec, WAngle};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef, for_each_activity};
@@ -257,7 +257,7 @@ impl Default for TransformsIntoMobileInfo {
             base: ConditionalTraitInfo::default(),
             locomotor: String::new(),
             cursor: "move".into(),
-            terrain_cursors: IndexMap::new(),
+            terrain_cursors: IndexMap::default(),
             blocked_cursor: "move-blocked".into(),
             voice: "Action".into(),
             requires_force_move: false,
@@ -594,7 +594,7 @@ impl Default for TransformsIntoRepairableInfo {
         TransformsIntoRepairableInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
-            repair_actors: IndexSet::new(),
+            repair_actors: IndexSet::default(),
             voice: "Action".into(),
             requires_force_move: false,
             enter_cursor: "enter".into(),

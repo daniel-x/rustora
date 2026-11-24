@@ -6,7 +6,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::player::PlayerRef;
@@ -49,7 +49,7 @@ impl Default for PlayerResourcesInfo {
             insufficient_funds_notification_interval: 30000,
             cash_tick_up_notification: None,
             cash_tick_down_notification: None,
-            resource_values: IndexMap::new(),
+            resource_values: IndexMap::default(),
         }
     }
 }

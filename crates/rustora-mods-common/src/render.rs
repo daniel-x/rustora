@@ -17,7 +17,7 @@ use rustora_engine::{conditional_plumbing, conditional_simple};
 use crate::actor_reference::SkipMakeAnimsInit;
 use crate::interfaces::{IDockClientBody, INotifyDamageStateChanged, INotifyDeployComplete, INotifyDeployTriggered, INotifyHarvestAction};
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_info::ActorInfo;
@@ -80,7 +80,7 @@ impl Default for RenderSpritesInfo {
         RenderSpritesInfo {
             instance_name: None,
             image: None,
-            faction_images: IndexMap::new(),
+            faction_images: IndexMap::default(),
             palette: None,
             player_palette: "player".into(),
             editor_only: false,

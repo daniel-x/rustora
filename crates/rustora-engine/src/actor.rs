@@ -3,12 +3,12 @@
 
 //! Port of `Actor.cs`.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::expression::Variables;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, WPos, WRot};
 
 use crate::activity::{self, ActivityRef};

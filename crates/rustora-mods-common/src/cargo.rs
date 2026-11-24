@@ -7,8 +7,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::expression::BooleanExpression;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
@@ -69,11 +69,11 @@ impl Default for CargoInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
             max_weight: 0,
-            types: IndexSet::new(),
+            types: IndexSet::default(),
             initial_units: Vec::new(),
             eject_on_sell: true,
             eject_on_death: false,
-            unload_terrain_types: IndexSet::new(),
+            unload_terrain_types: IndexSet::default(),
             load_range: WDist::from_cells(5),
             passenger_facing: WAngle::new(512),
             after_load_delay: 8,
@@ -81,7 +81,7 @@ impl Default for CargoInfo {
             after_unload_delay: 25,
             loading_condition: None,
             loaded_condition: None,
-            passenger_conditions: IndexMap::new(),
+            passenger_conditions: IndexMap::default(),
             unload_cursor: "deploy".into(),
             unload_blocked_cursor: "deploy-blocked".into(),
         }
@@ -186,7 +186,7 @@ info_impl!(CargoInfo => |info, init| {
         self_,
         cargo: RefCell::new(cargo),
         reserves: RefCell::new(Vec::new()),
-        passenger_tokens: RefCell::new(IndexMap::new()),
+        passenger_tokens: RefCell::new(IndexMap::default()),
         check_terrain_type: !info.unload_terrain_types.is_empty(),
         total_weight: Cell::new(total),
         reserved_weight: Cell::new(0),
@@ -567,7 +567,7 @@ impl Default for PassengerInfo {
             cargo_type: None,
             weight: 1,
             cargo_condition: None,
-            cargo_conditions: IndexMap::new(),
+            cargo_conditions: IndexMap::default(),
             require_force_move_condition: None,
             enter_cursor: "enter".into(),
             enter_blocked_cursor: "enter-blocked".into(),

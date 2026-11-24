@@ -16,7 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, MersenneTwister};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;

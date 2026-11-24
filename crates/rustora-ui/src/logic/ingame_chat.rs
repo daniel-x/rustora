@@ -3,8 +3,8 @@
 
 //! Ports of `LoadIngameChatLogic.cs`, `IngameChatLogic.cs` and `GameTimerLogic.cs`.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -190,7 +190,7 @@ pub fn ingame_chat(ui: &mut Ui, id: WidgetId, args: &WidgetArgs, logic_args: &[M
     let team_chat = Rc::new(Cell::new(!disable_team_chat.get()));
     let (team_message, all_message) = (message(ui, "button-team-chat"), message(ui, "button-general-chat"));
 
-    let mut templates = HashMap::new();
+    let mut templates = HashMap::default();
     if let Some(nodes) = logic_args.iter().find(|n| n.key == "Templates") {
         for item in &nodes.value.nodes {
             if let Some(pool) = pool_from_name(&item.key) {

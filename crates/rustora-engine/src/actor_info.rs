@@ -84,7 +84,7 @@ pub fn construct_order(actor: &str, traits: &[TraitNode]) -> Result<Vec<usize>, 
 /// Static index of trait infos by type (`TypeDictionary` of an `ActorInfo`).
 #[derive(Default)]
 pub struct InfoIndex {
-    map: std::cell::RefCell<std::collections::HashMap<std::any::TypeId, Vec<Box<dyn std::any::Any>>>>,
+    map: std::cell::RefCell<rustora_core::hash::HashMap<std::any::TypeId, Vec<Box<dyn std::any::Any>>>>,
 }
 
 impl InfoIndex {

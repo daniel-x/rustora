@@ -3,7 +3,7 @@
 
 //! Port of `MapPreviewWidget.cs`.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_client::map_cache::{MapGridType, MapPreview};
@@ -147,7 +147,7 @@ impl WidgetKind for MapPreviewWidget {
         if !self.show_spawn_points {
             return;
         }
-        let occupants = self.spawn_occupants.as_ref().map_or_else(HashMap::new, |f| f());
+        let occupants = self.spawn_occupants.as_ref().map_or_else(HashMap::default, |f| f());
         let disabled = self.disabled_spawn_points.as_ref().map_or_else(Vec::new, |f| f());
         let unclaimed = dc.image("lobby-bits", "spawn-unclaimed");
         let claimed = dc.image("lobby-bits", "spawn-claimed");

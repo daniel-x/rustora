@@ -3,8 +3,8 @@
 
 //! Port of `Traits/Player/Shroud.cs`. Flat maps only: a cell projects to itself.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::{CPos, MPos, PPos, WDist, WPos, WVec};
@@ -104,7 +104,7 @@ info_impl!(ShroudInfo => |info, init| {
             explored: vec![false; n],
             touched: vec![false; n],
             resolved: vec![0; n],
-            sources: HashMap::new(),
+            sources: HashMap::default(),
         }),
         listeners: RefCell::new(Vec::new()),
         any_cell_touched: Cell::new(true),

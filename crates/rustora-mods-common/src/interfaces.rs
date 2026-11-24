@@ -358,7 +358,7 @@ pub trait IAircraftCenterPositionOffset {
 
 /// `IOverrideAircraftLanding`; `None` keeps the aircraft's own `LandableTerrainTypes`.
 pub trait IOverrideAircraftLanding {
-    fn landable_terrain_types(&self) -> Option<std::rc::Rc<indexmap::IndexSet<String>>>;
+    fn landable_terrain_types(&self) -> Option<std::rc::Rc<rustora_core::hash::IndexSet<String>>>;
 }
 
 rustora_engine::persist_trait_refs!(

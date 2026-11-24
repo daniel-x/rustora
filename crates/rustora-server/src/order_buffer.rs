@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 
 const NUMBER_OF_FRAMES: usize = 20;
 const INTERVAL: i64 = 1000;

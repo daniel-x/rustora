@@ -4,7 +4,7 @@
 //! The game server (`OpenRA.Game/Server/Server.cs`) with the `PlayerPinger` trait.
 //! Not ported yet: replay recording, which C# independent (dedicated) servers do not enable by default.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -15,8 +15,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine;
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_core::world_types::MersenneTwister;
 use rustora_game::players::{make_slot, sync_client_to_player_reference};
@@ -504,13 +504,13 @@ impl Server {
             map_pool,
             vote_kick: VoteKickTracker::default(),
             master_server,
-            pending_authentication: HashMap::new(),
+            pending_authentication: HashMap::default(),
             port_forward,
             world_players: Vec::new(),
-            sync_for_frame: HashMap::new(),
+            sync_for_frame: HashMap::default(),
             last_defeat_state_frame: 0,
             last_defeat_state: 0,
-            message_tracker: HashMap::new(),
+            message_tracker: HashMap::default(),
             order_buffer: None,
             start: Instant::now(),
             next_player_index: 0,
@@ -524,8 +524,8 @@ impl Server {
             last_conn_report: 0,
             game_save: None,
             geoip,
-            client_software: IndexMap::new(),
-            latencies: HashMap::new(),
+            client_software: IndexMap::default(),
+            latencies: HashMap::default(),
             max_packet_delay: 0,
             last_lag_report: 0,
         })

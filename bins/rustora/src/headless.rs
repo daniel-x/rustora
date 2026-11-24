@@ -4,7 +4,7 @@
 //! `rustora --headless <command> ...`: replay verification and test games without window, graphics or sound.
 //! [`HELP`] lists the commands.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -53,7 +53,7 @@ fn print_detail(world: &World) {
 /// Prints "gone <tick> <id> <type> <owner> <x> <y>" for each actor with health that was in the world after the last
 /// tick (`alive`) and no longer is, at its last position. Returns the actors with health in the world now.
 fn print_deaths(world: &World, alive: HashMap<u32, (String, String, WPos)>) -> HashMap<u32, (String, String, WPos)> {
-    let mut now = HashMap::new();
+    let mut now = HashMap::default();
     for a in world.actors() {
         if a.is_in_world() && !a.is_dead() && a.trait_or_default::<rustora_mods_common::health::Health>().is_some() {
             now.insert(a.id, (a.info.name.clone(), a.owner().internal_name.clone(), a.center_position()));
@@ -117,7 +117,7 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
         .filter(|l| l.split(' ').nth(1) != Some("PauseGame"))
         .map(str::to_string)
         .collect();
-    let counts: std::collections::HashMap<i32, i32> = sync_path.map_or_else(Default::default, |p| {
+    let counts: rustora_core::hash::HashMap<i32, i32> = sync_path.map_or_else(Default::default, |p| {
         std::fs::read_to_string(p)
             .expect("read sync dump")
             .lines()
@@ -171,7 +171,7 @@ fn verify_bots(world: &Rc<World>, replay: Replay, orders_path: &str, sync_path: 
 }
 
 /// Reads `tick hash botrandomcount` lines of a C# sync dump, skipping detail lines.
-fn read_sync_dump(path: &str) -> std::collections::HashMap<i32, String> {
+fn read_sync_dump(path: &str) -> rustora_core::hash::HashMap<i32, String> {
     std::fs::read_to_string(path)
         .expect("read sync dump")
         .lines()
@@ -491,7 +491,7 @@ pub fn main(args: Vec<String>) {
                     Some(rustora_core::world_types::CPos::new(x.parse().ok()?, y.parse().ok()?))
                 });
                 let trace_deaths = std::env::var_os("TRACE_DEATHS").is_some();
-                let mut alive = HashMap::new();
+                let mut alive = HashMap::default();
                 run_driver(&world, driver, tick, |w| {
                     if trace_deaths {
                         alive = print_deaths(w, std::mem::take(&mut alive));
@@ -838,8 +838,10 @@ fn compare_worlds(a: &Rc<World>, b: &Rc<World>) -> bool {
 }
 
 /// The recorded sync packets of each frame, as client id to (sync hash, defeat state).
-fn recorded_syncs(replay: &rustora_client::replay::Replay) -> std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> {
-    let mut out: std::collections::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> = Default::default();
+fn recorded_syncs(
+    replay: &rustora_client::replay::Replay,
+) -> rustora_core::hash::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> {
+    let mut out: rustora_core::hash::HashMap<i32, std::collections::BTreeMap<i32, (i32, u64)>> = Default::default();
     for p in replay.chunks.iter().flat_map(|c| &c.packets) {
         if let Ok(rustora_net::order::Packet::Sync {
             frame,

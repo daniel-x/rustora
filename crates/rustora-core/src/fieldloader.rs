@@ -8,7 +8,7 @@
 
 use std::hash::Hash;
 
-use indexmap::{IndexMap, IndexSet};
+use crate::hash::{IndexMap, IndexSet};
 
 use crate::miniyaml::MiniYaml;
 use crate::world_types::*;
@@ -176,7 +176,7 @@ impl<T: FieldValue> ArrayAware for Vec<T> {
 impl<T: FieldValue + Hash + Eq> FieldValue for IndexSet<T> {
     const TYPE_NAME: &'static str = "HashSet";
     fn parse(field: &str, value: Option<&str>, _yaml: Option<&MiniYaml>) -> Result<Self, LoadError> {
-        let Some(v) = value else { return Ok(IndexSet::new()) };
+        let Some(v) = value else { return Ok(IndexSet::default()) };
         v.split(',')
             .filter(|p| !p.is_empty())
             .map(|p| T::parse(field, Some(p.trim()), None))
@@ -189,7 +189,7 @@ impl<T: FieldValue + Hash + Eq> ArrayAware for IndexSet<T> {}
 impl<K: FieldValue + Hash + Eq, V: FieldValue + ArrayAware> FieldValue for IndexMap<K, V> {
     const TYPE_NAME: &'static str = "Dictionary";
     fn parse(field: &str, _value: Option<&str>, yaml: Option<&MiniYaml>) -> Result<Self, LoadError> {
-        let mut out = IndexMap::new();
+        let mut out = IndexMap::default();
         let Some(y) = yaml else { return Ok(out) };
         for n in &y.nodes {
             let k = K::parse(field, Some(n.key.trim()), None)?;

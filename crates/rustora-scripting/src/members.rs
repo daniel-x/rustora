@@ -7,8 +7,8 @@
 
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use mlua::{IntoLuaMulti, Lua, MetaMethod, MultiValue, UserData, UserDataMethods, Value};
+use rustora_core::hash::IndexMap;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_info::ActorInfo;
 use rustora_engine::player::PlayerRef;
@@ -129,7 +129,7 @@ impl<T: 'static> Group<T> {
 pub type MemberTable = Result<IndexMap<&'static str, (usize, usize)>, String>;
 
 pub fn bind<T>(groups: &[Group<T>], selected: impl Iterator<Item = usize>, duplicate: impl Fn(&str) -> String) -> MemberTable {
-    let mut table = IndexMap::new();
+    let mut table = IndexMap::default();
     for g in selected {
         for (m, (name, _)) in groups[g].members.iter().enumerate() {
             if table.insert(*name, (g, m)).is_some() {

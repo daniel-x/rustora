@@ -4,8 +4,8 @@
 //! `SequenceSet`, `ClassicTilesetSpecificSpriteSequence` data and `Graphics/Animation.cs`, without sprites.
 //! Sequence lengths with `Length: *` are resolved lazily from the sprite file header.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::fieldloader::get_value;
@@ -155,19 +155,19 @@ impl Sequence {
 
 /// `SequenceSet`.
 pub struct SequenceSet {
-    images: HashMap<String, indexmap::IndexMap<String, Rc<Sequence>>>,
+    images: HashMap<String, rustora_core::hash::IndexMap<String, Rc<Sequence>>>,
 }
 
 impl SequenceSet {
     pub fn new(nodes: &[MiniYamlNode], tileset: &str, read_file: ReadFile) -> SequenceSet {
         let empty = MiniYaml::new(None, Vec::new());
-        let mut images = HashMap::new();
+        let mut images = HashMap::default();
         for img in nodes {
             if img.key.starts_with('^') {
                 continue;
             }
             let defaults = node(&img.value, "Defaults").map_or(&empty, |n| &n.value);
-            let mut seqs = indexmap::IndexMap::new();
+            let mut seqs = rustora_core::hash::IndexMap::default();
             for s in &img.value.nodes {
                 if s.key == "Defaults" {
                     continue;

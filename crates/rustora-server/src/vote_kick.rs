@@ -3,10 +3,10 @@
 
 //! Vote kicking of players in a running game (`OpenRA.Game/Server/VoteKickTracker.cs`).
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::time::Instant;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_net::order::RawOrder;
 use rustora_net::session::Client;
 

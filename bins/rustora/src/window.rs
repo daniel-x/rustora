@@ -5,7 +5,7 @@
 //! of `Sdl2PlatformWindow` and the links. It forwards the window events to the simulation thread of
 //! [`crate::game_loop`] and presents the frames that come back.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -184,7 +184,7 @@ impl ApplicationHandler<Wake> for Launcher {
                 redraw_requested: None,
                 forced_redraw: Instant::now(),
                 busy: Duration::ZERO,
-                hardware_cursors: HashMap::new(),
+                hardware_cursors: HashMap::default(),
                 links_awaiting_token: Vec::new(),
             });
         }

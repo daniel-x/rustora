@@ -3,16 +3,16 @@
 
 //! Port of `Primitives/BitSet.cs`: sets of strings with bits allocated per category in first-seen order.
 
+use rustora_core::hash::HashMap;
 use std::any::TypeId;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use rustora_core::fieldloader::{ArrayAware, FieldValue, LoadError};
 use rustora_core::miniyaml::MiniYaml;
 
 thread_local! {
-    static ALLOCATORS: RefCell<HashMap<TypeId, Vec<String>>> = RefCell::new(HashMap::new());
+    static ALLOCATORS: RefCell<HashMap<TypeId, Vec<String>>> = RefCell::new(HashMap::default());
 }
 
 fn bit_of<T: 'static>(s: &str) -> u128 {

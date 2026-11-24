@@ -3,9 +3,9 @@
 
 //! Port of `GameRules/Ruleset.cs` (actors part) and the trait info registry.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use std::rc::Rc;
 
 use rustora_core::miniyaml::MiniYamlNode;
@@ -67,7 +67,7 @@ impl Ruleset {
         rules: &[MiniYamlNode],
         weapon_rules: &[MiniYamlNode],
     ) -> Result<Ruleset, String> {
-        let mut actors = IndexMap::new();
+        let mut actors = IndexMap::default();
         for n in rules {
             if n.key.starts_with('^') {
                 continue;
@@ -81,7 +81,7 @@ impl Ruleset {
             let info = ActorInfo::new(&name, nodes, traits).map_err(|e| e.to_string())?;
             actors.insert(name, Rc::new(info));
         }
-        let mut weapons = IndexMap::new();
+        let mut weapons = IndexMap::default();
         for n in weapon_rules {
             if n.key.starts_with('^') {
                 continue;

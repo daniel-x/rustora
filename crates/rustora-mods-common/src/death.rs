@@ -7,8 +7,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
 use rustora_core::field_enum;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, CVec, WAngle, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
@@ -419,7 +419,7 @@ impl Default for HuskInfo {
     fn default() -> Self {
         HuskInfo {
             instance_name: None,
-            allowed_terrain: IndexSet::new(),
+            allowed_terrain: IndexSet::default(),
             preview_facing: WAngle::new(384),
             locomotor: None,
         }

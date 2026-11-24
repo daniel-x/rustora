@@ -9,6 +9,7 @@ license.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 log = "0.4"
 indexmap = "2"
+rustc-hash = "2"
 thiserror = "2"
 
 [lints]

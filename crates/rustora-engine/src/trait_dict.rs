@@ -3,9 +3,9 @@
 
 //! Port of `TraitDictionary.cs`: traits per interface, sorted by actor ID and insertion order.
 
+use rustora_core::hash::HashMap;
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::actor::{Actor, ActorRef};

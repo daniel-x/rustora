@@ -4,8 +4,8 @@
 //! Port of `ScriptContext.cs`: the sandboxed Lua 5.1 runtime of a world with its global tables and the map
 //! scripts.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use mlua::{Function, IntoLuaMulti, Lua, Value};
@@ -68,8 +68,8 @@ impl ScriptContext {
             actor_groups,
             player_groups,
             player_members,
-            actor_members: RefCell::new(HashMap::new()),
-            group_state: RefCell::new(HashMap::new()),
+            actor_members: RefCell::new(HashMap::default()),
+            group_state: RefCell::new(HashMap::default()),
             fatal_error_occurred: Cell::new(false),
             error_message: RefCell::new(None),
             tick: RefCell::new(None),

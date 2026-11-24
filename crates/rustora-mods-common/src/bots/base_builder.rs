@@ -7,7 +7,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::CPos;
 use rustora_derive::FieldLoad;
@@ -95,15 +95,15 @@ impl Default for BaseBuilderBotModuleInfo {
         BaseBuilderBotModuleInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
-            construction_yard_types: IndexSet::new(),
-            vehicles_factory_types: IndexSet::new(),
-            refinery_types: IndexSet::new(),
-            power_types: IndexSet::new(),
-            barracks_types: IndexSet::new(),
-            production_types: IndexSet::new(),
-            naval_production_types: IndexSet::new(),
-            silo_types: IndexSet::new(),
-            defense_types: IndexSet::new(),
+            construction_yard_types: IndexSet::default(),
+            vehicles_factory_types: IndexSet::default(),
+            refinery_types: IndexSet::default(),
+            power_types: IndexSet::default(),
+            barracks_types: IndexSet::default(),
+            production_types: IndexSet::default(),
+            naval_production_types: IndexSet::default(),
+            silo_types: IndexSet::default(),
+            defense_types: IndexSet::default(),
             building_queues: set(&["Building"]),
             defense_queues: set(&["Defense"]),
             min_base_radius: 2,
@@ -128,9 +128,9 @@ impl Default for BaseBuilderBotModuleInfo {
             rally_point_scan_radius: 8,
             check_for_water_radius: 8,
             water_terrain_types: set(&["Water"]),
-            building_fractions: IndexMap::new(),
-            building_limits: IndexMap::new(),
-            building_delays: IndexMap::new(),
+            building_fractions: IndexMap::default(),
+            building_limits: IndexMap::default(),
+            building_delays: IndexMap::default(),
             production_min_cash_requirement: 500,
             assign_rally_points_interval: 100,
         }

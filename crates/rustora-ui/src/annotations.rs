@@ -4,7 +4,7 @@
 //! The selection annotations of `SelectionDecorationsBase.cs`: `SelectionBoxAnnotationRenderable` and the health
 //! bar of `SelectionBarsAnnotationRenderable`. Extra bars and path debugging are not ported.
 
-use std::collections::HashSet;
+use rustora_core::hash::HashSet;
 
 use rustora_client::settings::{Settings, StatusBarsType, TargetLinesType};
 use rustora_core::fieldloader::Color;
@@ -47,7 +47,7 @@ fn draw_target_lines(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings,
         let (x, y) = viewport.world_to_view_px(world_px);
         (x as f32, y as f32)
     };
-    let mut current = HashSet::with_capacity(selected.len());
+    let mut current = HashSet::with_capacity_and_hasher(selected.len(), Default::default());
     for a in &selected {
         current.insert(a.id);
         let Some(line) = a.trait_or_default::<DrawLineToTarget>() else {

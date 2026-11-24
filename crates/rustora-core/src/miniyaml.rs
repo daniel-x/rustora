@@ -6,7 +6,7 @@
 //! This is a port of `OpenRA.Game/MiniYaml.cs`. Parsing, merging, inheritance resolution and
 //! serialization follow the C# implementation so that rule trees come out identical.
 
-use std::collections::{HashMap, HashSet};
+use crate::hash::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -107,8 +107,8 @@ impl MiniYaml {
     }
 
     /// Child nodes keyed by name, in insertion order. Errors on duplicate keys.
-    pub fn to_map(&self) -> Result<indexmap::IndexMap<&str, &MiniYaml>, YamlError> {
-        let mut ret = indexmap::IndexMap::with_capacity(self.nodes.len());
+    pub fn to_map(&self) -> Result<crate::hash::IndexMap<&str, &MiniYaml>, YamlError> {
+        let mut ret = crate::hash::IndexMap::with_capacity_and_hasher(self.nodes.len(), Default::default());
         for n in &self.nodes {
             if ret.insert(n.key.as_str(), &n.value).is_some() {
                 return Err(YamlError(format!("Duplicate key '{}' in {}", n.key, n.location)));
@@ -171,7 +171,7 @@ impl MiniYaml {
             acc = merge_partial_nodes(acc, merge_self_partial(s)?)?;
         }
 
-        let mut tree: indexmap::IndexMap<String, MiniYaml> = indexmap::IndexMap::new();
+        let mut tree: crate::hash::IndexMap<String, MiniYaml> = crate::hash::IndexMap::default();
         for n in acc.into_iter().filter(|n| !n.key.is_empty()) {
             if tree.contains_key(&n.key) {
                 return Err(YamlError(format!(
@@ -401,7 +401,7 @@ fn last_index_of_key(nodes: &[MiniYamlNode], key: &str) -> Option<usize> {
 }
 
 fn check_conflicts(nodes: &[MiniYamlNode]) -> Result<(), YamlError> {
-    let mut seen: HashMap<&str, &MiniYamlNode> = HashMap::with_capacity(nodes.len());
+    let mut seen: HashMap<&str, &MiniYamlNode> = HashMap::with_capacity_and_hasher(nodes.len(), Default::default());
     let mut dups: Vec<String> = Vec::new();
     for n in nodes.iter().filter(|n| !n.key.is_empty()) {
         if let Some(first) = seen.get(n.key.as_str()) {
@@ -424,7 +424,7 @@ fn check_conflicts(nodes: &[MiniYamlNode]) -> Result<(), YamlError> {
 }
 
 fn merge_self_partial(nodes: Vec<MiniYamlNode>) -> Result<Vec<MiniYamlNode>, YamlError> {
-    let mut keys = HashSet::with_capacity(nodes.len());
+    let mut keys = HashSet::with_capacity_and_hasher(nodes.len(), Default::default());
     let mut ret: Vec<MiniYamlNode> = Vec::with_capacity(nodes.len());
     for n in nodes {
         if keys.insert(n.key.clone()) {
@@ -465,7 +465,7 @@ fn merge_partial_nodes(existing: Vec<MiniYamlNode>, overrides: Vec<MiniYamlNode>
     }
 
     let mut ret: Vec<MiniYamlNode> = Vec::with_capacity(existing.len() + overrides.len());
-    let mut plain_keys: HashSet<String> = HashSet::new();
+    let mut plain_keys: HashSet<String> = HashSet::default();
     for node in existing.into_iter().chain(overrides) {
         if node.key.starts_with('-') {
             ret.push(node);
@@ -491,7 +491,7 @@ fn merge_into_resolved(
     override_node: &MiniYamlNode,
     existing: &mut Vec<MiniYamlNode>,
     existing_keys: &mut HashSet<String>,
-    tree: &indexmap::IndexMap<String, MiniYaml>,
+    tree: &crate::hash::IndexMap<String, MiniYaml>,
     inherited: &Inherited,
 ) -> Result<(), YamlError> {
     let existing_index = if existing_keys.insert(override_node.key.clone()) {
@@ -514,7 +514,7 @@ fn merge_into_resolved(
 
 fn resolve_inherits(
     node: &MiniYaml,
-    tree: &indexmap::IndexMap<String, MiniYaml>,
+    tree: &crate::hash::IndexMap<String, MiniYaml>,
     inherited: &Inherited,
 ) -> Result<Vec<MiniYamlNode>, YamlError> {
     if node.nodes.is_empty() {
@@ -523,7 +523,7 @@ fn resolve_inherits(
 
     let mut inherited = inherited.clone();
     let mut resolved: Vec<MiniYamlNode> = Vec::with_capacity(node.nodes.len());
-    let mut resolved_keys: HashSet<String> = HashSet::with_capacity(node.nodes.len());
+    let mut resolved_keys: HashSet<String> = HashSet::with_capacity_and_hasher(node.nodes.len(), Default::default());
 
     for n in &node.nodes {
         if n.key == "Inherits" || n.key.starts_with("Inherits@") {

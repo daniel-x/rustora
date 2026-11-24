@@ -3,8 +3,8 @@
 
 //! Port of `ReplayBrowserLogic.cs` and `ReplayUtils.cs`. Map downloads are not ported.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -92,7 +92,7 @@ fn eq_ignore_case(a: &str, b: &str) -> bool {
 }
 
 fn sort_distinct_ignore_case(mut values: Vec<String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = rustora_core::hash::HashSet::default();
     values.retain(|v| seen.insert(v.to_lowercase()));
     values.sort_by_key(|v| v.to_lowercase());
     values

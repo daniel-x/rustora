@@ -5,7 +5,7 @@
 
 mod type_table;
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::sync::OnceLock;
 
 /// C# type metadata of one TraitInfo class.

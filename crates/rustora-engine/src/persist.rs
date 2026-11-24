@@ -11,15 +11,16 @@
 //!
 //! `#[derive(Persist)]` of `rustora_derive` implements these traits for structs and enums.
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::any::{Any, TypeId};
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::{Color, Float2, Float3, Rectangle, Size};
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, CVec, Int2, MPos, MersenneTwister, PPos, WAngle, WDist, WPos, WRot, WVec};
 
 use crate::actor::{Actor, ActorRef};
@@ -212,7 +213,7 @@ pub struct SaveWriter {
 
 impl SaveWriter {
     pub fn new(world: &Rc<World>) -> SaveWriter {
-        let mut rules = HashMap::new();
+        let mut rules = HashMap::default();
         for (name, info) in world.rules().actors() {
             for (i, t) in info.traits.iter().enumerate() {
                 rules.insert(addr(Rc::as_ptr(t)), RulePath::TraitInfo(name.clone(), i as u32));
@@ -231,9 +232,9 @@ impl SaveWriter {
             buf: Vec::new(),
             world: world.clone(),
             rules,
-            objects: HashMap::new(),
+            objects: HashMap::default(),
             keep: Vec::new(),
-            actors_seen: HashSet::new(),
+            actors_seen: HashSet::default(),
             actor_queue: VecDeque::new(),
             skipped: std::env::var_os("RUSTORA_PERSIST_AUDIT").map(|_| BTreeSet::new()),
             current_actor: None,
@@ -465,7 +466,7 @@ pub struct SaveReader<'a> {
 type Loader<D> = fn(&mut SaveReader) -> Rc<D>;
 
 thread_local! {
-    static LOADERS: RefCell<HashMap<(TypeId, &'static str), Box<dyn Any>>> = RefCell::new(HashMap::new());
+    static LOADERS: RefCell<HashMap<(TypeId, &'static str), Box<dyn Any>>> = RefCell::new(HashMap::default());
 }
 
 /// Registers the loader of the type `name` for trait objects `Rc<D>`.
@@ -493,12 +494,12 @@ impl<'a> SaveReader<'a> {
             data,
             pos: 0,
             world: world.clone(),
-            actors: HashMap::new(),
+            actors: HashMap::default(),
             slots: Vec::new(),
             pending: None,
             current_actor: None,
             label: String::new(),
-            value_origins: HashMap::new(),
+            value_origins: HashMap::default(),
             version: crate::savegame::VERSION,
             block_end: None,
         }
@@ -1187,7 +1188,7 @@ impl<K: Persist + Ord> Persist for BTreeSet<K> {
 
 /// Hash maps iterate in an arbitrary order, so the simulation must not depend on their order. They are written in
 /// the order of the written keys, so that equal maps give equal bytes. Keys must not hold shared objects.
-impl<K: Persist + Hash + Eq, V: Persist, S: std::hash::BuildHasher + Default> Persist for HashMap<K, V, S> {
+impl<K: Persist + Hash + Eq, V: Persist, S: std::hash::BuildHasher + Default> Persist for std::collections::HashMap<K, V, S> {
     fn save(&self, w: &mut SaveWriter) {
         let mut entries: Vec<(Vec<u8>, &V)> = self.iter().map(|(k, v)| (w.capture(|w| k.save(w)), v)).collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1203,7 +1204,7 @@ impl<K: Persist + Hash + Eq, V: Persist, S: std::hash::BuildHasher + Default> Pe
     }
 }
 
-impl<K: Persist + Hash + Eq, S: std::hash::BuildHasher + Default> Persist for HashSet<K, S> {
+impl<K: Persist + Hash + Eq, S: std::hash::BuildHasher + Default> Persist for std::collections::HashSet<K, S> {
     fn save(&self, w: &mut SaveWriter) {
         let mut keys: Vec<Vec<u8>> = self.iter().map(|k| w.capture(|w| k.save(w))).collect();
         keys.sort();
@@ -1218,7 +1219,7 @@ impl<K: Persist + Hash + Eq, S: std::hash::BuildHasher + Default> Persist for Ha
     }
 }
 
-impl<K: Persist + Hash + Eq, V: Persist, S: std::hash::BuildHasher + Default> Persist for IndexMap<K, V, S> {
+impl<K: Persist + Hash + Eq, V: Persist, S: std::hash::BuildHasher + Default> Persist for indexmap::IndexMap<K, V, S> {
     fn save(&self, w: &mut SaveWriter) {
         w.len_prefix(self.len());
         for (k, v) in self {
@@ -1232,7 +1233,7 @@ impl<K: Persist + Hash + Eq, V: Persist, S: std::hash::BuildHasher + Default> Pe
     }
 }
 
-impl<K: Persist + Hash + Eq, S: std::hash::BuildHasher + Default> Persist for IndexSet<K, S> {
+impl<K: Persist + Hash + Eq, S: std::hash::BuildHasher + Default> Persist for indexmap::IndexSet<K, S> {
     fn save(&self, w: &mut SaveWriter) {
         w.len_prefix(self.len());
         for k in self {
@@ -1345,7 +1346,7 @@ impl<T: PersistState> PersistState for Vec<T> {
 }
 
 /// The values are written in place in key order; the loaded map must have the same keys.
-impl<K: Persist + Ord + Hash + Eq, V: PersistState, S: std::hash::BuildHasher> PersistState for HashMap<K, V, S> {
+impl<K: Persist + Ord + Hash + Eq, V: PersistState, S: std::hash::BuildHasher> PersistState for std::collections::HashMap<K, V, S> {
     fn save_state(&self, w: &mut SaveWriter) {
         let mut keys: Vec<&K> = self.keys().collect();
         keys.sort();

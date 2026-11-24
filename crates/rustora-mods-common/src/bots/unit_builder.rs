@@ -6,7 +6,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -56,9 +56,9 @@ impl Default for UnitBuilderBotModuleInfo {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-            units_to_build: IndexMap::new(),
-            unit_limits: IndexMap::new(),
-            unit_delays: IndexMap::new(),
+            units_to_build: IndexMap::default(),
+            unit_limits: IndexMap::default(),
+            unit_delays: IndexMap::default(),
             production_min_cash_requirement: 500,
         }
     }

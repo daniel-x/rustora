@@ -6,7 +6,7 @@
 use std::cell::{Cell, OnceCell};
 use std::rc::Rc;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_core::world_types::{WAngle, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -59,7 +59,7 @@ impl Default for TakeCoverInfo {
             duration: 100,
             speed_modifier: 50,
             damage_triggers: DamageTypes::default(),
-            damage_modifiers: IndexMap::new(),
+            damage_modifiers: IndexMap::default(),
             prone_offset: WVec::new(500, 0, 0),
             prone_sequence_prefix: "prone-".into(),
         }

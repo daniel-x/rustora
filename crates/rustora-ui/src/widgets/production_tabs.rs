@@ -7,8 +7,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::IndexMap;
 use rustora_engine::world::World;
 use rustora_mods_common::production::{ProductionQueue, ProductionQueueInfo};
 
@@ -130,7 +130,7 @@ impl ProductionTabsWidget {
             click_disabled_sound: assets.metrics.string("ClickDisabledSound"),
             previous_production_tab_key: String::new(),
             next_production_tab_key: String::new(),
-            groups: IndexMap::new(),
+            groups: IndexMap::default(),
             arrow_button: "button".into(),
             tab_button: "button".into(),
             background: "panel-black".into(),

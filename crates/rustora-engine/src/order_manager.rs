@@ -148,7 +148,7 @@ pub struct OrderManager {
     pub world: Rc<World>,
     pub connection: Box<dyn Connection>,
     pending_orders: NetMap<i32, std::collections::VecDeque<(i32, Option<OrderPacket>)>>,
-    sync_for_frame: std::collections::HashMap<i32, (i32, u64)>,
+    sync_for_frame: rustora_core::hash::HashMap<i32, (i32, u64)>,
     pub net_frame_number: i32,
     pub local_frame_number: i32,
     sent_orders_frame: i32,

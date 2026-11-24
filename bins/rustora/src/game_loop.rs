@@ -20,8 +20,8 @@
 //!   replaces the newer of the two, which keeps only its uploads; a frame without draws adds its uploads to the newer
 //!   one.
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -239,7 +239,7 @@ impl GameLoop {
             scale_factor: start.scale_factor,
             cursor_mod,
             cursor_scale: 1,
-            sent_cursors: HashSet::new(),
+            sent_cursors: HashSet::default(),
             shown_cursor: ShownCursor::Hidden,
             suspended: false,
             modifiers: Modifiers::default(),
@@ -247,8 +247,8 @@ impl GameLoop {
             held: [false; 3],
             pending_motion: false,
             scroll_remainder: 0.0,
-            mouse_taps: HashMap::new(),
-            key_taps: HashMap::new(),
+            mouse_taps: HashMap::default(),
+            key_taps: HashMap::default(),
             next_logic: now,
             bench,
             last_logic_tick: now,

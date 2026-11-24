@@ -5,7 +5,7 @@
 //! The client updates the mouse bounds of the actors that the world reports as added, moved or changed, and keeps
 //! them in screen bins with their render bounds, like `ScreenMap.TickRender`.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Rectangle;

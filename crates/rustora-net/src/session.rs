@@ -3,9 +3,9 @@
 
 //! Lobby state (`OpenRA.Game/Network/Session.cs`).
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::field_enum;
 use rustora_core::fieldloader::{Color, LoadError, load};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_derive::FieldLoad;
 
@@ -122,7 +122,7 @@ impl Default for Global {
             independent_server: false,
             game_saves_enabled: false,
             net_frame_interval: 3,
-            lobby_options: IndexMap::new(),
+            lobby_options: IndexMap::default(),
         }
     }
 }

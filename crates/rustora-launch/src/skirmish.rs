@@ -7,8 +7,8 @@
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_client::replay::Chunk;
+use rustora_core::hash::IndexMap;
 use rustora_engine::order_manager::{Connection, Incoming, OrderManager, ReplayConnection};
 use rustora_engine::world::World;
 use rustora_game::map::MapPackage;

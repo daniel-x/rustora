@@ -5,8 +5,8 @@
 //! Palettes: `chrome` and everything unknown use `temperat.pal` with shadow index 3; names starting with `player`
 //! followed by a player's internal name get that player's color remap.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::WAngle;

@@ -4,13 +4,13 @@
 //! Harvesting and docking: `Harvester`, `DockClientManager`, `DockHost`, `Refinery`, `StoresResources`,
 //! `StoresPlayerResources`, `ResourceClaimLayer`, `CashTrickler` and their activities.
 
+use rustora_core::hash::HashMap;
 use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use indexmap::IndexMap;
 use rustora_core::expression::BooleanExpression;
+use rustora_core::hash::IndexMap;
 use rustora_core::world_types::{CPos, CVec, WAngle, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
@@ -846,7 +846,7 @@ pub fn closest_dock(
 ) -> Option<(ActorRef, Rc<DockHost>)> {
     let w = client_actor.world();
     if let Some(mobile) = client_actor.trait_or_default::<Mobile>() {
-        let mut lookup: IndexMap<CPos, (ActorRef, Rc<DockHost>)> = IndexMap::new();
+        let mut lookup: IndexMap<CPos, (ActorRef, Rc<DockHost>)> = IndexMap::default();
         for d in docks {
             lookup
                 .entry(w.map().cell_containing(d.1.dock_position()))

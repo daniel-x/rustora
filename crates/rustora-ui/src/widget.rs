@@ -4,9 +4,9 @@
 //! Port of `Widget.cs`. Widgets live in an arena and refer to each other by index. Widget types implement
 //! [`WidgetKind`]. Each kind sits behind its own `RefCell`, so that its methods can change the tree.
 
+use rustora_core::hash::HashMap;
 use std::any::Any;
 use std::cell::{RefCell, RefMut};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -306,7 +306,7 @@ pub struct Ui {
     /// `Game.GetModifierKeys`.
     pub modifiers: crate::input::Modifiers,
     /// The cursor sequences of the mod, for `CursorProvider.HasCursorSequence`.
-    pub cursor_names: Rc<std::collections::HashSet<String>>,
+    pub cursor_names: Rc<rustora_core::hash::HashSet<String>>,
     /// `Viewport.LastMoveRunTime`.
     pub last_move_time: i64,
     /// `Game.Settings.Game.UIScrollSpeed`.

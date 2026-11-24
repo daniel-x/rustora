@@ -4,14 +4,14 @@
 //! Port of `LobbyUtils.cs` and the tooltips of the lobby. A client is captured by value: the lobby runs these setup
 //! functions again after each change of the session, as C# does.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_client::map_cache::{MapPreview, MapStatus};
 use rustora_client::settings::{Settings, sanitized_player_name};
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::IndexMap;
 use rustora_net::extensions::{self, BanTarget};
 use rustora_net::session::{Client, ConnectionQuality, Session, Slot};
 

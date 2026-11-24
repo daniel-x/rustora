@@ -9,8 +9,8 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_lines};
 
 /// A settings field type: `FieldLoader.GetValue` and `FieldSaver.FormatValue`.
@@ -450,7 +450,7 @@ impl Settings {
             graphics: Default::default(),
             server: Default::default(),
             debug: Default::default(),
-            keys: IndexMap::new(),
+            keys: IndexMap::default(),
             yaml_cache: read_yaml(&file),
             file,
         };

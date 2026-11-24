@@ -5,7 +5,7 @@
 //! insertion order, removed slots go on a LIFO free list and are reused first. The iteration
 //! order therefore depends only on the add/remove sequence, not on hash codes.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 
 use crate::persist::{Persist, SaveReader, SaveWriter};
 use std::hash::Hash;
@@ -23,7 +23,7 @@ impl<K, V> Default for NetMap<K, V> {
         NetMap {
             entries: Vec::new(),
             free: Vec::new(),
-            index: HashMap::new(),
+            index: HashMap::default(),
         }
     }
 }

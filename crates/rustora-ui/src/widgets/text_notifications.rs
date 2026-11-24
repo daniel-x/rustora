@@ -3,7 +3,7 @@
 
 //! Port of `TextNotificationsDisplayWidget.cs`.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 
 use super::impl_as_any;
 use crate::draw::{DrawContext, Rect};
@@ -40,7 +40,7 @@ impl Default for TextNotificationsDisplayWidget {
             mission_template: "CHAT_LINE_TEMPLATE".to_string(),
             feedback_template: "TRANSIENT_LINE_TEMPLATE".to_string(),
             transients_template: "TRANSIENT_LINE_TEMPLATE".to_string(),
-            templates: HashMap::new(),
+            templates: HashMap::default(),
             expirations: Vec::new(),
         }
     }

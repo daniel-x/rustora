@@ -68,7 +68,7 @@ pub struct MobileInfo {
     pub terrain_orientation_adjustment_margin: WDist,
     pub cursor: String,
     pub blocked_cursor: String,
-    pub terrain_cursors: indexmap::IndexMap<String, String>,
+    pub terrain_cursors: rustora_core::hash::IndexMap<String, String>,
     #[field(ignore)]
     pub locomotor_info: OnceCell<Rc<LocomotorInfo>>,
 }
@@ -93,7 +93,7 @@ impl Default for MobileInfo {
             terrain_orientation_adjustment_margin: WDist::new(-1),
             cursor: "move".into(),
             blocked_cursor: "move-blocked".into(),
-            terrain_cursors: indexmap::IndexMap::new(),
+            terrain_cursors: rustora_core::hash::IndexMap::default(),
             locomotor_info: OnceCell::new(),
         }
     }

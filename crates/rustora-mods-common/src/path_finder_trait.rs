@@ -3,8 +3,8 @@
 
 //! Port of `Traits/World/PathFinder.cs`.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::CPos;

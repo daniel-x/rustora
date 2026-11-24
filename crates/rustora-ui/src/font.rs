@@ -5,7 +5,7 @@
 //! are rasterized at the device scale, which is the UI scale, and drawn at the reciprocal size, so text stays sharp
 //! when the UI is scaled up.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 
 use rustora_core::fieldloader::Color;
 use rustora_render::Renderer;
@@ -161,11 +161,11 @@ impl SpriteFont {
             size,
             top_offset: size - ascender,
             scale: 1.0,
-            glyphs: HashMap::new(),
-            advances: HashMap::new(),
-            alpha: HashMap::new(),
-            contrast_glyphs: HashMap::new(),
-            dilation_elements: HashMap::new(),
+            glyphs: HashMap::default(),
+            advances: HashMap::default(),
+            alpha: HashMap::default(),
+            contrast_glyphs: HashMap::default(),
+            dilation_elements: HashMap::default(),
         }
     }
 

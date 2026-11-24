@@ -4,8 +4,8 @@
 //! Ports of `MultiplayerLogic.cs`, `ServerListLogic.cs`, `DirectConnectLogic.cs` and `ServerCreationLogic.cs`.
 //! The mod version notices stay hidden, and server creation reports UPnP as not supported.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, channel};
 
@@ -770,7 +770,7 @@ fn setup_server_list(
         current: RefCell::new(None),
         status: Cell::new(SearchStatus::Fetching),
         player_count: Cell::new(0),
-        occupants: RefCell::new(HashMap::new()),
+        occupants: RefCell::new(HashMap::default()),
         disabled_spawns: RefCell::new(Vec::new()),
         query: RefCell::new(None),
         probe,

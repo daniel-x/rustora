@@ -7,8 +7,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::IndexSet;
 use rustora_core::field_enum;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, PPos, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -254,7 +254,7 @@ impl AffectsShroud {
         }
         let delta = self.info.max_height_delta;
         if self.info.ty == VisibilityType::Footprint {
-            let mut set = IndexSet::new();
+            let mut set = IndexSet::default();
             for (c, _) in self_.cache().occupies_space.as_ref().expect("occupies space").occupied_cells() {
                 for p in Shroud::projected_cells_in_range(map, map.center_of_cell(c), min_range, max_range, delta) {
                     set.insert(p);

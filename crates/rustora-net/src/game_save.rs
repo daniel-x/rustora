@@ -6,8 +6,8 @@
 
 use std::path::Path;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::{Color, load};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_derive::FieldLoad;
 
@@ -108,9 +108,9 @@ impl Default for GameSave {
             last_sync_frame: 0,
             last_sync_packet: Vec::new(),
             global_settings: Global::default(),
-            slots: IndexMap::new(),
-            slot_clients: IndexMap::new(),
-            trait_data: IndexMap::new(),
+            slots: IndexMap::default(),
+            slot_clients: IndexMap::default(),
+            trait_data: IndexMap::default(),
             clients_by_slot_index: Vec::new(),
             first_bot_slot_index: -1,
         }
@@ -163,7 +163,7 @@ impl GameSave {
 
         let text = read_text(&mut r)?;
         let nodes = MiniYaml::from_str(text, &format!("{name}:slotClients"), true).map_err(|e| e.to_string())?;
-        let mut slot_clients = IndexMap::new();
+        let mut slot_clients = IndexMap::default();
         for n in &nodes {
             let client: SlotClient = load(&n.value).map_err(|e| e.to_string())?;
             let slot = client.slot.clone().ok_or(INVALID)?;
@@ -175,7 +175,7 @@ impl GameSave {
         }
         let text = read_text(&mut r)?;
         let nodes = MiniYaml::from_str(text, &format!("{name}:traitData"), true).map_err(|e| e.to_string())?;
-        let mut trait_data = IndexMap::new();
+        let mut trait_data = IndexMap::default();
         for n in nodes {
             trait_data.insert(n.key.parse::<i32>().map_err(|e| e.to_string())?, n.value);
         }
@@ -201,8 +201,8 @@ impl GameSave {
             .map(|s| lobby.client_in_slot(s).map_or(-1, |c| c.index))
             .collect();
         self.global_settings = lobby.global_settings.clone();
-        self.slots = IndexMap::new();
-        self.slot_clients = IndexMap::new();
+        self.slots = IndexMap::default();
+        self.slot_clients = IndexMap::default();
         for (key, slot) in &lobby.slots {
             self.slots.insert(key.clone(), slot.clone());
             let Some(client) = lobby.client_in_slot(key) else {

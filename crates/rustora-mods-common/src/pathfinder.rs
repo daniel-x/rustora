@@ -4,8 +4,8 @@
 //! Port of `Mods.Common/Pathfinder` (searches) and `Primitives/PriorityQueue.cs`.
 //! Custom movement layers are not used by RA and left out.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::{CPos, CVec, Int2};
@@ -542,7 +542,7 @@ impl PathSearch {
     pub fn to_target_cell_over_graph(edges: EdgesFn, locomotor: &Locomotor, from: CPos, target: CPos) -> PathSearch {
         let graph = Graph::Sparse {
             edges,
-            info: HashMap::new(),
+            info: HashMap::default(),
         };
         let e = CostEstimator::new(locomotor);
         let mut search = PathSearch::new(

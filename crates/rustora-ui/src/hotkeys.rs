@@ -3,7 +3,7 @@
 
 //! Ports of `Hotkey.cs` and `HotkeyManager.cs`.
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::MiniYamlNode;
 
 use crate::input::{KeyInput, Modifiers};
@@ -274,7 +274,7 @@ mod tests {
     fn settings_override_definitions_except_readonly() {
         let nodes = rustora_core::miniyaml::MiniYaml::from_str("ZoomIn: PAGEUP\nFixed: F1\n\tReadonly: true\n", "t", true).unwrap();
         let mut hotkeys = Hotkeys::load(&nodes);
-        let mut settings = IndexMap::new();
+        let mut settings = IndexMap::default();
         settings.insert("ZoomIn".to_string(), "Z Ctrl".to_string());
         settings.insert("Fixed".to_string(), "F2".to_string());
         hotkeys.apply_settings(&settings);
@@ -294,7 +294,7 @@ mod tests {
         let mut hotkeys = Hotkeys::load(&nodes);
         assert!(!hotkeys.definition("A").unwrap().has_duplicates);
         assert!(!hotkeys.definition("D").unwrap().has_duplicates);
-        let mut settings = IndexMap::new();
+        let mut settings = IndexMap::default();
         hotkeys.set("B", Hotkey::parse("Q"), &mut settings);
         assert!(hotkeys.definition("A").unwrap().has_duplicates);
         assert!(hotkeys.definition("B").unwrap().has_duplicates);

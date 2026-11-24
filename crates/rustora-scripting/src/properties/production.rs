@@ -3,12 +3,12 @@
 
 //! Port of `ProductionProperties.cs`.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
 use mlua::{Function, Lua};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::CPos;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::actor_init::{ActorInits, FactionInit, OwnerInit};
@@ -244,7 +244,7 @@ fn classic_state(lua: &Lua, p: &PlayerRef) -> LuaResult<Rc<ClassicState>> {
             .map(|q| (q.info.ty.clone(), q))
             .collect();
         ClassicState {
-            handlers: RefCell::new(HashMap::new()),
+            handlers: RefCell::new(HashMap::default()),
             queues,
         }
     });
@@ -274,7 +274,7 @@ fn player_production() -> Group<PlayerRef> {
             let actor_types: Vec<String> = args.get(0)?;
             let action: Option<Function> = args.opt(1, None)?;
             let state = classic_state(lua, p)?;
-            let mut type_to_queue = IndexMap::new();
+            let mut type_to_queue = IndexMap::default();
             for t in actor_types.iter().collect::<IndexSet<_>>() {
                 let bi = buildable_info(lua, t)?;
                 type_to_queue.insert(t.clone(), first_queue(&bi)?);

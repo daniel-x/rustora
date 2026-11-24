@@ -8,8 +8,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::field_enum;
+use rustora_core::hash::IndexMap;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::conditional::*;

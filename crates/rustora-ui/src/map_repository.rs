@@ -4,8 +4,8 @@
 //! The remote parts of `MapCache.QueryRemoteMapDetails` and `MapPreview.Install`. Worker threads make the HTTP
 //! requests, and `poll` applies their results to the map cache on the UI thread.
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use rustora_client::map_cache::{MapCache, MapStatus};
@@ -62,7 +62,7 @@ impl MapRepository {
     /// `QueryRemoteMapDetails`: asks the repository for the maps among `uids` that are unavailable.
     pub fn query<'a>(&self, maps: &RefCell<MapCache>, uids: impl IntoIterator<Item = &'a str>) {
         let mut cache = maps.borrow_mut();
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::default();
         let query: Vec<String> = uids
             .into_iter()
             .filter(|uid| seen.insert(*uid))

@@ -6,7 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::{ActorRef, INVALID_CONDITION_TOKEN};
 use rustora_engine::damage::DamageTypes;
@@ -42,7 +42,7 @@ impl Default for ParachutableInfo {
             instance_name: None,
             killed_on_impassable_terrain: true,
             damage_types: DamageTypes::default(),
-            water_terrain_types: IndexSet::from(["Water".to_string()]),
+            water_terrain_types: IndexSet::from_iter(["Water".to_string()]),
             fall_rate: 13,
             parachuting_condition: None,
         }

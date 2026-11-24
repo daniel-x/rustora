@@ -4,8 +4,8 @@
 //! Port of the client side of `PlayerDatabase` and `PlayerProfile`: the forum profiles of registered players and the
 //! icons of their badges, downloaded in the background. Unlike OpenRA, the results stay cached for the session.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};

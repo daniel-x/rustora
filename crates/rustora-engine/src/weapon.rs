@@ -4,7 +4,7 @@
 //! Port of `GameRules/WeaponInfo.cs`. Projectile and warhead types live in the mod crates and register their
 //! loaders in [`WeaponRegistry`].
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_core::miniyaml::MiniYaml;

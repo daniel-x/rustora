@@ -6,8 +6,8 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
 use rustora_core::expression::BooleanExpression;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos, WRot, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::{Activity, ActivityBase, ActivityRef};
@@ -130,7 +130,7 @@ impl Default for AircraftInfo {
             idle_roll: None,
             roll_speed: WAngle::ZERO,
             min_airborne_altitude: 1,
-            landable_terrain_types: IndexSet::new(),
+            landable_terrain_types: IndexSet::default(),
             move_into_shroud: true,
             crushes: BitSet::default(),
             crush_damage_types: DamageTypes::default(),

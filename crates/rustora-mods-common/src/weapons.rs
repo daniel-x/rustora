@@ -8,8 +8,8 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::MiniYaml;
 use rustora_core::world_types::{CPos, CVec, Int2, MersenneTwister, WAngle, WDist, WPos, WRot, WVec, isqrt_i32};
 use rustora_derive::FieldLoad;
@@ -585,7 +585,7 @@ impl Default for DamageWarhead {
             base: WarheadBase::default(),
             damage: 0,
             damage_types: DamageTypes::default(),
-            versus: IndexMap::new(),
+            versus: IndexMap::default(),
             spread_value: None,
             falloff: vec![100, 37, 14, 5, 0],
             range: None,
@@ -896,7 +896,7 @@ impl Default for LeaveSmudgeWarhead {
         LeaveSmudgeWarhead {
             base: WarheadBase::default(),
             size: vec![0, 0],
-            smudge_type: IndexSet::new(),
+            smudge_type: IndexSet::default(),
             chance: 100,
         }
     }
@@ -1068,7 +1068,7 @@ impl Default for DestroyResourceWarhead {
             base: WarheadBase::default(),
             size: vec![0, 0],
             resource_amount: 0,
-            resource_types: IndexSet::new(),
+            resource_types: IndexSet::default(),
         }
     }
 }
@@ -1327,7 +1327,7 @@ impl Default for BulletInfo {
             launch_angle: vec![WAngle::ZERO],
             bounce_count: 0,
             bounce_range_modifier: 60,
-            invalid_bounce_terrain: IndexSet::new(),
+            invalid_bounce_terrain: IndexSet::default(),
             valid_bounce_blocker_relationships: PlayerRelationship(PlayerRelationship::ENEMY.0 | PlayerRelationship::NEUTRAL.0),
             airburst_altitude: WDist::ZERO,
         }

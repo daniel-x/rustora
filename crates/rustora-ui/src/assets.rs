@@ -3,7 +3,7 @@
 
 //! The shared chrome assets of a mod.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_fs::ReadFs;
@@ -36,7 +36,7 @@ impl Assets {
         let manifest = &mod_data.manifest;
         let chrome = ModData::load_yaml(&*fs, &manifest.chrome, None)?;
         let metrics = ModData::load_yaml(&*fs, &manifest.chrome_metrics, None)?;
-        let mut fonts = HashMap::new();
+        let mut fonts = HashMap::default();
         if let Some(section) = manifest.section("Fonts") {
             for font in &section.nodes {
                 let field = |key: &str| {
@@ -62,7 +62,7 @@ impl Assets {
             messages,
             fonts,
             glyphs: GlyphSheet::default(),
-            minimaps: HashMap::new(),
+            minimaps: HashMap::default(),
             hue_texture: None,
             mixer_texture: None,
             hotkeys,
@@ -168,9 +168,9 @@ impl Assets {
             chrome: Chrome::new(&[]),
             metrics: Metrics::new(&[]),
             messages,
-            fonts: HashMap::new(),
+            fonts: HashMap::default(),
             glyphs: GlyphSheet::default(),
-            minimaps: HashMap::new(),
+            minimaps: HashMap::default(),
             hue_texture: None,
             mixer_texture: None,
             hotkeys: Hotkeys::default(),

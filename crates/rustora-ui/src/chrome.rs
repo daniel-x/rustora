@@ -3,7 +3,7 @@
 
 //! Port of `ChromeProvider.cs` and `ChromeMetrics.cs`.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 
 use rustora_core::fieldloader::Color;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
@@ -94,7 +94,7 @@ impl Chrome {
     }
 
     pub fn new(nodes: &[MiniYamlNode]) -> Chrome {
-        let mut collections = HashMap::new();
+        let mut collections = HashMap::default();
         for node in nodes.iter().filter(|n| !n.key.starts_with('^')) {
             let mut c = Collection {
                 panel_sides: ALL,
@@ -120,8 +120,8 @@ impl Chrome {
         }
         Chrome {
             collections,
-            textures: HashMap::new(),
-            panels: HashMap::new(),
+            textures: HashMap::default(),
+            panels: HashMap::default(),
         }
     }
 
@@ -210,7 +210,7 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn new(nodes: &[MiniYamlNode]) -> Metrics {
-        let mut data = HashMap::new();
+        let mut data = HashMap::default();
         for m in nodes {
             for n in &m.value.nodes {
                 data.insert(n.key.clone(), MiniYaml::value_str(&n.value).to_string());

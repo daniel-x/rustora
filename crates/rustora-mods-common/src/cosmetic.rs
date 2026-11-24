@@ -3,8 +3,8 @@
 
 //! Traits without simulation effect: `ScreenShaker`, `ShakeOnDeath`, `ThrowsParticle`, `GpsDot` and the selection bars.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Color;
@@ -521,7 +521,7 @@ register_traits!(CapturableProgressBar: ISelectionBar, ICaptureProgressWatcher, 
 info_impl!(CapturableProgressBarInfo => |info, _init| Some(Rc::new(CapturableProgressBar {
     state: ConditionalState::new(&info.base),
     info,
-    progress: RefCell::new(HashMap::new()),
+    progress: RefCell::new(HashMap::default()),
 })));
 rustora_engine::conditional_simple!(CapturableProgressBar);
 

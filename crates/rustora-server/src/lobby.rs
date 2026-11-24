@@ -498,7 +498,7 @@ impl Server {
         }
         let map = self.map.clone();
         let player = client.name.clone().unwrap_or_default();
-        let mut options = indexmap::IndexMap::new();
+        let mut options = rustora_core::hash::IndexMap::default();
         for o in &map.options {
             let current = self.lobby.global_settings.lobby_options.get(&o.id).and_then(|s| s.value.clone());
             if current.as_deref() != Some(o.default_value.as_str()) {

@@ -1012,13 +1012,13 @@ pub struct CapturableProgressBarInfo {
 #[derive(rustora_engine::persist::Persist)]
 pub struct CapturableProgressBar {
     state: ConditionalState,
-    progress: RefCell<indexmap::IndexMap<u32, (i32, i32)>>,
+    progress: RefCell<rustora_core::hash::IndexMap<u32, (i32, i32)>>,
 }
 
 register_traits!(CapturableProgressBar: ICaptureProgressWatcher, INotifyCreated, IObservesVariables, IDisabledTrait, ISync);
 info_impl!(CapturableProgressBarInfo => |info, _init| Some(Rc::new(CapturableProgressBar {
     state: ConditionalState::new(&info.base),
-    progress: RefCell::new(indexmap::IndexMap::new()),
+    progress: RefCell::new(rustora_core::hash::IndexMap::default()),
 })));
 rustora_engine::conditional_simple!(CapturableProgressBar);
 

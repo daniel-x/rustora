@@ -3,8 +3,8 @@
 
 //! Ports of `SettingsLogic`, `SettingsUtils` and the logic of the settings panels.
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -135,7 +135,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs, logic_args: &[Mi
                 .collect()
         })
         .unwrap_or_default();
-    let mut panel_containers = HashMap::new();
+    let mut panel_containers = HashMap::default();
     for (id, _) in &panels {
         let container = ui.clone_widget(panel_template);
         ui.set_visible_fn(container, || true);

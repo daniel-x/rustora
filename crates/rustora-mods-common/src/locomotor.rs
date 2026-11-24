@@ -3,12 +3,12 @@
 
 //! Port of `Traits/World/Locomotor.cs`.
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::cell::{OnceCell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::{LoadError, get_value};
+use rustora_core::hash::IndexMap;
 use rustora_core::miniyaml::MiniYaml;
 use rustora_core::world_types::CPos;
 use rustora_derive::FieldLoad;
@@ -93,13 +93,13 @@ impl Default for LocomotorInfo {
             move_into_shroud: true,
             crushes: BitSet::default(),
             crush_damage_types: BitSet::default(),
-            terrain_speeds: IndexMap::new(),
+            terrain_speeds: IndexMap::default(),
         }
     }
 }
 
 fn load_speeds(y: &MiniYaml) -> Result<IndexMap<String, TerrainSpeedInfo>, LoadError> {
-    let mut ret = IndexMap::new();
+    let mut ret = IndexMap::default();
     let Some(node) = y.node_with_key_or_default("TerrainSpeeds")? else {
         return Err(LoadError("Locomotor lacks TerrainSpeeds".into()));
     };
@@ -149,7 +149,7 @@ info_impl!(LocomotorInfo => |info, init| {
         info,
         terrain_infos,
         world: weak,
-        dirty_cells: RefCell::new(HashSet::new()),
+        dirty_cells: RefCell::new(HashSet::default()),
         cells_cost: OnceCell::new(),
         blocking_cache: OnceCell::new(),
         cell_cost_changed: RefCell::new(Vec::new()),

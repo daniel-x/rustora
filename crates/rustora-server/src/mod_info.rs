@@ -5,12 +5,12 @@
 //! cache of the server. The map cache scans the map folders only when it needs a map it does not know yet, so a
 //! dependent server that is told the package of its initial map starts without a scan.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use indexmap::IndexMap;
+use rustora_core::hash::IndexMap;
 use rustora_fs::{Package, Platform};
 use rustora_game::lobby_rules::ModLobbyRules;
 pub use rustora_game::lobby_rules::{GameSpeed, MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo};
@@ -34,7 +34,7 @@ pub struct ServerMod {
 
 /// The maps of the map folders of the mod, each folder in name order.
 fn scan_maps(data: &ModData) -> IndexMap<String, MapEntry> {
-    let mut maps = IndexMap::new();
+    let mut maps = IndexMap::default();
     for folder in map_folders(data) {
         let mut packages = folder.map_packages(&data.file_system);
         packages.sort_by(|a, b| a.0.cmp(&b.0));
@@ -74,7 +74,7 @@ impl ServerMod {
             data,
             rules,
             maps,
-            infos: HashMap::new(),
+            infos: HashMap::default(),
             scanned: false,
         })
     }

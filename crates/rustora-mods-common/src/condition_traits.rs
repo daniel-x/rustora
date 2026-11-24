@@ -13,7 +13,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, WAngle, WDist, WPos};
 use rustora_derive::FieldLoad;
 use rustora_engine::activity::TargetLineNode;
@@ -641,7 +641,7 @@ impl Default for GrantConditionOnDeployInfo {
             base: PausableConditionalTraitInfo::default(),
             undeployed_condition: None,
             deployed_condition: String::new(),
-            allowed_terrain_types: IndexSet::new(),
+            allowed_terrain_types: IndexSet::default(),
             can_deploy_on_ramps: false,
             deploy_cursor: "deploy".into(),
             deploy_blocked_cursor: "deploy-blocked".into(),
@@ -1109,7 +1109,7 @@ info_impl!(ProximityExternalConditionInfo => |info, init| Some(Rc::new_cyclic(|m
     info,
     self_: init.self_.clone(),
     me: me.clone(),
-    tokens: RefCell::new(IndexMap::new()),
+    tokens: RefCell::new(IndexMap::default()),
     trigger: Cell::new(0),
     cached_position: Cell::new(WPos::ZERO),
     cached_range: Cell::new(WDist::ZERO),
@@ -1534,7 +1534,7 @@ impl Default for SpawnActorsOnSellInfo {
             min_hp_percent: 30,
             actor_types: Vec::new(),
             guaranteed_actor_types: Vec::new(),
-            factions: IndexSet::new(),
+            factions: IndexSet::default(),
         }
     }
 }

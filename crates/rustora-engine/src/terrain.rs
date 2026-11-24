@@ -3,10 +3,11 @@
 
 //! Terrain data of a tileset (`Mods.Common/Terrain/DefaultTerrain.cs`).
 
-use std::collections::{BTreeMap, HashMap};
+use rustora_core::hash::HashMap;
+use std::collections::BTreeMap;
 
-use indexmap::IndexSet;
 use rustora_core::fieldloader::{Color, get_value};
+use rustora_core::hash::IndexSet;
 use rustora_core::miniyaml::MiniYamlNode;
 use rustora_derive::FieldLoad;
 

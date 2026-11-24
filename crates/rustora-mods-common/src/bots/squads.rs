@@ -7,7 +7,7 @@
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_core::world_types::{CPos, WDist, WPos, WVec};
 use rustora_derive::FieldLoad;
@@ -76,12 +76,12 @@ impl Default for SquadManagerBotModuleInfo {
         SquadManagerBotModuleInfo {
             instance_name: None,
             base: ConditionalTraitInfo::default(),
-            naval_units_types: IndexSet::new(),
-            air_units_types: IndexSet::new(),
-            exclude_from_squads_types: IndexSet::new(),
-            construction_yard_types: IndexSet::new(),
-            naval_production_types: IndexSet::new(),
-            protection_types: IndexSet::new(),
+            naval_units_types: IndexSet::default(),
+            air_units_types: IndexSet::default(),
+            exclude_from_squads_types: IndexSet::default(),
+            construction_yard_types: IndexSet::default(),
+            naval_production_types: IndexSet::default(),
+            protection_types: IndexSet::default(),
             aircraft_target_type: BitSet::new(&["Air"]),
             squad_size: 8,
             squad_size_random_bonus: 30,

@@ -2645,6 +2645,7 @@ dependencies = [
  "chrono",
  "indexmap",
  "log",
+ "rustc-hash 2.1.3",
  "rustora-derive",
  "thiserror 2.0.21",
 ]

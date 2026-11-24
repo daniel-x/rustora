@@ -8,7 +8,7 @@ use rustora_engine::sequence::AfterAnim;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{MersenneTwister, WAngle, WDist, WVec};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -189,7 +189,7 @@ impl Default for WithInfantryBodyInfo {
             max_idle_delay: 110,
             move_sequence: "run".into(),
             default_attack_sequence: None,
-            attack_sequences: IndexMap::new(),
+            attack_sequences: IndexMap::default(),
             idle_sequences: Vec::new(),
             stand_sequences: vec!["stand".into()],
             palette: None,

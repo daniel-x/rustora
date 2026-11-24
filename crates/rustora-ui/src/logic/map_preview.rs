@@ -3,8 +3,8 @@
 
 //! Port of `MapPreviewLogic.cs`. Not ported: map updates (`MapCache.GetUpdatedMap`).
 
+use rustora_core::hash::HashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_client::map_cache::{MapPreview, MapStatus};
@@ -287,7 +287,7 @@ pub fn create(ui: &mut Ui, widget: WidgetId, args: &WidgetArgs) -> Rc<RefCell<dy
     }
 
     let child = |ui: &Ui, name: &str| ui.child(widget, name);
-    let preview_widgets = HashMap::from([
+    let preview_widgets = HashMap::from_iter([
         (PreviewStatus::Unknown, vec![large]),
         (PreviewStatus::Playable, vec![large, available]),
         (PreviewStatus::Incompatible, vec![large, child(ui, "MAP_INCOMPATIBLE")]),

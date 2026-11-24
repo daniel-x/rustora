@@ -12,7 +12,7 @@
 //! Like in C#, files are buffered and a thread flushes them every 5 seconds; warnings and errors flush at once. A channel whose
 //! file cannot be created tries `<file>.1` up to `<file>.127`.
 
-use std::collections::HashMap;
+use crate::hash::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -110,7 +110,7 @@ pub fn init(support_dir: &Path, specs: &'static [ChannelSpec]) {
     let logger = LOGGER.get_or_init(|| ChannelLogger {
         dir: crate::own_files::logs_dir(support_dir),
         specs,
-        state: Mutex::new(State { open: HashMap::new() }),
+        state: Mutex::new(State { open: HashMap::default() }),
     });
     if log::set_logger(logger).is_err() {
         return;

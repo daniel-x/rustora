@@ -4,7 +4,7 @@
 //! `HardwarePalette` and the `ILoadsPalettes` traits: builds the palette rows from the world actor's traits, and
 //! applies the palette modifiers each world tick.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_core::fieldloader::Color;
@@ -38,8 +38,8 @@ impl Palettes {
     pub fn new(renderer: &mut Renderer, world: &World, read_file: &ReadFile) -> Palettes {
         let mut p = Palettes {
             rows: Vec::new(),
-            named: HashMap::new(),
-            player: HashMap::new(),
+            named: HashMap::default(),
+            player: HashMap::default(),
             rotations: Vec::new(),
             lights: Vec::new(),
             last_tick: -1,

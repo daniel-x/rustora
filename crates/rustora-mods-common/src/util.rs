@@ -79,7 +79,7 @@ pub fn are_adjacent_cells(a: CPos, b: CPos) -> bool {
 }
 
 pub fn expand_footprint(cells: &[CPos], allow_diagonal: bool) -> Vec<CPos> {
-    let mut seen = indexmap::IndexSet::new();
+    let mut seen = rustora_core::hash::IndexSet::default();
     for c in cells {
         for n in neighbours(*c, allow_diagonal) {
             seen.insert(n);
@@ -89,7 +89,7 @@ pub fn expand_footprint(cells: &[CPos], allow_diagonal: bool) -> Vec<CPos> {
 }
 
 pub fn adjacent_cells(w: &World, target: &Target) -> Vec<CPos> {
-    let mut cells = indexmap::IndexSet::new();
+    let mut cells = rustora_core::hash::IndexSet::default();
     for p in target.positions() {
         cells.insert(w.map().cell_containing(p));
     }

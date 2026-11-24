@@ -3,7 +3,7 @@
 
 //! Port of `InstallShieldCABCompression.cs`.
 
-use std::collections::{HashMap, HashSet};
+use rustora_core::hash::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -378,7 +378,7 @@ fn read_index(header: &mut dyn ReadSeek) -> Result<HashMap<String, FileDescripto
     }
 
     let mut groups = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     for offset in group_offsets {
         let mut next = offset;
         while next != 0 && visited.insert(next) {
@@ -397,7 +397,7 @@ fn read_index(header: &mut dyn ReadSeek) -> Result<HashMap<String, FileDescripto
         }
     }
 
-    let mut index = HashMap::new();
+    let mut index = HashMap::default();
     for (name, first, last) in groups {
         for i in first..=last {
             if version <= 5 {
@@ -507,7 +507,7 @@ mod tests {
         std::fs::write(dir.join("data.hdr"), &header).unwrap();
         std::fs::write(dir.join("data.cab"), &volume).unwrap();
 
-        let volumes = HashMap::from([(0, File::open(dir.join("data.cab")).unwrap())]);
+        let volumes = HashMap::from_iter([(0, File::open(dir.join("data.cab")).unwrap())]);
         let mut cab = InstallShieldCab::new(File::open(dir.join("data.hdr")).unwrap(), volumes).unwrap();
         let extract = |cab: &mut InstallShieldCab, name: &str| {
             let path = dir.join("out");

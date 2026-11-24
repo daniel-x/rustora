@@ -4,8 +4,8 @@
 //! The network side of the lobby: the single player server thread, the multiplayer server process, the connection
 //! and the orders of `UnitOrders.ProcessOrder` that matter before a game starts.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

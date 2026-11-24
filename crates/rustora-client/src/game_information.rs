@@ -3,9 +3,9 @@
 
 //! `GameInformation`: the summary of a game that the metadata block of a replay holds.
 
-use indexmap::IndexSet;
 use rustora_core::field_enum;
 use rustora_core::fieldloader::{Color, LoadError, load};
+use rustora_core::hash::IndexSet;
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode, nodes_to_string};
 use rustora_derive::FieldLoad;
 

@@ -3,8 +3,8 @@
 
 //! `Traits/World/SmudgeLayer.cs`. Smudges are cosmetic: they draw from the local random only.
 
+use rustora_core::hash::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustora_core::world_types::{CPos, WDist, WVec};

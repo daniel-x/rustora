@@ -3,7 +3,7 @@
 
 //! Port of `Primitives/SpatiallyPartitioned.cs`.
 
-use std::collections::HashSet;
+use rustora_core::hash::HashSet;
 use std::hash::Hash;
 
 use rustora_core::fieldloader::Rectangle;
@@ -106,7 +106,7 @@ impl<K: Hash + Eq + Clone, V: Clone> SpatiallyPartitioned<K, V> {
 
     pub fn in_box(&self, b: Rectangle) -> Vec<V> {
         let (r0, r1, c0, c1) = self.rows_cols(&b);
-        let mut seen: HashSet<K> = HashSet::new();
+        let mut seen: HashSet<K> = HashSet::default();
         let mut out = Vec::new();
         for r in r0..r1 {
             for c in c0..c1 {

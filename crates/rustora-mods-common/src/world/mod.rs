@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::world_types::{CPos, CVec, MersenneTwister, WAngle, WDist};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -49,7 +49,7 @@ impl Default for FactionInfo {
             instance_name: None,
             name: None,
             internal_name: None,
-            random_faction_members: IndexSet::new(),
+            random_faction_members: IndexSet::default(),
             side: None,
             description: None,
             selectable: true,
@@ -451,7 +451,7 @@ impl Default for StartingUnitsInfo {
             instance_name: None,
             class: "none".into(),
             class_name: None,
-            factions: IndexSet::new(),
+            factions: IndexSet::default(),
             base_actor: None,
             base_actor_offset: CVec::ZERO,
             base_actor_facing: Some(WAngle::new(512)),

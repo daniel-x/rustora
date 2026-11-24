@@ -6,8 +6,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use indexmap::{IndexMap, IndexSet};
 use rustora_core::fieldloader::{LoadError, get_value};
+use rustora_core::hash::{IndexMap, IndexSet};
 use rustora_core::miniyaml::MiniYaml;
 use rustora_core::world_types::{CPos, CVec, WPos, WVec};
 use rustora_derive::FieldLoad;
@@ -73,8 +73,8 @@ impl Default for BuildingInfo {
     fn default() -> Self {
         BuildingInfo {
             instance_name: None,
-            terrain_types: IndexSet::new(),
-            footprint: IndexMap::new(),
+            terrain_types: IndexSet::default(),
+            footprint: IndexMap::default(),
             dimensions: CVec::new(1, 1),
             local_center_offset: WVec::ZERO,
             requires_base_provider: false,
@@ -107,7 +107,7 @@ fn load_footprint(yaml: &MiniYaml) -> Result<IndexMap<CVec, FootprintCellType>, 
             dim.y
         )));
     }
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::default();
     let mut i = 0;
     for y in 0..dim.y {
         for x in 0..dim.x {

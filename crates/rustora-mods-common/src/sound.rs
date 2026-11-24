@@ -3,8 +3,8 @@
 
 //! Ports of `Voiced.cs`, `MusicPlaylist.cs` (its info) and the traits in `Traits/Sound`.
 
+use rustora_core::hash::HashSet;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -835,7 +835,7 @@ info_impl!(EnemyWatcherInfo => |info, _init| Some(Rc::new(EnemyWatcher {
     discovered_players: RefCell::new(Vec::new()),
     rescan_interval: Cell::new(0),
     ticks_before_next_notification: Cell::new(0),
-    last_known_actor_ids: RefCell::new(HashSet::new()),
+    last_known_actor_ids: RefCell::new(HashSet::default()),
 })));
 
 impl ITick for EnemyWatcher {
@@ -852,8 +852,8 @@ impl ITick for EnemyWatcher {
         }
         self.rescan_interval.set(self.info.scan_interval);
         let mut announced_any = false;
-        let mut visible = HashSet::new();
-        let mut played = HashSet::new();
+        let mut visible = HashSet::default();
+        let mut played = HashSet::default();
         for (actor, announce) in self_.world().actors_with_trait::<AnnounceOnSeen>() {
             if crate::util::appears_friendly_to(&actor, self_)
                 || actor.is_dead()

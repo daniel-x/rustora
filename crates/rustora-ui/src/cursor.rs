@@ -3,7 +3,7 @@
 
 //! Port of `CursorProvider`, `CursorSequence` and the hardware cursor part of `CursorManager`.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 
 use rustora_core::miniyaml::{MiniYaml, MiniYamlNode};
 use rustora_formats::palette::Palette;
@@ -139,7 +139,7 @@ impl Cursors {
     pub fn load(mod_data: &ModData, fs: &dyn ReadFs) -> Result<Cursors, GameError> {
         let yaml = ModData::load_yaml(fs, &mod_data.manifest.cursors, None)?;
         let rules = ModData::load_yaml(fs, &mod_data.manifest.rules, None)?;
-        let mut sequences = HashMap::new();
+        let mut sequences = HashMap::default();
         let Some(root) = yaml.iter().find(|n| n.key == "Cursors") else {
             return Ok(Cursors { sequences });
         };
@@ -183,7 +183,7 @@ impl Cursors {
     }
 
     /// `CursorProvider.HasCursorSequence` for all names at once.
-    pub fn names(&self) -> std::collections::HashSet<String> {
+    pub fn names(&self) -> rustora_core::hash::HashSet<String> {
         self.sequences.keys().cloned().collect()
     }
 

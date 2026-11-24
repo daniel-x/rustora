@@ -7,8 +7,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use indexmap::IndexMap;
 use rustora_core::fieldloader::Color;
+use rustora_core::hash::IndexMap;
 use rustora_core::world_types::{Int2, WAngle, WDist, WPos};
 use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
@@ -352,8 +352,8 @@ impl Default for WithPipsDecorationInfo {
             full_sequence: "pip-green".into(),
             palette: "chrome".into(),
             ammo_pools: Vec::new(),
-            resource_sequences: IndexMap::new(),
-            custom_pip_sequences: IndexMap::new(),
+            resource_sequences: IndexMap::default(),
+            custom_pip_sequences: IndexMap::default(),
         }
     }
 }

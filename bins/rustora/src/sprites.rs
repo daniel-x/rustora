@@ -4,7 +4,7 @@
 //! Sprite loading for the renderer: decoded sprite files in GPU sheets, and the frame layout of sprite sequences.
 //! Port of the renderer half of `DefaultSpriteSequence`, `ClassicSpriteSequence` and `TilesetSpecificSpriteSequence`.
 
-use std::collections::HashMap;
+use rustora_core::hash::HashMap;
 use std::rc::Rc;
 
 use rustora_core::fieldloader::get_value;
@@ -163,9 +163,9 @@ impl SpriteCache {
         SpriteCache {
             read_file,
             tileset: tileset.to_string(),
-            files: HashMap::new(),
+            files: HashMap::default(),
             file_names: Vec::new(),
-            sequences: HashMap::new(),
+            sequences: HashMap::default(),
         }
     }
 

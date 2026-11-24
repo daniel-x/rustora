@@ -3,11 +3,11 @@
 
 //! Port of `Pathfinder/HierarchicalPathFinder.cs`.
 
+use rustora_core::hash::{HashMap, HashSet};
 use std::cell::{OnceCell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
-use indexmap::IndexSet;
+use rustora_core::hash::IndexSet;
 use rustora_core::world_types::{CPos, CVec};
 use rustora_engine::actor::ActorRef;
 use rustora_engine::net_collections::NetSet;
@@ -33,7 +33,7 @@ fn div_away(a: i32, b: i32) -> i32 {
 #[persist(value)]
 struct GridInfo {
     single_abstract_cell: Option<CPos>,
-    local_cell_to_abstract_cell: indexmap::IndexMap<CPos, CPos>,
+    local_cell_to_abstract_cell: rustora_core::hash::IndexMap<CPos, CPos>,
 }
 
 impl GridInfo {
@@ -58,7 +58,7 @@ impl AbstractGraphWithInsertedEdges {
     fn new(hpf: Rc<HierarchicalPathFinder>, source_edges: &[GraphEdge], target_edge: Option<GraphEdge>) -> Rc<Self> {
         let mut g = AbstractGraphWithInsertedEdges {
             hpf,
-            changed_edges: HashMap::new(),
+            changed_edges: HashMap::default(),
         };
         for e in source_edges {
             g.insert_connections(e.source, e.destination);
@@ -129,7 +129,7 @@ impl HierarchicalPathFinder {
         let (mw, mh) = world.map().map_size;
         let grid_xs = div_away(mw, GRID_SIZE);
         let grid_ys = div_away(mh, GRID_SIZE);
-        let blocking = (check == BlockedByActor::Immovable).then(|| RefCell::new(HashSet::new()));
+        let blocking = (check == BlockedByActor::Immovable).then(|| RefCell::new(HashSet::default()));
         assert!(
             check == BlockedByActor::Immovable || check == BlockedByActor::None,
             "HierarchicalPathFinder supports None and Immovable only"
@@ -144,8 +144,8 @@ impl HierarchicalPathFinder {
             map_bottom_right: CPos::new(mw, mh),
             grid_xs,
             grid_infos: RefCell::new(vec![GridInfo::default(); (grid_xs * grid_ys) as usize]),
-            abstract_graph: RefCell::new(HashMap::new()),
-            abstract_domains: RefCell::new(HashMap::new()),
+            abstract_graph: RefCell::new(HashMap::default()),
+            abstract_domains: RefCell::new(HashMap::default()),
             me: me.clone(),
         });
         if !locomotor.has_terrain_speeds() {
@@ -302,7 +302,7 @@ impl HierarchicalPathFinder {
     }
 
     fn get_abstract_edges_for_grid(&self, grid_x: i32, grid_y: i32) -> Vec<(CPos, Vec<GraphConnection>)> {
-        let mut edges: IndexSet<(CPos, CPos)> = IndexSet::new();
+        let mut edges: IndexSet<(CPos, CPos)> = IndexSet::default();
         let mut add = |x_inc: i32, y_inc: i32, adjacent: CVec, off_x: i32, off_y: i32| {
             let (start_y, start_x) = (grid_y + off_y, grid_x + off_x);
             let mut y = start_y;
@@ -337,7 +337,7 @@ impl HierarchicalPathFinder {
         add(GRID_SIZE, 1, CVec::new(1, 0), GRID_SIZE - 1, 0);
 
         let est = self.est();
-        let mut out: indexmap::IndexMap<CPos, Vec<GraphConnection>> = indexmap::IndexMap::new();
+        let mut out: rustora_core::hash::IndexMap<CPos, Vec<GraphConnection>> = rustora_core::hash::IndexMap::default();
         for (s, d) in edges {
             out.entry(s).or_default().push(GraphConnection {
                 destination: d,
@@ -459,7 +459,7 @@ impl HierarchicalPathFinder {
         self.rebuild_domains();
         let target_domain = self.domain(target_abstract);
 
-        let mut pathable: IndexSet<CPos> = IndexSet::new();
+        let mut pathable: IndexSet<CPos> = IndexSet::default();
         let mut source_edges = Vec::new();
         let mut unpathable: Vec<CPos> = Vec::new();
         for &source in sources {
@@ -755,7 +755,7 @@ impl HierarchicalPathFinder {
         unpathable: Option<Vec<CPos>>,
     ) -> Heuristic {
         let hpf = self.clone();
-        let mut node_for_cost_lookup: HashMap<CPos, CPos> = HashMap::new();
+        let mut node_for_cost_lookup: HashMap<CPos, CPos> = HashMap::default();
         Box::new(move |cell, known_accessible| {
             if unpathable.as_ref().is_some_and(|u| u.contains(&cell)) {
                 return PATH_COST_FOR_INVALID_PATH;
