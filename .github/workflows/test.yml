@@ -1,4 +1,7 @@
 name: Test
+# A tag push has no head commit, so its run shows the tag instead of the workflow name; other runs keep the commit
+# message.
+run-name: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
 on:
   push:
