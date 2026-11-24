@@ -335,7 +335,8 @@ fn next_token(e: &[char], i: &mut usize, last: Tok) -> Result<Option<Token>, Str
 enum Node {
     Const(i32),
     Bool(bool),
-    Var(String),
+    /// A variable and its id from [`intern`].
+    Var(String, u32),
     Unary(Tok, Box<Node>),
     Binary(Tok, Box<Node>, Box<Node>),
     /// Converts an int to bool (`!= 0`) or a bool to int (1/0).
@@ -353,7 +354,7 @@ impl Node {
     fn eval_int(&self, v: &dyn Variables) -> i32 {
         match self {
             Node::Const(c) => *c,
-            Node::Var(n) => v.get(n),
+            Node::Var(n, id) => v.get_id(*id, n),
             Node::ToInt(b) => i32::from(b.eval_bool(v)),
             Node::Unary(Tok::Negate, x) => x.eval_int(v).wrapping_neg(),
             Node::Unary(Tok::OnesComplement, x) => !x.eval_int(v),
@@ -408,6 +409,54 @@ impl Node {
 /// Variable values; missing variables read as 0.
 pub trait Variables {
     fn get(&self, name: &str) -> i32;
+
+    /// The value of the variable `name`, whose id from [`intern`] is `id`.
+    fn get_id(&self, _id: u32, name: &str) -> i32 {
+        self.get(name)
+    }
+}
+
+struct Interner {
+    ids: crate::hash::HashMap<&'static str, u32>,
+    names: Vec<&'static str>,
+}
+
+static INTERNER: std::sync::RwLock<Option<Interner>> = std::sync::RwLock::new(None);
+
+/// A process-wide id of the variable or condition name `name`. Equal names get equal ids. The names are kept for
+/// the lifetime of the process; the mods use a bounded set of them.
+pub fn intern(name: &str) -> u32 {
+    if let Some(&id) = INTERNER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|i| i.ids.get(name))
+    {
+        return id;
+    }
+    let mut guard = INTERNER.write().unwrap_or_else(|e| e.into_inner());
+    let i = guard.get_or_insert_with(|| Interner {
+        ids: Default::default(),
+        names: Vec::new(),
+    });
+    if let Some(&id) = i.ids.get(name) {
+        return id;
+    }
+    let id = i.names.len() as u32;
+    let name: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    i.names.push(name);
+    i.ids.insert(name, id);
+    id
+}
+
+/// The name of the id `id` from [`intern`].
+pub fn interned_name(id: u32) -> &'static str {
+    INTERNER
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .expect("interned names")
+        .names[id as usize]
 }
 
 impl Variables for HashMap<String, i32> {
@@ -572,7 +621,10 @@ fn build(expression: &str, result: Ty) -> Result<Parsed, String> {
                 let v: i32 = t.text.parse().map_err(|_| format!("Invalid number {}", t.text))?;
                 ast.push((Node::Const(v), Ty::Int));
             }
-            Tok::Variable => ast.push((Node::Var(t.text), Ty::Int)),
+            Tok::Variable => {
+                let id = intern(&t.text);
+                ast.push((Node::Var(t.text, id), Ty::Int))
+            }
             _ => return Err(format!("Unexpected token {}", t.symbol())),
         }
     }

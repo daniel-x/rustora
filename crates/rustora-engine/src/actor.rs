@@ -7,8 +7,7 @@ use rustora_core::hash::HashMap;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
-use rustora_core::expression::Variables;
-use rustora_core::hash::{IndexMap, IndexSet};
+use rustora_core::expression::{Variables, intern, interned_name};
 use rustora_core::world_types::{CPos, WPos, WRot};
 
 use crate::activity::{self, ActivityRef};
@@ -22,10 +21,14 @@ pub type ActorRef = Rc<Actor>;
 
 pub const INVALID_CONDITION_TOKEN: i32 = 0;
 
-#[derive(Default)]
-struct ConditionState {
-    notifiers: Vec<VariableObserverNotifier>,
-    tokens: IndexSet<i32>,
+/// The tokens and observers of one condition of an actor.
+struct ConditionSlot {
+    /// The condition name's id from [`rustora_core::expression::intern`].
+    id: u32,
+    /// The granted tokens in grant order; their count is the condition's value.
+    tokens: Vec<i32>,
+    /// Shared, so that a change can call them without holding the conditions borrowed.
+    notifiers: Rc<Vec<VariableObserverNotifier>>,
 }
 
 /// Read-only view on an actor's condition counts, passed to condition observers.
@@ -33,16 +36,40 @@ pub struct ConditionCache<'a>(pub &'a Actor);
 
 impl Variables for ConditionCache<'_> {
     fn get(&self, name: &str) -> i32 {
-        self.0.conditions.borrow().cache.get(name).copied().unwrap_or(0)
+        self.get_id(intern(name), name)
+    }
+
+    fn get_id(&self, id: u32, _name: &str) -> i32 {
+        let c = self.0.conditions.borrow();
+        c.slot(id).map_or(0, |i| c.slots[i].tokens.len() as i32)
     }
 }
 
+/// The conditions of an actor. The slots are in the order in which their names first appeared, which save games
+/// keep.
 #[derive(Default)]
 struct Conditions {
-    states: HashMap<String, ConditionState>,
-    tokens: HashMap<i32, String>,
+    slots: Vec<ConditionSlot>,
+    /// The condition id of each granted token.
+    tokens: HashMap<i32, u32>,
     next_token: i32,
-    cache: IndexMap<String, i32>,
+}
+
+impl Conditions {
+    fn slot(&self, id: u32) -> Option<usize> {
+        self.slots.iter().position(|s| s.id == id)
+    }
+
+    fn slot_or_insert(&mut self, id: u32) -> usize {
+        self.slot(id).unwrap_or_else(|| {
+            self.slots.push(ConditionSlot {
+                id,
+                tokens: Vec::new(),
+                notifiers: Rc::default(),
+            });
+            self.slots.len() - 1
+        })
+    }
 }
 
 /// Traits cached at creation for fast access (`OccupiesSpace`, `facing`, ...).
@@ -316,12 +343,8 @@ impl Actor {
                 }
                 for variable in &user.variables {
                     let mut c = self.conditions.borrow_mut();
-                    let count = {
-                        let cs = c.states.entry(variable.clone()).or_default();
-                        cs.notifiers.push(user.notifier.clone());
-                        cs.tokens.len() as i32
-                    };
-                    c.cache.insert(variable.clone(), count);
+                    let i = c.slot_or_insert(intern(variable));
+                    Rc::make_mut(&mut c.slots[i].notifiers).push(user.notifier.clone());
                 }
             }
         }
@@ -458,25 +481,24 @@ impl Actor {
             .is_visible(self, player)
     }
 
-    fn update_condition_state(self: &ActorRef, condition: &str, token: i32, is_revoke: bool) {
+    fn update_condition_state(self: &ActorRef, id: u32, token: i32, is_revoke: bool) {
         let notifiers = {
             let mut c = self.conditions.borrow_mut();
-            let count = {
-                let cs = c.states.entry(condition.to_string()).or_default();
-                if is_revoke {
-                    cs.tokens.shift_remove(&token);
-                } else {
-                    cs.tokens.insert(token);
+            let i = c.slot_or_insert(id);
+            let tokens = &mut c.slots[i].tokens;
+            if is_revoke {
+                if let Some(p) = tokens.iter().position(|&t| t == token) {
+                    tokens.remove(p);
                 }
-                cs.tokens.len() as i32
-            };
-            c.cache.insert(condition.to_string(), count);
+            } else if !tokens.contains(&token) {
+                tokens.push(token);
+            }
             if !self.created.get() {
                 return;
             }
-            c.states[condition].notifiers.clone()
+            c.slots[i].notifiers.clone()
         };
-        for n in notifiers {
+        for n in notifiers.iter() {
             n(self, &ConditionCache(self));
         }
     }
@@ -486,25 +508,26 @@ impl Actor {
         if condition.is_empty() {
             return INVALID_CONDITION_TOKEN;
         }
+        let id = intern(condition);
         let token = {
             let mut c = self.conditions.borrow_mut();
             let t = c.next_token;
             c.next_token += 1;
-            c.tokens.insert(t, condition.to_string());
+            c.tokens.insert(t, id);
             t
         };
-        self.update_condition_state(condition, token, false);
+        self.update_condition_state(id, token, false);
         token
     }
 
     pub fn revoke_condition(self: &ActorRef, token: i32) -> i32 {
-        let condition = self
+        let id = self
             .conditions
             .borrow_mut()
             .tokens
             .remove(&token)
             .unwrap_or_else(|| panic!("Attempting to revoke condition with invalid token {token} for {self:?}."));
-        self.update_condition_state(&condition, token, true);
+        self.update_condition_state(id, token, true);
         INVALID_CONDITION_TOKEN
     }
 
@@ -523,15 +546,21 @@ impl Actor {
         self.generation.save(w);
         self.replaced_by_actor.save(w);
         let c = self.conditions.borrow();
-        c.tokens.save(w);
+        let tokens: std::collections::HashMap<i32, String> = c.tokens.iter().map(|(&t, &id)| (t, interned_name(id).to_string())).collect();
+        tokens.save(w);
         c.next_token.save(w);
-        c.cache.save(w);
-        let mut states: Vec<(&String, &IndexSet<i32>)> = c.states.iter().map(|(k, s)| (k, &s.tokens)).collect();
+        let cache: indexmap::IndexMap<String, i32> = c
+            .slots
+            .iter()
+            .map(|s| (interned_name(s.id).to_string(), s.tokens.len() as i32))
+            .collect();
+        cache.save(w);
+        let mut states: Vec<(&str, &Vec<i32>)> = c.slots.iter().map(|s| (interned_name(s.id), &s.tokens)).collect();
         states.sort_by(|a, b| a.0.cmp(b.0));
         w.len_prefix(states.len());
         for (k, t) in states {
-            k.save(w);
-            t.save(w);
+            k.to_string().save(w);
+            indexmap::IndexSet::<i32>::from_iter(t.iter().copied()).save(w);
         }
         drop(c);
         self.current_activity.save(w);
@@ -547,24 +576,38 @@ impl Actor {
         self.created.load_state(r);
         self.generation.load_state(r);
         self.replaced_by_actor.load_state(r);
-        let tokens = Persist::load(r);
+        let tokens: std::collections::HashMap<i32, String> = Persist::load(r);
         let next_token = Persist::load(r);
-        let cache = Persist::load(r);
+        let cache: indexmap::IndexMap<String, i32> = Persist::load(r);
         let n = r.len_prefix();
-        let mut states: Vec<(String, IndexSet<i32>)> = Vec::with_capacity(n);
+        let mut states: Vec<(String, indexmap::IndexSet<i32>)> = Vec::with_capacity(n);
         for _ in 0..n {
             states.push((Persist::load(r), Persist::load(r)));
         }
         {
             let mut c = self.conditions.borrow_mut();
-            c.tokens = tokens;
+            c.tokens = tokens.iter().map(|(&t, name)| (t, intern(name))).collect();
             c.next_token = next_token;
-            c.cache = cache;
-            for s in c.states.values_mut() {
+            let mut old = std::mem::take(&mut c.slots);
+            for name in cache.keys() {
+                let id = intern(name);
+                let notifiers = old
+                    .iter()
+                    .position(|s| s.id == id)
+                    .map_or_else(Rc::default, |p| old.remove(p).notifiers);
+                c.slots.push(ConditionSlot {
+                    id,
+                    tokens: Vec::new(),
+                    notifiers,
+                });
+            }
+            for mut s in old {
                 s.tokens.clear();
+                c.slots.push(s);
             }
             for (k, t) in states {
-                c.states.entry(k).or_default().tokens = t;
+                let i = c.slot_or_insert(intern(&k));
+                c.slots[i].tokens = t.into_iter().collect();
             }
         }
         self.current_activity.load_state(r);
