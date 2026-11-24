@@ -1,7 +1,7 @@
 name: Release
-# A tag push has no head commit, so its run would show only the workflow name; it shows the tag before it instead.
+# A tag push has no head commit, so its run would show only the workflow name; it shows "release <tag>" instead.
 # Other runs keep the commit message.
-run-name: ${{ github.ref_type == 'tag' && format('{0} Release', github.ref_name) || '' }}
+run-name: ${{ github.ref_type == 'tag' && format('release {0}', github.ref_name) || '' }}
 
 # A tag v<version> publishes a release. A push to main replaces the prerelease "dev" with a development build.
 on:
