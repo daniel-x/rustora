@@ -14,6 +14,7 @@ rustora-fs = { path = "../rustora-fs" }
 rustora-game = { path = "../rustora-game" }
 rustora-net = { path = "../rustora-net" }
 indexmap = "2"
+smallvec = { version = "1", features = ["union", "const_generics"] }
 thiserror = "2"
 log = "0.4"
 

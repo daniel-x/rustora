@@ -148,8 +148,9 @@ struct Bin {
     proximity_triggers: Vec<Rc<ProximityTrigger>>,
 }
 
-/// Nodes of one cell, oldest first (C# keeps a linked list with the newest at the head).
-type CellNodes = Vec<(u8, ActorRef)>;
+/// Nodes of one cell, oldest first (C# keeps a linked list with the newest at the head). A single occupant is stored
+/// in the cell itself.
+type CellNodes = smallvec::SmallVec<[(u8, ActorRef); 1]>;
 
 #[derive(rustora_engine::persist::Persist)]
 pub struct ActorMap {
@@ -186,7 +187,7 @@ info_impl!(ActorMapInfo => |info, init| {
         cell_trigger_influence: RefCell::new(NetMap::new()),
         proximity_triggers: RefCell::new(NetMap::new()),
         next_trigger_id: Cell::new(0),
-        influence: RefCell::new(CellLayer::new(mw, mh, Vec::new())),
+        influence: RefCell::new(CellLayer::new(mw, mh, CellNodes::new())),
         cell_updated: RefCell::new(Vec::new()),
         bins: RefCell::new(bins),
         rows,
@@ -346,6 +347,21 @@ impl ActorMap {
             .iter()
             .rev()
             .filter(|n| n.0 == sub || n.0 == FULL_CELL || always)
+            .map(|n| n.1.clone())
+            .collect()
+    }
+
+    /// [`ActorMap::get_actors_at_sub`] without a heap allocation for up to 4 actors.
+    pub fn actors_at_inline(&self, a: CPos, sub: u8) -> smallvec::SmallVec<[ActorRef; 4]> {
+        let inf = self.influence.borrow();
+        if !inf.contains_cell(a) {
+            return smallvec::SmallVec::new();
+        }
+        let always = sub == FULL_CELL || sub == ANY;
+        inf.at(a)
+            .iter()
+            .rev()
+            .filter(|n| always || n.0 == sub || n.0 == FULL_CELL)
             .map(|n| n.1.clone())
             .collect()
     }

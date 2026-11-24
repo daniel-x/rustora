@@ -13,6 +13,7 @@ rustora-engine = { path = "../rustora-engine" }
 rustora-game = { path = "../rustora-game" }
 rustora-net = { path = "../rustora-net" }
 indexmap = "2"
+smallvec = { version = "1", features = ["union", "const_generics"] }
 log = "0.4"
 
 [lints]

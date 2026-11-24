@@ -33,6 +33,9 @@ pub enum CellStatus {
 #[derive(Clone, Copy, Debug)]
 pub struct CellInfo {
     pub status: CellStatus,
+    /// The search generation of a pooled map layer that wrote the entry; entries of older searches read as
+    /// unvisited, so that a reused layer needs no clearing.
+    stamp: u16,
     pub cost_so_far: i32,
     pub estimated_total_cost: i32,
     pub previous_node: CPos,
@@ -42,6 +45,7 @@ impl Default for CellInfo {
     fn default() -> Self {
         CellInfo {
             status: CellStatus::Unvisited,
+            stamp: 0,
             cost_so_far: 0,
             estimated_total_cost: 0,
             previous_node: CPos::ZERO,
@@ -220,19 +224,21 @@ impl Grid {
 }
 
 thread_local! {
-    static LAYER_POOL: RefCell<Vec<Vec<CellInfo>>> = const { RefCell::new(Vec::new()) };
+    static LAYER_POOL: RefCell<Vec<(Vec<CellInfo>, u16)>> = const { RefCell::new(Vec::new()) };
 }
 
 const MAX_POOL_SIZE: usize = 4;
 
-fn layer_from_pool(len: usize) -> Vec<CellInfo> {
+/// A map layer and its search generation, which is never 0, so that fresh entries read as unvisited.
+fn layer_from_pool(len: usize) -> (Vec<CellInfo>, u16) {
     let reused = LAYER_POOL.with(|p| p.borrow_mut().pop());
     match reused {
-        Some(mut l) if l.len() == len => {
+        Some((l, stamp)) if l.len() == len && stamp != u16::MAX => (l, stamp + 1),
+        Some((mut l, _)) if l.len() == len => {
             l.iter_mut().for_each(|c| *c = CellInfo::default());
-            l
+            (l, 1)
         }
-        _ => vec![CellInfo::default(); len],
+        _ => (vec![CellInfo::default(); len], 1),
     }
 }
 
@@ -270,16 +276,31 @@ pub struct DenseParams {
 pub type EdgesFn = Rc<dyn Fn(CPos) -> Vec<GraphConnection>>;
 
 pub enum Graph {
-    Map { p: DenseParams, infos: Vec<CellInfo>, width: i32 },
-    Grid { p: DenseParams, infos: Vec<CellInfo>, grid: Grid },
-    Sparse { edges: EdgesFn, info: HashMap<CPos, CellInfo> },
+    Map {
+        p: DenseParams,
+        infos: Vec<CellInfo>,
+        width: i32,
+        stamp: u16,
+    },
+    Grid {
+        p: DenseParams,
+        infos: Vec<CellInfo>,
+        grid: Grid,
+    },
+    Sparse {
+        edges: EdgesFn,
+        info: HashMap<CPos, CellInfo>,
+    },
 }
 
 impl Graph {
     #[inline]
     pub fn get(&self, c: CPos) -> CellInfo {
         match self {
-            Graph::Map { infos, width, .. } => infos[(c.y() * width + c.x()) as usize],
+            Graph::Map { infos, width, stamp, .. } => {
+                let info = infos[(c.y() * width + c.x()) as usize];
+                if info.stamp == *stamp { info } else { CellInfo::default() }
+            }
             Graph::Grid { infos, grid, .. } => infos[((c.y() - grid.top_left.y()) * grid.width() + (c.x() - grid.top_left.x())) as usize],
             Graph::Sparse { info, .. } => info.get(&c).copied().unwrap_or_default(),
         }
@@ -288,7 +309,7 @@ impl Graph {
     #[inline]
     pub fn set(&mut self, c: CPos, v: CellInfo) {
         match self {
-            Graph::Map { infos, width, .. } => infos[(c.y() * *width + c.x()) as usize] = v,
+            Graph::Map { infos, width, stamp, .. } => infos[(c.y() * *width + c.x()) as usize] = CellInfo { stamp: *stamp, ..v },
             Graph::Grid { infos, grid, .. } => {
                 infos[((c.y() - grid.top_left.y()) * grid.width() + (c.x() - grid.top_left.x())) as usize] = v
             }
@@ -298,9 +319,9 @@ impl Graph {
         }
     }
 
-    fn get_connections(&self, position: CPos, target_predicate: &dyn Fn(CPos) -> bool) -> Vec<GraphConnection> {
+    fn get_connections(&self, position: CPos, target_predicate: &dyn Fn(CPos) -> bool) -> smallvec::SmallVec<[GraphConnection; 8]> {
         let (p, grid) = match self {
-            Graph::Sparse { edges, .. } => return edges(position),
+            Graph::Sparse { edges, .. } => return smallvec::SmallVec::from_vec(edges(position)),
             Graph::Map { p, .. } => (p, None),
             Graph::Grid { p, grid, .. } => (p, Some(*grid)),
         };
@@ -308,7 +329,7 @@ impl Graph {
         let dx = position.x() - info.previous_node.x();
         let dy = position.y() - info.previous_node.y();
         let directions = DIRECTED_NEIGHBORS[(dy * 3 + dx + 4) as usize];
-        let mut valid = Vec::with_capacity(directions.len());
+        let mut valid = smallvec::SmallVec::new();
         for &dir in directions {
             let neighbor = position + dir;
             if grid.is_some_and(|g| !g.contains(neighbor)) {
@@ -404,12 +425,13 @@ pub struct PathSearch {
 
 impl Drop for PathSearch {
     fn drop(&mut self) {
-        if let Graph::Map { infos, .. } = &mut self.graph {
+        if let Graph::Map { infos, stamp, .. } = &mut self.graph {
             let l = std::mem::take(infos);
+            let stamp = *stamp;
             LAYER_POOL.with(|p| {
                 let mut p = p.borrow_mut();
                 if p.len() < MAX_POOL_SIZE {
-                    p.push(l);
+                    p.push((l, stamp));
                 }
             });
         }
@@ -418,11 +440,8 @@ impl Drop for PathSearch {
 
 fn map_graph(map: &Map, p: DenseParams) -> Graph {
     let (w, h) = map.map_size;
-    Graph::Map {
-        p,
-        infos: layer_from_pool((w * h) as usize),
-        width: w,
-    }
+    let (infos, stamp) = layer_from_pool((w * h) as usize);
+    Graph::Map { p, infos, width: w, stamp }
 }
 
 impl PathSearch {
@@ -575,6 +594,7 @@ impl PathSearch {
                 cost_so_far: initial_cost,
                 estimated_total_cost: initial_cost.wrapping_add(estimated),
                 previous_node: location,
+                stamp: 0,
             },
         );
         self.open_queue.add(GraphConnection {
@@ -632,6 +652,7 @@ impl PathSearch {
                     cost_so_far,
                     estimated_total_cost: total,
                     previous_node: current,
+                    stamp: 0,
                 },
             );
             self.open_queue.add(GraphConnection {

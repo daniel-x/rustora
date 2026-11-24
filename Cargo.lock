@@ -2672,6 +2672,7 @@ dependencies = [
  "rustora-fs",
  "rustora-game",
  "rustora-net",
+ "smallvec",
  "thiserror 2.0.21",
 ]
 
@@ -2733,6 +2734,7 @@ dependencies = [
  "rustora-engine",
  "rustora-game",
  "rustora-net",
+ "smallvec",
 ]
 
 [[package]]

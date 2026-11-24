@@ -1104,6 +1104,23 @@ impl<T: Persist> Persist for Vec<T> {
     }
 }
 
+/// Written like a `Vec`.
+impl<A: smallvec::Array> Persist for smallvec::SmallVec<A>
+where
+    A::Item: Persist,
+{
+    fn save(&self, w: &mut SaveWriter) {
+        w.len_prefix(self.len());
+        for v in self {
+            v.save(w);
+        }
+    }
+    fn load(r: &mut SaveReader) -> Self {
+        let n = r.len_prefix();
+        (0..n).map(|_| A::Item::load(r)).collect()
+    }
+}
+
 impl<T: Persist> Persist for Box<[T]> {
     fn save(&self, w: &mut SaveWriter) {
         w.len_prefix(self.len());

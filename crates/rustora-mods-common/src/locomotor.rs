@@ -124,6 +124,80 @@ struct CellCache {
     flag: u8,
 }
 
+/// What a locomotor knows about a cell: the blocking cache, the terrain cost and whether the blocking cache must be
+/// updated, in one record, so that a cost query reads one cache line.
+#[derive(Clone, Copy, Default)]
+struct CellState {
+    immovable: u64,
+    crushable: u64,
+    cost: i16,
+    flag: u8,
+    dirty: bool,
+}
+
+/// The cell states of a locomotor, set when the world is loaded. Save games write them as the former dirty cell set,
+/// cost layer and blocking cache layer.
+#[derive(Default)]
+struct Cells(OnceCell<RefCell<CellLayer<CellState>>>);
+
+impl rustora_engine::persist::PersistState for Cells {
+    fn save_state(&self, w: &mut rustora_engine::persist::SaveWriter) {
+        use rustora_engine::persist::Persist;
+        let Some(layer) = self.0.get() else {
+            HashSet::<CPos>::default().save(w);
+            w.bool(false);
+            w.bool(false);
+            return;
+        };
+        let l = layer.borrow();
+        let (width, height) = (l.width, l.height);
+        let mut dirty = HashSet::<CPos>::default();
+        let mut cost = Vec::with_capacity(l.raw().len());
+        let mut cache = Vec::with_capacity(l.raw().len());
+        for (i, c) in l.raw().iter().enumerate() {
+            if c.dirty {
+                dirty.insert(CPos::new(i as i32 % width, i as i32 / width));
+            }
+            cost.push(c.cost);
+            cache.push(CellCache {
+                immovable: c.immovable,
+                crushable: c.crushable,
+                flag: c.flag,
+            });
+        }
+        dirty.save(w);
+        w.bool(true);
+        CellLayer::from_raw(width, height, cost).save(w);
+        w.bool(true);
+        CellLayer::from_raw(width, height, cache).save(w);
+    }
+
+    fn load_state(&self, r: &mut rustora_engine::persist::SaveReader) {
+        use rustora_engine::persist::Persist;
+        let dirty = HashSet::<CPos>::load(r);
+        let cost = r.bool().then(|| CellLayer::<i16>::load(r));
+        let cache = r.bool().then(|| CellLayer::<CellCache>::load(r));
+        let (Some(cost), Some(cache)) = (cost, cache) else {
+            return;
+        };
+        let Some(layer) = self.0.get() else {
+            r.fail("the locomotor cells are empty in the loaded world".to_string());
+        };
+        let mut l = layer.borrow_mut();
+        let width = l.width;
+        for (i, c) in l.raw_mut().iter_mut().enumerate() {
+            let b = cache.raw()[i];
+            *c = CellState {
+                immovable: b.immovable,
+                crushable: b.crushable,
+                cost: cost.raw()[i],
+                flag: b.flag,
+                dirty: dirty.contains(&CPos::new(i as i32 % width, i as i32 / width)),
+            };
+        }
+    }
+}
+
 pub type CellCostChanged = Rc<dyn Fn(CPos, i16, i16)>;
 
 #[derive(rustora_engine::persist::Persist)]
@@ -131,9 +205,7 @@ pub struct Locomotor {
     pub info: Rc<LocomotorInfo>,
     terrain_infos: Vec<TerrainSpeedInfo>,
     world: std::rc::Weak<World>,
-    dirty_cells: RefCell<HashSet<CPos>>,
-    cells_cost: OnceCell<RefCell<CellLayer<i16>>>,
-    blocking_cache: OnceCell<RefCell<CellLayer<CellCache>>>,
+    cells: Cells,
     #[persist(skip)]
     cell_cost_changed: RefCell<Vec<CellCostChanged>>,
     me: std::rc::Weak<Locomotor>,
@@ -149,9 +221,7 @@ info_impl!(LocomotorInfo => |info, init| {
         info,
         terrain_infos,
         world: weak,
-        dirty_cells: RefCell::new(HashSet::default()),
-        cells_cost: OnceCell::new(),
-        blocking_cache: OnceCell::new(),
+        cells: Cells::default(),
         cell_cost_changed: RefCell::new(Vec::new()),
         me: me.clone(),
     }))
@@ -170,11 +240,13 @@ impl IWorldLoaded for Locomotor {
         let me = self.me.clone();
         w.actor_map().on_cell_updated(Rc::new(move |c| {
             if let Some(m) = me.upgrade() {
-                m.dirty_cells.borrow_mut().insert(c);
+                let mut l = m.cells().borrow_mut();
+                if l.contains_cell(c) {
+                    l.at_mut(c).dirty = true;
+                }
             }
         }));
-        let _ = self.cells_cost.set(RefCell::new(CellLayer::new(mw, mh, 0)));
-        let _ = self.blocking_cache.set(RefCell::new(CellLayer::new(mw, mh, CellCache::default())));
+        let _ = self.cells.0.set(RefCell::new(CellLayer::new(mw, mh, CellState::default())));
         for cell in map.all_cells() {
             self.update_cell_cost(cell);
             self.update_cell_blocking(cell);
@@ -187,6 +259,10 @@ impl Locomotor {
         self.world.upgrade().expect("world alive")
     }
 
+    fn cells(&self) -> &RefCell<CellLayer<CellState>> {
+        self.cells.0.get().expect("locomotor loaded")
+    }
+
     pub fn on_cell_cost_changed(&self, f: CellCostChanged) {
         self.cell_cost_changed.borrow_mut().push(f);
     }
@@ -195,7 +271,7 @@ impl Locomotor {
         if !self.world().map().contains(cell) {
             return MOVEMENT_COST_FOR_UNREACHABLE_CELL;
         }
-        *self.cells_cost.get().expect("locomotor loaded").borrow().at(cell)
+        self.cells().borrow().at(cell).cost
     }
 
     pub fn movement_speed_for_cell(&self, cell: CPos) -> i32 {
@@ -262,11 +338,7 @@ impl Locomotor {
         }
         let w = self.world();
         let am = w.actor_map();
-        let others = if sub == FULL_CELL {
-            am.get_actors_at(cell)
-        } else {
-            am.get_actors_at_sub(cell, sub)
-        };
+        let others = am.actors_at_inline(cell, sub);
         if ignore_self {
             let mut is_blocked = false;
             for other in &others {
@@ -372,11 +444,12 @@ impl Locomotor {
         true
     }
 
-    fn get_cache(&self, cell: CPos) -> CellCache {
-        if self.dirty_cells.borrow_mut().remove(&cell) {
+    fn get_cache(&self, cell: CPos) -> CellState {
+        let dirty = std::mem::take(&mut self.cells().borrow_mut().at_mut(cell).dirty);
+        if dirty {
             self.update_cell_blocking(cell);
         }
-        *self.blocking_cache.get().expect("locomotor loaded").borrow().at(cell)
+        *self.cells().borrow().at(cell)
     }
 
     fn update_cell_cost(&self, cell: CPos) {
@@ -388,10 +461,9 @@ impl Locomotor {
             MOVEMENT_COST_FOR_UNREACHABLE_CELL
         };
         let old = {
-            let mut c = self.cells_cost.get().expect("locomotor loaded").borrow_mut();
-            let old = *c.at(cell);
-            c.set_at(cell, cost);
-            old
+            let mut c = self.cells().borrow_mut();
+            let s = c.at_mut(cell);
+            std::mem::replace(&mut s.cost, cost)
         };
         let listeners = self.cell_cost_changed.borrow().clone();
         for f in listeners {
@@ -407,17 +479,10 @@ impl Locomotor {
         let mut immovable = 0u64;
         let mut crushable = all;
         if self.info.shares_cell && am.has_free_subcell(cell, true) {
-            self.blocking_cache.get().expect("locomotor loaded").borrow_mut().set_at(
-                cell,
-                CellCache {
-                    immovable,
-                    crushable,
-                    flag,
-                },
-            );
+            self.set_blocking(cell, immovable, crushable, flag);
             return;
         }
-        for actor in am.get_actors_at(cell) {
+        for actor in am.actors_at_inline(cell, FULL_CELL) {
             let mut actor_immovable = all;
             let mut actor_crushable = 0u64;
             let mobile = crate::mobile::mobile_of(&actor);
@@ -445,14 +510,15 @@ impl Locomotor {
             crushable &= actor_crushable;
             immovable |= actor_immovable;
         }
-        self.blocking_cache.get().expect("locomotor loaded").borrow_mut().set_at(
-            cell,
-            CellCache {
-                immovable,
-                crushable,
-                flag,
-            },
-        );
+        self.set_blocking(cell, immovable, crushable, flag);
+    }
+
+    fn set_blocking(&self, cell: CPos, immovable: u64, crushable: u64, flag: u8) {
+        let mut l = self.cells().borrow_mut();
+        let s = l.at_mut(cell);
+        s.immovable = immovable;
+        s.crushable = crushable;
+        s.flag = flag;
     }
 
     /// Lowest cost over the terrain speeds, for the path cost estimator.

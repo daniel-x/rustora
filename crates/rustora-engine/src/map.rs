@@ -72,6 +72,11 @@ impl<T> CellLayer<T> {
         &self.data
     }
 
+    /// The values in row order, writable.
+    pub fn raw_mut(&mut self) -> &mut Vec<T> {
+        &mut self.data
+    }
+
     pub fn from_raw(width: i32, height: i32, data: Vec<T>) -> Self {
         CellLayer { width, height, data }
     }
