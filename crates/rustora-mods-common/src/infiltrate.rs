@@ -120,14 +120,16 @@ impl Infiltrates {
                 info.types.overlaps(&enabled_target_types(a))
                     && info
                         .valid_relationships
-                        .has_relationship(self_.owner().relationship_with(Some(&a.owner())))
+                        .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(&a.owner()))))
             }
             TargetType::FrozenActor => {
                 let f = target.frozen_actor().expect("type was checked");
                 f.is_valid()
                     && info.types.overlaps(&f.target_types())
-                    && f.owner()
-                        .is_some_and(|o| info.valid_relationships.has_relationship(self_.owner().relationship_with(Some(&o))))
+                    && f.owner().is_some_and(|o| {
+                        info.valid_relationships
+                            .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(&o))))
+                    })
             }
             _ => false,
         }
@@ -148,14 +150,14 @@ impl IIssueOrder for Infiltrates {
             true,
             Box::new(move |self_, target, _, _| {
                 a.valid_relationships
-                    .has_relationship(self_.owner().relationship_with(Some(&target.owner())))
+                    .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(&target.owner()))))
                     && a.types.overlaps(&all_target_types(target))
             }),
             Box::new(move |self_, target, _, _| {
-                target
-                    .owner()
-                    .is_some_and(|o| f.valid_relationships.has_relationship(self_.owner().relationship_with(Some(&o))))
-                    && f.types.overlaps(&crate::targetable::info_all_target_types(target.info()))
+                target.owner().is_some_and(|o| {
+                    f.valid_relationships
+                        .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(&o))))
+                }) && f.types.overlaps(&crate::targetable::info_all_target_types(target.info()))
             }),
         ))]
     }
@@ -785,15 +787,15 @@ impl IIssueOrder for Disguise {
             true,
             Box::new(move |self_, target, _, _| {
                 a.valid_relationships
-                    .has_relationship(self_.owner().relationship_with(Some(&target.owner())))
+                    .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(&target.owner()))))
                     && target.id != self_.id
                     && a.target_types.overlaps(&all_target_types(target))
             }),
             Box::new(move |self_, target, _, _| {
-                target
-                    .owner()
-                    .is_some_and(|o| f.valid_relationships.has_relationship(self_.owner().relationship_with(Some(&o))))
-                    && f.target_types.overlaps(&crate::targetable::info_all_target_types(target.info()))
+                target.owner().is_some_and(|o| {
+                    f.valid_relationships
+                        .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(&o))))
+                }) && f.target_types.overlaps(&crate::targetable::info_all_target_types(target.info()))
             }),
         );
         targeter.force_attack = Some(false);

@@ -334,7 +334,7 @@ impl INotifyKilled for GivesExperience {
         if !self
             .info
             .valid_relationships
-            .has_relationship(attacker.owner().relationship_with(Some(&self_.owner())))
+            .has_relationship(attacker.with_owner(|owner_| owner_.relationship_with(Some(&self_.owner()))))
         {
             return;
         }

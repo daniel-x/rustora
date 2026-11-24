@@ -305,7 +305,7 @@ impl Cloak {
     }
 
     pub fn is_visible_to(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> bool {
-        if !self.cloaked() || self_.owner().is_allied_with(viewer.map(|v| v.as_ref())) {
+        if !self.cloaked() || self_.with_owner(|owner_| owner_.is_allied_with(viewer.map(|v| v.as_ref()))) {
             return true;
         }
         let Some(viewer) = viewer else { return false };
@@ -313,7 +313,7 @@ impl Cloak {
         let pos = self_.center_position();
         w.actors_with_trait::<DetectCloaked>().iter().any(|(a, d)| {
             a.is_in_world()
-                && a.owner().is_allied_with(Some(viewer))
+                && a.with_owner(|owner_| owner_.is_allied_with(Some(viewer)))
                 && self.info.detection_types.overlaps(&d.info.detection_types)
                 && (pos - a.center_position()).length_squared() <= d.range().length_squared()
         })

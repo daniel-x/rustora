@@ -376,7 +376,10 @@ fn find_repair_building(self_: &ActorRef, repair_actors: &IndexSet<String>) -> O
         .actors_having_trait::<RepairsUnits>()
         .into_iter()
         .filter(|a| {
-            !a.is_dead() && a.is_in_world() && a.owner().is_allied_with(Some(&self_.owner())) && repair_actors.contains(&a.info.name)
+            !a.is_dead()
+                && a.is_in_world()
+                && a.with_owner(|owner_| owner_.is_allied_with(Some(&self_.owner())))
+                && repair_actors.contains(&a.info.name)
         })
         .collect();
     buildings.sort_by_key(|a| {

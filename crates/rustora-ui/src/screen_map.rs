@@ -258,7 +258,7 @@ impl SelectionContext<'_> {
 
     fn selectable_by_viewer(&self, a: &ActorRef) -> bool {
         a.info.has_trait_info::<rustora_mods_common::selection::SelectableInfo>()
-            && (a.owner().is_allied_with(self.render_player.map(|p| &**p)) || !self.fog_obscures(a))
+            && (a.with_owner(|owner_| owner_.is_allied_with(self.render_player.map(|p| &**p))) || !self.fog_obscures(a))
     }
 
     /// `SelectHighestPriorityActorAtPoint`.

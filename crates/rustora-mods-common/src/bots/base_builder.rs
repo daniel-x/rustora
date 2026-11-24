@@ -394,7 +394,8 @@ impl IBotRespondToAttack for BaseBuilderBotModule {
 
     fn respond_to_attack(&self, _bot: &ModularBot, self_: &ActorRef, e: &AttackInfo) {
         let Some(attacker) = &e.attacker else { return };
-        if attacker.disposed() || attacker.owner().relationship_with(Some(&self_.owner())) != PlayerRelationship::ENEMY {
+        if attacker.disposed() || attacker.with_owner(|owner_| owner_.relationship_with(Some(&self_.owner()))) != PlayerRelationship::ENEMY
+        {
             return;
         }
         if !attacker.info.has_trait_info_assignable_to("ITargetableInfo") {

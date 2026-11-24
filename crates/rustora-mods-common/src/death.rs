@@ -878,7 +878,10 @@ rustora_engine::conditional_simple!(EjectOnDeath);
 impl INotifyKilled for EjectOnDeath {
     fn killed(&self, self_: &ActorRef, _e: &AttackInfo) {
         let w = self_.world();
-        if self.state.is_trait_disabled() || self_.owner().win_state.get() == WinState::Lost || !w.map().contains(self_.location()) {
+        if self.state.is_trait_disabled()
+            || self_.with_owner(|owner_| owner_.win_state.get()) == WinState::Lost
+            || !w.map().contains(self_.location())
+        {
             return;
         }
         if w.shared_random.borrow_mut().next_max(100) >= self.info.success_rate {

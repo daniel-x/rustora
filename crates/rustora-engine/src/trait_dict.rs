@@ -71,6 +71,19 @@ impl TraitDict {
         f(c.as_any().downcast_ref::<RefCell<Container<T>>>().expect("container type"))
     }
 
+    /// Calls `f` with the container of `T` while the container map stays borrowed, without creating a missing
+    /// container. `f` must not add traits.
+    fn read<T: ?Sized + 'static, R>(&self, f: impl FnOnce(Option<&Container<T>>) -> R) -> R {
+        let map = self.containers.borrow();
+        match map.get(&TypeId::of::<T>()) {
+            None => f(None),
+            Some(c) => {
+                let c = c.as_any().downcast_ref::<RefCell<Container<T>>>().expect("container type").borrow();
+                f(Some(&c))
+            }
+        }
+    }
+
     /// Adds `trait_` for `actor` under the key `T` (an interface `dyn I` or a concrete type).
     pub fn add<T: ?Sized + 'static>(&self, actor: &ActorRef, trait_: Rc<T>) {
         self.with::<T, _>(|c| {
@@ -84,8 +97,8 @@ impl TraitDict {
 
     /// The single trait of `actor` implementing `T`. Panics if there are several, like C#.
     pub fn get_or_default<T: ?Sized + 'static>(&self, actor: &Actor) -> Option<Rc<T>> {
-        self.with::<T, _>(|c| {
-            let c = c.borrow();
+        self.read::<T, _>(|c| {
+            let c = c?;
             let idx = c.lower_bound(actor.id);
             if c.ids.get(idx) != Some(&actor.id) {
                 return None;
@@ -113,8 +126,8 @@ impl TraitDict {
 
     /// All traits of `actor` implementing `T`, in insertion order.
     pub fn with_interface<T: ?Sized + 'static>(&self, actor: &Actor) -> Vec<Rc<T>> {
-        self.with::<T, _>(|c| {
-            let c = c.borrow();
+        self.read::<T, _>(|c| {
+            let Some(c) = c else { return Vec::new() };
             let start = c.lower_bound(actor.id);
             let end = c.lower_bound(actor.id + 1);
             c.traits[start..end].to_vec()

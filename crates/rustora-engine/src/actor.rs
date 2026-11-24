@@ -246,6 +246,11 @@ impl Actor {
     }
 
     /// True if `p` owns the actor, without cloning the owner reference.
+    /// Calls `f` with the owner, borrowed instead of cloned. `f` must not change the owner.
+    pub fn with_owner<R>(&self, f: impl FnOnce(&crate::player::Player) -> R) -> R {
+        f(self.owner.borrow().as_ref().expect("actor has an owner"))
+    }
+
     pub fn is_owned_by(&self, p: &PlayerRef) -> bool {
         self.owner.borrow().as_ref().is_some_and(|o| Rc::ptr_eq(o, p))
     }

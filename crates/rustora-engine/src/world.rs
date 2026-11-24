@@ -95,6 +95,8 @@ pub struct World {
     trait_owners: RefCell<rustora_core::hash::HashMap<usize, (std::rc::Weak<Actor>, u32)>>,
     /// True while a save game is restored: the world loaded hooks create no actors.
     restoring: Cell<bool>,
+    /// The buffer of the actors that a tick visits, kept between ticks.
+    tick_actors: RefCell<Vec<ActorRef>>,
 }
 
 /// `RustoraHarness.BotSeed`: the seed of the bot random numbers, derived from the lobby random seed.
@@ -176,6 +178,7 @@ impl World {
             game_info: RefCell::new(None),
             trait_owners: RefCell::new(rustora_core::hash::HashMap::default()),
             restoring: Cell::new(false),
+            tick_actors: RefCell::new(Vec::new()),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -651,9 +654,13 @@ impl World {
         }
         if !self.paused.get() && (self.world_type != WorldType::Shellmap || !self.pause_shellmap.get() || self.world_tick.get() == 0) {
             self.world_tick.set(self.world_tick.get() + 1);
-            for a in self.actors() {
+            let mut actors = self.tick_actors.take();
+            actors.extend(self.actors.borrow().values().cloned());
+            for a in &actors {
                 a.tick();
             }
+            actors.clear();
+            *self.tick_actors.borrow_mut() = actors;
             self.trait_dict.apply_to_all::<dyn ITick>(|a, t| {
                 rustora_core::world_types::TRACE_ACTOR_ID.with(|c| c.set(a.id));
                 t.tick(a)

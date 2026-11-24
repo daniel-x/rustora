@@ -2159,7 +2159,7 @@ impl Activity for AttackActivity {
                     .filter(|a| {
                         !a.is_dead()
                             && a.is_in_world()
-                            && a.owner().is_allied_with(Some(&self_.owner()))
+                            && a.with_owner(|owner_| owner_.is_allied_with(Some(&self_.owner())))
                             && rearmable.info.rearm_actors.contains(&a.info.name)
                     })
                     .collect();
@@ -2982,7 +2982,7 @@ impl AttackOrderTargeter {
         }
         if let Some(t) = target.actor().filter(|_| target.target_type() == TargetType::Actor) {
             let disguised = t.trait_or_default::<dyn IEffectiveOwner>().is_some_and(|e| e.disguised());
-            if disguised && self_.owner().relationship_with(Some(&t.owner())) == PlayerRelationship::ENEMY {
+            if disguised && self_.with_owner(|owner_| owner_.relationship_with(Some(&t.owner()))) == PlayerRelationship::ENEMY {
                 *modifiers = modifiers.with(TargetModifiers::FORCE_ATTACK, true);
             }
         }

@@ -302,7 +302,7 @@ impl Shroud {
                     self.revealed_cells.set(self.revealed_cells.get() - 1);
                 }
             }
-            if self_.owner().win_state.get() == WinState::Lost {
+            if self_.with_owner(|owner_| owner_.win_state.get()) == WinState::Lost {
                 self.revealed_cells.set(0);
             }
         }

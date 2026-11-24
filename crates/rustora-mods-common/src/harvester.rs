@@ -274,7 +274,7 @@ impl ResourceClaimLayer {
             claimers.retain(|a| !a.is_dead());
             if claimers
                 .iter()
-                .any(|c| c.id != claimer.id && claimer.owner().is_allied_with(Some(&c.owner())))
+                .any(|c| c.id != claimer.id && claimer.with_owner(|owner_| owner_.is_allied_with(Some(&c.owner()))))
             {
                 return false;
             }
@@ -297,7 +297,7 @@ impl ResourceClaimLayer {
             None => true,
             Some(claimers) => !claimers
                 .iter()
-                .any(|c| c.id != claimer.id && !c.is_dead() && claimer.owner().is_allied_with(Some(&c.owner()))),
+                .any(|c| c.id != claimer.id && !c.is_dead() && claimer.with_owner(|owner_| owner_.is_allied_with(Some(&c.owner())))),
         }
     }
 
@@ -1317,13 +1317,13 @@ impl IDockClient for Harvester {
         self.can_dock(host.info.ty, force_enter)
             && host.is_docking_possible(self.dock_client_manager.as_ref(), ignore_occupancy)
             && (Rc::ptr_eq(&self.self_.owner(), &host_actor.owner())
-                || (ignore_occupancy && self.self_.owner().is_allied_with(Some(&host_actor.owner()))))
+                || (ignore_occupancy && self.self_.with_owner(|owner_| owner_.is_allied_with(Some(&host_actor.owner())))))
     }
 
     fn can_queue_dock_at(&self, host_actor: &ActorRef, host: &Rc<DockHost>, _force_enter: bool, _is_queued: bool) -> bool {
         self.can_dock(host.info.ty, true)
             && host.is_docking_possible(self.dock_client_manager.as_ref(), true)
-            && self.self_.owner().is_allied_with(Some(&host_actor.owner()))
+            && self.self_.with_owner(|owner_| owner_.is_allied_with(Some(&host_actor.owner())))
     }
 
     fn on_dock_started(&self, _self_: &ActorRef, host_actor: &ActorRef, host: &Rc<DockHost>) {

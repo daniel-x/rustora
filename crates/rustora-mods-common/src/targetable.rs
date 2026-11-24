@@ -213,7 +213,7 @@ impl ICrushable for Crushable {
         if self.info.crushed_by_friendlies {
             all
         } else {
-            all & !self_.owner().allied_players_mask.get()
+            all & !self_.with_owner(|owner_| owner_.allied_players_mask.get())
         }
     }
 }

@@ -163,7 +163,7 @@ impl IProvideTooltipInfo for TooltipDescription {
             && self
                 .info
                 .valid_relationships
-                .has_relationship(self_.owner().relationship_with(Some(for_player)))
+                .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(for_player))))
     }
 
     fn tooltip_text(&self, _actor: &ActorRef, message: &dyn Fn(&str) -> String) -> String {

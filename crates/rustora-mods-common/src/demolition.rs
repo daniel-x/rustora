@@ -118,11 +118,14 @@ impl IIssueOrder for Demolition {
                 if modifiers.has_modifier(TargetModifiers::FORCE_MOVE) {
                     return false;
                 }
-                relationship_allowed(&a, target.owner().relationship_with(Some(&self_.owner())), modifiers)
-                    && target
-                        .traits_implementing::<dyn IDemolishable>()
-                        .iter()
-                        .any(|d| d.is_valid_target(target, self_))
+                relationship_allowed(
+                    &a,
+                    target.with_owner(|owner_| owner_.relationship_with(Some(&self_.owner()))),
+                    modifiers,
+                ) && target
+                    .traits_implementing::<dyn IDemolishable>()
+                    .iter()
+                    .any(|d| d.is_valid_target(target, self_))
             }),
             Box::new(move |self_, target, modifiers, _| {
                 target

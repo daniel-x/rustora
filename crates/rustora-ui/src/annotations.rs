@@ -56,7 +56,7 @@ fn draw_target_lines(dc: &mut DrawContext, ingame: &Ingame, settings: &Settings,
         if automatic && !previous.contains(&a.id) {
             line.show(a);
         }
-        let allied = a.owner().is_allied_with(ingame.world.sound.local_player().as_deref());
+        let allied = a.with_owner(|owner_| owner_.is_allied_with(ingame.world.sound.local_player().as_deref()));
         if !lines_enabled || !allied || !(force || (automatic && line.within_lifetime())) {
             continue;
         }

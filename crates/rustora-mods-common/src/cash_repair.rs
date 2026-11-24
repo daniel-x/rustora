@@ -118,10 +118,13 @@ impl IIssueOrder for DeliversCash {
             false,
             true,
             Box::new(move |self_, target, _, _| {
-                target
-                    .info
-                    .trait_info::<AcceptsDeliveredCashInfo>()
-                    .is_some_and(|i| accepts_cash_from(&i, target.owner().relationship_with(Some(&self_.owner())), a.as_ref()))
+                target.info.trait_info::<AcceptsDeliveredCashInfo>().is_some_and(|i| {
+                    accepts_cash_from(
+                        &i,
+                        target.with_owner(|owner_| owner_.relationship_with(Some(&self_.owner()))),
+                        a.as_ref(),
+                    )
+                })
             }),
             Box::new(move |self_, target, _, _| {
                 target.info().trait_info::<AcceptsDeliveredCashInfo>().is_some_and(|i| {
@@ -370,7 +373,7 @@ impl IIssueOrder for InstantlyRepairs {
                     || !a
                         .info
                         .valid_relationships
-                        .has_relationship(target.owner().relationship_with(Some(&self_.owner())))
+                        .has_relationship(target.with_owner(|owner_| owner_.relationship_with(Some(&self_.owner()))))
                 {
                     return false;
                 }
@@ -442,7 +445,7 @@ impl EnterHooks for InstantRepairHooks {
     fn try_start_enter(&self, enter: &Enter, self_: &ActorRef, target_actor: &ActorRef) -> bool {
         let health = target_actor.trait_or_default::<dyn IHealth>();
         let repairable = target_actor.trait_or_default::<InstantlyRepairable>();
-        let stance = self_.owner().relationship_with(Some(&target_actor.owner()));
+        let stance = self_.with_owner(|owner_| owner_.relationship_with(Some(&target_actor.owner())));
         let can_enter = health.is_some_and(|h| h.damage_state() != DamageState::UNDAMAGED)
             && repairable.is_some_and(|r| !r.state.is_trait_disabled())
             && self.info.valid_relationships.has_relationship(stance);
@@ -462,7 +465,7 @@ impl EnterHooks for InstantRepairHooks {
         if repairable.state.is_trait_disabled() || health.damage_state() == DamageState::UNDAMAGED {
             return;
         }
-        let stance = self_.owner().relationship_with(Some(&target_actor.owner()));
+        let stance = self_.with_owner(|owner_| owner_.relationship_with(Some(&target_actor.owner())));
         if !self.info.valid_relationships.has_relationship(stance) {
             return;
         }

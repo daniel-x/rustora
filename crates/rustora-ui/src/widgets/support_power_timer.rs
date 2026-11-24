@@ -86,7 +86,7 @@ impl WidgetKind for SupportPowerTimerWidget {
         let viewer = ingame.render_player().or_else(|| ingame.local_player.clone());
         let blink = world.local_frame_number() % 50 < 25;
         for (actor, manager) in world.actors_with_trait::<SupportPowerManager>() {
-            if actor.is_dead() || actor.owner().non_combatant {
+            if actor.is_dead() || actor.with_owner(|owner_| owner_.non_combatant) {
                 continue;
             }
             for power in manager.powers.borrow().values() {

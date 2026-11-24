@@ -1113,7 +1113,7 @@ impl ISelectionBar for Chronoshiftable {
         if self.state.is_trait_disabled()
             || !self.info.return_to_origin
             || ticks == 0
-            || !self_.owner().is_allied_with(viewer.map(|v| &**v))
+            || !self_.with_owner(|owner_| owner_.is_allied_with(viewer.map(|v| &**v)))
         {
             return 0.0;
         }
@@ -1128,7 +1128,7 @@ impl ISelectionBar for Chronoshiftable {
 impl ISelectionBar for ConyardChronoReturn {
     fn value(&self, self_: &ActorRef, viewer: Option<&rustora_engine::player::PlayerRef>) -> f32 {
         let ticks = self.return_ticks.get();
-        if ticks == 0 || !self_.owner().is_allied_with(viewer.map(|v| &**v)) {
+        if ticks == 0 || !self_.with_owner(|owner_| owner_.is_allied_with(viewer.map(|v| &**v))) {
             return 0.0;
         }
         ticks as f32 / self.duration as f32

@@ -517,7 +517,7 @@ impl HarvesterBotModule {
                 .actor_map()
                 .actors_in_box(origin - v, origin + v)
                 .into_iter()
-                .filter(|u| !u.is_dead() && a2.owner().relationship_with(Some(&u.owner())) == PlayerRelationship::ENEMY)
+                .filter(|u| !u.is_dead() && a2.with_owner(|owner_| owner_.relationship_with(Some(&u.owner()))) == PlayerRelationship::ENEMY)
                 .count() as i32;
             let c = threats * min_cell_cost * multiplier;
             bins.borrow_mut().insert(bin, c);
@@ -563,7 +563,8 @@ impl IBotRespondToAttack for BuildingRepairBotModule {
 
     fn respond_to_attack(&self, bot: &ModularBot, self_: &ActorRef, e: &AttackInfo) {
         let attacker_owner = e.attacker.as_ref().map(|a| a.owner());
-        if self_.is_dead() || self_.owner().relationship_with(attacker_owner.as_deref()) == PlayerRelationship::NEUTRAL {
+        if self_.is_dead() || self_.with_owner(|owner_| owner_.relationship_with(attacker_owner.as_deref())) == PlayerRelationship::NEUTRAL
+        {
             return;
         }
         let Some(rb) = self_.trait_or_default::<crate::base::RepairableBuilding>() else {
@@ -688,7 +689,7 @@ impl MinelayerBotModule {
         let player = self.self_.owner();
         let mut enemy = false;
         for a in w.find_actors_in_circle(pos, dist) {
-            let rel = a.owner().relationship_with(Some(&player));
+            let rel = a.with_owner(|owner_| owner_.relationship_with(Some(&player)));
             let away = if rel == PlayerRelationship::ALLY {
                 &self.info.away_from_allied_target_types
             } else if rel == PlayerRelationship::ENEMY {

@@ -165,7 +165,7 @@ impl CaptureManager {
     }
 
     fn can_target_types(&self, target: &PlayerRef, types: BitSet<CaptureType>) -> bool {
-        let relationship = self.self_.owner().relationship_with(Some(target));
+        let relationship = self.self_.with_owner(|owner_| owner_.relationship_with(Some(target)));
         if relationship.has_relationship(PlayerRelationship::ENEMY) {
             return types.overlaps(&self.enemy_captures_types.get());
         }
@@ -182,7 +182,9 @@ impl CaptureManager {
         if target.self_.is_dead() {
             return None;
         }
-        let relationship = self.self_.owner().relationship_with(Some(&target.self_.owner()));
+        let relationship = self
+            .self_
+            .with_owner(|owner_| owner_.relationship_with(Some(&target.self_.owner())));
         let mut captures: Vec<Rc<Captures>> = self
             .captures
             .borrow()
@@ -494,7 +496,7 @@ impl IIssueOrder for Captures {
                     return false;
                 }
                 *cursor = Some(a.info.enter_cursor.clone());
-                if a.info.sabotage_threshold > 0 && !target.owner().non_combatant {
+                if a.info.sabotage_threshold > 0 && !target.with_owner(|owner_| owner_.non_combatant) {
                     let health = target.trait_::<dyn IHealth>();
                     if health.hp() as i64 * 100 > a.info.sabotage_threshold as i64 * health.max_hp() as i64 {
                         *cursor = Some(a.info.sabotage_cursor.clone());
@@ -597,7 +599,7 @@ impl CaptureActorHooks {
                 return;
             }
             let info = &captures.info;
-            if info.sabotage_threshold > 0 && !enter_actor.owner().non_combatant {
+            if info.sabotage_threshold > 0 && !enter_actor.with_owner(|owner_| owner_.non_combatant) {
                 let health = enter_actor.trait_::<dyn IHealth>();
                 if 100 * health.hp() as i64 > info.sabotage_threshold as i64 * health.max_hp() as i64 {
                     let damage = (health.max_hp() as i64 * info.sabotage_hp_removal as i64 / 100) as i32;

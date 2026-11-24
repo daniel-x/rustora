@@ -132,7 +132,10 @@ impl WithDecorationBaseInfo {
                 return false;
             }
         }
-        viewer.is_none_or(|v| self.valid_relationships.has_relationship(self_.owner().relationship_with(Some(v))))
+        viewer.is_none_or(|v| {
+            self.valid_relationships
+                .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(v))))
+        })
     }
 
     fn decoration(&self, sprites: Vec<DecorationSprite>) -> Option<Decoration> {
@@ -549,7 +552,7 @@ pub trait IRenderCircles {
 
 /// `Exts.RenderPlayer`-style test: `self.Owner.IsAlliedWith(self.World.RenderPlayer)`.
 fn allied_with_viewer(self_: &ActorRef, viewer: Option<&PlayerRef>) -> bool {
-    self_.owner().is_allied_with(viewer.map(|v| &**v))
+    self_.with_owner(|owner_| owner_.is_allied_with(viewer.map(|v| &**v)))
 }
 
 macro_rules! circle_defaults {
@@ -916,7 +919,9 @@ impl IRenderCircles for WithRangeCircle {
             return;
         }
         let visible = viewer.is_none_or(|v| {
-            info.valid_relationships.has_relationship(self_.owner().relationship_with(Some(v))) || (v.spectating() && !v.non_combatant)
+            info.valid_relationships
+                .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(v))))
+                || (v.spectating() && !v.non_combatant)
         });
         if !visible {
             return;

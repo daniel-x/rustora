@@ -294,7 +294,7 @@ impl AutoTarget {
         }
         self.active_target_priorities().iter().any(|ati| {
             ati.valid_relationships
-                .has_relationship(self_.owner().relationship_with(Some(owner)))
+                .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(owner))))
                 && ati.valid_targets.overlaps(target_types)
                 && !ati.invalid_targets.overlaps(target_types)
         })

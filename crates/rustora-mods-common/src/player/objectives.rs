@@ -605,7 +605,7 @@ impl StrategicVictoryConditions {
         let (mut total, mut owned) = (0, 0);
         w.for_each_with_trait::<StrategicPoint>(|a, _| {
             total += 1;
-            if a.owner().relationship_with(Some(player)) == PlayerRelationship::ALLY {
+            if a.with_owner(|owner_| owner_.relationship_with(Some(player))) == PlayerRelationship::ALLY {
                 owned += 1;
             }
         });

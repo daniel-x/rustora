@@ -297,7 +297,7 @@ impl OrderGenerator for UnitOrderGenerator {
                 let a = &e.actor;
                 !a.is_dead()
                     && a.info.has_trait_info::<SelectableInfo>()
-                    && (a.owner().is_allied_with(ctx.render_player.map(|p| &**p)) || !sel.fog_obscures(a))
+                    && (a.with_owner(|owner_| owner_.is_allied_with(ctx.render_player.map(|p| &**p))) || !sel.fog_obscures(a))
             })
             .collect();
         let Some(actor) = with_highest_selection_priority(&candidates, xy, mi.modifiers) else {

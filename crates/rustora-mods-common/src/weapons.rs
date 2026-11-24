@@ -363,7 +363,11 @@ fn any_blocking_actors_between(w: &World, owner: &PlayerRef, start: WPos, end: W
         let blockers: Vec<Rc<dyn IBlocksProjectiles>> = a
             .traits_implementing::<dyn IBlocksProjectiles>()
             .into_iter()
-            .filter(|t| t.is_trait_enabled() && t.valid_relationships().has_relationship(a.owner().relationship_with(Some(owner))))
+            .filter(|t| {
+                t.is_trait_enabled()
+                    && t.valid_relationships()
+                        .has_relationship(a.with_owner(|owner_| owner_.relationship_with(Some(owner))))
+            })
             .collect();
         if blockers.is_empty() {
             continue;
@@ -534,7 +538,7 @@ impl WarheadBase {
 
     fn relationship_and_types_valid(&self, victim: &ActorRef, fired_by: &ActorRef) -> bool {
         self.valid_relationships
-            .has_relationship(fired_by.owner().relationship_with(Some(&victim.owner())))
+            .has_relationship(fired_by.with_owner(|owner_| owner_.relationship_with(Some(&victim.owner()))))
             && self.is_valid_target(&enabled_target_types(victim))
     }
 
@@ -1519,7 +1523,7 @@ impl Bullet {
                 && !self
                     .info
                     .valid_bounce_blocker_relationships
-                    .has_relationship(fired_by.owner().relationship_with(Some(&victim.owner())))
+                    .has_relationship(fired_by.with_owner(|owner_| owner_.relationship_with(Some(&victim.owner()))))
             {
                 continue;
             }
@@ -2703,7 +2707,7 @@ impl Missile {
         if !t
             .info
             .deflection_relationships
-            .has_relationship(a.owner().relationship_with(Some(&self.args.source_actor.owner())))
+            .has_relationship(a.with_owner(|owner_| owner_.relationship_with(Some(&self.args.source_actor.owner()))))
         {
             return false;
         }

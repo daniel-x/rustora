@@ -312,7 +312,7 @@ impl Locomotor {
             return true;
         }
         let Some(actor) = actor else { return false };
-        let owner_mask = actor.owner().player_mask;
+        let owner_mask = actor.with_owner(|owner_| owner_.player_mask);
         if cache.crushable & owner_mask != 0 {
             return true;
         }
@@ -413,7 +413,7 @@ impl Locomotor {
         if check <= BlockedByActor::Immovable
             && flag & HAS_MOVABLE_ACTOR != 0
             && other_is_movable
-            && actor.owner().relationship_with(Some(&other.owner())) == PlayerRelationship::ALLY
+            && actor.with_owner(|owner_| owner_.relationship_with(Some(&other.owner()))) == PlayerRelationship::ALLY
         {
             return false;
         }
@@ -502,7 +502,7 @@ impl Locomotor {
             }
             if is_movable {
                 flag |= HAS_MOVABLE_ACTOR;
-                actor_immovable &= !actor.owner().allied_players_mask.get();
+                actor_immovable &= !actor.with_owner(|owner_| owner_.allied_players_mask.get());
             }
             if actor.trait_or_default::<dyn crate::interfaces::ITemporaryBlocker>().is_some() {
                 flag |= HAS_TEMPORARY_BLOCKER;

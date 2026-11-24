@@ -124,7 +124,7 @@ impl GpsWatcher {
         let allies: Vec<Rc<GpsWatcher>> = world
             .actors_with_trait::<GpsWatcher>()
             .into_iter()
-            .filter(|(a, _)| a.owner().is_allied_with(Some(&self.owner)))
+            .filter(|(a, _)| a.with_owner(|owner_| owner_.is_allied_with(Some(&self.owner))))
             .map(|(_, w)| w)
             .collect();
         self.granted.set(!self.actors.borrow().is_empty() && self.launched.get());

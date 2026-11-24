@@ -719,7 +719,7 @@ impl CrateAction {
     }
 
     fn valid_faction(&self, collector: &ActorRef) -> bool {
-        !collector.owner().non_combatant
+        !collector.with_owner(|owner_| owner_.non_combatant)
             && (self.info.valid_factions.is_empty() || self.info.valid_factions.contains(&collector.owner().faction))
     }
 

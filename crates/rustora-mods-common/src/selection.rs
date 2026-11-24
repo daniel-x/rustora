@@ -286,7 +286,7 @@ impl Selection {
         actors.retain(|a| {
             a.is_in_world()
                 && (render_player.is_none()
-                    || a.owner().is_allied_with(render_player.map(|p| &**p))
+                    || a.with_owner(|owner_| owner_.is_allied_with(render_player.map(|p| &**p)))
                     || a.can_be_viewed_by_player(render_player))
         });
         let removed = actors.len() != before;

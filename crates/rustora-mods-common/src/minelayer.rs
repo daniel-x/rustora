@@ -388,7 +388,8 @@ impl INotifyCrushed for Mine {
             return;
         }
         if is_mine_immune(crusher)
-            || (self_.owner().relationship_with(Some(&crusher.owner())) == PlayerRelationship::ALLY && self.info.avoid_friendly)
+            || (self_.with_owner(|owner_| owner_.relationship_with(Some(&crusher.owner()))) == PlayerRelationship::ALLY
+                && self.info.avoid_friendly)
         {
             return;
         }
@@ -409,7 +410,7 @@ impl ICrushable for Mine {
     fn crushable_by_actor(&self, self_: &ActorRef, crusher: &ActorRef, classes: BitSet<CrushClass>) -> bool {
         if self.info.block_friendly
             && !is_mine_immune(crusher)
-            && self_.owner().relationship_with(Some(&crusher.owner())) == PlayerRelationship::ALLY
+            && self_.with_owner(|owner_| owner_.relationship_with(Some(&crusher.owner()))) == PlayerRelationship::ALLY
         {
             return false;
         }
@@ -422,7 +423,7 @@ impl ICrushable for Mine {
         }
         let all = self_.world().all_players_mask.get();
         if self.info.block_friendly {
-            all & !self_.owner().allied_players_mask.get()
+            all & !self_.with_owner(|owner_| owner_.allied_players_mask.get())
         } else {
             all
         }

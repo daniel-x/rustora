@@ -526,7 +526,7 @@ impl SupportPower {
             return;
         };
         let info = &self.info;
-        let allied = self.self_.owner().is_allied_with(Some(&local_player));
+        let allied = self.self_.with_owner(|owner_| owner_.is_allied_with(Some(&local_player)));
         let (launch, speech, text) = if allied {
             (&info.launch_sound, &info.launch_speech_notification, &info.launch_text_notification)
         } else {
@@ -1163,7 +1163,7 @@ impl SupportPowerInstance {
 
     pub fn disabled(&self) -> bool {
         let m = self.manager();
-        m.self_.owner().win_state.get() == WinState::Lost
+        m.self_.with_owner(|owner_| owner_.win_state.get()) == WinState::Lost
             || (!self.prereqs_available.get() && !m.dev_mode.all_tech())
             || !self.instances_enabled.get()
             || self.one_shot_fired.get()

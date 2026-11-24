@@ -2401,7 +2401,9 @@ impl RallyPointIndicator {
     fn visible(&self) -> bool {
         let world = self.building.world();
         self.building.is_in_world()
-            && self.building.owner().is_allied_with(world.sound.local_player().as_deref())
+            && self
+                .building
+                .with_owner(|owner_| owner_.is_allied_with(world.sound.local_player().as_deref()))
             && crate::selection::Selection::of(&world).is_some_and(|s| s.contains(&self.building))
     }
 

@@ -270,14 +270,20 @@ impl AffectsShroud {
     }
 
     fn add_cells(&self, self_: &ActorRef, p: &PlayerRef, cells: &Rc<[PPos]>) {
-        if !self.valid_relationships.has_relationship(self_.owner().relationship_with(Some(p))) {
+        if !self
+            .valid_relationships
+            .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(p))))
+        {
             return;
         }
         p.shroud().add_source(self.key.get(), self.source_type, cells.clone());
     }
 
     fn remove_cells(&self, self_: &ActorRef, p: &PlayerRef) {
-        if !self.valid_relationships.has_relationship(self_.owner().relationship_with(Some(p))) {
+        if !self
+            .valid_relationships
+            .has_relationship(self_.with_owner(|owner_| owner_.relationship_with(Some(p))))
+        {
             return;
         }
         p.shroud().remove_source(self.key.get());
@@ -527,7 +533,7 @@ impl ICreatesFrozenActors for FrozenUnderFog {
 impl IDefaultVisibility for FrozenUnderFog {
     fn is_visible(&self, self_: &ActorRef, by_player: Option<&PlayerRef>) -> bool {
         let Some(by) = by_player else { return true };
-        let r = self_.owner().relationship_with(Some(by));
+        let r = self_.with_owner(|owner_| owner_.relationship_with(Some(by)));
         self.info.always_visible_relationships.has_relationship(r) || self.is_visible_inner(by)
     }
 }
@@ -630,7 +636,7 @@ impl HiddenUnderShroud {
 impl IDefaultVisibility for HiddenUnderShroud {
     fn is_visible(&self, self_: &ActorRef, by_player: Option<&PlayerRef>) -> bool {
         let Some(by) = by_player else { return true };
-        let r = self_.owner().relationship_with(Some(by));
+        let r = self_.with_owner(|owner_| owner_.relationship_with(Some(by)));
         self.always_visible.has_relationship(r)
             || if self.fog {
                 self.fog_inner(self_, by)

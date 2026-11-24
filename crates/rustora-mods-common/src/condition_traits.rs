@@ -1147,7 +1147,7 @@ impl ProximityExternalCondition {
         if (a.id == self.self_.id && !self.info.affects_parent) || self.tokens.borrow().contains_key(&a.id) {
             return;
         }
-        let relationship = self.self_.owner().relationship_with(Some(&a.owner()));
+        let relationship = self.self_.with_owner(|owner_| owner_.relationship_with(Some(&a.owner())));
         if self.info.valid_relationships.has_relationship(relationship) {
             self.try_grant(a);
         }
@@ -1248,7 +1248,7 @@ impl INotifyOtherProduction for ProximityExternalCondition {
         if produced.cache().occupies_space.is_none() || self.state.is_trait_disabled() || !self.in_range(self_, produced) {
             return;
         }
-        let relationship = self_.owner().relationship_with(Some(&produced.owner()));
+        let relationship = self_.with_owner(|owner_| owner_.relationship_with(Some(&produced.owner())));
         if self.info.valid_relationships.has_relationship(relationship) {
             self.try_grant(produced);
         }
@@ -1260,7 +1260,7 @@ impl INotifyProximityOwnerChanged for ProximityExternalCondition {
         if actor.cache().occupies_space.is_none() || self.state.is_trait_disabled() || !self.in_range(self_, actor) {
             return;
         }
-        let relationship = self_.owner().relationship_with(Some(&actor.owner()));
+        let relationship = self_.with_owner(|owner_| owner_.relationship_with(Some(&actor.owner())));
         let has_relationship = self.info.valid_relationships.has_relationship(relationship);
         let token = self.tokens.borrow().get(&actor.id).copied();
         match token {
@@ -1329,7 +1329,7 @@ info_impl!(GrantConditionOnCombatantOwnerInfo => |info, _init| Some(Rc::new(Gran
 
 impl INotifyCreated for GrantConditionOnCombatantOwner {
     fn created(&self, self_: &ActorRef) {
-        if !self_.owner().non_combatant {
+        if !self_.with_owner(|owner_| owner_.non_combatant) {
             self.token.set(self_.grant_condition(&self.info.condition));
         }
     }
@@ -1418,7 +1418,7 @@ info_impl!(HandicapFirepowerMultiplierInfo => |_info, init| Some(Rc::new(Handica
 
 impl IFirepowerModifier for HandicapFirepowerMultiplier {
     fn get_firepower_modifier(&self) -> i32 {
-        100 - self.self_.owner().handicap
+        100 - self.self_.with_owner(|owner_| owner_.handicap)
     }
 }
 
@@ -1438,7 +1438,7 @@ info_impl!(HandicapDamageMultiplierInfo => |_info, init| Some(Rc::new(HandicapDa
 
 impl IDamageModifier for HandicapDamageMultiplier {
     fn get_damage_modifier(&self, _attacker: Option<&ActorRef>, _damage: &Damage) -> i32 {
-        10000 / (100 - self.self_.owner().handicap)
+        10000 / (100 - self.self_.with_owner(|owner_| owner_.handicap))
     }
 }
 
@@ -1499,7 +1499,7 @@ impl INotifyKilled for GivesBounty {
         if self.state.is_trait_disabled() {
             return;
         }
-        let relationship = attacker.owner().relationship_with(Some(&self_.owner()));
+        let relationship = attacker.with_owner(|owner_| owner_.relationship_with(Some(&self_.owner())));
         if !self.info.valid_relationships.has_relationship(relationship) {
             return;
         }

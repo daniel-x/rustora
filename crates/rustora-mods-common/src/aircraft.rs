@@ -656,7 +656,7 @@ impl Aircraft {
             return false;
         }
         if !blocked_by_mobile
-            && self_.owner().relationship_with(Some(&other.owner())) == PlayerRelationship::ALLY
+            && self_.with_owner(|owner_| owner_.relationship_with(Some(&other.owner()))) == PlayerRelationship::ALLY
             && other.trait_or_default::<Mobile>().is_some()
             && other.current_activity().is_none()
         {

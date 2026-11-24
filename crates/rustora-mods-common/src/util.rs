@@ -178,7 +178,7 @@ pub fn is_at_ground_level(a: &ActorRef) -> bool {
 }
 
 pub fn appears_friendly_to(a: &ActorRef, to: &ActorRef) -> bool {
-    let stance = to.owner().relationship_with(Some(&a.owner()));
+    let stance = to.with_owner(|owner_| owner_.relationship_with(Some(&a.owner())));
     if stance == PlayerRelationship::ALLY {
         return true;
     }
@@ -186,13 +186,13 @@ pub fn appears_friendly_to(a: &ActorRef, to: &ActorRef) -> bool {
         && eo.disguised()
         && !to.info.has_trait_info_named("IgnoresDisguise")
     {
-        return to.owner().relationship_with(eo.owner().as_deref()) == PlayerRelationship::ALLY;
+        return to.with_owner(|owner_| owner_.relationship_with(eo.owner().as_deref())) == PlayerRelationship::ALLY;
     }
     false
 }
 
 pub fn appears_hostile_to(a: &ActorRef, to: &ActorRef) -> bool {
-    let stance = to.owner().relationship_with(Some(&a.owner()));
+    let stance = to.with_owner(|owner_| owner_.relationship_with(Some(&a.owner())));
     if stance == PlayerRelationship::ALLY {
         return false;
     }
@@ -200,7 +200,7 @@ pub fn appears_hostile_to(a: &ActorRef, to: &ActorRef) -> bool {
         && eo.disguised()
         && !to.info.has_trait_info_named("IgnoresDisguise")
     {
-        return to.owner().relationship_with(eo.owner().as_deref()) == PlayerRelationship::ENEMY;
+        return to.with_owner(|owner_| owner_.relationship_with(eo.owner().as_deref())) == PlayerRelationship::ENEMY;
     }
     stance == PlayerRelationship::ENEMY
 }

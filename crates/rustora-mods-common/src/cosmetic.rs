@@ -479,7 +479,7 @@ impl IConditionTimerWatcher for TimedConditionBar {
 
 impl ISelectionBar for TimedConditionBar {
     fn value(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> f32 {
-        if self_.owner().is_allied_with(viewer.map(|v| &**v)) {
+        if self_.with_owner(|owner_| owner_.is_allied_with(viewer.map(|v| &**v))) {
             self.value.get()
         } else {
             0.0
@@ -661,7 +661,7 @@ impl ITick for ProductionBar {
 
 impl ISelectionBar for ProductionBar {
     fn value(&self, self_: &ActorRef, viewer: Option<&PlayerRef>) -> f32 {
-        if self.state.is_trait_disabled() || !self_.owner().is_allied_with(viewer.map(|v| &**v)) {
+        if self.state.is_trait_disabled() || !self_.with_owner(|owner_| owner_.is_allied_with(viewer.map(|v| &**v))) {
             return 0.0;
         }
         self.value.get()

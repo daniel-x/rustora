@@ -228,7 +228,10 @@ impl UnitOrderTargeter {
             false,
             true,
             Box::new(move |self_, target, modifiers, cursor| {
-                if !self_.owner().is_allied_with(Some(&target.owner())) || !has_info(target) || !can_target(target, modifiers) {
+                if !self_.with_owner(|owner_| owner_.is_allied_with(Some(&target.owner())))
+                    || !has_info(target)
+                    || !can_target(target, modifiers)
+                {
                     return false;
                 }
                 *cursor = Some(if use_enter_cursor(target) { enter.clone() } else { blocked.clone() });
@@ -264,7 +267,7 @@ impl IOrderTargeter for UnitOrderTargeter {
             (_, Some(a)) => Some(a.owner()),
             _ => None,
         };
-        let relationship = self_.owner().relationship_with(owner.as_deref());
+        let relationship = self_.with_owner(|owner_| owner_.relationship_with(owner.as_deref()));
         if !force_attack && relationship == PlayerRelationship::ALLY && !self.target_ally_units {
             return false;
         }
