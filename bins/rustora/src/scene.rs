@@ -124,9 +124,20 @@ fn cell_corner_tints(l: &dyn rustora_engine::render::ITerrainLighting, q: &Quad)
     [at(-512, -512), at(512, -512), at(512, 512), at(-512, 512)]
 }
 
+/// A cell of [`Scene::terrain_cells`].
+#[derive(Clone, Copy)]
+enum TerrainCell {
+    NotBuilt,
+    Empty,
+    Quad(Quad),
+}
+
 pub struct Scene {
     sprites: SpriteCache,
     terrain: HashMap<u16, Rc<Vec<Option<Sprite>>>>,
+    /// The untinted terrain quad of each map cell in row order, built when the cell is first in view, as the map
+    /// tiles never change.
+    terrain_cells: Vec<TerrainCell>,
     palettes: Palettes,
     variant_seed: u32,
     /// The number of quads of the last frame after the actors and effects: the `AfterActors` passes.
@@ -192,6 +203,7 @@ impl Scene {
             palettes: Palettes::new(renderer, world, &read_file),
             sprites: SpriteCache::new(read_file, &world.map().tileset),
             terrain: HashMap::default(),
+            terrain_cells: Vec::new(),
             variant_seed: 0x9e37_79b9,
             after_actors: 0,
             after_world: 0,
@@ -348,16 +360,27 @@ impl Scene {
         let mut quads = Vec::new();
         let cells: Vec<CPos> = Self::visible_cells(world, cam).collect();
         let map = world.map();
+        let (map_width, map_height) = map.map_size;
+        if self.terrain_cells.len() != (map_width * map_height) as usize {
+            self.terrain_cells = vec![TerrainCell::NotBuilt; (map_width * map_height) as usize];
+        }
         for &c in &cells {
-            let tile = *map.tiles.at(c);
-            let frames = self.template_frames(renderer, world, tile.ty);
-            if let Some(s) = frames.get(tile.index as usize).copied().flatten() {
-                quads.push(Quad::sprite(
-                    s.rect,
-                    c.x() as f32 * TILE_SIZE + s.offset[0] - s.rect.w as f32 / 2.0 + TILE_SIZE / 2.0,
-                    c.y() as f32 * TILE_SIZE + s.offset[1] - s.rect.h as f32 / 2.0 + TILE_SIZE / 2.0,
-                    terrain_row,
-                ));
+            let i = (c.y() * map_width + c.x()) as usize;
+            if let TerrainCell::NotBuilt = self.terrain_cells[i] {
+                let tile = *map.tiles.at(c);
+                let frames = self.template_frames(renderer, world, tile.ty);
+                self.terrain_cells[i] = match frames.get(tile.index as usize).copied().flatten() {
+                    Some(s) => TerrainCell::Quad(Quad::sprite(
+                        s.rect,
+                        c.x() as f32 * TILE_SIZE + s.offset[0] - s.rect.w as f32 / 2.0 + TILE_SIZE / 2.0,
+                        c.y() as f32 * TILE_SIZE + s.offset[1] - s.rect.h as f32 / 2.0 + TILE_SIZE / 2.0,
+                        terrain_row,
+                    )),
+                    None => TerrainCell::Empty,
+                };
+            }
+            if let TerrainCell::Quad(q) = self.terrain_cells[i] {
+                quads.push(q);
             }
         }
         self.add_resources(renderer, world, viewer, &cells, &mut quads);
