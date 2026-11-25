@@ -16,13 +16,42 @@ use rustora_engine::world::WorldType;
 
 use super::game_info::{HideMenu, IngameInfoPanel, cheats_enabled};
 use super::{NoLogic, button_prompt_with_cancel, message, services};
+use crate::fluent::MessageArg;
 use crate::loader::cell;
+use crate::net::{SYSTEM_CLIENT_ID, TextNotification, TextNotificationPool};
 use crate::widget::{Action, AppRequest, ChromeLogic, Ui, WidgetArgs, WidgetId};
 use crate::widgets::menu_button::MenuButtonWidget;
 
 /// `World.SetPauseState`.
 pub(crate) fn set_pause_state(world: &rustora_engine::world::World, paused: bool) {
     world.set_pause_state(paused);
+}
+
+/// The system line `UnitOrders` adds for a change of the pause state by the player `name`.
+pub fn pause_notification(messages: &crate::fluent::Messages, paused: bool, name: &str) -> TextNotification {
+    let key = if paused { "notification-game-paused" } else { "notification-game-unpaused" };
+    TextNotification {
+        pool: TextNotificationPool::System,
+        client_id: SYSTEM_CLIENT_ID,
+        prefix: Some("Battlefield Control".to_string()),
+        text: messages.get_with(key, &[("player", MessageArg::Text(name))]),
+        prefix_color: None,
+        text_color: None,
+        time: crate::net::local_time(),
+    }
+}
+
+/// Announces the pause toggle of the pause hotkey or the `/pause` command in a single player game, where
+/// `UnitOrders` stays silent. `paused` is the requested state.
+pub(crate) fn announce_single_player_pause(ui: &Ui, world: &rustora_engine::world::World, paused: bool) {
+    if !single_non_bot_client(world) || (world.is_game_over() && !paused) {
+        return;
+    }
+    let services = services(ui);
+    let mut net = services.net.borrow_mut();
+    let name = net.local_client().and_then(|c| c.name.clone()).unwrap_or_default();
+    let line = pause_notification(&ui.assets.borrow().messages, paused, &name);
+    net.notifications.push(line);
 }
 
 fn single_non_bot_client(world: &rustora_engine::world::World) -> bool {

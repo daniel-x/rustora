@@ -135,7 +135,11 @@ pub fn on_chat(ui: &mut Ui, ingame: &Rc<Ingame>, text: &str) {
             let world = &ingame.world;
             let is_host = services(ui).net.borrow().is_host();
             if is_host || ingame.local_player.as_ref().is_some_and(|p| p.win_state.get() != WinState::Lost) {
-                set_pause_state(world, !world.paused());
+                let paused = !world.paused();
+                if !world.is_game_over() {
+                    set_pause_state(world, paused);
+                    super::ingame_menu::announce_single_player_pause(ui, world, paused);
+                }
             }
         }
         Command::Surrender => {

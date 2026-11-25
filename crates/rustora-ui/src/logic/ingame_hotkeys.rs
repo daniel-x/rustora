@@ -178,9 +178,11 @@ fn pause(ui: &mut Ui, ingame: &Rc<Ingame>, _e: &KeyInput) -> bool {
     if !is_host && ingame.local_player.as_ref().is_none_or(|p| p.win_state.get() == WinState::Lost) {
         return false;
     }
+    let paused = !ingame.world.paused();
     let mut o = Order::new("PauseGame", None, Target::Invalid, false);
-    o.target_string = Some(if ingame.world.paused() { "UnPause" } else { "Pause" }.to_string());
+    o.target_string = Some(if paused { "Pause" } else { "UnPause" }.to_string());
     ingame.world.issue_order(o);
+    super::ingame_menu::announce_single_player_pause(ui, &ingame.world, paused);
     true
 }
 

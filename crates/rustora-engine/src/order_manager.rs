@@ -377,6 +377,9 @@ impl OrderManager {
                 if self.world.lobby_info.client_with_index(client_id).is_some() {
                     let pause = raw.target_string.as_deref() == Some("Pause");
                     if !(self.world.is_game_over() && !pause) {
+                        if self.collect_client_orders && self.world.paused() != pause {
+                            self.client_orders.push((client_id, raw.clone()));
+                        }
                         self.world.set_paused(pause);
                     }
                 }

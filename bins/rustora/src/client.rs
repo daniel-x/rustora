@@ -594,6 +594,10 @@ impl ShellWorld {
                 self.game_saved(messages, &mut state);
                 continue;
             }
+            if order.order_string == "PauseGame" {
+                self.game_paused(messages, &mut state, client_id, &order);
+                continue;
+            }
             if let Err(e) = crate::net::process_client_order(messages, &mut state, chat_world.as_ref(), client_id, &order, run_time) {
                 log::warn!("{e}");
             }
@@ -626,6 +630,19 @@ impl ShellWorld {
             rustora_engine::sound::play_notification(&self.world, None, "Speech", &info.saved_notification, faction);
             self.world.sound.add_transient_line(None, info.saved_text_notification.as_deref());
         }
+    }
+
+    /// `UnitOrders.ProcessOrder` of a `PauseGame` order that changed the pause state. Like OpenRA, it announces the
+    /// change only in games with more than one human client; a single player game announces it in the pause hotkey
+    /// and the `/pause` command, so that the pause of the ingame menu and of videos stays silent.
+    fn game_paused(&self, messages: &Messages, net: &mut rustora_ui::net::NetState, client_id: i32, order: &RawOrder) {
+        let lobby = &self.world.lobby_info;
+        if lobby.clients.iter().filter(|c| c.bot.is_none()).count() <= 1 {
+            return;
+        }
+        let name = lobby.client_with_index(client_id).and_then(|c| c.name.clone()).unwrap_or_default();
+        let paused = order.target_string.as_deref() == Some("Pause");
+        net.notifications.push(rustora_ui::logic::ingame_menu::pause_notification(messages, paused, &name));
     }
 
     /// Hands the sound calls of the last tick to the audio system, and what else `Game.InnerLogicTick` tells it.
