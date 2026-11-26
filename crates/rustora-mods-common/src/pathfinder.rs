@@ -67,115 +67,71 @@ pub struct GraphEdge {
     pub cost: i32,
 }
 
-/// Binary min-heap with the exact sift behavior of the C# `PriorityQueue`.
+/// Binary min-heap with the exact sift behavior of the C# `PriorityQueue`. The C# queue addresses an item by
+/// level and index within the level; the flat position `2^level - 1 + index` of that item is used here, so the
+/// children of position `i` are at `2i + 1` and `2i + 2`.
 pub struct PriorityQueue {
     items: Vec<GraphConnection>,
-    level: i32,
-    index: i32,
-}
-
-const EMPTY_CONN: GraphConnection = GraphConnection {
-    destination: CPos::ZERO,
-    cost: 0,
-};
-
-fn idx(level: i32, index: i32) -> usize {
-    ((1i32 << level) - 1 + index) as usize
-}
-
-fn above_idx(level: i32, index: i32) -> usize {
-    ((1i32 << (level - 1)) - 1 + (index >> 1)) as usize
 }
 
 impl PriorityQueue {
     pub fn new() -> Self {
-        PriorityQueue {
-            items: vec![EMPTY_CONN; 1],
-            level: 0,
-            index: 0,
-        }
+        PriorityQueue { items: Vec::new() }
     }
 
     pub fn add(&mut self, item: GraphConnection) {
-        let mut add_level = self.level;
-        let mut add_index = self.index;
-        while add_level >= 1 {
-            let above = self.items[above_idx(add_level, add_index)];
+        let mut pos = self.items.len();
+        self.items.push(item);
+        while pos >= 1 {
+            let parent = (pos - 1) / 2;
+            let above = self.items[parent];
             if above.cost > item.cost {
-                self.items[idx(add_level, add_index)] = above;
-                add_level -= 1;
-                add_index >>= 1;
+                self.items[pos] = above;
+                pos = parent;
             } else {
                 break;
             }
         }
-        self.items[idx(add_level, add_index)] = item;
-        self.index += 1;
-        if self.index >= 1 << self.level {
-            self.index = 0;
-            self.level += 1;
-            let count = 2 * (1usize << self.level);
-            if count > self.items.len() {
-                self.items.resize(count, EMPTY_CONN);
-            }
-        }
+        self.items[pos] = item;
     }
 
     pub fn is_empty(&self) -> bool {
-        self.level == 0
+        self.items.is_empty()
     }
 
     pub fn peek(&self) -> GraphConnection {
-        assert!(self.level > 0 || self.index > 0, "PriorityQueue empty.");
-        self.items[0]
+        *self.items.first().expect("PriorityQueue empty.")
     }
 
-    fn index_last(&self) -> usize {
-        let mut last_level = self.level;
-        let mut last_index = self.index - 1;
-        if last_index < 0 {
-            last_level -= 1;
-            last_index = (1 << last_level) - 1;
-        }
-        idx(last_level, last_index)
-    }
-
+    /// Removes the minimum. As in C#, the last item sifts down from the root while it still counts as part of the
+    /// heap and is dropped afterwards.
     pub fn pop(&mut self) -> GraphConnection {
         let ret = self.peek();
-        let last = self.items[self.index_last()];
-        self.bubble_into(0, 0, last);
-        self.index -= 1;
-        if self.index < 0 {
-            self.level -= 1;
-            self.index = (1 << self.level) - 1;
-        }
-        ret
-    }
-
-    fn bubble_into(&mut self, mut into_level: i32, mut into_index: i32, val: GraphConnection) {
+        let len = self.items.len();
+        let val = self.items[len - 1];
+        let mut pos = 0;
         loop {
-            let down_level = into_level + 1;
-            let mut down_index = into_index << 1;
-            if down_level > self.level || (down_level == self.level && down_index >= self.index) {
-                self.items[idx(into_level, into_index)] = val;
-                return;
+            let mut down = 2 * pos + 1;
+            if down >= len {
+                break;
             }
-            let mut down = self.items[idx(down_level, down_index)];
-            if down_level < self.level || (down_level == self.level && down_index + 1 < self.index) {
-                let down2 = self.items[idx(down_level, down_index + 1)];
-                if down.cost >= down2.cost {
-                    down_index += 1;
-                    down = down2;
+            let mut down_item = self.items[down];
+            if down + 1 < len {
+                let down2 = self.items[down + 1];
+                if down_item.cost >= down2.cost {
+                    down += 1;
+                    down_item = down2;
                 }
             }
-            if val.cost <= down.cost {
-                self.items[idx(into_level, into_index)] = val;
-                return;
+            if val.cost <= down_item.cost {
+                break;
             }
-            self.items[idx(into_level, into_index)] = down;
-            into_level = down_level;
-            into_index = down_index;
+            self.items[pos] = down_item;
+            pos = down;
         }
+        self.items[pos] = val;
+        self.items.pop();
+        ret
     }
 }
 
@@ -262,15 +218,98 @@ pub fn multiply_by_sqrt_two(n: i16) -> i32 {
     (n as i32).wrapping_mul(46341) / 32768
 }
 
-/// Common data of `DensePathGraph`.
+/// Common data of `DensePathGraph`. `map` and `owner_mask`, the player mask of the owner of `actor`, are
+/// resolved once per search instead of once per neighbor cell.
 pub struct DenseParams {
+    pub map: Rc<Map>,
     pub locomotor: Rc<Locomotor>,
     pub actor: Option<ActorRef>,
+    pub owner_mask: u64,
     pub check: BlockedByActor,
     pub custom_cost: Option<CustomCost>,
     pub ignore_actor: Option<ActorRef>,
     pub lane_bias: bool,
     pub in_reverse: bool,
+}
+
+impl DenseParams {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        world: &World,
+        locomotor: &Rc<Locomotor>,
+        actor: Option<&ActorRef>,
+        check: BlockedByActor,
+        custom_cost: Option<CustomCost>,
+        ignore_actor: Option<&ActorRef>,
+        lane_bias: bool,
+        in_reverse: bool,
+    ) -> Self {
+        DenseParams {
+            map: world.map().clone(),
+            locomotor: locomotor.clone(),
+            actor: actor.cloned(),
+            owner_mask: actor.map_or(0, |a| a.with_owner(|o| o.player_mask)),
+            check,
+            custom_cost,
+            ignore_actor: ignore_actor.cloned(),
+            lane_bias,
+            in_reverse,
+        }
+    }
+}
+
+/// The cell infos of a graph, as seen by one expansion step.
+trait CellStore {
+    fn get(&self, c: CPos) -> CellInfo;
+    fn set(&mut self, c: CPos, v: CellInfo);
+}
+
+struct MapCells<'a> {
+    infos: &'a mut [CellInfo],
+    width: i32,
+    stamp: u16,
+}
+
+impl CellStore for MapCells<'_> {
+    #[inline(always)]
+    fn get(&self, c: CPos) -> CellInfo {
+        let info = self.infos[(c.y() * self.width + c.x()) as usize];
+        if info.stamp == self.stamp { info } else { CellInfo::default() }
+    }
+
+    #[inline(always)]
+    fn set(&mut self, c: CPos, v: CellInfo) {
+        self.infos[(c.y() * self.width + c.x()) as usize] = CellInfo { stamp: self.stamp, ..v };
+    }
+}
+
+struct GridCells<'a> {
+    infos: &'a mut [CellInfo],
+    grid: Grid,
+}
+
+impl CellStore for GridCells<'_> {
+    #[inline(always)]
+    fn get(&self, c: CPos) -> CellInfo {
+        let g = &self.grid;
+        self.infos[((c.y() - g.top_left.y()) * g.width() + (c.x() - g.top_left.x())) as usize]
+    }
+
+    #[inline(always)]
+    fn set(&mut self, c: CPos, v: CellInfo) {
+        let g = &self.grid;
+        self.infos[((c.y() - g.top_left.y()) * g.width() + (c.x() - g.top_left.x())) as usize] = v;
+    }
+}
+
+impl CellStore for HashMap<CPos, CellInfo> {
+    fn get(&self, c: CPos) -> CellInfo {
+        HashMap::get(self, &c).copied().unwrap_or_default()
+    }
+
+    fn set(&mut self, c: CPos, v: CellInfo) {
+        self.insert(c, v);
+    }
 }
 
 pub type EdgesFn = Rc<dyn Fn(CPos) -> Vec<GraphConnection>>;
@@ -318,39 +357,14 @@ impl Graph {
             }
         }
     }
-
-    fn get_connections(&self, position: CPos, target_predicate: &dyn Fn(CPos) -> bool) -> smallvec::SmallVec<[GraphConnection; 8]> {
-        let (p, grid) = match self {
-            Graph::Sparse { edges, .. } => return smallvec::SmallVec::from_vec(edges(position)),
-            Graph::Map { p, .. } => (p, None),
-            Graph::Grid { p, grid, .. } => (p, Some(*grid)),
-        };
-        let info = self.get(position);
-        let dx = position.x() - info.previous_node.x();
-        let dy = position.y() - info.previous_node.y();
-        let directions = DIRECTED_NEIGHBORS[(dy * 3 + dx + 4) as usize];
-        let mut valid = smallvec::SmallVec::new();
-        for &dir in directions {
-            let neighbor = position + dir;
-            if grid.is_some_and(|g| !g.contains(neighbor)) {
-                continue;
-            }
-            let path_cost = get_path_cost_to_node(p, neighbor, dir, target_predicate);
-            if path_cost != PATH_COST_FOR_INVALID_PATH && self.get(neighbor).status != CellStatus::Closed {
-                valid.push(GraphConnection {
-                    destination: neighbor,
-                    cost: path_cost,
-                });
-            }
-        }
-        valid
-    }
 }
 
+#[inline]
 fn get_path_cost_to_node(p: &DenseParams, dest: CPos, direction: CVec, target_predicate: &dyn Fn(CPos) -> bool) -> i32 {
+    let actor = p.actor.as_ref().map(|a| (a, p.owner_mask));
     let mut cost = p
         .locomotor
-        .movement_cost_to_enter_cell(p.actor.as_ref(), dest, p.check, p.ignore_actor.as_ref(), false, FULL_CELL);
+        .movement_cost_to_enter_cell_in(&p.map, actor, dest, p.check, p.ignore_actor.as_ref(), false, FULL_CELL);
     if cost == MOVEMENT_COST_FOR_UNREACHABLE_CELL && p.in_reverse && target_predicate(dest) {
         cost = 0;
     }
@@ -360,6 +374,7 @@ fn get_path_cost_to_node(p: &DenseParams, dest: CPos, direction: CVec, target_pr
     PATH_COST_FOR_INVALID_PATH
 }
 
+#[inline]
 fn calculate_cell_path_cost(p: &DenseParams, neighbor: CPos, direction: CVec, movement_cost: i16) -> i32 {
     let mut cell_cost = if direction.x * direction.y != 0 {
         multiply_by_sqrt_two(movement_cost)
@@ -469,15 +484,7 @@ impl PathSearch {
     ) -> PathSearch {
         let graph = map_graph(
             world.map(),
-            DenseParams {
-                locomotor: locomotor.clone(),
-                actor: self_.cloned(),
-                check,
-                custom_cost: custom_cost.clone(),
-                ignore_actor: ignore_actor.cloned(),
-                lane_bias,
-                in_reverse: false,
-            },
+            DenseParams::new(world, locomotor, self_, check, custom_cost.clone(), ignore_actor, lane_bias, false),
         );
         let mut search = PathSearch::new(graph, Box::new(|_, _| 0), 0, target_predicate);
         search.add_initial_cells(world, locomotor, self_, froms, check, custom_cost.as_ref(), ignore_actor, false);
@@ -500,15 +507,16 @@ impl PathSearch {
         heuristic: Option<Heuristic>,
         grid: Option<Grid>,
     ) -> PathSearch {
-        let p = DenseParams {
-            locomotor: locomotor.clone(),
-            actor: self_.cloned(),
+        let p = DenseParams::new(
+            world,
+            locomotor,
+            self_,
             check,
-            custom_cost: custom_cost.clone(),
-            ignore_actor: ignore_actor.cloned(),
+            custom_cost.clone(),
+            ignore_actor,
             lane_bias,
             in_reverse,
-        };
+        );
         let graph = match grid {
             Some(g) => Graph::Grid {
                 p,
@@ -619,46 +627,39 @@ impl PathSearch {
 
     fn expand(&mut self) -> CPos {
         let current = self.open_queue.pop().destination;
-        let info = self.graph.get(current);
-        self.graph.set(
-            current,
-            CellInfo {
-                status: CellStatus::Closed,
-                ..info
-            },
-        );
-        let connections = self.graph.get_connections(current, &*self.target_predicate);
-        for connection in connections {
-            let cost_so_far = info.cost_so_far.wrapping_add(connection.cost);
-            let neighbor = connection.destination;
-            let ni = self.graph.get(neighbor);
-            if ni.status == CellStatus::Closed || (ni.status == CellStatus::Open && cost_so_far >= ni.cost_so_far) {
-                continue;
+        let PathSearch {
+            graph,
+            target_predicate,
+            heuristic,
+            heuristic_weight_percentage,
+            open_queue,
+            ..
+        } = self;
+        let mut step = Expansion {
+            heuristic,
+            weight: *heuristic_weight_percentage,
+            open_queue,
+        };
+        match graph {
+            Graph::Map { p, infos, width, stamp } => {
+                let mut cells = MapCells {
+                    infos,
+                    width: *width,
+                    stamp: *stamp,
+                };
+                step.expand_dense(&mut cells, p, None, &**target_predicate, current);
             }
-            let remaining = if ni.status == CellStatus::Open {
-                ni.estimated_total_cost.wrapping_sub(ni.cost_so_far)
-            } else {
-                let h = (self.heuristic)(neighbor, true);
-                if h == PATH_COST_FOR_INVALID_PATH {
-                    continue;
+            Graph::Grid { p, infos, grid } => {
+                let grid = *grid;
+                let mut cells = GridCells { infos, grid };
+                step.expand_dense(&mut cells, p, Some(grid), &**target_predicate, current);
+            }
+            Graph::Sparse { edges, info } => {
+                let current_info = step.close(info, current);
+                for c in edges(current) {
+                    step.relax(info, current, current_info, c.destination, c.cost);
                 }
-                h.wrapping_mul(self.heuristic_weight_percentage) / 100
-            };
-            let total = cost_so_far.wrapping_add(remaining);
-            self.graph.set(
-                neighbor,
-                CellInfo {
-                    status: CellStatus::Open,
-                    cost_so_far,
-                    estimated_total_cost: total,
-                    previous_node: current,
-                    stamp: 0,
-                },
-            );
-            self.open_queue.add(GraphConnection {
-                destination: neighbor,
-                cost: total,
-            });
+            }
         }
         current
     }
@@ -737,5 +738,88 @@ impl PathSearch {
             ret.push(q);
         }
         ret
+    }
+}
+
+/// The parts of a `PathSearch` that one expansion step uses besides the cell infos.
+struct Expansion<'a> {
+    heuristic: &'a mut Heuristic,
+    weight: i32,
+    open_queue: &'a mut PriorityQueue,
+}
+
+impl Expansion<'_> {
+    /// Marks `current` as closed and returns its info.
+    #[inline(always)]
+    fn close<S: CellStore>(&mut self, cells: &mut S, current: CPos) -> CellInfo {
+        let info = cells.get(current);
+        cells.set(
+            current,
+            CellInfo {
+                status: CellStatus::Closed,
+                ..info
+            },
+        );
+        info
+    }
+
+    /// `DensePathGraph.GetConnections` and the expansion over them in one pass. The C# collects the connections
+    /// first; the costs do not depend on the cell infos and no step changes a closed status, so the order of the
+    /// calls does not change the result.
+    #[inline(always)]
+    fn expand_dense<S: CellStore>(
+        &mut self,
+        cells: &mut S,
+        p: &DenseParams,
+        grid: Option<Grid>,
+        target_predicate: &dyn Fn(CPos) -> bool,
+        current: CPos,
+    ) {
+        let info = self.close(cells, current);
+        let dx = current.x() - info.previous_node.x();
+        let dy = current.y() - info.previous_node.y();
+        for &dir in DIRECTED_NEIGHBORS[(dy * 3 + dx + 4) as usize] {
+            let neighbor = current + dir;
+            if grid.is_some_and(|g| !g.contains(neighbor)) {
+                continue;
+            }
+            let path_cost = get_path_cost_to_node(p, neighbor, dir, target_predicate);
+            if path_cost != PATH_COST_FOR_INVALID_PATH {
+                self.relax(cells, current, info, neighbor, path_cost);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn relax<S: CellStore>(&mut self, cells: &mut S, current: CPos, info: CellInfo, neighbor: CPos, cost: i32) {
+        let cost_so_far = info.cost_so_far.wrapping_add(cost);
+        let ni = cells.get(neighbor);
+        if ni.status == CellStatus::Closed || (ni.status == CellStatus::Open && cost_so_far >= ni.cost_so_far) {
+            return;
+        }
+        let remaining = if ni.status == CellStatus::Open {
+            ni.estimated_total_cost.wrapping_sub(ni.cost_so_far)
+        } else {
+            let h = (self.heuristic)(neighbor, true);
+            if h == PATH_COST_FOR_INVALID_PATH {
+                return;
+            }
+            h.wrapping_mul(self.weight) / 100
+        };
+        let total = cost_so_far.wrapping_add(remaining);
+        cells.set(
+            neighbor,
+            CellInfo {
+                status: CellStatus::Open,
+                cost_so_far,
+                estimated_total_cost: total,
+                previous_node: current,
+                stamp: 0,
+            },
+        );
+        self.open_queue.add(GraphConnection {
+            destination: neighbor,
+            cost: total,
+        });
     }
 }

@@ -15,7 +15,7 @@ use rustora_derive::FieldLoad;
 use rustora_engine::actor::ActorRef;
 use rustora_engine::bitset::BitSet;
 use rustora_engine::damage::DamageTypeTag;
-use rustora_engine::map::CellLayer;
+use rustora_engine::map::{CellLayer, Map};
 use rustora_engine::player::PlayerRelationship;
 use rustora_engine::rules::TraitRegistry;
 use rustora_engine::traits::subcell::{ANY, FULL_CELL, INVALID};
@@ -287,16 +287,48 @@ impl Locomotor {
         ignore_self: bool,
         sub: u8,
     ) -> i16 {
-        let cost = self.movement_cost_for_cell(dest);
-        if cost == MOVEMENT_COST_FOR_UNREACHABLE_CELL || !self.can_move_freely_into(actor, dest, sub, check, ignore_actor, ignore_self) {
-            return MOVEMENT_COST_FOR_UNREACHABLE_CELL;
-        }
-        cost
+        let actor = actor.map(|a| (a, a.with_owner(|o| o.player_mask)));
+        self.movement_cost_to_enter_cell_in(self.world().map(), actor, dest, check, ignore_actor, ignore_self, sub)
     }
 
+    /// `movement_cost_to_enter_cell` with the map and the owner mask of the actor given by the caller, for path
+    /// searches, which ask for many cells in a row.
+    #[allow(clippy::too_many_arguments)]
+    #[inline]
+    pub fn movement_cost_to_enter_cell_in(
+        &self,
+        map: &Map,
+        actor: Option<(&ActorRef, u64)>,
+        dest: CPos,
+        check: BlockedByActor,
+        ignore_actor: Option<&ActorRef>,
+        ignore_self: bool,
+        sub: u8,
+    ) -> i16 {
+        if !map.contains(dest) {
+            return MOVEMENT_COST_FOR_UNREACHABLE_CELL;
+        }
+        let mut state = *self.cells().borrow().at(dest);
+        if state.cost == MOVEMENT_COST_FOR_UNREACHABLE_CELL {
+            return MOVEMENT_COST_FOR_UNREACHABLE_CELL;
+        }
+        if check == BlockedByActor::None {
+            return state.cost;
+        }
+        if state.dirty {
+            state = self.get_cache(dest);
+        }
+        if !self.can_move_freely_into(state, actor, dest, sub, check, ignore_actor, ignore_self) {
+            return MOVEMENT_COST_FOR_UNREACHABLE_CELL;
+        }
+        state.cost
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn can_move_freely_into(
         &self,
-        actor: Option<&ActorRef>,
+        cache: CellState,
+        actor: Option<(&ActorRef, u64)>,
         cell: CPos,
         sub: u8,
         check: BlockedByActor,
@@ -306,13 +338,11 @@ impl Locomotor {
         if check == BlockedByActor::None {
             return true;
         }
-        let cache = self.get_cache(cell);
         let flag = cache.flag;
         if flag == 0 {
             return true;
         }
-        let Some(actor) = actor else { return false };
-        let owner_mask = actor.with_owner(|owner_| owner_.player_mask);
+        let Some((actor, owner_mask)) = actor else { return false };
         if cache.crushable & owner_mask != 0 {
             return true;
         }
