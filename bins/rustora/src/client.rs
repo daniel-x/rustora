@@ -642,7 +642,8 @@ impl ShellWorld {
         }
         let name = lobby.client_with_index(client_id).and_then(|c| c.name.clone()).unwrap_or_default();
         let paused = order.target_string.as_deref() == Some("Pause");
-        net.notifications.push(rustora_ui::logic::ingame_menu::pause_notification(messages, paused, &name));
+        net.notifications
+            .push(rustora_ui::logic::ingame_menu::pause_notification(messages, paused, &name));
     }
 
     /// Hands the sound calls of the last tick to the audio system, and what else `Game.InnerLogicTick` tells it.

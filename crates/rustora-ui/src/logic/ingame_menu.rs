@@ -29,7 +29,11 @@ pub(crate) fn set_pause_state(world: &rustora_engine::world::World, paused: bool
 
 /// The system line `UnitOrders` adds for a change of the pause state by the player `name`.
 pub fn pause_notification(messages: &crate::fluent::Messages, paused: bool, name: &str) -> TextNotification {
-    let key = if paused { "notification-game-paused" } else { "notification-game-unpaused" };
+    let key = if paused {
+        "notification-game-paused"
+    } else {
+        "notification-game-unpaused"
+    };
     TextNotification {
         pool: TextNotificationPool::System,
         client_id: SYSTEM_CLIENT_ID,
