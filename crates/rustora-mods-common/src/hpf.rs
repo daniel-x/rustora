@@ -16,6 +16,7 @@ use rustora_engine::world::World;
 
 use crate::actor_map::{ActorMap, WorldExt};
 use crate::locomotor::{BlockedByActor, Locomotor, MOVEMENT_COST_FOR_UNREACHABLE_CELL, building_of};
+use crate::path_certificate::FailureCertificates;
 use crate::pathfinder::*;
 
 const GRID_SIZE: i32 = 10;
@@ -533,6 +534,7 @@ impl HierarchicalPathFinder {
         ignore_actor: Option<&ActorRef>,
         in_reverse: bool,
         lane_bias: bool,
+        certificates: &FailureCertificates,
     ) -> Vec<CPos> {
         if self.cost_estimator.get().is_none() {
             return Vec::new();
@@ -591,6 +593,10 @@ impl HierarchicalPathFinder {
         if self.domain(source_abstract) != self.domain(target_abstract) {
             return Vec::new();
         }
+        let certified = custom_cost.is_none();
+        if certified && certificates.prove_no_path(world.map(), &self.locomotor, self_, source, target, check, ignore_actor) {
+            return Vec::new();
+        }
         let target_edge = self.edge_from_local_to_abstract(target, target_abstract);
         let source_edge = self.edge_from_local_to_abstract(source, source_abstract);
         let source_edges: Vec<GraphEdge> = source_edge.into_iter().collect();
@@ -633,7 +639,12 @@ impl HierarchicalPathFinder {
             Some(self.make_heuristic(forward, None, None)),
             None,
         );
-        PathSearch::find_bidi_path(&mut from_dest, &mut from_src)
+        let path = PathSearch::find_bidi_path(&mut from_dest, &mut from_src);
+        if path.is_empty() && certified {
+            let exhausted = if from_dest.can_expand() { &from_src } else { &from_dest };
+            certificates.add(world.map(), exhausted);
+        }
+        path
     }
 
     pub fn path_exists(&self, source: CPos, target: CPos) -> bool {

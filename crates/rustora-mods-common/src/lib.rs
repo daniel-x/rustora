@@ -47,6 +47,7 @@ pub mod mobile;
 pub mod orders;
 pub mod palettes;
 pub mod parachutable;
+pub mod path_certificate;
 pub mod path_finder_trait;
 pub mod pathfinder;
 pub mod player;

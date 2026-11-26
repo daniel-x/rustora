@@ -611,7 +611,7 @@ impl PathSearch {
         });
     }
 
-    fn can_expand(&mut self) -> bool {
+    pub fn can_expand(&mut self) -> bool {
         loop {
             if self.open_queue.is_empty() {
                 return false;

@@ -19,6 +19,7 @@ use rustora_engine::{info_impl, load_info, register_traits};
 use crate::hpf::HierarchicalPathFinder;
 use crate::locomotor::{BlockedByActor, Locomotor, MOVEMENT_COST_FOR_UNREACHABLE_CELL};
 use crate::mobile::mobile_of;
+use crate::path_certificate::FailureCertificates;
 use crate::pathfinder::*;
 
 pub fn register(r: &mut TraitRegistry) {
@@ -39,6 +40,9 @@ pub struct PathFinder {
     by_none: RefCell<HashMap<String, Rc<HierarchicalPathFinder>>>,
     #[persist(in_place)]
     by_immovable: RefCell<HashMap<String, Rc<HierarchicalPathFinder>>>,
+    /// Not saved: a certificate only skips searches that fail, so the results do not depend on it.
+    #[persist(skip)]
+    certificates: FailureCertificates,
 }
 
 register_traits!(PathFinder: IWorldLoaded);
@@ -174,6 +178,7 @@ impl PathFinder {
                 ignore_actor,
                 in_reverse,
                 lane_bias,
+                &self.certificates,
             );
         }
         hpf.find_path_multi(
