@@ -24,6 +24,7 @@ pub mod music;
 pub mod net;
 pub mod orders;
 pub mod perf;
+pub mod perf_stats;
 pub mod place_building;
 pub mod player_database;
 pub mod screen_map;

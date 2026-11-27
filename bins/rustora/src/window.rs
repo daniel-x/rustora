@@ -256,6 +256,12 @@ impl App {
             size: self.size,
             window_size: (gpu.surface.config.width, gpu.surface.config.height),
             scale_factor: gpu.window.scale_factor(),
+            vsync: !self.no_vsync,
+            refresh_hz: gpu
+                .window
+                .current_monitor()
+                .and_then(|m| m.refresh_rate_millihertz())
+                .map(|mhz| f64::from(mhz) / 1000.0),
             args: self.args.clone(),
             queue: self.queue.clone(),
         };

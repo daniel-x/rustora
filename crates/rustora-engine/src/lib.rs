@@ -33,6 +33,7 @@ pub mod spatial;
 pub mod stub;
 pub mod target;
 pub mod terrain;
+pub mod tick_profile;
 pub mod trait_dict;
 pub mod traits;
 pub mod weapon;

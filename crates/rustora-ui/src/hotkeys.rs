@@ -103,6 +103,30 @@ pub struct HotkeyDefinition {
     pub has_duplicates: bool,
 }
 
+/// The hotkeys that rustora adds to those of the mod, in the format of the hotkey files of the mods. Their
+/// descriptions are no message keys, so the settings show them as they are.
+const RUSTORA_HOTKEYS: &str = "TogglePerfText: P Alt
+	Description: Toggle the performance text
+	Types: World
+	Contexts: menu, player, spectator
+
+TogglePerfGraph: G Alt
+	Description: Toggle the performance graph
+	Types: World
+	Contexts: menu, player, spectator
+";
+
+/// The hotkey definitions of the mod followed by those of [`RUSTORA_HOTKEYS`] that the mod does not define.
+pub fn with_rustora_hotkeys(mut nodes: Vec<MiniYamlNode>) -> Vec<MiniYamlNode> {
+    let added = rustora_core::miniyaml::MiniYaml::from_str(RUSTORA_HOTKEYS, "rustora hotkeys", true).expect("rustora hotkeys");
+    for node in added {
+        if !nodes.iter().any(|n| n.key == node.key) {
+            nodes.push(node);
+        }
+    }
+    nodes
+}
+
 /// `HotkeyDefinition.ContextFluentPrefix`.
 pub const CONTEXT_FLUENT_PREFIX: &str = "hotkey-context";
 
@@ -259,6 +283,18 @@ mod tests {
             multi_tap: 1,
             repeat: false,
         }
+    }
+
+    #[test]
+    fn adds_the_perf_hotkeys_unless_the_mod_defines_them() {
+        let nodes = rustora_core::miniyaml::MiniYaml::from_str("TogglePerfGraph: G\n", "t", true).unwrap();
+        let hotkeys = Hotkeys::load(&with_rustora_hotkeys(nodes));
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        };
+        assert!(hotkeys.is_activated("TogglePerfText", &key("P", alt)));
+        assert!(hotkeys.is_activated("TogglePerfGraph", &key("G", Modifiers::default())));
     }
 
     #[test]

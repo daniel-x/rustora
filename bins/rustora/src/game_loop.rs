@@ -141,6 +141,10 @@ pub struct Start {
     pub window_size: (u32, u32),
     /// The scale factor of the window system for the window.
     pub scale_factor: f64,
+    /// The presents wait for the vertical sync of the display.
+    pub vsync: bool,
+    /// The refresh rate of the display of the window, if known.
+    pub refresh_hz: Option<f64>,
     pub args: Vec<String>,
     pub queue: FrameQueue,
 }
@@ -182,6 +186,8 @@ struct GameLoop {
     link: MainLink,
     window_size: (u32, u32),
     scale_factor: f64,
+    vsync: bool,
+    refresh_hz: Option<f64>,
     /// The mod whose cursor images the main thread has.
     cursor_mod: String,
     /// The pixel doubling of the cursor images.
@@ -245,6 +251,8 @@ impl GameLoop {
             link,
             window_size: start.window_size,
             scale_factor: start.scale_factor,
+            vsync: start.vsync,
+            refresh_hz: start.refresh_hz,
             cursor_mod,
             cursor_scale: 1,
             sent_cursors: HashSet::default(),
@@ -426,13 +434,16 @@ impl GameLoop {
             ElementState::Pressed => (UiKeyEvent::Down, taps.press(Instant::now(), (0, 0))),
             ElementState::Released => (UiKeyEvent::Up, taps.count()),
         };
-        self.client.ui.handle_key(&KeyInput {
+        let input = KeyInput {
             event,
             key,
             modifiers: m,
             multi_tap,
             repeat,
-        });
+        };
+        if !self.client.ui.handle_key(&input) {
+            rustora_ui::logic::perf_debug::toggle_by_hotkey(&mut self.client.ui, &input);
+        }
     }
 
     fn keyboard(&mut self, event: &KeyEvent) {
@@ -522,6 +533,7 @@ impl GameLoop {
         let render = rustora_ui::perf::PerfSample::new("render");
         self.apply_cursor();
         let frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
+        rustora_ui::perf_stats::frame_built();
         if let Some(bench) = &mut self.bench {
             bench.built(start.elapsed());
         }
@@ -551,6 +563,7 @@ impl GameLoop {
         if report.skipped.is_none() {
             rustora_ui::perf::increment("render_flip", 1000.0 * report.present.as_secs_f64());
             rustora_ui::perf::frame_tick();
+            rustora_ui::perf_stats::frame_drawn();
         }
         if let Some(pixels) = &report.screenshot {
             self.client.save_screenshot(pixels, report.size.0, report.size.1);
@@ -590,6 +603,7 @@ impl GameLoop {
         let logic_interval = Duration::from_millis(self.client.logic_interval() as u64);
         let render_interval = Duration::from_millis(self.client.render_interval() as u64);
         let frame_skip = self.client.frame_skip();
+        rustora_ui::perf_stats::set_frame_target(Some(self.client.frame_target(self.vsync, self.refresh_hz)));
         let now = Instant::now();
         if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
             self.next_logic = now;

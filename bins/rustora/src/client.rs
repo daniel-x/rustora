@@ -113,6 +113,17 @@ struct LagContext {
     slow_connections: Vec<i32>,
     /// The software of the clients that announced it; the others count as OpenRA.
     software: rustora_core::hash::HashMap<i32, String>,
+    /// The human clients with what the server tells of their connections, for the lag table of the perf text.
+    clients: Vec<ClientConnection>,
+}
+
+/// What the server tells of the connection of a human client.
+struct ClientConnection {
+    index: i32,
+    /// How much later its orders arrive than the earliest ones and its ping, from a lag report of a rustora server.
+    lateness_ms: Option<i32>,
+    ping_ms: Option<i32>,
+    quality: rustora_net::session::ConnectionQuality,
 }
 
 impl LagContext {
@@ -142,12 +153,62 @@ impl LagContext {
                     .max_by_key(|c| c.lateness_ms)
             })
             .map(|c| c.index);
+        let clients = humans
+            .iter()
+            .map(|c| {
+                let lag = report.and_then(|r| r.client(c.index));
+                ClientConnection {
+                    index: c.index,
+                    lateness_ms: lag.map(|l| l.lateness_ms),
+                    ping_ms: lag.and_then(|l| l.ping_ms),
+                    quality: c.connection_quality,
+                }
+            })
+            .collect();
         LagContext {
             own_connection_slow,
             latest_client,
             slow_connections,
             software: net.client_software.clone(),
+            clients,
         }
+    }
+
+    /// The lines of the lag table of the perf text: the speed and the waits that no player caused, then a line per
+    /// human client with its connection and the share of the time that the game waited for it. Empty for fewer than
+    /// two human clients.
+    fn table(&self, report: Option<&LagReport>, world: &World, local_client: i32) -> Vec<String> {
+        if self.clients.len() < 2 {
+            return Vec::new();
+        }
+        let share = |cause: LagCause| {
+            report
+                .and_then(|r| r.causes.iter().find(|(c, _)| *c == cause))
+                .map_or(0, |(_, p)| *p)
+        };
+        let mut lines = vec![format!(
+            "Lag in {} s: speed {}%, this computer {}%, server {}%, own connection {}%",
+            rustora_client::lag_monitor::WINDOW_MS / 1000,
+            report.map_or(100, |r| r.speed_percent),
+            share(LagCause::ThisComputer),
+            share(LagCause::Server),
+            share(LagCause::OwnConnection),
+        )];
+        for c in &self.clients {
+            let name = world
+                .lobby_info
+                .client_with_index(c.index)
+                .and_then(|c| c.name.clone())
+                .unwrap_or_else(|| format!("player {}", c.index));
+            let you = if c.index == local_client { " (you)" } else { "" };
+            let connection = match (c.lateness_ms, c.ping_ms) {
+                (Some(late), Some(ping)) => format!("late {late} ms, ping {ping} ms"),
+                (Some(late), None) => format!("late {late} ms"),
+                _ => format!("connection {:?}", c.quality),
+            };
+            lines.push(format!("{name}{you}: {connection}, waited {}%", share(LagCause::Client(c.index))));
+        }
+        lines
     }
 
     /// The lines of the lag display for `report`.
@@ -179,6 +240,51 @@ impl LagContext {
             lines.push(format!("Waiting for {what}: {percent}%"));
         }
         lines.join("\n")
+    }
+}
+
+/// The timesteps of the `GameSpeeds` of the mod with their names in the language of the player.
+fn game_speed_names(mod_data: &ModData, messages: &Messages) -> Vec<(i32, String)> {
+    let Some(speeds) = mod_data
+        .manifest
+        .yaml
+        .get("GameSpeeds")
+        .and_then(|s| s.node_with_key("Speeds").ok())
+    else {
+        return Vec::new();
+    };
+    speeds
+        .value
+        .nodes
+        .iter()
+        .filter_map(|n| {
+            let get = |k: &str| n.value.nodes.iter().find(|c| c.key == k).map(|c| c.value.value_str().to_string());
+            let timestep = get("Timestep")?.trim().parse().ok()?;
+            Some((timestep, get("Name").map_or_else(|| n.key.clone(), |key| messages.get(&key))))
+        })
+        .collect()
+}
+
+/// The tick rate that `world` aims at: that of the game speed, or of the replay speed that the player chose.
+fn tick_target(world: &World, speed_names: &[(i32, String)]) -> rustora_ui::perf_stats::Target {
+    let timestep = if world.is_replay() {
+        world.replay_timestep.get()
+    } else {
+        world.timestep
+    };
+    if timestep <= 0 {
+        return rustora_ui::perf_stats::Target {
+            label: "Paused".to_string(),
+            rate: None,
+        };
+    }
+    let label = speed_names
+        .iter()
+        .find(|(t, _)| *t == timestep)
+        .map_or_else(|| format!("{timestep} ms per tick"), |(_, name)| name.clone());
+    rustora_ui::perf_stats::Target {
+        label,
+        rate: Some(1000.0 / timestep as f64),
     }
 }
 
@@ -554,12 +660,14 @@ impl ShellWorld {
     /// Records the tick attempt in the lag monitor and puts its report into the in-game state.
     fn measure_lag(&mut self, now: i64, timestep: i32, step: Step, lag: &LagContext) {
         let Some(ingame) = self.ingame.clone() else {
+            rustora_ui::perf_stats::set_lag(Vec::new());
             return;
         };
         let orders = &self.driver.orders;
         if self.world.is_replay() || self.world.is_loading_game_save() || !orders.game_started() || step == Step::Ended {
             self.lag = None;
             ingame.lag_text.borrow_mut().clear();
+            rustora_ui::perf_stats::set_lag(Vec::new());
             return;
         }
         let monitor = self.lag.get_or_insert_with(|| LagMonitor::new(self.world.timestep));
@@ -581,6 +689,9 @@ impl ShellWorld {
             None => String::new(),
         };
         *ingame.lag_text.borrow_mut() = text;
+        let local = self.driver.orders.connection.local_client_id();
+        let measured = self.lag.as_ref().and_then(|m| m.measure(now));
+        rustora_ui::perf_stats::set_lag(lag.table(measured.as_ref(), &self.world, local));
     }
 
     /// Feeds the user interface with the orders that the world ignores, and sends the chat lines it wrote.
@@ -783,6 +894,8 @@ pub struct Client {
     bench_timestep: Option<i32>,
     /// The time that [`ShellWorld::tick`] took so far, the world ticks with their orders, for the benchmark.
     world_busy: Duration,
+    /// The timesteps of the game speeds of the mod with their names, for the tick rate target of the perf text.
+    speed_names: Vec<(i32, String)>,
     /// The world tick at which the replay pauses itself (`Launch.PauseAtTick`), for reproducible screenshots.
     pause_at_tick: Option<i32>,
     load_screen_drawn: bool,
@@ -835,6 +948,7 @@ impl Client {
         assets.hotkeys.apply_settings(&settings.keys);
         let ui_scale = Some(settings.graphics.ui_scale).filter(|s| *s > 0.0).unwrap_or(1.0);
         assets.set_font_scale(ui_scale);
+        let speed_names = game_speed_names(&mod_data, &assets.messages);
         let assets = Rc::new(RefCell::new(assets));
         let mut progress = || {
             if let Some(startup) = startup.as_mut() {
@@ -960,6 +1074,7 @@ impl Client {
                 .and_then(|n| n.parse().ok()),
             bench_realtime: args.iter().any(|a| a.eq_ignore_ascii_case("Launch.BenchRealtime=True")),
             world_busy: Duration::ZERO,
+            speed_names,
             bench_timestep: args
                 .iter()
                 .find_map(|a| a.strip_prefix("Launch.BenchTimestep="))
@@ -1167,6 +1282,42 @@ impl Client {
         if to_game_fps { self.logic_interval() } else { 1000 / max_framerate }
     }
 
+    /// The frame rate that the client aims at: the tick rate with `CapFramerateToGameFps`, else the lower of
+    /// `MaxFramerate` with `CapFramerate` and the refresh rate `refresh_hz` of the display with `vsync`.
+    pub fn frame_target(&self, vsync: bool, refresh_hz: Option<f64>) -> rustora_ui::perf_stats::Target {
+        use rustora_ui::perf_stats::Target;
+        let (to_game_fps, cap) = {
+            let graphics = &self.services.settings.borrow().graphics;
+            let cap = graphics.cap_framerate.then(|| f64::from(graphics.max_framerate.clamp(1, 1000)));
+            (graphics.cap_framerate_to_game_fps, cap)
+        };
+        if to_game_fps {
+            return Target {
+                label: "Game speed".to_string(),
+                rate: Some(1000.0 / f64::from(self.logic_interval().max(1))),
+            };
+        }
+        let sync = vsync.then_some(refresh_hz);
+        match (cap, sync) {
+            (Some(cap), Some(Some(hz))) if hz < cap => Target {
+                label: "VSync".to_string(),
+                rate: Some(hz),
+            },
+            (Some(cap), _) => Target {
+                label: "Cap".to_string(),
+                rate: Some(cap),
+            },
+            (None, Some(hz)) => Target {
+                label: "VSync".to_string(),
+                rate: hz,
+            },
+            (None, None) => Target {
+                label: "Uncapped".to_string(),
+                rate: None,
+            },
+        }
+    }
+
     /// True if `Game.Loop` builds a frame before the next logic tick: in regular gameplay, which excludes replays and
     /// the loading of game saves, and while the benchmark of `--bench-ticks` measures.
     pub fn renders_every_tick(&self) -> bool {
@@ -1206,11 +1357,14 @@ impl Client {
             self.update_script_host();
             let lag = LagContext::new(&self.services.net.borrow(), now);
             let sample = rustora_ui::perf::PerfSample::new("tick_time");
+            let tick_started = std::time::Instant::now();
+            let mut ticked_world = None;
             if let Some(shell) = &mut self.shell {
                 let tick_before = shell.world.world_tick();
                 let started = std::time::Instant::now();
                 shell.tick(now, timestep, &lag);
-                self.world_busy += started.elapsed();
+                let world_time = started.elapsed();
+                self.world_busy += world_time;
                 if shell.world.is_replay() && self.pause_at_tick.is_some_and(|t| shell.world.world_tick() >= t) {
                     shell.world.replay_timestep.set(0);
                     self.pause_at_tick = None;
@@ -1218,8 +1372,10 @@ impl Client {
                 if shell.world.world_tick() != tick_before {
                     if tick_before == 0 {
                         rustora_ui::perf::reset();
+                        rustora_ui::perf_stats::reset_ticks();
                     }
                     rustora_ui::perf::tick();
+                    ticked_world = Some((shell.world.world_tick(), world_time));
                 }
                 if shell.ingame.is_some() {
                     let assets = self.ui.assets.clone();
@@ -1232,8 +1388,13 @@ impl Client {
             self.finish_loading_game_save();
             self.services.sound.tick();
             drop(sample);
+            if let Some((tick, world_time)) = ticked_world {
+                rustora_ui::perf_stats::record_tick(tick, tick_started.elapsed(), world_time);
+            }
         }
         if ui_due {
+            let target = self.shell.as_ref().map(|s| tick_target(&s.world, &self.speed_names));
+            rustora_ui::perf_stats::set_tick_target(target);
             self.cursor.tick(&self.cursors);
             rustora_ui::map_repository::MapRepository::poll(&mut self.ui);
             self.ui.tick();

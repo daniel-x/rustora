@@ -133,6 +133,11 @@ pub trait IGameSaveTraitData {
 
 pub trait ITick {
     fn tick(&self, self_: &ActorRef);
+
+    /// The type name of the trait, for the tick profile.
+    fn tick_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 }
 
 pub trait ISync {

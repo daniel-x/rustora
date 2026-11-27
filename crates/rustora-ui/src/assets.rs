@@ -53,7 +53,11 @@ impl Assets {
                 fonts.insert(font.key.clone(), SpriteFont::new(data, size, ascender));
             }
         }
-        let hotkeys = Hotkeys::load(&ModData::load_yaml(&*fs, &manifest.hotkeys, None)?);
+        let hotkeys = Hotkeys::load(&crate::hotkeys::with_rustora_hotkeys(ModData::load_yaml(
+            &*fs,
+            &manifest.hotkeys,
+            None,
+        )?));
         let messages = Messages::new(&manifest.fluent_messages, &*fs);
         Ok(Assets {
             fs,

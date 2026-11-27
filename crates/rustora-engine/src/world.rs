@@ -21,6 +21,7 @@ use crate::effect::EffectRef;
 use crate::map::Map;
 use crate::player::{Player, PlayerRef, WinState};
 use crate::rules::Ruleset;
+use crate::tick_profile::{TickPart, TickProfile};
 use crate::trait_dict::TraitDict;
 use crate::traits::*;
 
@@ -97,6 +98,8 @@ pub struct World {
     restoring: Cell<bool>,
     /// The buffer of the actors that a tick visits, kept between ticks.
     tick_actors: RefCell<Vec<ActorRef>>,
+    /// The times of the world ticks per activity, trait and the effects, for the performance text.
+    pub tick_profile: TickProfile,
 }
 
 /// `RustoraHarness.BotSeed`: the seed of the bot random numbers, derived from the lobby random seed.
@@ -179,6 +182,7 @@ impl World {
             trait_owners: RefCell::new(rustora_core::hash::HashMap::default()),
             restoring: Cell::new(false),
             tick_actors: RefCell::new(Vec::new()),
+            tick_profile: TickProfile::default(),
         });
 
         let name = if world_type == WorldType::Editor { "editorworld" } else { "world" };
@@ -656,18 +660,28 @@ impl World {
             self.world_tick.set(self.world_tick.get() + 1);
             let mut actors = self.tick_actors.take();
             actors.extend(self.actors.borrow().values().cloned());
+            let profile = &self.tick_profile;
+            if profile.is_enabled() {
+                profile.count_tick();
+            }
             for a in &actors {
-                a.tick();
+                let activity = || TickPart::Activity(a.current_activity().map_or("(none)", |x| x.type_name()));
+                profile.measure(activity, || a.tick());
             }
             actors.clear();
             *self.tick_actors.borrow_mut() = actors;
             self.trait_dict.apply_to_all::<dyn ITick>(|a, t| {
                 rustora_core::world_types::TRACE_ACTOR_ID.with(|c| c.set(a.id));
-                t.tick(a)
+                profile.measure(|| TickPart::Trait(t.tick_name()), || t.tick(a))
             });
-            for e in self.effects() {
-                e.tick(self);
-            }
+            profile.measure(
+                || TickPart::Effects,
+                || {
+                    for e in self.effects() {
+                        e.tick(self);
+                    }
+                },
+            );
         }
         loop {
             let next = self.frame_end_actions.borrow_mut().pop_front();
