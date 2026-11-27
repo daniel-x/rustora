@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) The rustora authors.
 
-//! A minimal IRC client for the general chat: it connects to Libera.Chat over TLS, joins one channel, and
-//! passes on the messages of that channel and the private messages to this client. It runs on a thread of its
-//! own; dropping the `IrcClient` quits.
+//! A minimal IRC client: it connects to Libera.Chat over TLS, joins channels, and passes on the messages of those
+//! channels and the private messages. It runs on a thread of its own; dropping the `IrcClient` quits. The general
+//! chat of the client and the game advertisements of clients and servers use it.
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -14,7 +14,10 @@ use std::time::Duration;
 
 pub const SERVER: &str = "irc.libera.chat";
 pub const PORT: u16 = 6697;
+/// The channel of the general chat.
 pub const CHANNEL: &str = "##openra-ingame-general";
+/// The channel where servers advertise their games, see `irc_games`.
+pub const SERVERS_CHANNEL: &str = "#openra-ingame-servers";
 /// `NICKLEN` of Libera.Chat.
 pub const NICK_LEN: usize = 16;
 pub const LONG_PREFIX: &str = "openra_user_";
@@ -26,17 +29,46 @@ const MAX_TEXT_BYTES: usize = 400;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IrcEvent {
     /// The channel is joined under this nick.
-    Joined(String),
-    /// A message in the channel, or a private message to this client.
-    Message { nick: String, text: String, private: bool },
+    Joined { channel: String, nick: String },
+    /// A message in a channel, or a private message to this client when `channel` is `None`. `host` is the host
+    /// part of the sender's source.
+    Message {
+        channel: Option<String>,
+        nick: String,
+        host: String,
+        text: String,
+    },
     /// The users of the channel changed; these are all of them, sorted.
-    Users(Vec<String>),
+    Users { channel: String, users: Vec<String> },
     /// The connection is gone, with the reason.
     Disconnected(String),
 }
 
+/// What a connection joins and how it names itself.
+pub struct IrcConfig {
+    pub channels: Vec<String>,
+    /// The nick of attempt 1, 2, 3, ...; the next attempt follows a nick that is taken or invalid.
+    pub nick: Box<dyn Fn(u32) -> String + Send>,
+    pub real_name: String,
+    /// Connects over IPv4 only, so that the host the others see is an IPv4 address.
+    pub ipv4_only: bool,
+}
+
+impl IrcConfig {
+    /// The connection of a player with the name `name`, see [`nick`].
+    pub fn player(name: &str, channels: &[&str]) -> IrcConfig {
+        let escaped = escape_name(name);
+        IrcConfig {
+            channels: channels.iter().map(|c| c.to_string()).collect(),
+            nick: Box::new(move |attempt| nick(&escaped, attempt)),
+            real_name: "rustora general chat".into(),
+            ipv4_only: false,
+        }
+    }
+}
+
 enum Command {
-    Send(String),
+    Send { channel: String, text: String },
     Quit,
 }
 
@@ -48,15 +80,13 @@ pub struct IrcClient {
 }
 
 impl IrcClient {
-    /// Connects with the nick for the player name `name`.
-    pub fn connect(name: &str) -> IrcClient {
+    pub fn connect(config: IrcConfig) -> IrcClient {
         let (command_tx, command_rx) = channel();
         let (event_tx, event_rx) = channel();
-        let escaped = escape_name(name);
         let thread = std::thread::Builder::new()
             .name("irc".into())
             .spawn(move || {
-                let reason = match run(&escaped, &command_rx, &event_tx) {
+                let reason = match run(&config, &command_rx, &event_tx) {
                     Ok(reason) => reason,
                     Err(e) => e.to_string(),
                 };
@@ -70,9 +100,12 @@ impl IrcClient {
         }
     }
 
-    /// Sends `text` to the channel.
-    pub fn send(&self, text: &str) {
-        let _ = self.commands.send(Command::Send(text.to_string()));
+    /// Sends `text` to `channel` once that is joined; texts before are dropped.
+    pub fn send(&self, channel: &str, text: &str) {
+        let _ = self.commands.send(Command::Send {
+            channel: channel.to_string(),
+            text: text.to_string(),
+        });
     }
 
     /// The events since the last call.
@@ -133,22 +166,31 @@ pub fn display_name(nick: &str) -> &str {
 #[derive(Debug, PartialEq, Eq)]
 struct Line<'a> {
     source_nick: Option<&'a str>,
+    source_host: Option<&'a str>,
     command: &'a str,
     params: Vec<&'a str>,
 }
 
-/// The users of the channel, from the `NAMES` replies and the joins, parts, quits, nick changes and kicks.
-#[derive(Default)]
+/// The users of a channel, from the `NAMES` replies and the joins, parts, quits, nick changes and kicks.
 struct ChannelUsers {
+    channel: String,
     users: Vec<String>,
     /// The names of a `NAMES` reply that is not complete yet.
     reply: Option<Vec<String>>,
 }
 
 impl ChannelUsers {
+    fn new(channel: &str) -> ChannelUsers {
+        ChannelUsers {
+            channel: channel.to_string(),
+            users: Vec::new(),
+            reply: None,
+        }
+    }
+
     /// Applies the line; returns whether the users changed.
     fn apply(&mut self, line: &Line) -> bool {
-        let in_channel = |channel: &str| channel.eq_ignore_ascii_case(CHANNEL);
+        let in_channel = |channel: &str| channel.eq_ignore_ascii_case(&self.channel);
         let source = line.source_nick.unwrap_or_default();
         match (line.command, line.params.as_slice()) {
             ("353", [_, _, channel, names]) if in_channel(channel) => {
@@ -209,9 +251,11 @@ fn parse_line(line: &str) -> Option<Line<'_>> {
         rest = rest.split_once(' ')?.1;
     }
     let mut source_nick = None;
+    let mut source_host = None;
     if let Some(stripped) = rest.strip_prefix(':') {
         let (source, after) = stripped.split_once(' ')?;
         source_nick = Some(source.split(['!', '@']).next().unwrap_or(source));
+        source_host = source.split_once('@').map(|(_, host)| host);
         rest = after;
     }
     let (command, mut rest) = rest.split_once(' ').unwrap_or((rest, ""));
@@ -229,6 +273,7 @@ fn parse_line(line: &str) -> Option<Line<'_>> {
     }
     Some(Line {
         source_nick,
+        source_host,
         command,
         params,
     })
@@ -279,10 +324,10 @@ fn outgoing_text(text: &str) -> String {
 
 type TlsStream = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
 
-fn open() -> std::io::Result<TlsStream> {
+fn open(ipv4_only: bool) -> std::io::Result<TlsStream> {
     let address = (SERVER, PORT)
         .to_socket_addrs()?
-        .next()
+        .find(|a| !ipv4_only || a.is_ipv4())
         .ok_or_else(|| std::io::Error::new(ErrorKind::NotFound, "no address for the IRC server"))?;
     let mut socket = TcpStream::connect_timeout(&address, Duration::from_secs(15))?;
     socket.set_read_timeout(Some(Duration::from_secs(15)))?;
@@ -305,12 +350,13 @@ fn open() -> std::io::Result<TlsStream> {
 
 /// Runs the connection until it ends; returns the reason. Reads time out after 100 ms, so that the commands are
 /// checked between them; the TLS handshake is done before, because a timeout would break it.
-fn run(escaped: &str, commands: &Receiver<Command>, events: &Sender<IrcEvent>) -> std::io::Result<String> {
-    let mut stream = BufReader::new(open()?);
+fn run(config: &IrcConfig, commands: &Receiver<Command>, events: &Sender<IrcEvent>) -> std::io::Result<String> {
+    let mut stream = BufReader::new(open(config.ipv4_only)?);
     let mut attempt = 1;
-    let mut own_nick = nick(escaped, attempt);
-    let mut joined = false;
-    let mut users = ChannelUsers::default();
+    let mut own_nick = (config.nick)(attempt);
+    let mut registered = false;
+    let mut joined: Vec<String> = Vec::new();
+    let mut users: Vec<ChannelUsers> = config.channels.iter().map(|c| ChannelUsers::new(c)).collect();
     let write = |stream: &mut BufReader<TlsStream>, line: &str| -> std::io::Result<()> {
         let s = stream.get_mut();
         s.write_all(line.as_bytes())?;
@@ -318,15 +364,16 @@ fn run(escaped: &str, commands: &Receiver<Command>, events: &Sender<IrcEvent>) -
         s.flush()
     };
     write(&mut stream, &format!("NICK {own_nick}"))?;
-    write(&mut stream, "USER rustora 0 * :rustora general chat")?;
+    write(&mut stream, &format!("USER rustora 0 * :{}", config.real_name))?;
     let mut buffer = Vec::new();
     loop {
         loop {
             match commands.try_recv() {
-                Ok(Command::Send(text)) if joined => {
-                    write(&mut stream, &format!("PRIVMSG {CHANNEL} :{}", outgoing_text(&text)))?;
+                Ok(Command::Send { channel, text }) => {
+                    if joined.iter().any(|j| j.eq_ignore_ascii_case(&channel)) {
+                        write(&mut stream, &format!("PRIVMSG {channel} :{}", outgoing_text(&text)))?;
+                    }
                 }
-                Ok(Command::Send(_)) => {}
                 Ok(Command::Quit) | Err(TryRecvError::Disconnected) => {
                     let _ = write(&mut stream, "QUIT :leaving");
                     return Ok("quit".into());
@@ -346,35 +393,51 @@ fn run(escaped: &str, commands: &Receiver<Command>, events: &Sender<IrcEvent>) -
         let text = String::from_utf8_lossy(&buffer).into_owned();
         buffer.clear();
         let Some(line) = parse_line(&text) else { continue };
-        if users.apply(&line) {
-            let _ = events.send(IrcEvent::Users(users.sorted()));
+        for channel_users in &mut users {
+            if channel_users.apply(&line) {
+                let _ = events.send(IrcEvent::Users {
+                    channel: channel_users.channel.clone(),
+                    users: channel_users.sorted(),
+                });
+            }
         }
+        let wanted = |channel: &str| config.channels.iter().find(|c| c.eq_ignore_ascii_case(channel));
         match (line.command, line.params.as_slice()) {
             ("PING", params) => write(&mut stream, &format!("PONG :{}", params.first().unwrap_or(&"")))?,
             ("001", [nick, ..]) => {
+                registered = true;
                 own_nick = nick.to_string();
-                write(&mut stream, &format!("JOIN {CHANNEL}"))?;
+                write(&mut stream, &format!("JOIN {}", config.channels.join(",")))?;
             }
-            ("432" | "433" | "436", _) if !joined => {
+            ("432" | "433" | "436", _) if !registered => {
                 attempt += 1;
-                own_nick = nick(escaped, attempt);
+                own_nick = (config.nick)(attempt);
                 write(&mut stream, &format!("NICK {own_nick}"))?;
             }
-            ("JOIN", [channel, ..]) if line.source_nick == Some(own_nick.as_str()) && channel.eq_ignore_ascii_case(CHANNEL) => {
-                joined = true;
-                let _ = events.send(IrcEvent::Joined(own_nick.clone()));
+            ("JOIN", [channel, ..]) if line.source_nick == Some(own_nick.as_str()) => {
+                if let Some(channel) = wanted(channel) {
+                    joined.push(channel.clone());
+                    let _ = events.send(IrcEvent::Joined {
+                        channel: channel.clone(),
+                        nick: own_nick.clone(),
+                    });
+                }
             }
             ("NICK", [new_nick, ..]) if line.source_nick == Some(own_nick.as_str()) => own_nick = new_nick.to_string(),
             ("PRIVMSG", [target, message]) => {
-                let private = target.eq_ignore_ascii_case(&own_nick);
-                if !private && !target.eq_ignore_ascii_case(CHANNEL) {
+                let channel = if target.eq_ignore_ascii_case(&own_nick) {
+                    None
+                } else if let Some(channel) = wanted(target) {
+                    Some(channel.clone())
+                } else {
                     continue;
-                }
+                };
                 if let (Some(nick), Some(text)) = (line.source_nick, plain_text(message)) {
                     let _ = events.send(IrcEvent::Message {
+                        channel,
                         nick: nick.to_string(),
+                        host: line.source_host.unwrap_or_default().to_string(),
                         text,
-                        private,
                     });
                 }
             }
@@ -417,6 +480,7 @@ mod tests {
     fn lines() {
         let line = parse_line(":ora_x!~u@host PRIVMSG ##openra-ingame-general :hello there\r\n").unwrap();
         assert_eq!(line.source_nick, Some("ora_x"));
+        assert_eq!(line.source_host, Some("host"));
         assert_eq!(line.command, "PRIVMSG");
         assert_eq!(line.params, vec!["##openra-ingame-general", "hello there"]);
         let line = parse_line("PING :tantalum.libera.chat").unwrap();
@@ -430,7 +494,7 @@ mod tests {
 
     #[test]
     fn channel_users() {
-        let mut users = ChannelUsers::default();
+        let mut users = ChannelUsers::new(CHANNEL);
         let mut apply = |text: &str| users.apply(&parse_line(text).unwrap());
         assert!(!apply(":srv 353 me = ##openra-ingame-general :me @op +voiced"));
         assert!(!apply(":srv 353 me = ##openra-ingame-general :Zed"));
@@ -463,9 +527,9 @@ mod live_tests {
         for _ in 0..300 {
             for event in client.poll() {
                 match event {
-                    IrcEvent::Joined(nick) => return nick,
+                    IrcEvent::Joined { nick, .. } => return nick,
                     IrcEvent::Disconnected(reason) => panic!("disconnected: {reason}"),
-                    IrcEvent::Message { .. } | IrcEvent::Users(_) => {}
+                    IrcEvent::Message { .. } | IrcEvent::Users { .. } => {}
                 }
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -477,9 +541,9 @@ mod live_tests {
     #[test]
     #[ignore = "connects to Libera.Chat"]
     fn join_twice() {
-        let first = IrcClient::connect("rtst");
+        let first = IrcClient::connect(IrcConfig::player("rtst", &[CHANNEL]));
         assert_eq!(wait_joined(&first), "openra_user_rtst");
-        let second = IrcClient::connect("rtst");
+        let second = IrcClient::connect(IrcConfig::player("rtst", &[CHANNEL]));
         assert_eq!(wait_joined(&second), "ora_rtst_2");
     }
 
@@ -487,13 +551,13 @@ mod live_tests {
     #[test]
     #[ignore = "connects to Libera.Chat"]
     fn private_message() {
-        let client = IrcClient::connect("rpm");
+        let client = IrcClient::connect(IrcConfig::player("rpm", &[CHANNEL]));
         wait_joined(&client);
         for _ in 0..900 {
             for event in client.poll() {
-                if let IrcEvent::Message { nick, text, private } = event {
-                    eprintln!("{nick}: {text} {private}");
-                    assert!(private);
+                if let IrcEvent::Message { channel, nick, text, .. } = event {
+                    eprintln!("{nick}: {text} {channel:?}");
+                    assert!(channel.is_none());
                     return;
                 }
             }

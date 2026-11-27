@@ -2,13 +2,16 @@
 // Copyright (c) The rustora authors.
 
 //! The general chat of rustora: an IRC channel on Libera.Chat, shown beside the server list and the multiplayer
-//! lobby. It is connected while one of them is open and disconnected otherwise, also while playing.
+//! lobby. It is connected while one of them is open and disconnected otherwise, also while playing. The same
+//! connection collects the games that servers advertise in `irc::SERVERS_CHANNEL` for the server list.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use rustora_client::irc::{self, IrcClient, IrcEvent};
+use rustora_client::irc_games::IrcGames;
+use rustora_net::irc::{self, IrcClient, IrcConfig, IrcEvent};
+use rustora_net::irc_games::{self, now_millis};
 
 use crate::draw::Rect;
 use crate::logic::services;
@@ -44,6 +47,8 @@ pub struct GeneralChat {
     users: Vec<String>,
     /// Grows with every change of `users`.
     users_revision: u64,
+    /// The games advertised in the servers channel.
+    pub games: IrcGames,
 }
 
 impl GeneralChat {
@@ -64,7 +69,7 @@ impl GeneralChat {
     }
 
     fn connect(&mut self, name: &str) {
-        self.irc = Some(IrcClient::connect(name));
+        self.irc = Some(IrcClient::connect(IrcConfig::player(name, &[irc::CHANNEL, irc::SERVERS_CHANNEL])));
         self.push(
             None,
             format!("Connecting to {} on Libera.Chat.", irc::CHANNEL),
@@ -81,6 +86,7 @@ impl GeneralChat {
         if self.irc.take().is_some() {
             self.nick = None;
             self.set_users(Vec::new());
+            self.games.clear();
             self.retry_at = 0;
             self.push(None, "Disconnected.".into(), TextNotificationPool::System);
         }
@@ -90,32 +96,55 @@ impl GeneralChat {
         let events = self.irc.as_ref().map(IrcClient::poll).unwrap_or_default();
         for event in events {
             match event {
-                IrcEvent::Joined(nick) => {
+                IrcEvent::Joined { channel, nick } if channel == irc::CHANNEL => {
                     self.push(None, format!("Joined as {nick}."), TextNotificationPool::System);
                     self.nick = Some(nick);
                 }
-                IrcEvent::Message { nick, text, private } => {
+                IrcEvent::Joined { channel, .. } => self.query_games(&channel),
+                IrcEvent::Message { channel, nick, host, text } if channel.as_deref() == Some(irc::SERVERS_CHANNEL) => {
+                    self.games.apply_message(&nick, &host, &text, now_millis());
+                }
+                IrcEvent::Message { channel, nick, text, .. } => {
                     let name = irc::display_name(&nick);
-                    let prefix = if private { format!("{name} (private)") } else { name.to_string() };
+                    let prefix = if channel.is_none() {
+                        format!("{name} (private)")
+                    } else {
+                        name.to_string()
+                    };
                     self.push(Some(prefix), text, TextNotificationPool::Chat);
                 }
-                IrcEvent::Users(users) => self.set_users(users),
+                IrcEvent::Users { channel, users } if channel == irc::CHANNEL => self.set_users(users),
+                IrcEvent::Users { users, .. } => self.games.retain_users(&users),
                 IrcEvent::Disconnected(reason) => {
                     self.irc = None;
                     self.nick = None;
                     self.set_users(Vec::new());
+                    self.games.clear();
                     self.retry_at = now + RETRY_DELAY;
                     self.push(None, format!("Disconnected: {reason}"), TextNotificationPool::System);
                 }
             }
         }
+        self.games.expire(now_millis());
+    }
+
+    /// Asks the servers in `channel` to advertise their games again.
+    fn query_games(&self, channel: &str) {
+        if let Some(irc) = &self.irc {
+            irc.send(channel, &irc_games::query(now_millis()));
+        }
+    }
+
+    /// Asks the servers to advertise their games again, for a refresh of the server list.
+    pub fn refresh_games(&self) {
+        self.query_games(irc::SERVERS_CHANNEL);
     }
 
     fn send(&mut self, text: &str) -> bool {
         let (Some(irc), Some(nick)) = (&self.irc, &self.nick) else {
             return false;
         };
-        irc.send(text);
+        irc.send(irc::CHANNEL, text);
         let name = irc::display_name(nick).to_string();
         self.push(Some(name), text.to_string(), TextNotificationPool::Chat);
         true

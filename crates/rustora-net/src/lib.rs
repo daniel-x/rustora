@@ -9,6 +9,8 @@ pub mod extensions;
 pub mod game_save;
 pub mod game_server;
 pub mod handshake;
+pub mod irc;
+pub mod irc_games;
 pub mod lobby_setup;
 pub mod order;
 pub mod session;

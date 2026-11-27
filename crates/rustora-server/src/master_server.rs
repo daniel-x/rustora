@@ -2,7 +2,8 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! Announces the game to LAN clients and, when `AdvertiseOnline` is set, to the master server
-//! (`OpenRA.Mods.Common/ServerTraits/MasterServerPinger.cs`).
+//! (`OpenRA.Mods.Common/ServerTraits/MasterServerPinger.cs`) and, a rustora addition, in the IRC channel
+//! `irc::SERVERS_CHANNEL` (see `rustora_net::irc_games`).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +12,8 @@ use std::sync::mpsc::Sender;
 use rustora_core::world_types::MersenneTwister;
 use rustora_net::beacon::{Beacon, DISCOVERY_PORT, LAN_GAME_BEACON};
 use rustora_net::game_server::{GameClient, GameServer};
+use rustora_net::irc::{self, IrcClient, IrcConfig, IrcEvent, NICK_LEN};
+use rustora_net::irc_games::{self, now_millis};
 
 use crate::connection::Event;
 use crate::server::{Server, ServerState};
@@ -23,6 +26,22 @@ const INVALID_ERROR_CODE: &str = "notification-invalid-error-code";
 const CONNECTED: &str = "notification-master-server-connected";
 const ERROR: &str = "notification-master-server-error";
 const GAME_OFFLINE: &str = "notification-game-offline";
+/// The shortest time between two advertisements in IRC, against flooding the channel.
+const IRC_RATE_LIMIT: u64 = 5000;
+/// The time before a lost IRC connection is tried again.
+const IRC_RETRY_DELAY: u64 = 60_000;
+const IRC_NICK_PREFIX: &str = "ora_srv_";
+
+/// The connection that advertises the game in IRC.
+#[derive(Default)]
+struct IrcAdvertiser {
+    client: Option<IrcClient>,
+    joined: bool,
+    /// An advertisement waits for the rate limit.
+    pending: bool,
+    last_sent: Option<u64>,
+    retry_at: u64,
+}
 
 pub struct MasterServerPinger {
     beacon: Option<Beacon>,
@@ -31,6 +50,10 @@ pub struct MasterServerPinger {
     last_changed: u64,
     is_initial_ping: Arc<AtomicBool>,
     is_busy: Arc<AtomicBool>,
+    is_multiplayer: bool,
+    /// The seed of the IRC nicks.
+    nick_seed: u32,
+    irc: IrcAdvertiser,
 }
 
 impl MasterServerPinger {
@@ -51,6 +74,9 @@ impl MasterServerPinger {
             last_changed: 0,
             is_initial_ping: Arc::new(AtomicBool::new(true)),
             is_busy: Arc::new(AtomicBool::new(false)),
+            is_multiplayer,
+            nick_seed: random.next() as u32,
+            irc: IrcAdvertiser::default(),
         }
     }
 }
@@ -181,7 +207,73 @@ impl Server {
         if let Some(beacon) = &self.master_server.beacon {
             beacon.set_data(&game.to_post_data(Some(&self.master_server.session_guid)));
         }
+        self.master_server.irc.pending = true;
         self.master_server.last_ping = now;
+    }
+
+    /// The nick of attempt `attempt`: `ora_srv_` and 8 hex digits.
+    fn irc_config(seed: u32) -> IrcConfig {
+        IrcConfig {
+            channels: vec![irc::SERVERS_CHANNEL.to_string()],
+            nick: Box::new(move |attempt| {
+                let nick = format!(
+                    "{IRC_NICK_PREFIX}{:08x}",
+                    seed.wrapping_add(attempt - 1).wrapping_mul(2_654_435_761)
+                );
+                nick.chars().take(NICK_LEN).collect()
+            }),
+            real_name: "rustora game server".into(),
+            ipv4_only: true,
+        }
+    }
+
+    /// Keeps the IRC connection up while the game is advertised online, answers queries, and sends the pending
+    /// advertisement once the rate limit allows.
+    pub(crate) fn irc_tick(&mut self) {
+        if !self.settings.advertise_online || !self.master_server.is_multiplayer {
+            return;
+        }
+        let now = self.run_time();
+        let seed = self.master_server.nick_seed;
+        let advertiser = &mut self.master_server.irc;
+        if advertiser.client.is_none() && now >= advertiser.retry_at {
+            advertiser.client = Some(IrcClient::connect(Self::irc_config(seed)));
+        }
+        for event in advertiser.client.as_ref().map(IrcClient::poll).unwrap_or_default() {
+            match event {
+                IrcEvent::Joined { .. } => {
+                    log::info!(target: "server", "Advertising the game in {}", irc::SERVERS_CHANNEL);
+                    advertiser.joined = true;
+                    advertiser.pending = true;
+                }
+                IrcEvent::Message {
+                    channel: Some(_), text, ..
+                } if irc_games::is_query(&text, now_millis()) => {
+                    advertiser.pending = true;
+                }
+                IrcEvent::Disconnected(reason) => {
+                    log::info!(target: "server", "IRC: {reason}");
+                    advertiser.client = None;
+                    advertiser.joined = false;
+                    advertiser.retry_at = now + IRC_RETRY_DELAY;
+                }
+                IrcEvent::Message { .. } | IrcEvent::Users { .. } => {}
+            }
+        }
+        let allowed = advertiser.last_sent.is_none_or(|t| now.saturating_sub(t) >= IRC_RATE_LIMIT);
+        if advertiser.joined && advertiser.pending && allowed {
+            advertiser.pending = false;
+            advertiser.last_sent = Some(now);
+            self.send_irc_advertisement();
+        }
+    }
+
+    fn send_irc_advertisement(&self) {
+        let pinger = &self.master_server;
+        if let (Some(client), true) = (&pinger.irc.client, pinger.irc.joined) {
+            let line = irc_games::advertisement(&self.game_server(), &pinger.session_guid, now_millis());
+            client.send(irc::SERVERS_CHANNEL, &line);
+        }
     }
 
     /// `ServerShutdown` of the pinger: removes the game from the lists.
@@ -189,6 +281,8 @@ impl Server {
         if self.settings.advertise_online {
             self.post_to_master_server(self.game_server().to_post_data(None));
         }
+        self.send_irc_advertisement();
+        self.master_server.irc = IrcAdvertiser::default();
         if let Some(beacon) = self.master_server.beacon.take() {
             beacon.stop();
         }

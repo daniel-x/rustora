@@ -29,6 +29,8 @@ const STATE_WAITING: i32 = 1;
 const STATE_STARTED: i32 = 2;
 const STATE_SHUTTING_DOWN: i32 = 3;
 const DEFAULT_PORT: u16 = 1234;
+/// Milliseconds between two updates of the server list for games from IRC.
+const IRC_UPDATE_INTERVAL: i64 = 2000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SearchStatus {
@@ -138,6 +140,12 @@ struct ServerList {
     disabled_spawns: RefCell<Vec<i32>>,
     query: RefCell<Option<Receiver<Result<String, String>>>>,
     probe: Option<Probe>,
+    /// The games of the last answer of the master server, `None` if it failed.
+    online_games: RefCell<Option<Vec<GameServer>>>,
+    /// The `IrcGames::revision` that the list shows.
+    irc_revision: Cell<u64>,
+    /// The `Ui::run_time` when the list last took the games from IRC.
+    irc_shown_at: Cell<i64>,
 }
 
 impl ServerList {
@@ -160,6 +168,7 @@ impl ServerList {
             let _ = send.send(rustora_net::web::get(&url));
         });
         *self.query.borrow_mut() = Some(receive);
+        services(ui).general_chat.borrow().refresh_games();
     }
 
     fn lan_games(&self) -> Vec<GameServer> {
@@ -176,20 +185,51 @@ impl ServerList {
 
     /// The part of the query task in `RefreshServerList` that runs on the answer.
     fn finish_query(self: &Rc<Self>, ui: &mut Ui, answer: Result<String, String>) {
-        let mut games = match answer.and_then(|text| parse_game_list(&text)) {
+        let games = match answer.and_then(|text| parse_game_list(&text)) {
             Ok(games) => Some(games),
             Err(e) => {
                 log::debug!("Failed to query server list: {e}");
                 None
             }
         };
-        let lan = self.lan_games();
+        *self.online_games.borrow_mut() = games;
+        self.show_games(ui);
+    }
+
+    /// Shows the games of the master server, the LAN and IRC. A game from IRC that the master server or the LAN
+    /// also list is left out.
+    fn show_games(self: &Rc<Self>, ui: &mut Ui) {
+        let mut games = self.online_games.borrow().clone();
+        let mut other = self.lan_games();
+        let irc = {
+            let services = services(ui);
+            let chat = services.general_chat.borrow();
+            self.irc_revision.set(chat.games.revision());
+            chat.games.games()
+        };
+        self.irc_shown_at.set(ui.run_time());
+        for game in irc {
+            let listed = |g: &GameServer| g.address == game.address;
+            if !other.iter().any(listed) && !games.iter().flatten().any(listed) {
+                other.push(game);
+            }
+        }
         match &mut games {
-            Some(g) => g.extend(lan),
-            None if !lan.is_empty() => games = Some(lan),
+            Some(g) => g.extend(other),
+            None if !other.is_empty() => games = Some(other),
             None => {}
         }
         self.refresh_inner(ui, games);
+    }
+
+    /// Shows the games again when the games from IRC changed and no query runs, at most every
+    /// `IRC_UPDATE_INTERVAL`.
+    fn update_irc_games(self: &Rc<Self>, ui: &mut Ui) {
+        let revision = services(ui).general_chat.borrow().games.revision();
+        let due = ui.run_time() - self.irc_shown_at.get() >= IRC_UPDATE_INTERVAL;
+        if revision != self.irc_revision.get() && due && self.status.get() != SearchStatus::Fetching {
+            self.show_games(ui);
+        }
     }
 
     /// `RefreshServerListInner`.
@@ -584,6 +624,7 @@ impl ChromeLogic for MultiplayerLogic {
             *self.list.query.borrow_mut() = None;
             self.list.finish_query(ui, answer);
         }
+        self.list.update_irc_games(ui);
         let current = self.list.current.borrow().clone();
         let mut selected = self.selected.borrow_mut();
         selected.map_title = message(ui, "label-no-server-selected");
@@ -774,6 +815,9 @@ fn setup_server_list(
         disabled_spawns: RefCell::new(Vec::new()),
         query: RefCell::new(None),
         probe,
+        online_games: RefCell::new(None),
+        irc_revision: Cell::new(0),
+        irc_shown_at: Cell::new(0),
     });
 
     if let Some(clients) = &list.clients {

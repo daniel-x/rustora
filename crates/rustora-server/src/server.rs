@@ -541,6 +541,7 @@ impl Server {
             self.idle_tick();
             self.vote_kick_tick();
             self.master_server_tick();
+            self.irc_tick();
             self.lag_report_tick();
             if self.state == ServerState::GameStarted {
                 self.send_tick_scales();
