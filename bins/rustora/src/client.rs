@@ -1780,6 +1780,8 @@ impl Client {
         if let Some(ingame) = self.services.ingame.borrow().clone() {
             self.ui.label(lag_display).get_text = Some(Rc::new(move || ingame.lag_text.borrow().clone()));
         }
+        let settings = self.services.settings.clone();
+        self.ui.set_visible_fn(lag_display, move || !settings.borrow().debug.perf_text);
         if let Some(label) = self.ui.find(root, "MISSION_TEXT") {
             let (host, color_host) = (self.script_host.clone(), self.script_host.clone());
             let mut label = self.ui.label(label);

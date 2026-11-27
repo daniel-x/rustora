@@ -18,13 +18,19 @@ use crate::loader::cell;
 use crate::perf;
 use crate::perf_stats::{self, Target};
 use crate::widget::{ChromeLogic, Ui, WidgetArgs, WidgetId};
+use crate::widgets::{TextAlign, TextVAlign};
 
 /// How often the parts of the tick profile are summed up.
 const PROFILE_INTERVAL: Duration = Duration::from_secs(1);
 /// The parts of the tick profile that the text shows.
 const PROFILE_TOP: usize = 5;
-/// The lines of the text of `PerfDebugLogic`, whose bottom the longer text keeps.
-const OPENRA_LINES: i32 = 6;
+/// Where the text goes: at the top left, the place of the lag display of rustora, which it replaces.
+const TEXT_BOUNDS: Rect = Rect {
+    x: 10,
+    y: 70,
+    w: 640,
+    h: 0,
+};
 
 /// `LoadIngamePerfLogic`.
 pub fn load_ingame_perf(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>> {
@@ -33,14 +39,11 @@ pub fn load_ingame_perf(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeL
     cell(NoLogic)
 }
 
-/// `PerfDebugLogic`: the frame rate is the rolling average over the frames of the last second. The text grows to the
-/// left and upward from the place of the text of OpenRA, so that its longer lines stay in the window.
+/// `PerfDebugLogic`: the frame rate is the rolling average over the frames of the last second. Unlike in OpenRA, the
+/// text is left aligned at the top left, so that it does not move when its lines change their length.
 struct PerfDebug {
     services: Rc<Services>,
-    text_widget: WidgetId,
     text: Rc<RefCell<String>>,
-    /// The bounds of the text widget from the chrome.
-    base: Rect,
     start: Instant,
     timings: VecDeque<(u64, Duration)>,
     /// The parts of the tick profile in milliseconds per tick, the longest first, and when they were summed up.
@@ -147,24 +150,14 @@ impl PerfDebug {
 }
 
 impl ChromeLogic for PerfDebug {
-    fn tick(&mut self, ui: &mut Ui) {
+    fn tick(&mut self, _ui: &mut Ui) {
         let enabled = self.services.settings.borrow().debug.perf_text;
         if let Some(ingame) = self.services.ingame.borrow().as_ref() {
             ingame.world.tick_profile.set_enabled(enabled);
         }
-        if !enabled {
-            return;
+        if enabled {
+            *self.text.borrow_mut() = self.compose();
         }
-        let text = self.compose();
-        let font = ui.label(self.text_widget).font.clone();
-        let (width, height) = ui.measure(&font, &text);
-        let line_height = ui.measure(&font, "Tick").1.max(1);
-        let lines = text.lines().count() as i32;
-        let bottom = self.base.y + OPENRA_LINES * line_height;
-        let bounds = &mut ui.node_mut(self.text_widget).bounds;
-        bounds.x = self.base.x.min(self.base.x + self.base.w - width);
-        bounds.y = self.base.y.min(bottom - height.max(lines * line_height));
-        *self.text.borrow_mut() = text;
     }
 }
 
@@ -179,13 +172,17 @@ pub fn perf_debug(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>>
     ui.set_visible_fn(text_widget, move || s.borrow().debug.perf_text);
     let text = Rc::new(RefCell::new(String::new()));
     let shown = text.clone();
-    ui.label(text_widget).get_text = Some(Rc::new(move || shown.borrow().clone()));
+    {
+        let mut label = ui.label(text_widget);
+        label.get_text = Some(Rc::new(move || shown.borrow().clone()));
+        label.align = TextAlign::Left;
+        label.valign = TextVAlign::Top;
+    }
+    ui.node_mut(text_widget).bounds = TEXT_BOUNDS;
     let now = Instant::now();
     cell(PerfDebug {
         services: services(ui),
-        text_widget,
         text,
-        base: ui.node(text_widget).bounds,
         start: now,
         timings: VecDeque::from([(perf::render_frame(), Duration::ZERO)]),
         profile: Vec::new(),
