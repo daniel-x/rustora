@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex};
 use rustora_net::game_server::GameServer;
 use rustora_net::irc_games::{STATE_SHUTTING_DOWN, parse_advertisement};
 
-/// Milliseconds after its last advertisement that a game is dropped: a bit more than two of the intervals after
-/// which servers advertise their games again.
-const EXPIRY: i64 = 7 * 60 * 1000;
+/// Milliseconds after its last advertisement that a game counts as offline and is dropped: one and a half of the
+/// intervals of 1 minute after which servers advertise their games again.
+const EXPIRY: i64 = 90 * 1000;
 
 struct Entry {
     nick: String,

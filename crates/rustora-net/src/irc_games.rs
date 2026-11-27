@@ -11,7 +11,8 @@
 //! The fields from `Spectators` to `Clients` are left out when they are 0, `False` or empty. Flags hold `A` for an admin, `S` for a spectator and `B` for a bot. A backslash escapes `\`, `;`, `,` and `|` in
 //! the values. The address of the game is the host that the IRC server shows for the sender, with the port of the
 //! line. The client list holds as many clients as fit into one IRC line; the counts are always complete. A client
-//! that joins the channel sends `Query:;Time=...;Hash=...`, which servers answer with an advertisement.
+//! that joins the channel sends `Query:;Time=...;Hash=...`, which servers answer with an advertisement. Servers
+//! advertise at least once a minute; clients drop a game that was silent for 90 seconds.
 //!
 //! Every line ends with the time of sending and the first 16 hex digits of the SHA-1 of the line before `;Hash=`.
 //! A receiver drops lines with a wrong hash, lines older than `MAX_AGE` or further in the future, and

@@ -28,6 +28,9 @@ const ERROR: &str = "notification-master-server-error";
 const GAME_OFFLINE: &str = "notification-game-offline";
 /// The shortest time between two advertisements in IRC, against flooding the channel.
 const IRC_RATE_LIMIT: u64 = 5000;
+/// The longest time between two advertisements in IRC; clients drop a game that is silent for longer, see
+/// `rustora_client::irc_games`.
+const IRC_INTERVAL: u64 = 60_000;
 /// The time before a lost IRC connection is tried again.
 const IRC_RETRY_DELAY: u64 = 60_000;
 const IRC_NICK_PREFIX: &str = "ora_srv_";
@@ -260,7 +263,11 @@ impl Server {
                 IrcEvent::Message { .. } | IrcEvent::Users { .. } => {}
             }
         }
-        let allowed = advertiser.last_sent.is_none_or(|t| now.saturating_sub(t) >= IRC_RATE_LIMIT);
+        let since_last = advertiser.last_sent.map(|t| now.saturating_sub(t));
+        if since_last.is_some_and(|t| t >= IRC_INTERVAL) {
+            advertiser.pending = true;
+        }
+        let allowed = since_last.is_none_or(|t| t >= IRC_RATE_LIMIT);
         if advertiser.joined && advertiser.pending && allowed {
             advertiser.pending = false;
             advertiser.last_sent = Some(now);
