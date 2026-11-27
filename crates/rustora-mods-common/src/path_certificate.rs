@@ -7,7 +7,9 @@
 //! region `C`, the 8-connected component of the cells it could enter, and the cells next to `C` form the rim `R`.
 //! Any path between a cell in `C` and a cell outside `C ∪ R` enters a cell of `R`. A later search of any actor,
 //! locomotor and check without custom cost therefore fails if one of its endpoints is in `C`, the other is in neither
-//! `C` nor `R`, and the movement cost check of that search rejects every cell of `R` at the time of the search. Cells
+//! `C` nor `R`, and the movement cost check of that search rejects every cell of `R` at the time of the search. An
+//! endpoint on the rim works as well when the other endpoint is not next to it and the check also rejects its
+//! neighbors outside `C`: the units of a group stand on the rims of each other's failed searches. Cells
 //! of `C` that became blocked since only make the region smaller, so the certificate needs no invalidation. The
 //! check decides only whether a search that can only fail runs, so the results stay those of OpenRA.
 //!
@@ -110,8 +112,27 @@ impl Certificate {
         }
     }
 
-    fn separates(&self, a: CPos, b: CPos) -> bool {
-        self.region.contains(a) && !self.region.contains(b) && !self.rim_cells.contains(b)
+    /// Whether the certificate proves that no path connects `a` and `b` for a search whose cost check is `rejects`.
+    /// It does when `b` is outside the region and the rim, and either `a` is in the region and every rim cell is
+    /// rejected, or `a` is on the rim, `b` is no neighbor of `a`, and every other rim cell and every neighbor of `a`
+    /// outside the region is rejected. A path from a rim cell `a` starts with a step into one of its neighbors, and
+    /// the neighbors in the region lead only to the rejected rim. The cost of `a` itself does not matter, as the
+    /// searches start there or end there by its special case.
+    fn proves(&self, map: &Map, a: CPos, b: CPos, rejects: impl Fn(CPos) -> bool) -> bool {
+        if self.region.contains(b) || self.rim_cells.contains(b) {
+            return false;
+        }
+        if self.region.contains(a) {
+            return self.rim_is_closed(rejects);
+        }
+        if !self.rim_cells.contains(a) {
+            return false;
+        }
+        let neighbors_closed = CVec::DIRECTIONS.iter().all(|&d| {
+            let n = a + d;
+            n != b && (self.region.contains(n) || self.rim_cells.contains(n) || !map.contains(n) || rejects(n))
+        });
+        neighbors_closed && self.rim_is_closed(|c| c == a || rejects(c))
     }
 
     /// Whether the cost check of the search rejects every rim cell.
@@ -155,7 +176,7 @@ impl FailureCertificates {
         };
         let found = certificates
             .iter()
-            .position(|c| (c.separates(source, target) || c.separates(target, source)) && c.rim_is_closed(rejects));
+            .position(|c| c.proves(map, source, target, rejects) || c.proves(map, target, source, rejects));
         if let Some(i) = found {
             certificates[..=i].rotate_right(1);
         }
