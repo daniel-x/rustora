@@ -38,6 +38,11 @@ impl FrameQueue {
         self.frames().is_empty()
     }
 
+    /// True if the queue holds fewer frames than it holds at most without `Graphics.FrameSkip`.
+    pub fn has_room(&self) -> bool {
+        self.frames().len() < Self::CAPACITY
+    }
+
     /// Takes out the oldest frame.
     pub fn pop(&self) -> Option<Frame> {
         self.frames().pop_front()

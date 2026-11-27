@@ -5,20 +5,22 @@
 //! `Sdl2Input.PumpInput`, and the timing of `Game.Loop`. It builds the frames and sends them to the main thread,
 //! which owns the window and the GPU and presents them.
 //!
-//! The simulation thread builds at most one frame after every logic tick and none in between, and puts it into the
-//! [`FrameQueue`]. The main thread takes the frames out one by one and draws each. Only the simulation thread decides
-//! which frames are skipped, with `Graphics.FrameSkip`:
+//! The simulation thread builds the frames with the timing of `Game.Loop` and puts them into the [`FrameQueue`]. The
+//! main thread takes the frames out one by one and draws each. A frame is due every `1000 / Graphics.MaxFramerate` ms
+//! with `Graphics.CapFramerate`, every logic interval with `Graphics.CapFramerateToGameFps`, and otherwise every
+//! millisecond. Between ticks a due frame is built only while the queue has room, so the presents of the main thread,
+//! with vsync at the rate of the display, limit the frame rate, as the blocking `Clear` of `ThreadedGraphicsContext`
+//! does in OpenRA. A frame is built anyway when the last one is `1 / MinReplayFps` ago, even if the logic is behind.
+//! Only the simulation thread decides which frames are skipped, with `Graphics.FrameSkip`, a rustora addition:
 //!
-//! - Off: every tick is drawn. A frame is built after every tick. The queue holds at most one frame. A built frame
-//!   that finds the queue full waits outside of it, and the next tick waits until the frame is in the queue. Like
-//!   `Game.Loop` with `ThreadedGraphicsContext`, a tick runs while the main thread draws the frame of the tick before,
-//!   and the game slows down instead of skipping frames. At most three frames exist: the one drawn, the one in the
-//!   queue and the one waiting to get in.
-//! - On: ticks never wait for frames. No frame is built after a tick when the logic is behind, that is when the next
-//!   tick is due already, unless the last build is `1 / Graphics.FrameSkipMinFps` ago; the uploads that the tick recorded
-//!   go into the queue as a frame without draws. The queue holds at most two frames. A frame that finds it full
-//!   replaces the newer of the two, which keeps only its uploads; a frame without draws adds its uploads to the newer
-//!   one.
+//! - Off: as in `Game.Loop`, regular gameplay builds a frame before the next tick, so every tick is drawn. The queue
+//!   holds at most one frame. A built frame that finds the queue full waits outside of it, and the next tick waits
+//!   until the frame is in the queue: the game slows down instead of skipping frames. At most three frames exist: the
+//!   one drawn, the one in the queue and the one waiting to get in.
+//! - On: ticks never wait for frames, and a frame is built anyway when the last one is `1 / Graphics.FrameSkipMinFps`
+//!   ago. A tick without a frame puts the uploads that it recorded into the queue as a frame without draws. The queue
+//!   holds at most two frames. A frame that finds it full replaces the newer of the two, which keeps only its
+//!   uploads; a frame without draws adds its uploads to the newer one.
 
 use rustora_core::hash::{HashMap, HashSet};
 use std::cell::RefCell;
@@ -43,6 +45,8 @@ use crate::frames::{Frame, FrameQueue, Presented};
 const MAX_LOGIC_BEHIND: Duration = Duration::from_millis(250);
 /// The longest wait for a message while a frame waits to get into the queue.
 const QUEUE_WAIT: Duration = Duration::from_millis(100);
+/// The longest time between two frames without `Graphics.FrameSkip`: `1 / MinReplayFps` of `Game.Loop`.
+const MAX_RENDER_INTERVAL: Duration = Duration::from_millis(100);
 const PIXELS_PER_SCROLL_STEP: f64 = 40.0;
 /// The stack size of the simulation thread, that of the main thread on Linux.
 const STACK_SIZE: usize = 8 << 20;
@@ -195,6 +199,12 @@ struct GameLoop {
     mouse_taps: HashMap<WinitButton, TapHistory>,
     key_taps: HashMap<(String, [bool; 4]), TapHistory>,
     next_logic: Instant,
+    /// `nextRender` of `Game.Loop`: when the next frame is due.
+    next_render: Instant,
+    /// `forcedNextRender` of `Game.Loop`: when a frame is built even if the logic is behind.
+    forced_next_render: Instant,
+    /// `renderBeforeNextTick` of `Game.Loop`: the next tick waits for a frame.
+    render_before_next_tick: bool,
     bench: Option<crate::bench::Bench>,
     /// When the last logic tick ran, to log gaps.
     last_logic_tick: Instant,
@@ -202,8 +212,6 @@ struct GameLoop {
     queue: FrameQueue,
     /// A built frame that found the queue full.
     waiting: Option<Frame>,
-    /// When the last frame was built.
-    last_build: Instant,
     /// The time spent waiting for messages.
     idle: Duration,
 }
@@ -250,12 +258,14 @@ impl GameLoop {
             mouse_taps: HashMap::default(),
             key_taps: HashMap::default(),
             next_logic: now,
+            next_render: now,
+            forced_next_render: now,
+            render_before_next_tick: false,
             bench,
             last_logic_tick: now,
             quit: false,
             queue: start.queue,
             waiting: None,
-            last_build: now,
             idle: Duration::ZERO,
         }
     }
@@ -287,14 +297,21 @@ impl GameLoop {
         }
     }
 
-    /// The time of the next logic tick. While a frame waits to get into the queue, the next tick waits for a message
-    /// instead, up to [`QUEUE_WAIT`].
+    /// The time of the next logic tick or frame. While the queue is full, a frame waits for the main thread to take
+    /// one out, which sends a message, and so does a tick that waits for a frame. Without a time, the wait for a
+    /// message lasts up to [`QUEUE_WAIT`].
     fn next_wake(&self) -> Instant {
+        let now = Instant::now();
         if self.waiting.is_some() {
-            Instant::now() + QUEUE_WAIT
-        } else {
-            self.next_logic
+            return now + QUEUE_WAIT;
         }
+        if self.suspended {
+            return self.next_logic;
+        }
+        let room = self.queue.has_room();
+        let logic = (room || !self.render_before_next_tick).then_some(self.next_logic);
+        let render = room.then_some(self.next_render);
+        logic.into_iter().chain(render).min().unwrap_or(now + QUEUE_WAIT)
     }
 
     fn handle(&mut self, message: ToSim) {
@@ -472,13 +489,6 @@ impl GameLoop {
         self.shown_cursor = wanted;
     }
 
-    /// True if the frame of the tick that just ran is built: always without `Graphics.FrameSkip`, with it only when
-    /// the logic keeps up, or when the last build is `1 / Graphics.FrameSkipMinFps` ago.
-    fn builds_after_tick(&self) -> bool {
-        let now = Instant::now();
-        !self.client.frame_skip() || now < self.next_logic || now.duration_since(self.last_build) >= self.client.frame_skip_max_interval()
-    }
-
     /// Puts the uploads that the ticks since the last frame recorded into the queue, for a tick whose build is skipped.
     fn send_uploads(&mut self) {
         let commands = self.renderer.take_frame();
@@ -512,7 +522,6 @@ impl GameLoop {
         let render = rustora_ui::perf::PerfSample::new("render");
         self.apply_cursor();
         let frame = build_frame(&mut self.client, &mut self.renderer, self.window_size);
-        self.last_build = Instant::now();
         if let Some(bench) = &mut self.bench {
             bench.built(start.elapsed());
         }
@@ -549,48 +558,82 @@ impl GameLoop {
         self.renderer.recycle(report.commands);
     }
 
-    /// One pass of `Game.Loop`: at most one logic tick, followed by its frame unless `Graphics.FrameSkip` skips it. A
-    /// tick waits while a frame waits to get into the queue. While the window is hidden, the logic runs on without
-    /// frames.
+    /// Runs a logic tick and tells the benchmark. Returns true if the benchmark ended, which quits the client.
+    fn logic_tick(&mut self) -> bool {
+        let now = Instant::now();
+        let gap = now.saturating_duration_since(self.last_logic_tick);
+        if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
+            log::warn!(target: "client", "No logic tick ran for {:.1} s.", gap.as_secs_f64());
+        }
+        self.last_logic_tick = now;
+        self.client.logic_tick();
+        if let Some(bench) = &mut self.bench
+            && bench.after_logic_tick(self.client.running_world_tick(), self.idle, self.client.world_busy(), || {
+                self.client.speed_state()
+            })
+        {
+            if let Some((x, y)) = self.client.view_center() {
+                println!("BENCH view center {x},{y}");
+            }
+            self.quit = true;
+            return true;
+        }
+        false
+    }
+
+    /// One pass of `Game.Loop`: at most one logic tick and at most one frame, when they are due. A tick waits while
+    /// a frame waits to get into the queue. While the window is hidden, the logic runs on without frames.
     fn pass(&mut self) {
         self.flush_motion();
         self.open_links();
         self.enqueue_waiting();
+        let logic_interval = Duration::from_millis(self.client.logic_interval() as u64);
+        let render_interval = Duration::from_millis(self.client.render_interval() as u64);
+        let frame_skip = self.client.frame_skip();
         let now = Instant::now();
         if now.saturating_duration_since(self.next_logic) > MAX_LOGIC_BEHIND {
             self.next_logic = now;
         }
-        if self.waiting.is_none() && now >= self.next_logic {
-            if self.client.benchmarking() {
-                self.next_logic = now;
-            } else {
-                self.next_logic += Duration::from_millis(self.client.logic_interval() as u64);
-            }
-            let gap = now.saturating_duration_since(self.last_logic_tick);
-            if gap > rustora_launch::net_client::DIAGNOSTIC_GAP {
-                log::warn!(target: "client", "No logic tick ran for {:.1} s.", gap.as_secs_f64());
-            }
-            self.last_logic_tick = now;
-            self.client.logic_tick();
-            if let Some(bench) = &mut self.bench
-                && bench.after_logic_tick(self.client.running_world_tick(), self.idle, self.client.world_busy(), || {
-                    self.client.speed_state()
-                })
-            {
-                if let Some((x, y)) = self.client.view_center() {
-                    println!("BENCH view center {x},{y}");
-                }
-                self.quit = true;
-                return;
-            }
-            if !self.suspended {
-                if self.builds_after_tick() {
-                    self.render();
+        if self.suspended {
+            self.render_before_next_tick = false;
+        }
+        if now >= self.next_logic.min(self.next_render) {
+            let force_render = self.render_before_next_tick || now >= self.forced_next_render;
+            let mut ticked = false;
+            if self.waiting.is_none() && now >= self.next_logic && !self.render_before_next_tick {
+                self.next_logic = if self.client.benchmarking() {
+                    now
                 } else {
-                    self.send_uploads();
-                    if let Some(bench) = &mut self.bench {
-                        bench.skipped_build();
-                    }
+                    self.next_logic + logic_interval
+                };
+                if self.logic_tick() {
+                    return;
+                }
+                self.render_before_next_tick = !frame_skip && self.client.renders_every_tick();
+                ticked = true;
+            }
+            let have_time = now < self.next_logic;
+            let time_to_render = now >= self.next_render;
+            let mut rendered = false;
+            if !self.suspended && self.waiting.is_none() && ((time_to_render && have_time && self.queue.has_room()) || force_render) {
+                self.next_render = now + render_interval;
+                let max_interval = if frame_skip {
+                    self.client.frame_skip_max_interval()
+                } else {
+                    MAX_RENDER_INTERVAL
+                };
+                self.forced_next_render = now + max_interval.max(render_interval);
+                self.render();
+                self.render_before_next_tick = false;
+                rendered = true;
+            }
+            if self.suspended && time_to_render {
+                self.next_render = now + render_interval;
+            }
+            if ticked && !rendered && !self.suspended && frame_skip {
+                self.send_uploads();
+                if let Some(bench) = &mut self.bench {
+                    bench.skipped_build();
                 }
             }
         }

@@ -86,6 +86,8 @@ struct ShellWorld {
 
 /// `Ui.Timestep`.
 pub const UI_TIMESTEP: i32 = 40;
+/// The interval of `Game.Loop` between two frames while a game save loads, 5 frames per second.
+const LOADING_RENDER_INTERVAL: i32 = 200;
 /// A longer pause between two tick attempts, like a minimized window, starts the lag measurement anew.
 const LAG_GAP_MS: i64 = 1000;
 
@@ -1145,6 +1147,34 @@ impl Client {
             0 => UI_TIMESTEP,
             t => t,
         }
+    }
+
+    /// The interval of `Game.Loop` between two frames in milliseconds: 200 while a game save loads, the logic interval
+    /// with `CapFramerateToGameFps`, `1000 / MaxFramerate` with `CapFramerate`, and 1 otherwise.
+    pub fn render_interval(&self) -> i32 {
+        if self.shell.as_ref().is_some_and(|s| s.world.is_loading_game_save()) {
+            return LOADING_RENDER_INTERVAL;
+        }
+        let (to_game_fps, max_framerate) = {
+            let graphics = &self.services.settings.borrow().graphics;
+            let max_framerate = if graphics.cap_framerate {
+                graphics.max_framerate.clamp(1, 1000)
+            } else {
+                1000
+            };
+            (graphics.cap_framerate_to_game_fps, max_framerate)
+        };
+        if to_game_fps { self.logic_interval() } else { 1000 / max_framerate }
+    }
+
+    /// True if `Game.Loop` builds a frame before the next logic tick: in regular gameplay, which excludes replays and
+    /// the loading of game saves, and while the benchmark of `--bench-ticks` measures.
+    pub fn renders_every_tick(&self) -> bool {
+        self.benchmarking()
+            || self
+                .shell
+                .as_ref()
+                .is_some_and(|s| !s.world.is_replay() && !s.world.is_loading_game_save())
     }
 
     /// Port of `Game.InnerLogicTick`: the user interface ticks at `Ui.Timestep`, the world at its own timestep.
