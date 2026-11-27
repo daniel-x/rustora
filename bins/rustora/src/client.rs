@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use rustora_audio::MixerDevice;
 use rustora_client::game_information::ReplayMetadata;
@@ -287,7 +288,7 @@ fn awaits_game_loaded(world: &World) -> bool {
 }
 
 /// The shortest time between two load screen frames, the 5 frames per second limit of `SheetLoadScreen.Display`.
-const LOAD_SCREEN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+const LOAD_SCREEN_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Shows the load screen while the client starts, as `LoadScreen.Display` does during `Game.InitializeMod`.
 pub struct Startup<'a> {
@@ -774,6 +775,12 @@ pub struct Client {
     view_center: Option<(i32, i32)>,
     /// The world ticks of the benchmark of `--bench-ticks` (`Launch.BenchTicks`).
     bench_ticks: Option<i32>,
+    /// `--bench-realtime`: the benchmark plays at the timestep of the world.
+    bench_realtime: bool,
+    /// `--bench-timestep`: the timestep of a replay in milliseconds instead of the one of its game speed.
+    bench_timestep: Option<i32>,
+    /// The time that [`ShellWorld::tick`] took so far, the world ticks with their orders, for the benchmark.
+    world_busy: Duration,
     /// The world tick at which the replay pauses itself (`Launch.PauseAtTick`), for reproducible screenshots.
     pause_at_tick: Option<i32>,
     load_screen_drawn: bool,
@@ -949,6 +956,12 @@ impl Client {
                 .iter()
                 .find_map(|a| a.strip_prefix("Launch.BenchTicks="))
                 .and_then(|n| n.parse().ok()),
+            bench_realtime: args.iter().any(|a| a.eq_ignore_ascii_case("Launch.BenchRealtime=True")),
+            world_busy: Duration::ZERO,
+            bench_timestep: args
+                .iter()
+                .find_map(|a| a.strip_prefix("Launch.BenchTimestep="))
+                .and_then(|n| n.parse().ok()),
             pause_at_tick: args
                 .iter()
                 .find_map(|a| a.strip_prefix("Launch.PauseAtTick="))
@@ -1078,16 +1091,52 @@ impl Client {
         self.bench_ticks
     }
 
+    /// Whether the benchmark of `--bench-ticks` plays at the timestep of the world (`--bench-realtime`).
+    pub fn bench_realtime(&self) -> bool {
+        self.bench_realtime
+    }
+
+    /// The time that the world ticks with their orders took so far.
+    pub fn world_busy(&self) -> Duration {
+        self.world_busy
+    }
+
+    /// The state of the game speed for the benchmark: the text of the lag display, the world and replay timesteps,
+    /// whether the world is a replay, the tick scale of the server and the logic interval.
+    pub fn speed_state(&self) -> String {
+        let Some(shell) = self.shell.as_ref() else { return String::new() };
+        let world = &shell.world;
+        let lag = shell
+            .ingame
+            .as_ref()
+            .map(|i| i.lag_text.borrow().replace('\n', " | "))
+            .unwrap_or_default();
+        format!(
+            "timestep {} replay_timestep {} replay {} tick_scale {} interval {} lag [{}]",
+            world.timestep,
+            world.replay_timestep.get(),
+            world.is_replay(),
+            shell.driver.orders.tick_scale,
+            self.logic_interval(),
+            lag
+        )
+    }
+
+    /// The world position at the center of the viewport while a world is shown.
+    pub fn view_center(&self) -> Option<(i32, i32)> {
+        self.shell.as_ref().map(|s| s.viewport.borrow().center)
+    }
+
     /// The world tick once a game or replay runs in the user interface and no game save is loading.
     pub fn running_world_tick(&self) -> Option<i32> {
         let shell = self.shell.as_ref()?;
         (shell.ingame.is_some() && self.loading_root.is_none() && !shell.world.is_loading_game_save()).then(|| shell.world.world_tick())
     }
 
-    /// True while the benchmark of `--bench-ticks` measures a running world. The world then ticks at every call of
-    /// [`Client::logic_tick`], without waiting for its timestep.
+    /// True while the benchmark of `--bench-ticks` without `--bench-realtime` measures a running world. The world
+    /// then ticks at every call of [`Client::logic_tick`], without waiting for its timestep.
     pub fn benchmarking(&self) -> bool {
-        self.bench_ticks.is_some() && self.running_world_tick().is_some()
+        self.bench_ticks.is_some() && !self.bench_realtime && self.running_world_tick().is_some()
     }
 
     /// The interval of `Game.Loop` between two calls of [`Client::logic_tick`] in milliseconds.
@@ -1129,7 +1178,9 @@ impl Client {
             let sample = rustora_ui::perf::PerfSample::new("tick_time");
             if let Some(shell) = &mut self.shell {
                 let tick_before = shell.world.world_tick();
+                let started = std::time::Instant::now();
                 shell.tick(now, timestep, &lag);
+                self.world_busy += started.elapsed();
                 if shell.world.is_replay() && self.pause_at_tick.is_some_and(|t| shell.world.world_tick() >= t) {
                     shell.world.replay_timestep.set(0);
                     self.pause_at_tick = None;
@@ -1490,6 +1541,11 @@ impl Client {
 
     /// The part of `Game.StartGame` after the world loaded: the in-game user interface.
     fn enter_game(&mut self, mut shell: ShellWorld, replay: Option<rustora_ui::logic::ingame::ReplayStatus>) {
+        if let Some(timestep) = self.bench_timestep
+            && shell.world.is_replay()
+        {
+            shell.world.replay_timestep.set(timestep);
+        }
         if let Some(center) = self.view_center.take() {
             shell.viewport.borrow_mut().center_on(center);
         }

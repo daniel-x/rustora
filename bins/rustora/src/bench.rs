@@ -2,7 +2,10 @@
 // Copyright (c) The rustora authors. Ported from OpenRA, Copyright (c) The OpenRA Developers and Contributors.
 
 //! The benchmark of `--bench-ticks`: once a game or replay runs, the client plays that many world ticks as fast as
-//! possible without vsync, prints one `BENCH` line and quits. `Graphics.FrameSkip` decides whether the
+//! possible without vsync, prints one `BENCH` line and quits. With `--bench-realtime` the world ticks at its own
+//! timestep with the vsync setting of the user, as in a game, and the client also prints one `BENCHSEC` line per
+//! second, which splits the busy time of the simulation thread into the world ticks with their orders, the frame
+//! builds and the rest. `Graphics.FrameSkip` decides whether the
 //! simulation waits for its frames or skips building and merging them. The line counts the world ticks whose frame
 //! was not built, the frames that were merged into newer ones, the frames that were not drawn by their reason, and those whose report had not come back when the run ended.
 
@@ -13,6 +16,8 @@ use crate::frames::{Presented, Skip};
 /// The measurement of a benchmark, started at the first world tick after the world began to run.
 pub struct Bench {
     ticks: i32,
+    /// Prints a `BENCHSEC` line per second.
+    realtime: bool,
     run: Option<Run>,
     /// The world tick of the previous logic tick.
     world_tick: Option<i32>,
@@ -38,12 +43,28 @@ struct Run {
     execute: Duration,
     present: Duration,
     main_busy: Duration,
+    /// The state at the last `BENCHSEC` line.
+    second: Second,
+}
+
+/// The counters at the start of a `BENCHSEC` second.
+struct Second {
+    start: Instant,
+    tick: i32,
+    idle: Duration,
+    world_busy: Duration,
+    build: Duration,
+    built: u64,
+    drawn: u64,
+    unbuilt: u64,
+    merged: u64,
 }
 
 impl Bench {
-    pub fn new(ticks: i32) -> Bench {
+    pub fn new(ticks: i32, realtime: bool) -> Bench {
         Bench {
             ticks,
+            realtime,
             run: None,
             world_tick: None,
             advanced: false,
@@ -52,7 +73,14 @@ impl Bench {
 
     /// Starts the measurement at the first `world_tick` and prints the result once `ticks` world ticks passed.
     /// `idle` is the time that the simulation thread waited so far. Returns true when the benchmark is over.
-    pub fn after_logic_tick(&mut self, world_tick: Option<i32>, idle: Duration) -> bool {
+    /// `world_busy` is the time that the world ticks took so far, `speed` describes the game speed state.
+    pub fn after_logic_tick(
+        &mut self,
+        world_tick: Option<i32>,
+        idle: Duration,
+        world_busy: Duration,
+        speed: impl FnOnce() -> String,
+    ) -> bool {
         self.advanced = world_tick != self.world_tick;
         self.world_tick = world_tick;
         let Some(tick) = world_tick else { return false };
@@ -71,9 +99,24 @@ impl Bench {
                 execute: Duration::ZERO,
                 present: Duration::ZERO,
                 main_busy: Duration::ZERO,
+                second: Second {
+                    start: Instant::now(),
+                    tick,
+                    idle,
+                    world_busy,
+                    build: Duration::ZERO,
+                    built: 0,
+                    drawn: 0,
+                    unbuilt: 0,
+                    merged: 0,
+                },
             });
             return false;
         };
+        if self.realtime && run.second.start.elapsed() >= Duration::from_secs(1) {
+            self.print_second(tick, idle, world_busy, &speed());
+        }
+        let Some(run) = &self.run else { return false };
         let ticks = tick - run.start_tick;
         if ticks < self.ticks {
             return false;
@@ -108,6 +151,43 @@ impl Bench {
             run.built.saturating_sub(run.merged + run.drawn + run.skipped.iter().sum::<u64>()),
         );
         true
+    }
+
+    /// Prints the `BENCHSEC` line of the second that ends now at world tick `tick`.
+    fn print_second(&mut self, tick: i32, idle: Duration, world_busy: Duration, speed: &str) {
+        let Some(run) = &mut self.run else { return };
+        let s = &run.second;
+        let wall = s.start.elapsed();
+        let ticks = (tick - s.tick).max(1);
+        let per_tick = |d: Duration| d.as_secs_f64() * 1000.0 / ticks as f64;
+        let sim_busy = wall.saturating_sub(idle.saturating_sub(s.idle));
+        let world = world_busy.saturating_sub(s.world_busy);
+        let build = run.build.saturating_sub(s.build);
+        println!(
+            "BENCHSEC tick {tick} wall {:.2} s ticks {} built {} drawn {} unbuilt {} merged {} busy sim {:.2} ms/tick \
+             world {:.2} build {:.2} other {:.2} {speed}",
+            wall.as_secs_f64(),
+            tick - s.tick,
+            run.built - s.built,
+            run.drawn - s.drawn,
+            run.unbuilt - s.unbuilt,
+            run.merged - s.merged,
+            per_tick(sim_busy),
+            per_tick(world),
+            per_tick(build),
+            per_tick(sim_busy.saturating_sub(world + build)),
+        );
+        run.second = Second {
+            start: Instant::now(),
+            tick,
+            idle,
+            world_busy,
+            build: run.build,
+            built: run.built,
+            drawn: run.drawn,
+            unbuilt: run.unbuilt,
+            merged: run.merged,
+        };
     }
 
     /// Counts a frame that the simulation thread built in `build`.

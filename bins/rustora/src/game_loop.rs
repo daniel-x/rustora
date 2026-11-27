@@ -228,7 +228,7 @@ impl GameLoop {
         client.ui.clipboard = Rc::new(SystemClipboard(RefCell::new(arboard::Clipboard::new().ok())));
         client.logic_tick();
         let now = Instant::now();
-        let bench = client.bench_ticks().map(crate::bench::Bench::new);
+        let bench = client.bench_ticks().map(|t| crate::bench::Bench::new(t, client.bench_realtime()));
         let cursor_mod = client.mod_id().to_string();
         GameLoop {
             client,
@@ -572,8 +572,13 @@ impl GameLoop {
             self.last_logic_tick = now;
             self.client.logic_tick();
             if let Some(bench) = &mut self.bench
-                && bench.after_logic_tick(self.client.running_world_tick(), self.idle)
+                && bench.after_logic_tick(self.client.running_world_tick(), self.idle, self.client.world_busy(), || {
+                    self.client.speed_state()
+                })
             {
+                if let Some((x, y)) = self.client.view_center() {
+                    println!("BENCH view center {x},{y}");
+                }
                 self.quit = true;
                 return;
             }

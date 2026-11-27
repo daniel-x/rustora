@@ -176,7 +176,8 @@ impl ApplicationHandler<Wake> for Launcher {
                 proxy: self.proxy.clone(),
                 size,
                 fullscreen,
-                no_vsync: self.args.iter().any(|a| a.starts_with("Launch.BenchTicks=")),
+                no_vsync: self.args.iter().any(|a| a.starts_with("Launch.BenchTicks="))
+                    && !self.args.iter().any(|a| a.eq_ignore_ascii_case("Launch.BenchRealtime=True")),
                 gpu: None,
                 sim: None,
                 queue: FrameQueue::default(),
