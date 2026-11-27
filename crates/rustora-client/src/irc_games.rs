@@ -239,4 +239,35 @@ mod live_tests {
         }
         panic!("no game, client joined: {client_joined}");
     }
+
+    /// Prints the games that the servers in the channel advertise within 20 s of a query.
+    #[test]
+    #[ignore = "connects to Libera.Chat"]
+    fn list_games() {
+        let client = IrcClient::connect(IrcConfig::player("rtstlist", &[irc::SERVERS_CHANNEL]));
+        let mut games = IrcGames::default();
+        for _ in 0..300 {
+            for event in client.poll() {
+                match event {
+                    IrcEvent::Joined { channel, .. } => client.send(&channel, &query(now_millis())),
+                    IrcEvent::Message { nick, host, text, .. } => {
+                        if std::env::var_os("IRC_GAMES_RAW").is_some() {
+                            eprintln!("{nick}: {text}");
+                        }
+                        games.apply_message(&nick, &host, &text, now_millis());
+                    }
+                    IrcEvent::Disconnected(reason) => panic!("disconnected: {reason}"),
+                    IrcEvent::Users { .. } => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let mut lines: Vec<String> = games
+            .games()
+            .iter()
+            .map(|g| format!("{} port {} state {}", g.name.as_deref().unwrap_or_default(), g.port, g.state))
+            .collect();
+        lines.sort();
+        eprintln!("{} games\n{}", lines.len(), lines.join("\n"));
+    }
 }

@@ -72,16 +72,24 @@ impl MasterServerPinger {
             .flatten();
         MasterServerPinger {
             beacon,
-            session_guid: format!("{:08x}{:08x}", random.next(), random.next()),
+            session_guid: format!("{:016x}", process_random()),
             last_ping: 0,
             last_changed: 0,
             is_initial_ping: Arc::new(AtomicBool::new(true)),
             is_busy: Arc::new(AtomicBool::new(false)),
             is_multiplayer,
-            nick_seed: random.next() as u32,
+            nick_seed: process_random() as u32,
             irc: IrcAdvertiser::default(),
         }
     }
+}
+
+/// A random number that differs between servers started at the same time, whose `random` seeds can be equal.
+fn process_random() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u32(std::process::id());
+    hasher.finish()
 }
 
 /// The messages to show after the first answer of the master server, an optional `[code]message` text.
