@@ -50,14 +50,13 @@ pub fn perf_debug(ui: &mut Ui, widget: WidgetId) -> Rc<RefCell<dyn ChromeLogic>>
         let samples = service.settings.borrow().debug.samples.max(1) as usize;
         let tick = service.ingame.borrow().as_ref().map_or(0, |i| i.world.world_tick());
         let viewport = service.ingame.borrow().as_ref().map_or((0, 0), |i| i.viewport.borrow().size());
+        let wfb = perf::world_buffer().map_or("none".to_string(), |(w, h)| format!("{w} x {h}"));
         format!(
-            "FPS: {fps:.0}\nTick {tick} @ {:.1} ms\nRender {} @ {:.1} ms\nBatches: {}\nViewport Size: {} x {} / 1\nWFB Size: {} x {}",
+            "FPS: {fps:.0}\nTick {tick} @ {:.1} ms\nRender {} @ {:.1} ms\nBatches: {}\nViewport Size: {} x {} / 1\nWFB Size: {wfb}",
             perf::with_item("tick_time", |i| i.average(samples)),
             perf::render_frame(),
             perf::with_item("render", |i| i.average(samples)),
             perf::with_item("batches", |i| i.last_value()),
-            viewport.0,
-            viewport.1,
             viewport.0,
             viewport.1,
         )

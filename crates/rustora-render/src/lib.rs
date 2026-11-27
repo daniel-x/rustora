@@ -204,6 +204,8 @@ pub struct GpuBackend {
     vertex_capacity: usize,
     format: wgpu::TextureFormat,
     post: Option<post::PostResources>,
+    /// The size of the world frame buffer of the last world draw, or `None` if it drew straight into the target.
+    world_buffer: Option<(u32, u32)>,
 }
 
 impl GpuBackend {
@@ -312,6 +314,7 @@ impl GpuBackend {
         GpuBackend {
             ui,
             draw_calls: 0,
+            world_buffer: None,
             device,
             queue,
             pipeline,
@@ -397,6 +400,11 @@ impl GpuBackend {
     /// The draw calls since the last call.
     pub fn take_draw_calls(&mut self) -> u32 {
         std::mem::take(&mut self.draw_calls) + std::mem::take(&mut self.ui.draw_calls)
+    }
+
+    /// The size of the world frame buffer of the last world draw, or `None` if it drew straight into the target.
+    pub fn world_buffer(&self) -> Option<(u32, u32)> {
+        self.world_buffer
     }
 
     /// Executes all commands of `frame`, the uploads before the draws, drawing into `target`.
@@ -557,6 +565,7 @@ impl GpuBackend {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        self.world_buffer = buffered.then_some((width, height));
         if !buffered {
             self.draw_batches(&mut encoder, target, true, &batches, 0, quads.len() as u32);
             self.queue.submit([encoder.finish()]);

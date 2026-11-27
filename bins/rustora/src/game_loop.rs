@@ -538,6 +538,7 @@ impl GameLoop {
             bench.presented(&report);
         }
         rustora_ui::perf::increment("batches", report.draw_calls as f64);
+        rustora_ui::perf::set_world_buffer(report.world_buffer);
         if report.skipped.is_none() {
             rustora_ui::perf::increment("render_flip", 1000.0 * report.present.as_secs_f64());
             rustora_ui::perf::frame_tick();

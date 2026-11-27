@@ -4,7 +4,7 @@
 //! Ports of `PerfHistory`, `PerfItem` and `PerfSample`: timings of the logic ticks and the frames for the performance
 //! graph and text.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
 use rustora_core::fieldloader::Color;
@@ -112,6 +112,18 @@ impl History {
 
 thread_local! {
     static HISTORY: RefCell<History> = RefCell::default();
+    static WORLD_BUFFER: Cell<Option<(u32, u32)>> = const { Cell::new(None) };
+}
+
+/// Sets the size of the world frame buffer of the last presented frame, `None` if the world was drawn straight into
+/// the window.
+pub fn set_world_buffer(size: Option<(u32, u32)>) {
+    WORLD_BUFFER.with(|b| b.set(size));
+}
+
+/// `Renderer.WorldFrameBufferSize`, `None` while the world is drawn straight into the window.
+pub fn world_buffer() -> Option<(u32, u32)> {
+    WORLD_BUFFER.with(Cell::get)
 }
 
 /// `PerfHistory.Increment`.

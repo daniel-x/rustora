@@ -97,6 +97,8 @@ pub struct Presented {
     pub commands: FrameCommands,
     /// The draw calls of the frame, as `PerfHistory` "batches" counts them.
     pub draw_calls: u32,
+    /// The size of the world frame buffer, or `None` if the world was drawn straight into the window.
+    pub world_buffer: Option<(u32, u32)>,
     /// The time to execute the commands.
     pub execute: Duration,
     /// The time of the present.
@@ -131,6 +133,7 @@ impl Surface {
         Presented {
             commands: frame.commands,
             draw_calls: self.backend.take_draw_calls(),
+            world_buffer: self.backend.world_buffer(),
             execute: start.elapsed(),
             present: Duration::ZERO,
             main_busy: Duration::ZERO,
@@ -193,6 +196,7 @@ impl Surface {
         Presented {
             commands: frame.commands,
             draw_calls: self.backend.take_draw_calls(),
+            world_buffer: self.backend.world_buffer(),
             execute,
             present: start.elapsed(),
             main_busy: Duration::ZERO,
