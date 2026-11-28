@@ -18,9 +18,39 @@ use rustora_game::map::MapPackage;
 use rustora_game::map_folders::map_folders;
 use rustora_game::moddata::ModData;
 
+/// A map of the map cache without its package, which is opened again when the map's rules are needed, so that the
+/// packages of all maps, mostly zip files held in memory, do not stay loaded.
 struct MapEntry {
-    package: Arc<dyn Package>,
-    map: MapPackage,
+    /// The index of the map folder in `map_folders`.
+    folder: usize,
+    /// The entry of the package in the folder.
+    entry: String,
+    /// The file name of the package.
+    file_name: String,
+    /// `Visibility` of map.yaml.
+    visibility: Option<String>,
+}
+
+impl MapEntry {
+    fn new(folder: usize, entry: String, package: &dyn Package, map: &MapPackage) -> MapEntry {
+        MapEntry {
+            folder,
+            entry,
+            file_name: Path::new(package.name())
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            visibility: map.section("Visibility").map(|v| v.value_str().to_string()),
+        }
+    }
+
+    /// The package and the map, read again.
+    fn open(&self, data: &ModData) -> Option<(Arc<dyn Package>, MapPackage)> {
+        let folder = map_folders(data).into_iter().nth(self.folder)?;
+        let package = folder.package.open_package(&self.entry, &data.file_system)?;
+        let map = MapPackage::load(package.clone()).ok()?;
+        Some((package, map))
+    }
 }
 
 /// The loaded mod, like `ModData` with its `MapCache`.
@@ -35,27 +65,32 @@ pub struct ServerMod {
 /// The maps of the map folders of the mod, each folder in name order.
 fn scan_maps(data: &ModData) -> IndexMap<String, MapEntry> {
     let mut maps = IndexMap::default();
-    for folder in map_folders(data) {
-        let mut packages = folder.map_packages(&data.file_system);
-        packages.sort_by(|a, b| a.0.cmp(&b.0));
-        for (_, package) in packages {
+    for (index, folder) in map_folders(data).into_iter().enumerate() {
+        let mut entries = folder.package.contents();
+        entries.sort();
+        for entry in entries {
+            let Some(package) = folder.package.open_package(&entry, &data.file_system) else {
+                continue;
+            };
             if let Ok(map) = MapPackage::load(package.clone()) {
-                maps.entry(map.uid.clone()).or_insert(MapEntry { package, map });
+                let uid = map.uid.clone();
+                maps.entry(uid)
+                    .or_insert_with(|| MapEntry::new(index, entry, package.as_ref(), &map));
             }
         }
     }
     maps
 }
 
-/// The map at the package path `path` inside one of the map folders of the mod.
-fn load_map_package(data: &ModData, path: &str) -> Option<MapEntry> {
+/// The uid and the map at the package path `path` inside one of the map folders of the mod.
+fn load_map_package(data: &ModData, path: &str) -> Option<(String, MapEntry)> {
     let path = std::fs::canonicalize(path).ok()?;
-    map_folders(data).into_iter().find_map(|folder| {
+    map_folders(data).into_iter().enumerate().find_map(|(index, folder)| {
         let folder_path = std::fs::canonicalize(folder.package.name()).ok()?;
         let entry = path.strip_prefix(folder_path).ok()?.to_str()?;
         let package = folder.package.open_package(entry, &data.file_system)?;
         let map = MapPackage::load(package.clone()).ok()?;
-        Some(MapEntry { package, map })
+        Some((map.uid.clone(), MapEntry::new(index, entry.to_string(), package.as_ref(), &map)))
     })
 }
 
@@ -65,11 +100,7 @@ impl ServerMod {
     pub fn load(engine: &Path, support: &str, mod_id: &str, map_packages: &[String]) -> Result<ServerMod, String> {
         let data = ModData::load(Platform::new(engine, support), mod_id).map_err(|e| e.to_string())?;
         let rules = ModLobbyRules::load(&data)?;
-        let maps = map_packages
-            .iter()
-            .filter_map(|path| load_map_package(&data, path))
-            .map(|entry| (entry.map.uid.clone(), entry))
-            .collect();
+        let maps = map_packages.iter().filter_map(|path| load_map_package(&data, path)).collect();
         Ok(ServerMod {
             data,
             rules,
@@ -95,11 +126,7 @@ impl ServerMod {
         self.ensure_scanned();
         self.maps
             .iter()
-            .filter(|(_, e)| {
-                e.map
-                    .section("Visibility")
-                    .is_none_or(|v| v.value_str().split(',').any(|s| s.trim() == "Lobby"))
-            })
+            .filter(|(_, e)| e.visibility.as_deref().is_none_or(|v| v.split(',').any(|s| s.trim() == "Lobby")))
             .map(|(uid, _)| uid.clone())
             .collect()
     }
@@ -113,10 +140,7 @@ impl ServerMod {
         if self.maps.contains_key(name) {
             return Some(name.to_string());
         }
-        self.maps
-            .iter()
-            .find(|(_, e)| Path::new(e.package.name()).file_name().is_some_and(|f| f == name))
-            .map(|(uid, _)| uid.clone())
+        self.maps.iter().find(|(_, e)| e.file_name == name).map(|(uid, _)| uid.clone())
     }
 
     /// Adds the maps that were added to the map folders since the last scan.
@@ -143,8 +167,10 @@ impl ServerMod {
         if !self.map_exists(uid) {
             return Err(format!("unknown map {uid}"));
         }
-        let entry = &self.maps[uid];
-        let info = Rc::new(self.rules.map_info(&self.data, &entry.package, &entry.map)?);
+        let (package, map) = self.maps[uid]
+            .open(&self.data)
+            .ok_or_else(|| format!("cannot read the package of map {uid}"))?;
+        let info = Rc::new(self.rules.map_info(&self.data, &package, &map)?);
         self.infos.insert(uid.to_string(), info.clone());
         Ok(info)
     }
