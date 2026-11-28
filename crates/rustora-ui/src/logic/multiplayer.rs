@@ -40,6 +40,13 @@ enum SearchStatus {
     Hidden,
 }
 
+/// Whether a LAN game and a game from the master server or IRC are the same server: the addresses differ, the
+/// LAN one being local, but the name and the port are equal.
+fn same_server(lan: &GameServer, online: &GameServer) -> bool {
+    let port = |g: &GameServer| g.address.as_deref().and_then(|a| a.rsplit_once(':')).map(|(_, p)| p.to_string());
+    lan.location.as_deref() == Some("Local Network") && lan.name == online.name && port(lan).is_some() && port(lan) == port(online)
+}
+
 /// `GameServer` with the values that its C# constructor derives from the local mod.
 struct ServerEntry {
     game: GameServer,
@@ -197,10 +204,13 @@ impl ServerList {
     }
 
     /// Shows the games of the master server, the LAN and IRC. A game from IRC that the master server or the LAN
-    /// also list is left out.
+    /// also list is left out, and so is a game of the master server that the LAN lists, which OpenRA shows twice.
     fn show_games(self: &Rc<Self>, ui: &mut Ui) {
         let mut games = self.online_games.borrow().clone();
         let mut other = self.lan_games();
+        if let Some(games) = &mut games {
+            games.retain(|g| !other.iter().any(|lan| same_server(lan, g)));
+        }
         let irc = {
             let services = services(ui);
             let chat = services.general_chat.borrow();
@@ -209,7 +219,7 @@ impl ServerList {
         };
         self.irc_shown_at.set(ui.run_time());
         for game in irc {
-            let listed = |g: &GameServer| g.address == game.address;
+            let listed = |g: &GameServer| g.address == game.address || same_server(g, &game);
             if !other.iter().any(listed) && !games.iter().flatten().any(listed) {
                 other.push(game);
             }
