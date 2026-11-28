@@ -1346,6 +1346,8 @@ impl Server {
         let mut conn = self.conns.remove(position);
         let last_orders_frame = conn.last_orders_frame;
         if let Some(client) = self.lobby.client_with_index(player_index).cloned() {
+            let place = if self.state == ServerState::GameStarted { "game" } else { "lobby" };
+            log::info!(target: "server", "{} has left the {place}.", client.name.as_deref().unwrap_or_default());
             self.announce_drop(&client);
             self.lobby.clients.retain(|c| c.index != player_index);
             if self.is_independent() && client.is_admin && self.state == ServerState::WaitingPlayers {
