@@ -547,7 +547,8 @@ impl Server {
     /// Processes events until the game has started and all clients have left.
     pub fn run(&mut self) {
         if self.settings.advertise_online {
-            self.forensics.look_up_master_server(run_time(self.start), &self.settings.server_advertise_url);
+            self.forensics
+                .look_up_master_server(run_time(self.start), &self.settings.server_advertise_url);
         }
         while self.state != ServerState::ShuttingDown {
             if let Ok(e) = self.events_rx.recv_timeout(Duration::from_secs(1)) {
