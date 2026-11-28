@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod connection;
+pub mod forensics;
 pub mod geoip;
 mod initial_lobby;
 pub mod lobby;

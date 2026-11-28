@@ -31,11 +31,12 @@ opt-level = 3
 [profile.release]
 debug = "line-tables-only"
 
-# Packaged builds: whole-program optimization and no debug info, for smaller and faster binaries.
+# Packaged builds: whole-program optimization and no debug info, for smaller and faster binaries. The symbols stay,
+# so that the backtrace of a crash report names the functions.
 [profile.dist]
 inherits = "release"
 debug = 0
-strip = true
+strip = "debuginfo"
 lto = "fat"
 codegen-units = 1
 

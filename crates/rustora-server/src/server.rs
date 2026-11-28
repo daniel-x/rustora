@@ -31,6 +31,7 @@ use rustora_net::stream::{ByteStream, PipeEnd, pipe};
 
 use crate::auth::{PlayerProfile, check_profile};
 use crate::connection::{ClientOrigin, Connection, Event, run_time};
+use crate::forensics::{Forensics, log_malformed};
 use crate::geoip::{self, GeoIp};
 use crate::master_server::MasterServerPinger;
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
@@ -395,6 +396,7 @@ pub struct Server {
     max_packet_delay: u64,
     /// When the last lag report went out, in `run_time` milliseconds.
     last_lag_report: u64,
+    forensics: Forensics,
 }
 
 /// Whether the order data that client `from` sends parses as orders or a sync hash for the other clients, which
@@ -538,6 +540,7 @@ impl Server {
             latencies: HashMap::default(),
             max_packet_delay: 0,
             last_lag_report: 0,
+            forensics: Forensics::default(),
         })
     }
 
@@ -592,7 +595,29 @@ impl Server {
                 self.receive_orders(player_index, frame, &data);
             }
             Event::Ping { player_index, history, .. } => self.receive_ping(player_index, &history),
-            Event::Disconnect { player_index } => self.drop_client(player_index),
+            Event::Disconnect { player_index, reason } => {
+                if let Some(c) = self.conn_mut(player_index) {
+                    c.drop_reason.get_or_insert(reason);
+                }
+                self.drop_client(player_index);
+            }
+            Event::OversizedFrame {
+                player_index,
+                length,
+                frame,
+            } => {
+                let origin = self.conn(player_index).map(|c| c.origin.to_string()).unwrap_or_default();
+                log_malformed(
+                    &format!("frame of {length} bytes over the limit"),
+                    player_index,
+                    &origin,
+                    frame,
+                    &[],
+                );
+                if let Some(c) = self.conn_mut(player_index) {
+                    c.drop_reason = Some("oversized frame".into());
+                }
+            }
             Event::Authenticated { player_index, profile } => self.finish_authentication(player_index, profile),
             Event::MasterServerMessage(key) => self.send_fluent_message(&key, &[]),
             Event::Shutdown => self.state = ServerState::ShuttingDown,
@@ -680,6 +705,9 @@ impl Server {
         let order = RawOrder::handshake("HandshakeRequest", &request.serialize());
         conn.try_send_data(create_frame(0, 0, &order.serialize()));
         log::info!(target: "server", "Client {index}: Connection from {}.", conn.origin);
+        if let Some(ip) = conn.origin.ip() {
+            self.forensics.connected(run_time(self.start), ip);
+        }
         self.conns.push(conn);
     }
 
@@ -927,6 +955,7 @@ impl Server {
 
     /// `DispatchOrdersToClients`: forwards a client's orders to the other validated clients.
     pub fn dispatch_orders_to_clients(&mut self, from: i32, frame: i32, data: &[u8]) {
+        self.forensics.forwarded(run_time(self.start), from, frame, data);
         let frame_data = create_frame(from, frame, data);
         for c in self.validated_conn_indices() {
             if c != from {
@@ -1080,17 +1109,23 @@ impl Server {
     }
 
     fn receive_orders(&mut self, player_index: i32, frame: i32, data: &[u8]) {
-        let Some(validated) = self.conn(player_index).map(|c| c.validated) else {
+        let Some((validated, origin)) = self.conn(player_index).map(|c| (c.validated, c.origin.to_string())) else {
             return;
         };
+        self.forensics.received(run_time(self.start), player_index, &origin);
         let mut frame = frame;
-        if frame != 0 && !validated {
-            log::info!(target: "server", "Client {player_index}: Dropped; it sent orders before the handshake.");
-            self.drop_client(player_index);
-            return;
-        }
-        if frame != 0 && !is_forwardable(player_index, frame, data) {
-            log::info!(target: "server", "Client {player_index}: Dropped; it sent a malformed order packet of {} bytes.", data.len());
+        let malformed = if frame != 0 && !validated {
+            Some("orders before the handshake")
+        } else if frame != 0 && !is_forwardable(player_index, frame, data) {
+            Some("order data that does not parse")
+        } else {
+            None
+        };
+        if let Some(what) = malformed {
+            log_malformed(what, player_index, &origin, frame, data);
+            if let Some(c) = self.conn_mut(player_index) {
+                c.drop_reason = Some(format!("sent {what}"));
+            }
             self.drop_client(player_index);
             return;
         }
@@ -1365,6 +1400,16 @@ impl Server {
             return;
         };
         let mut conn = self.conns.remove(position);
+        let reason = conn.drop_reason.clone().unwrap_or_else(|| "dropped by the server".into());
+        let (received, sent) = conn.traffic();
+        log::info!(target: "server",
+            "Client {player_index}: Disconnected ({reason}) after {} s, {received} bytes received, {sent} bytes sent.",
+            conn.connection_timer() / 1000
+        );
+        self.forensics.forget(player_index);
+        if conn.validated {
+            self.forensics.dropped(run_time(self.start), player_index, &reason);
+        }
         let last_orders_frame = conn.last_orders_frame;
         if let Some(client) = self.lobby.client_with_index(player_index).cloned() {
             let place = if self.state == ServerState::GameStarted { "game" } else { "lobby" };

@@ -67,7 +67,11 @@ pub enum Event {
     },
     Disconnect {
         player_index: i32,
+        /// Why the reader thread ended.
+        reason: String,
     },
+    /// A frame longer than `MAX_ORDER_LENGTH`, which ends the connection.
+    OversizedFrame { player_index: i32, length: i32, frame: i32 },
     /// The outcome of a profile lookup: the profile, or why authentication failed.
     Authenticated {
         player_index: i32,
@@ -91,9 +95,13 @@ pub struct Connection {
     pub last_action: u64,
     /// Whether the client got the idle warning since its last order.
     pub idle_warned: bool,
+    /// Why the server drops the client, for the disconnect log line; `None` when the client ends the connection.
+    pub drop_reason: Option<String>,
     connected_at: Instant,
     send: Option<Sender<Vec<u8>>>,
     last_received: Arc<AtomicU64>,
+    bytes_received: Arc<AtomicU64>,
+    bytes_sent: Arc<AtomicU64>,
 }
 
 /// Milliseconds since the server started, the `Game.RunTime` of the server process.
@@ -125,14 +133,24 @@ impl Connection {
         let writer_socket = socket.try_clone_stream()?;
         let (send, queue) = channel();
         let last_received = Arc::new(AtomicU64::new(run_time(start)));
-        let lr = last_received.clone();
+        let bytes_received = Arc::new(AtomicU64::new(0));
+        let bytes_sent = Arc::new(AtomicU64::new(0));
+        let counters = ReadCounters {
+            last_received: last_received.clone(),
+            bytes: bytes_received.clone(),
+        };
         std::thread::Builder::new().name(format!("Client read ({origin})")).spawn(move || {
-            let _ = read_loop(player_index, socket, &events, start, is_multiplayer, &lr);
-            let _ = events.send(Event::Disconnect { player_index });
+            let reason = match read_loop(player_index, socket, &events, start, is_multiplayer, &counters) {
+                Ok(()) => "oversized frame".to_string(),
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => "closed by the client".to_string(),
+                Err(e) => e.to_string(),
+            };
+            let _ = events.send(Event::Disconnect { player_index, reason });
         })?;
+        let sent = bytes_sent.clone();
         std::thread::Builder::new()
             .name(format!("Client write ({origin})"))
-            .spawn(move || write_loop(writer_socket, &queue, start))?;
+            .spawn(move || write_loop(writer_socket, &queue, start, &sent))?;
         Ok(Connection {
             player_index,
             auth_token,
@@ -142,10 +160,18 @@ impl Connection {
             timeout_message_shown: false,
             last_action: run_time(start),
             idle_warned: false,
+            drop_reason: None,
             connected_at: Instant::now(),
             send: Some(send),
             last_received,
+            bytes_received,
+            bytes_sent,
         })
+    }
+
+    /// The bytes received from and sent to the client so far.
+    pub fn traffic(&self) -> (u64, u64) {
+        (self.bytes_received.load(Ordering::Relaxed), self.bytes_sent.load(Ordering::Relaxed))
     }
 
     /// Queues `data` for sending; false once the connection is closed.
@@ -171,17 +197,19 @@ impl Connection {
 
 /// Sends queued data and pings until the queue is closed or a write fails, then closes the socket,
 /// which also ends the read loop.
-fn write_loop(mut socket: Box<dyn ByteStream>, queue: &Receiver<Vec<u8>>, start: Instant) {
+fn write_loop(mut socket: Box<dyn ByteStream>, queue: &Receiver<Vec<u8>>, start: Instant, sent: &AtomicU64) {
     let mut next_ping = Instant::now() + PING_INTERVAL;
     loop {
-        let result = match queue.recv_timeout(next_ping.saturating_duration_since(Instant::now())) {
-            Ok(data) => socket.write_all(&data),
+        let data = match queue.recv_timeout(next_ping.saturating_duration_since(Instant::now())) {
+            Ok(data) => data,
             Err(RecvTimeoutError::Timeout) => {
                 next_ping = Instant::now() + PING_INTERVAL;
-                socket.write_all(&ping_frame(run_time(start)))
+                ping_frame(run_time(start))
             }
             Err(RecvTimeoutError::Disconnected) => break,
         };
+        sent.fetch_add(data.len() as u64, Ordering::Relaxed);
+        let result = socket.write_all(&data);
         if result.is_err() {
             break;
         }
@@ -189,14 +217,21 @@ fn write_loop(mut socket: Box<dyn ByteStream>, queue: &Receiver<Vec<u8>>, start:
     socket.shutdown_stream();
 }
 
-fn read_exact_counted(socket: &mut Box<dyn ByteStream>, buf: &mut [u8], start: Instant, last_received: &AtomicU64) -> std::io::Result<()> {
+/// The time of the last data from the client and the count of its bytes, which the reader thread updates.
+struct ReadCounters {
+    last_received: Arc<AtomicU64>,
+    bytes: Arc<AtomicU64>,
+}
+
+fn read_exact_counted(socket: &mut Box<dyn ByteStream>, buf: &mut [u8], start: Instant, counters: &ReadCounters) -> std::io::Result<()> {
     let mut filled = 0;
     while filled < buf.len() {
         match socket.read(&mut buf[filled..])? {
             0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
             n => {
                 filled += n;
-                last_received.store(run_time(start), Ordering::Relaxed);
+                counters.last_received.store(run_time(start), Ordering::Relaxed);
+                counters.bytes.fetch_add(n as u64, Ordering::Relaxed);
             }
         }
     }
@@ -209,19 +244,24 @@ fn read_loop(
     events: &Sender<Event>,
     start: Instant,
     is_multiplayer: bool,
-    last_received: &AtomicU64,
+    counters: &ReadCounters,
 ) -> std::io::Result<()> {
     let mut ping_history = std::collections::VecDeque::with_capacity(MAX_PING_SAMPLES);
     loop {
         let mut header = [0u8; 8];
-        read_exact_counted(&mut socket, &mut header, start, last_received)?;
+        read_exact_counted(&mut socket, &mut header, start, counters)?;
         let length = i32::from_le_bytes(header[0..4].try_into().unwrap()) - 4;
         let frame = i32::from_le_bytes(header[4..8].try_into().unwrap());
         if length < 0 || (is_multiplayer && length > MAX_ORDER_LENGTH) {
+            let _ = events.send(Event::OversizedFrame {
+                player_index,
+                length: length.wrapping_add(4),
+                frame,
+            });
             return Ok(());
         }
         let mut data = vec![0u8; length as usize];
-        read_exact_counted(&mut socket, &mut data, start, last_received)?;
+        read_exact_counted(&mut socket, &mut data, start, counters)?;
         if data.len() == 10 && data[0] == order_type::PING {
             if ping_history.len() == MAX_PING_SAMPLES {
                 ping_history.pop_front();

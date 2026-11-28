@@ -70,21 +70,29 @@ pub const CLIENT_CHANNELS: &[ChannelSpec] = &[
     ChannelSpec::new("sync", "syncreport.log", false, false),
     ChannelSpec::new("traitreport", "traitreport.log", false, false),
     ChannelSpec::new("assetbrowser", "assetbrowser.log", false, false),
+    MALFORMED_PACKETS,
 ];
 
-/// The channels of an independent server, from `OpenRA.Server.Program` (`dedicated-*.log` in C#).
+/// Packets that do not follow the protocol, with a hex dump, and signs of an attack like several clients that drop at
+/// once or a flood of connections. A rustora addition. It appends, so a restart keeps the lines of earlier runs.
+const MALFORMED_PACKETS: ChannelSpec = ChannelSpec::new("malformed_packets", "malformed_packets.log", true, false).appending();
+
+/// The channels of an independent server, from `OpenRA.Server.Program` (`dedicated-*.log` in C#). Unlike in C#, they
+/// append, so that a restart, for example by systemd, keeps the lines of the runs before.
 pub const INDEPENDENT_SERVER_CHANNELS: &[ChannelSpec] = &[
-    ChannelSpec::new("debug", "independent-debug.log", true, true),
-    ChannelSpec::new("perf", "independent-perf.log", true, true),
-    ChannelSpec::new("server", "independent-server.log", true, true),
-    ChannelSpec::new("nat", "independent-nat.log", true, true),
-    ChannelSpec::new("geoip", "independent-geoip.log", true, true),
+    ChannelSpec::new("debug", "independent-debug.log", true, true).appending(),
+    ChannelSpec::new("perf", "independent-perf.log", true, true).appending(),
+    ChannelSpec::new("server", "independent-server.log", true, true).appending(),
+    ChannelSpec::new("nat", "independent-nat.log", true, true).appending(),
+    ChannelSpec::new("geoip", "independent-geoip.log", true, true).appending(),
+    MALFORMED_PACKETS,
 ];
 
 /// The channels of a dependent server, the multiplayer server process that a client started for its game. In C# it
 /// runs inside the client and writes the `server.log` of the client for the whole session, so each server appends
 /// to it. Its other lines go there too.
-pub const DEPENDENT_SERVER_CHANNELS: &[ChannelSpec] = &[ChannelSpec::new("server", "server.log", true, true).appending()];
+pub const DEPENDENT_SERVER_CHANNELS: &[ChannelSpec] =
+    &[ChannelSpec::new("server", "server.log", true, true).appending(), MALFORMED_PACKETS];
 
 struct Channel {
     writer: Option<BufWriter<File>>,

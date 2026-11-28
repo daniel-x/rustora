@@ -25,7 +25,7 @@ use rustora_engine::world::World;
 use rustora_fs::Platform;
 use rustora_game::moddata::ModData;
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
-use rustora_net::order::{OrderPacket, Packet, RawOrder, order_type};
+use rustora_net::order::{OrderPacket, Packet, RawOrder, hex_dump, order_type};
 use rustora_net::session::{Client, ClientState, Session};
 
 use crate::skirmish::BotSpec;
@@ -35,6 +35,13 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// servers ping every client once a second, so only a dead connection stays silent this long. Without it, a
 /// connection whose end the client never learns of, for example after a network change, would look alive.
 const RECEIVE_TIMEOUT: Duration = Duration::from_secs(30);
+/// The log channel of packets that do not follow the protocol, see `rustora_core::log_channels`.
+const MALFORMED_PACKETS: &str = "malformed_packets";
+/// The received packets kept for the log line of a malformed packet, and the bytes of each.
+const RECENT_PACKETS: usize = 64;
+const RECENT_BYTES: usize = 32;
+/// The bytes of a malformed packet in its log line.
+const DUMP_BYTES: usize = 256;
 
 fn read_i32(stream: &mut dyn ByteStream) -> std::io::Result<i32> {
     let mut b = [0u8; 4];
@@ -83,6 +90,10 @@ pub struct NetworkConnection {
     sent_sync: VecDeque<(i32, i32, u64)>,
     queued_sync: Vec<(i32, i32, u64)>,
     recorder: Option<ReplayRecorder>,
+    /// The address of the server, for the log of malformed packets.
+    server: String,
+    /// The last received packets as sender, length and the start of the data in hex.
+    recent: VecDeque<(i32, usize, String)>,
 }
 
 /// Closes the stream, so the server notices at once that the client left.
@@ -107,7 +118,9 @@ impl NetworkConnection {
             .ok_or_else(|| format!("Failed to connect to {address}"))?;
         stream.set_nodelay(true).map_err(|e| e.to_string())?;
         stream.set_read_timeout(Some(receive_timeout)).map_err(|e| e.to_string())?;
-        NetworkConnection::from_stream(Box::new(stream))
+        let mut connection = NetworkConnection::from_stream(Box::new(stream))?;
+        connection.server = address.to_string();
+        Ok(connection)
     }
 
     /// Reads the handshake version and the client index from a connected `stream`.
@@ -140,7 +153,22 @@ impl NetworkConnection {
             sent_sync: VecDeque::new(),
             queued_sync: Vec::new(),
             recorder: None,
+            server: String::new(),
+            recent: VecDeque::new(),
         })
+    }
+
+    /// Logs a packet from client `from` that does not follow the protocol, with the packets before it.
+    fn log_malformed(&self, what: &str, from: i32, data: &[u8]) {
+        log::warn!(target: MALFORMED_PACKETS,
+            "kind=malformed what=\"{what}\" server={} from={from} length={} data={}",
+            self.server,
+            data.len(),
+            hex_dump(data, DUMP_BYTES)
+        );
+        for (from, length, data) in &self.recent {
+            log::warn!(target: MALFORMED_PACKETS, "kind=recent from={from} length={length} data={data}");
+        }
     }
 
     /// `StartRecording`: records the packets to a replay in `directory` once the game starts.
@@ -206,6 +234,10 @@ impl NetworkConnection {
                 Ok(p) => p,
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
             };
+            if self.recent.len() == RECENT_PACKETS {
+                self.recent.pop_front();
+            }
+            self.recent.push_back((from, data.len(), hex_dump(&data, RECENT_BYTES)));
             match Packet::parse(from, &data) {
                 Ok(Packet::Disconnect { frame, client_id }) => {
                     self.record(from, &data);
@@ -227,6 +259,7 @@ impl NetworkConnection {
                 Ok(Packet::Ping { timestamp }) => self.send_ping_response(timestamp),
                 Ok(Packet::Ack { count, .. }) if count as usize > self.sent_orders.len() => {
                     log::warn!(target: "client", "Ignored an Ack for {count} > {} frames.", self.sent_orders.len());
+                    self.log_malformed(&format!("Ack for {count} frames, {} sent", self.sent_orders.len()), from, &data);
                 }
                 Ok(Packet::Ack { frame, count }) => {
                     let orders: Vec<RawOrder> = self.sent_orders.drain(..count as usize).flatten().collect();
@@ -244,7 +277,10 @@ impl NetworkConnection {
                         Incoming::Orders { client_id: from, orders }
                     });
                 }
-                Err(e) => log::warn!(target: "client", "Ignored a malformed packet from client {from} with length {}: {e}", data.len()),
+                Err(e) => {
+                    log::warn!(target: "client", "Ignored a malformed packet from client {from} with length {}: {e}", data.len());
+                    self.log_malformed(&e.to_string(), from, &data);
+                }
             }
         }
     }

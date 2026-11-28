@@ -519,6 +519,24 @@ fn malformed_orders_are_not_forwarded() {
         !senders.contains(&attacker_index) && !senders.contains(&b_index),
         "forwarded: {senders:?}"
     );
+
+    let log = server.support.join("rustora/Logs/malformed_packets.log");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let text = loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.lines().filter(|l| l.contains("kind=malformed")).count() >= 2 || Instant::now() > deadline {
+            break text;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let dump = "ff".repeat(115);
+    assert!(
+        text.contains(&format!(
+            "kind=malformed what=\"orders before the handshake\" client={attacker_index}"
+        )),
+        "{text}"
+    );
+    assert!(text.contains(&format!("client={b_index}")) && text.contains(&dump), "{text}");
 }
 
 fn sync_packet(hash: i32) -> Vec<u8> {

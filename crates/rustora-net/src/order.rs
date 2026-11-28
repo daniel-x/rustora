@@ -408,3 +408,22 @@ mod tests {
         assert_eq!(p.orders, vec![o]);
     }
 }
+
+/// The first `max` bytes of `data` in hex, with the count of the bytes left out, for logs of malformed packets.
+pub fn hex_dump(data: &[u8], max: usize) -> String {
+    let shown: Vec<String> = data.iter().take(max).map(|b| format!("{b:02x}")).collect();
+    let mut out = shown.join("");
+    if data.len() > max {
+        out.push_str(&format!("+{}", data.len() - max));
+    }
+    out
+}
+
+#[cfg(test)]
+mod hex_dump_tests {
+    #[test]
+    fn hex_dump() {
+        assert_eq!(super::hex_dump(&[0x01, 0xab, 0xff], 8), "01abff");
+        assert_eq!(super::hex_dump(&[1, 2, 3, 4], 2), "0102+2");
+    }
+}
