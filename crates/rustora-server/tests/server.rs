@@ -493,6 +493,34 @@ fn game_start_sends_empty_frames_and_acks_orders() {
     assert_ne!(a_index, b_index);
 }
 
+/// The attack of 2026-11-28: a connection that skips the handshake, and then a validated client, send a malformed
+/// order packet. The server drops both and forwards neither.
+#[test]
+fn malformed_orders_are_not_forwarded() {
+    let Some(engine) = engine_dir() else { return };
+    let server = start_server(&engine, &[]);
+    let port = server.port;
+    let mut a = join(port);
+    let garbage = vec![0xFF; 115];
+
+    let mut attacker = TestClient::connect(port);
+    let attacker_index = attacker.index;
+    attacker.send_packet(1, &garbage);
+    assert!(!attacker.pump(VERSION, |_| false), "the server kept the connection");
+
+    let mut b = join(port);
+    let b_index = b.index;
+    assert!(a.pump(VERSION, |c| c.lobby.client_with_index(b_index).is_some()));
+    b.send_packet(1, &garbage);
+    assert!(!b.pump(VERSION, |_| false), "the server kept the client");
+    assert!(a.pump(VERSION, |c| c.lobby.client_with_index(b_index).is_none()));
+    let senders: Vec<i32> = a.frames.iter().map(|f| f.client).collect();
+    assert!(
+        !senders.contains(&attacker_index) && !senders.contains(&b_index),
+        "forwarded: {senders:?}"
+    );
+}
+
 fn sync_packet(hash: i32) -> Vec<u8> {
     let mut p = vec![order_type::SYNC_HASH];
     p.extend_from_slice(&hash.to_le_bytes());

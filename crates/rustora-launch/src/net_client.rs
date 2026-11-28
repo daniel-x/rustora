@@ -45,6 +45,8 @@ fn read_i32(stream: &mut dyn ByteStream) -> std::io::Result<i32> {
 /// The silence after which the client logs a gap, to find where a connection stalls.
 pub const DIAGNOSTIC_GAP: Duration = Duration::from_secs(5);
 
+/// Reads the frames of the server until the connection ends. A frame grows as its data arrives, so a declared length
+/// does not reserve memory by itself.
 fn receive_loop(mut stream: Box<dyn ByteStream>, packets: std::sync::mpsc::Sender<(i32, Vec<u8>)>) -> std::io::Result<()> {
     let mut last_packet = Instant::now();
     loop {
@@ -58,8 +60,11 @@ fn receive_loop(mut stream: Box<dyn ByteStream>, packets: std::sync::mpsc::Sende
         if length <= 0 {
             return Err(std::io::ErrorKind::InvalidData.into());
         }
-        let mut data = vec![0u8; length as usize];
-        stream.read_exact(&mut data)?;
+        let mut data = Vec::new();
+        (&mut *stream).take(length as u64).read_to_end(&mut data)?;
+        if data.len() < length as usize {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
         if packets.send((client, data)).is_err() {
             return Ok(());
         }
@@ -220,12 +225,10 @@ impl NetworkConnection {
                 }
                 Ok(Packet::TickScale(scale)) => return Some(Incoming::TickScale(scale)),
                 Ok(Packet::Ping { timestamp }) => self.send_ping_response(timestamp),
+                Ok(Packet::Ack { count, .. }) if count as usize > self.sent_orders.len() => {
+                    log::warn!(target: "client", "Ignored an Ack for {count} > {} frames.", self.sent_orders.len());
+                }
                 Ok(Packet::Ack { frame, count }) => {
-                    assert!(
-                        count as usize <= self.sent_orders.len(),
-                        "Received Ack for {count} > {} frames.",
-                        self.sent_orders.len()
-                    );
                     let orders: Vec<RawOrder> = self.sent_orders.drain(..count as usize).flatten().collect();
                     self.record(self.client_id, &Packet::serialize_orders(frame, &orders));
                     return Some(Incoming::Orders {
@@ -241,7 +244,7 @@ impl NetworkConnection {
                         Incoming::Orders { client_id: from, orders }
                     });
                 }
-                Err(e) => panic!("Received unknown packet from client {from} with length {}: {e}", data.len()),
+                Err(e) => log::warn!(target: "client", "Ignored a malformed packet from client {from} with length {}: {e}", data.len()),
             }
         }
     }

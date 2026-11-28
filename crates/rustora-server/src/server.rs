@@ -25,7 +25,7 @@ use rustora_net::extensions;
 use rustora_net::game_save::{GameSave, sanitized_file_name, saves_dir};
 use rustora_net::handshake::{HANDSHAKE_PROTOCOL, HandshakeRequest, HandshakeResponse, ORDERS_PROTOCOL};
 use rustora_net::lobby_setup::InitialLobby;
-use rustora_net::order::{RawOrder, SYNC_HASH_ORDER_LENGTH, order_type};
+use rustora_net::order::{Packet, RawOrder, SYNC_HASH_ORDER_LENGTH, order_type};
 use rustora_net::session::{Client, ClientState, ConnectionQuality, Global, Session};
 use rustora_net::stream::{ByteStream, PipeEnd, pipe};
 
@@ -397,6 +397,16 @@ pub struct Server {
     last_lag_report: u64,
 }
 
+/// Whether the order data that client `from` sends parses as orders or a sync hash for the other clients, which
+/// parse it the same way and would treat a malformed packet as an error. Client 0 shares its index with the server,
+/// so the check also keeps it from sending server packets like an `Ack`. A rustora addition: OpenRA forwards the data
+/// unchecked.
+fn is_forwardable(from: i32, frame: i32, data: &[u8]) -> bool {
+    let mut packet = frame.to_le_bytes().to_vec();
+    packet.extend_from_slice(data);
+    matches!(Packet::parse(from, &packet), Ok(Packet::Orders(_) | Packet::Sync { .. }))
+}
+
 impl Server {
     /// Opens the listeners and selects the initial map, like the constructor and `LobbyCommands.ServerStarted`.
     pub fn new(mut settings: ServerSettings, mut game_mod: ServerMod) -> Result<Server, String> {
@@ -669,6 +679,7 @@ impl Server {
         };
         let order = RawOrder::handshake("HandshakeRequest", &request.serialize());
         conn.try_send_data(create_frame(0, 0, &order.serialize()));
+        log::info!(target: "server", "Client {index}: Connection from {}.", conn.origin);
         self.conns.push(conn);
     }
 
@@ -1069,10 +1080,20 @@ impl Server {
     }
 
     fn receive_orders(&mut self, player_index: i32, frame: i32, data: &[u8]) {
-        if self.conn(player_index).is_none() {
+        let Some(validated) = self.conn(player_index).map(|c| c.validated) else {
+            return;
+        };
+        let mut frame = frame;
+        if frame != 0 && !validated {
+            log::info!(target: "server", "Client {player_index}: Dropped; it sent orders before the handshake.");
+            self.drop_client(player_index);
             return;
         }
-        let mut frame = frame;
+        if frame != 0 && !is_forwardable(player_index, frame, data) {
+            log::info!(target: "server", "Client {player_index}: Dropped; it sent a malformed order packet of {} bytes.", data.len());
+            self.drop_client(player_index);
+            return;
+        }
         if frame == 0 {
             self.interpret_server_orders(player_index, data);
         } else {
@@ -1613,6 +1634,20 @@ fn write_line_with_time_stamp(line: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_orders_and_sync_hashes_are_forwardable() {
+        let order = RawOrder::command("x").serialize();
+        assert!(is_forwardable(3, 5, &order));
+        assert!(is_forwardable(3, 5, &[]));
+        let mut sync = vec![order_type::SYNC_HASH];
+        sync.extend_from_slice(&[0; 12]);
+        assert!(is_forwardable(3, 5, &sync));
+        assert!(!is_forwardable(3, 5, &[0xFF; 115]));
+        assert!(!is_forwardable(3, 5, &order[..order.len() - 1]));
+        assert!(!is_forwardable(0, 5, &[order_type::ACK, 1]));
+        assert!(is_forwardable(0, 5, &order));
+    }
 
     #[test]
     fn servers_neither_advertise_nor_forward_ports_by_default() {
