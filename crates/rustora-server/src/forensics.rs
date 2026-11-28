@@ -30,7 +30,9 @@ const RECENT_BYTES: usize = 64;
 const MASS_DROP_CLIENTS: usize = 2;
 const MASS_DROP_WINDOW: u64 = 1000;
 /// Connections from one address within a minute, and packets from one client within a second, that count as a flood.
-const CONNECTION_FLOOD: usize = 20;
+/// The master server tests the port after each advertisement, which a server sends at most once a second, so it stays
+/// at about 60 connections a minute.
+const CONNECTION_FLOOD: usize = 300;
 const PACKET_FLOOD: u32 = 500;
 /// The most bytes that are kept of a connection before its handshake, and the most bytes of all capture files.
 pub const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
@@ -220,10 +222,10 @@ mod tests {
     fn floods_are_reported_once_a_minute() {
         let mut f = Forensics::default();
         let ip: IpAddr = "203.0.113.5".parse().unwrap();
-        for i in 0..25 {
+        for i in 0..310 {
             f.connected(i, ip);
         }
-        assert_eq!(f.connections[&ip].1, Some(19));
+        assert_eq!(f.connections[&ip].1, Some(299));
         for _ in 0..600 {
             f.received(5000, 7, "o");
         }
