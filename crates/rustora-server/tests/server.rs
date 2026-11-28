@@ -537,6 +537,19 @@ fn malformed_orders_are_not_forwarded() {
         "{text}"
     );
     assert!(text.contains(&format!("client={b_index}")) && text.contains(&dump), "{text}");
+
+    let captures = server.support.join("rustora/Logs/malformed_packets");
+    let file = std::fs::read_dir(&captures)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().contains(&format!("-client{attacker_index}-")))
+        .expect("a capture of the attacker");
+    let mut expected = 119i32.to_le_bytes().to_vec();
+    expected.extend_from_slice(&1i32.to_le_bytes());
+    expected.extend_from_slice(&garbage);
+    assert_eq!(std::fs::read(&file).unwrap(), expected);
+    let name = file.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(text.contains(&format!("file={name}")), "{text}");
 }
 
 fn sync_packet(hash: i32) -> Vec<u8> {

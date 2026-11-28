@@ -31,7 +31,7 @@ use rustora_net::stream::{ByteStream, PipeEnd, pipe};
 
 use crate::auth::{PlayerProfile, check_profile};
 use crate::connection::{ClientOrigin, Connection, Event, run_time};
-use crate::forensics::{Forensics, log_malformed};
+use crate::forensics::{Forensics, MAX_CAPTURE_BYTES, frame_bytes, log_malformed, save_capture};
 use crate::geoip::{self, GeoIp};
 use crate::master_server::MasterServerPinger;
 use crate::mod_info::{MAP_STATUS_UNSAFE_CUSTOM_RULES, MapInfo, ServerMod};
@@ -607,13 +607,12 @@ impl Server {
                 frame,
             } => {
                 let origin = self.conn(player_index).map(|c| c.origin.to_string()).unwrap_or_default();
-                log_malformed(
-                    &format!("frame of {length} bytes over the limit"),
-                    player_index,
-                    &origin,
-                    frame,
-                    &[],
-                );
+                let mut bytes = self.conn(player_index).and_then(|c| c.capture.clone()).unwrap_or_default();
+                bytes.extend_from_slice(&length.to_le_bytes());
+                bytes.extend_from_slice(&frame.to_le_bytes());
+                let capture = save_capture(&self.captures_dir(), player_index, &origin, &bytes);
+                let what = format!("frame of {length} bytes over the limit");
+                log_malformed(&what, player_index, &origin, frame, &[], capture.as_deref());
                 if let Some(c) = self.conn_mut(player_index) {
                     c.drop_reason = Some("oversized frame".into());
                 }
@@ -631,6 +630,11 @@ impl Server {
                 self.dispatch_frame_to_client(player_index, create_tick_scale_frame(scale));
             }
         }
+    }
+
+    /// The directory of the captures of malformed packets.
+    fn captures_dir(&self) -> PathBuf {
+        rustora_core::own_files::logs_dir(&self.settings.support_dir).join(crate::forensics::CHANNEL)
     }
 
     /// `IsMultiplayer`.
@@ -906,6 +910,7 @@ impl Server {
         self.lobby.clients.push(client);
         if let Some(c) = self.conn_mut(player_index) {
             c.validated = true;
+            c.capture = None;
             log::info!(target: "server", "Client {player_index}: Accepted connection from {}.", c.origin);
         }
         let join_cooldown = self.settings.flood_limit_join_cooldown;
@@ -1113,6 +1118,11 @@ impl Server {
             return;
         };
         self.forensics.received(run_time(self.start), player_index, &origin);
+        if let Some(capture) = self.conn_mut(player_index).and_then(|c| c.capture.as_mut())
+            && capture.len() < MAX_CAPTURE_BYTES
+        {
+            capture.extend(frame_bytes(frame, data));
+        }
         let mut frame = frame;
         let malformed = if frame != 0 && !validated {
             Some("orders before the handshake")
@@ -1122,7 +1132,12 @@ impl Server {
             None
         };
         if let Some(what) = malformed {
-            log_malformed(what, player_index, &origin, frame, data);
+            let bytes = match self.conn(player_index).and_then(|c| c.capture.clone()) {
+                Some(before_handshake) => before_handshake,
+                None => frame_bytes(frame, data),
+            };
+            let capture = save_capture(&self.captures_dir(), player_index, &origin, &bytes);
+            log_malformed(what, player_index, &origin, frame, data, capture.as_deref());
             if let Some(c) = self.conn_mut(player_index) {
                 c.drop_reason = Some(format!("sent {what}"));
             }
@@ -1407,6 +1422,8 @@ impl Server {
             conn.connection_timer() / 1000
         );
         self.forensics.forget(player_index);
+        self.message_tracker.remove(&player_index);
+        self.pending_authentication.remove(&player_index);
         if conn.validated {
             self.forensics.dropped(run_time(self.start), player_index, &reason);
         }

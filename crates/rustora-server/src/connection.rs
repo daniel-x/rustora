@@ -97,6 +97,9 @@ pub struct Connection {
     pub idle_warned: bool,
     /// Why the server drops the client, for the disconnect log line; `None` when the client ends the connection.
     pub drop_reason: Option<String>,
+    /// The frames the client sent before its handshake was accepted, up to `forensics::MAX_CAPTURE_BYTES`, for the
+    /// capture of a connection that breaks the protocol. `None` once the handshake is accepted.
+    pub capture: Option<Vec<u8>>,
     connected_at: Instant,
     send: Option<Sender<Vec<u8>>>,
     last_received: Arc<AtomicU64>,
@@ -161,6 +164,7 @@ impl Connection {
             last_action: run_time(start),
             idle_warned: false,
             drop_reason: None,
+            capture: Some(Vec::new()),
             connected_at: Instant::now(),
             send: Some(send),
             last_received,

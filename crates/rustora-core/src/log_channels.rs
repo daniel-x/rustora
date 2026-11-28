@@ -11,6 +11,10 @@
 //!
 //! Like in C#, files are buffered and a thread flushes them every 5 seconds; warnings and errors flush at once. A channel whose
 //! file cannot be created tries `<file>.1` up to `<file>.127`.
+//!
+//! A rustora addition for processes that run for years: a log file that reaches `ROTATE_BYTES` becomes `<file>.old`,
+//! replacing the one before, so a channel takes at most `2 * ROTATE_BYTES` = 20 MB. Of the `exception-*.log` crash
+//! reports the newest `MAX_EXCEPTION_LOGS` stay.
 
 use crate::hash::HashMap;
 use std::fs::{File, OpenOptions};
@@ -21,6 +25,8 @@ use std::time::Duration;
 
 const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 const CREATE_LOG_FILE_MAX_RETRY_COUNT: usize = 128;
+const ROTATE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_EXCEPTION_LOGS: usize = 20;
 /// `ServerSettings.TimestampFormat`.
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 
@@ -97,6 +103,49 @@ pub const DEPENDENT_SERVER_CHANNELS: &[ChannelSpec] =
 struct Channel {
     writer: Option<BufWriter<File>>,
     timestamped: bool,
+    path: Option<PathBuf>,
+    /// The size of the file, counted from its size at opening.
+    size: u64,
+}
+
+impl Channel {
+    fn open(dir: &Path, spec: &ChannelSpec) -> Channel {
+        let opened = create_log_file(dir, spec.file, spec.append);
+        let size = opened.as_ref().and_then(|(f, _)| f.metadata().ok()).map_or(0, |m| m.len());
+        let (writer, path) = opened.map_or((None, None), |(f, p)| (Some(BufWriter::new(f)), Some(p)));
+        Channel {
+            writer,
+            timestamped: spec.timestamped,
+            path,
+            size,
+        }
+    }
+
+    /// Writes `line`, first moving a full file to `<file>.old`.
+    fn write_line(&mut self, line: &str) {
+        if self.size + line.len() as u64 > ROTATE_BYTES {
+            self.rotate();
+        }
+        if let Some(w) = &mut self.writer
+            && w.write_all(line.as_bytes()).is_ok()
+        {
+            self.size += line.len() as u64;
+        }
+    }
+
+    fn rotate(&mut self) {
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        if let Some(mut w) = self.writer.take() {
+            let _ = w.flush();
+        }
+        let mut old = path.clone().into_os_string();
+        old.push(".old");
+        let _ = std::fs::rename(&path, &old);
+        self.writer = OpenOptions::new().append(true).create(true).open(&path).ok().map(BufWriter::new);
+        self.size = 0;
+    }
 }
 
 struct State {
@@ -162,17 +211,34 @@ pub fn install_panic_hook(support_dir: &Path) {
         lines.push(format!("Exception: {info}"));
         lines.push(std::backtrace::Backtrace::force_capture().to_string());
         let name = format!("exception-{}.log", now.format("%Y-%m-%dT%H%M%SZ"));
-        if let Some(mut file) = create_log_file(&dir, &name, false) {
+        remove_old_exception_logs(&dir);
+        if let Some((mut file, _)) = create_log_file(&dir, &name, false) {
             let _ = file.write_all((lines.join("\n") + "\n").as_bytes());
         }
         previous(info);
     }));
 }
 
+/// Deletes the oldest crash reports so that a new one makes `MAX_EXCEPTION_LOGS`. The names sort by time.
+fn remove_old_exception_logs(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut reports: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("exception-")))
+        .collect();
+    reports.sort();
+    let excess = (reports.len() + 1).saturating_sub(MAX_EXCEPTION_LOGS);
+    for path in reports.iter().take(excess) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// Opens the log file in append mode, so lines that another process appends to the same file stay intact. Without
 /// `append` the file is emptied first, by an open of its own: on Windows, a file opened for appending cannot be
 /// truncated.
-fn create_log_file(dir: &Path, base: &str, append: bool) -> Option<File> {
+fn create_log_file(dir: &Path, base: &str, append: bool) -> Option<(File, PathBuf)> {
     std::fs::create_dir_all(dir).ok()?;
     (0..CREATE_LOG_FILE_MAX_RETRY_COUNT).find_map(|i| {
         let name = if i > 0 { format!("{base}.{i}") } else { base.to_string() };
@@ -180,7 +246,8 @@ fn create_log_file(dir: &Path, base: &str, append: bool) -> Option<File> {
         if !append {
             OpenOptions::new().write(true).create(true).truncate(true).open(&path).ok()?;
         }
-        OpenOptions::new().append(true).create(true).open(&path).ok()
+        let file = OpenOptions::new().append(true).create(true).open(&path).ok()?;
+        Some((file, path))
     })
 }
 
@@ -208,10 +275,7 @@ impl ChannelLogger {
     /// The channel `name`, opened on first use, or the channel that stands in for it.
     fn channel<'a>(&self, state: &'a mut State, name: &str) -> &'a mut Channel {
         let spec = self.spec(name).or_else(|| self.spec("debug")).unwrap_or(&self.specs[0]);
-        state.open.entry(spec.name).or_insert_with(|| Channel {
-            writer: create_log_file(&self.dir, spec.file, spec.append).map(BufWriter::new),
-            timestamped: spec.timestamped,
-        })
+        state.open.entry(spec.name).or_insert_with(|| Channel::open(&self.dir, spec))
     }
 
     fn flush_all(state: &mut State) {
@@ -241,14 +305,12 @@ impl log::Log for ChannelLogger {
         };
         let mut state = self.lock();
         let channel = self.channel(&mut state, name);
-        let timestamped = channel.timestamped;
-        if let Some(w) = &mut channel.writer {
-            let _ = if timestamped {
-                writeln!(w, "[{}] {}", chrono::Local::now().format(TIMESTAMP_FORMAT), record.args())
-            } else {
-                writeln!(w, "{}", record.args())
-            };
-        }
+        let line = if channel.timestamped {
+            format!("[{}] {}\n", chrono::Local::now().format(TIMESTAMP_FORMAT), record.args())
+        } else {
+            format!("{}\n", record.args())
+        };
+        channel.write_line(&line);
         if record.level() <= log::Level::Warn {
             ChannelLogger::flush_all(&mut state);
         }
@@ -256,5 +318,54 @@ impl log::Log for ChannelLogger {
 
     fn flush(&self) {
         ChannelLogger::flush_all(&mut self.lock());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("rustora-log-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn a_full_log_moves_to_old() {
+        let dir = temp_dir("rotate");
+        let spec = ChannelSpec::new("x", "x.log", false, true).appending();
+        let mut channel = Channel::open(&dir, &spec);
+        let line = "a".repeat(1024 * 1024) + "\n";
+        for _ in 0..25 {
+            channel.write_line(&line);
+        }
+        channel.writer.as_mut().unwrap().flush().unwrap();
+        let size = |name: &str| std::fs::metadata(dir.join(name)).map_or(0, |m| m.len());
+        assert!(size("x.log") <= ROTATE_BYTES && size("x.log.old") <= ROTATE_BYTES);
+        assert!(size("x.log") + size("x.log.old") >= 15 * 1024 * 1024);
+        let reopened = Channel::open(&dir, &spec);
+        assert_eq!(reopened.size, size("x.log"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_newest_exception_logs_stay() {
+        let dir = temp_dir("exceptions");
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..25 {
+            std::fs::write(dir.join(format!("exception-2026-01-01T0000{i:02}Z.log")), "x").unwrap();
+        }
+        std::fs::write(dir.join("debug.log"), "x").unwrap();
+        remove_old_exception_logs(&dir);
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left.len(), MAX_EXCEPTION_LOGS);
+        assert_eq!(left[0], "debug.log");
+        assert_eq!(left[1], "exception-2026-01-01T000006Z.log");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

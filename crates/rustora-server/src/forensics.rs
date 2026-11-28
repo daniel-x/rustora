@@ -4,7 +4,10 @@
 //! Records for the investigation of attacks, a rustora addition. Everything goes to the `malformed_packets` log
 //! channel as `key=value` lines:
 //!
-//! - `kind=malformed`: a packet that breaks the protocol, with a hex dump of its first bytes.
+//! - `kind=malformed`: a packet that breaks the protocol, with a hex dump of its first bytes. The whole packet, and for
+//!   a connection that had not finished the handshake everything it sent, goes to a file in
+//!   `Logs/malformed_packets/` that the line names (`file=`), as the frames the client sent: length, frame and data.
+//!   `scripts/replay-packets.py` of the repository sends such a file to a server again.
 //! - `kind=mass_drop`: several clients dropped within a second, followed by the packets that the server forwarded
 //!   last (`kind=recent`), which hold the packet that crashed the clients if one did.
 //! - `kind=connection_flood` and `kind=packet_flood`: many connections from one address or many packets from one
@@ -12,6 +15,7 @@
 
 use std::collections::VecDeque;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 
 use rustora_core::hash::HashMap;
 use rustora_net::order::hex_dump;
@@ -28,16 +32,59 @@ const MASS_DROP_WINDOW: u64 = 1000;
 /// Connections from one address within a minute, and packets from one client within a second, that count as a flood.
 const CONNECTION_FLOOD: usize = 20;
 const PACKET_FLOOD: u32 = 500;
+/// The most bytes that are kept of a connection before its handshake, and the most bytes of all capture files.
+pub const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+const MAX_CAPTURES_BYTES: u64 = 100 * 1024 * 1024;
 /// The shortest time between two flood or mass drop reports about the same thing.
 const REPORT_INTERVAL: u64 = 60_000;
 
-/// Logs a packet of client `client` from `origin` that breaks the protocol.
-pub fn log_malformed(what: &str, client: i32, origin: &str, frame: i32, data: &[u8]) {
+/// Logs a packet of client `client` from `origin` that breaks the protocol; `capture` names the file with its bytes.
+pub fn log_malformed(what: &str, client: i32, origin: &str, frame: i32, data: &[u8], capture: Option<&Path>) {
+    let file = capture
+        .and_then(|p| p.file_name())
+        .map_or_else(String::new, |f| f.to_string_lossy().into_owned());
     log::warn!(target: CHANNEL,
-        "kind=malformed what=\"{what}\" client={client} origin={origin} frame={frame} length={} data={}",
+        "kind=malformed what=\"{what}\" client={client} origin={origin} frame={frame} length={} data={} file={file}",
         data.len(),
         hex_dump(data, DUMP_BYTES)
     );
+}
+
+/// A frame as the client sent it: the length of frame and data, the frame, and the data.
+pub fn frame_bytes(frame: i32, data: &[u8]) -> Vec<u8> {
+    let mut out = (data.len() as i32 + 4).to_le_bytes().to_vec();
+    out.extend_from_slice(&frame.to_le_bytes());
+    out.extend_from_slice(data);
+    out
+}
+
+/// Writes `bytes` of client `client` from `origin` to a new file in `dir`, after deleting the oldest files so that all
+/// stay within `MAX_CAPTURES_BYTES`. The names start with the time, so they sort by age.
+pub fn save_capture(dir: &Path, client: i32, origin: &str, bytes: &[u8]) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let mut files: Vec<(PathBuf, u64)> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| Some((e.path(), e.metadata().ok()?.len())))
+        .collect();
+    files.sort();
+    let mut total: u64 = files.iter().map(|(_, size)| size).sum::<u64>() + bytes.len() as u64;
+    for (path, size) in &files {
+        if total <= MAX_CAPTURES_BYTES {
+            break;
+        }
+        if std::fs::remove_file(path).is_ok() {
+            total -= size;
+        }
+    }
+    let origin: String = origin
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' { c } else { '_' })
+        .collect();
+    let name = format!("{}-client{client}-{origin}.bin", chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"));
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
 }
 
 struct RecentPacket {
@@ -181,5 +228,26 @@ mod tests {
             f.received(5000, 7, "o");
         }
         assert_eq!(f.packets[&7].reported, Some(5000));
+    }
+
+    #[test]
+    fn captures_stay_within_the_limit() {
+        let dir = std::env::temp_dir().join(format!("rustora-capture-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let chunk = vec![0u8; MAX_CAPTURE_BYTES];
+        for i in 0..105 {
+            save_capture(&dir, i, "[2001:db8::1]:5", &chunk).unwrap();
+        }
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+        let total: u64 = files.iter().map(|p| std::fs::metadata(p).unwrap().len()).sum();
+        assert!(total <= MAX_CAPTURES_BYTES);
+        assert!(
+            files
+                .iter()
+                .any(|p| p.to_string_lossy().ends_with("-client104-_2001_db8__1__5.bin"))
+        );
+        assert!(!files.iter().any(|p| p.to_string_lossy().contains("-client0-")));
+        assert_eq!(frame_bytes(7, &[1, 2]), [6, 0, 0, 0, 7, 0, 0, 0, 1, 2]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
