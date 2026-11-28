@@ -546,6 +546,9 @@ impl Server {
 
     /// Processes events until the game has started and all clients have left.
     pub fn run(&mut self) {
+        if self.settings.advertise_online {
+            self.forensics.look_up_master_server(run_time(self.start), &self.settings.server_advertise_url);
+        }
         while self.state != ServerState::ShuttingDown {
             if let Ok(e) = self.events_rx.recv_timeout(Duration::from_secs(1)) {
                 self.handle_event(e);
@@ -710,7 +713,9 @@ impl Server {
         conn.try_send_data(create_frame(0, 0, &order.serialize()));
         log::info!(target: "server", "Client {index}: Connection from {}.", conn.origin);
         if let Some(ip) = conn.origin.ip() {
-            self.forensics.connected(run_time(self.start), ip);
+            let now = run_time(self.start);
+            self.forensics.look_up_master_server(now, &self.settings.server_advertise_url);
+            self.forensics.connected(now, ip);
         }
         self.conns.push(conn);
     }

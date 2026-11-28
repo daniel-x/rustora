@@ -14,8 +14,9 @@
 //!   client.
 
 use std::collections::VecDeque;
-use std::net::IpAddr;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rustora_core::hash::HashMap;
 use rustora_net::order::hex_dump;
@@ -30,9 +31,12 @@ const RECENT_BYTES: usize = 64;
 const MASS_DROP_CLIENTS: usize = 2;
 const MASS_DROP_WINDOW: u64 = 1000;
 /// Connections from one address within a minute, and packets from one client within a second, that count as a flood.
-/// The master server tests the port after each advertisement, which a server sends at most once a second, so it stays
-/// at about 60 connections a minute.
-const CONNECTION_FLOOD: usize = 300;
+const CONNECTION_FLOOD: usize = 30;
+/// The flood limit of the master server, which tests the port after each advertisement. A server advertises at most
+/// once a second, so the master server stays at about 60 connections a minute.
+const MASTER_SERVER_CONNECTION_FLOOD: usize = 120;
+/// Milliseconds between two lookups of the addresses of the master server.
+const MASTER_SERVER_LOOKUP_INTERVAL: u64 = 3_600_000;
 const PACKET_FLOOD: u32 = 500;
 /// The most bytes that are kept of a connection before its handshake, and the most bytes of all capture files.
 pub const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
@@ -105,6 +109,21 @@ pub struct Forensics {
     last_mass_drop: Option<u64>,
     connections: HashMap<IpAddr, (VecDeque<u64>, Option<u64>)>,
     packets: HashMap<i32, PacketCount>,
+    /// The addresses of the master server, filled by a thread.
+    master_server: Arc<Mutex<Vec<IpAddr>>>,
+    master_server_lookup: Option<u64>,
+}
+
+/// The host of `url`, like `master.openra.net` of `https://master.openra.net/ping`.
+fn url_host(url: &str) -> Option<&str> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?']).next()?;
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next()?,
+        None => host.split(':').next()?,
+    };
+    (!host.is_empty()).then_some(host)
 }
 
 #[derive(Default)]
@@ -157,14 +176,49 @@ impl Forensics {
         }
     }
 
+    /// Looks up the addresses of the host of the master server URL `url` on a thread, at most every
+    /// `MASTER_SERVER_LOOKUP_INTERVAL`, so that the flood check knows the master server.
+    pub fn look_up_master_server(&mut self, now: u64, url: &str) {
+        if self
+            .master_server_lookup
+            .is_some_and(|t| now.saturating_sub(t) < MASTER_SERVER_LOOKUP_INTERVAL)
+        {
+            return;
+        }
+        self.master_server_lookup = Some(now);
+        let Some(host) = url_host(url).map(str::to_string) else {
+            return;
+        };
+        let addresses = self.master_server.clone();
+        std::thread::spawn(move || {
+            if let Ok(found) = (host.as_str(), 443).to_socket_addrs() {
+                let found: Vec<IpAddr> = found.map(|a| a.ip().to_canonical()).collect();
+                if !found.is_empty()
+                    && let Ok(mut a) = addresses.lock()
+                {
+                    *a = found;
+                }
+            }
+        });
+    }
+
+    fn is_master_server(&self, ip: IpAddr) -> bool {
+        self.master_server.lock().is_ok_and(|a| a.contains(&ip))
+    }
+
     /// Counts a connection from `ip` at `now`; logs a flood of connections from it.
     pub fn connected(&mut self, now: u64, ip: IpAddr) {
+        let limit = if self.is_master_server(ip) {
+            MASTER_SERVER_CONNECTION_FLOOD
+        } else {
+            CONNECTION_FLOOD
+        };
         let (times, reported) = self.connections.entry(ip).or_default();
         times.push_back(now);
         while times.front().is_some_and(|&t| now.saturating_sub(t) > 60_000) {
             times.pop_front();
         }
-        if times.len() >= CONNECTION_FLOOD && due(*reported, now) {
+        if times.len() >= limit && due(*reported, now) {
             *reported = Some(now);
             log::warn!(target: CHANNEL, "kind=connection_flood origin={ip} connections_per_minute={}", times.len());
         }
@@ -222,10 +276,16 @@ mod tests {
     fn floods_are_reported_once_a_minute() {
         let mut f = Forensics::default();
         let ip: IpAddr = "203.0.113.5".parse().unwrap();
-        for i in 0..310 {
+        for i in 0..40 {
             f.connected(i, ip);
         }
-        assert_eq!(f.connections[&ip].1, Some(299));
+        assert_eq!(f.connections[&ip].1, Some(29));
+        let master: IpAddr = "195.16.73.100".parse().unwrap();
+        f.master_server.lock().unwrap().push(master);
+        for i in 0..130 {
+            f.connected(i, master);
+        }
+        assert_eq!(f.connections[&master].1, Some(119));
         for _ in 0..600 {
             f.received(5000, 7, "o");
         }
@@ -251,5 +311,13 @@ mod tests {
         assert!(!files.iter().any(|p| p.to_string_lossy().contains("-client0-")));
         assert_eq!(frame_bytes(7, &[1, 2]), [6, 0, 0, 0, 7, 0, 0, 0, 1, 2]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn url_hosts() {
+        assert_eq!(url_host("https://master.openra.net/ping"), Some("master.openra.net"));
+        assert_eq!(url_host("http://127.0.0.1:8080/ping?x=1"), Some("127.0.0.1"));
+        assert_eq!(url_host("http://[::1]:80/"), Some("::1"));
+        assert_eq!(url_host("https:///"), None);
     }
 }
