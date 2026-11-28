@@ -542,6 +542,9 @@ impl Server {
             self.vote_kick_tick();
             self.master_server_tick();
             self.irc_tick();
+            if let Some(forward) = &mut self.port_forward {
+                forward.renew_if_due();
+            }
             self.lag_report_tick();
             if self.state == ServerState::GameStarted {
                 self.send_tick_scales();

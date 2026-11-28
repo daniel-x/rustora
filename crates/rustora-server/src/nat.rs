@@ -5,17 +5,23 @@
 //! NAT-PMP devices, which the C# Mono.Nat library also supports, are not handled.
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use igd_next::{Gateway, PortMappingProtocol, SearchOptions, search_gateway};
 
 const DESCRIPTION: &str = "OpenRA";
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// The time after which the mapping is added again, which renews its lease. A rustora addition: OpenRA maps the port
+/// once per server instance, so a server that waits longer than the lifetime for players is no longer reachable.
+const RENEW_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 /// A forwarded port that is removed again with [`PortForward::remove`].
 pub struct PortForward {
     gateway: Gateway,
     port: u16,
+    local: SocketAddr,
+    lifetime: u32,
+    renewed: Instant,
 }
 
 /// The local address of the route to `gateway`.
@@ -32,10 +38,32 @@ impl PortForward {
         options.timeout = Some(SEARCH_TIMEOUT);
         let gateway = search_gateway(options).map_err(|e| e.to_string())?;
         let ip = local_ip_towards(gateway.addr).map_err(|e| e.to_string())?;
+        let local = SocketAddr::new(ip, port);
         gateway
-            .add_port(PortMappingProtocol::TCP, port, SocketAddr::new(ip, port), lifetime, DESCRIPTION)
+            .add_port(PortMappingProtocol::TCP, port, local, lifetime, DESCRIPTION)
             .map_err(|e| e.to_string())?;
-        Ok(PortForward { gateway, port })
+        Ok(PortForward {
+            gateway,
+            port,
+            local,
+            lifetime,
+            renewed: Instant::now(),
+        })
+    }
+
+    /// Adds the mapping again on a thread once `RENEW_INTERVAL` has passed since the last time.
+    pub fn renew_if_due(&mut self) {
+        if self.renewed.elapsed() < RENEW_INTERVAL {
+            return;
+        }
+        self.renewed = Instant::now();
+        let (gateway, port, local, lifetime) = (self.gateway.clone(), self.port, self.local, self.lifetime);
+        std::thread::spawn(
+            move || match gateway.add_port(PortMappingProtocol::TCP, port, local, lifetime, DESCRIPTION) {
+                Ok(()) => log::info!(target: "nat", "Renewed the port forwarding of port {port}"),
+                Err(e) => log::info!(target: "nat", "Port forwarding renewal failed: {e}"),
+            },
+        );
     }
 
     /// `TryRemovePortForward`.
