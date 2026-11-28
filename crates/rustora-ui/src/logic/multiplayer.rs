@@ -233,12 +233,15 @@ impl ServerList {
     }
 
     /// Shows the games again when the games from IRC changed and no query runs, at most every
-    /// `IRC_UPDATE_INTERVAL`.
+    /// `IRC_UPDATE_INTERVAL`, at the same scroll position.
     fn update_irc_games(self: &Rc<Self>, ui: &mut Ui) {
         let revision = services(ui).general_chat.borrow().games.revision();
         let due = ui.run_time() - self.irc_shown_at.get() >= IRC_UPDATE_INTERVAL;
         if revision != self.irc_revision.get() && due && self.status.get() != SearchStatus::Fetching {
+            let offset = ui.list(self.server_list).target_offset;
             self.show_games(ui);
+            ui.set_list_offset(self.server_list, offset, false);
+            ui.scroll(self.server_list, 0, false);
         }
     }
 
